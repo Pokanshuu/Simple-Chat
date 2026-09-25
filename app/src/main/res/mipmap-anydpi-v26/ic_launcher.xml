@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自适应图标。
+
+  foreground 是 ICON.png 直接缩放出来的位图（**整幅铺满** 108dp 画布）。
+  没有再往里缩到 72dp 安全区：这张图的四角本来就是透明的，
+  铺满之后启动器的蒙版裁掉的是透明区，底下是同色的 background，
+  看起来是"整块底 + 气泡"，而不是"一个小图形浮在大色块中央"。
+
+  没有 monochrome 层：图案是位图 + 品牌字，做主题化只会变成一坨剪影。
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

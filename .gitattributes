@@ -1,0 +1,23 @@
+# 行尾统一钉成 LF：本机 core.autocrlf=true 会把 working tree 改回 CRLF，
+# 那样每碰一个文件都刷一堆 "LF will be replaced by CRLF" 警告，diff 也会脏。
+* text=auto eol=lf
+
+# 二进制：不要做任何行尾/编码转换
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.webp binary
+*.ico  binary
+*.zip  binary
+*.pdf  binary
+*.docx binary
+*.doc  binary
+*.jks  binary
+*.keystore binary
+*.apk  binary
+*.aab  binary
+*.jar  binary
+
+# 生成的锁文件按文本处理，但别做语言统计噪声
+gradlew text eol=lf
+*.bat text eol=crlf

@@ -1,0 +1,393 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!--
+  English strings. Kept 1:1 with `values/strings.xml` — same keys, same order.
+
+  House style for the English copy:
+  - sentence case, no trailing periods on short labels;
+  - no contractions (apostrophes need escaping in Android XML, and the app voice
+    is calm/neutral anyway);
+  - 「…」 quotes become “…”.
+-->
+<resources>
+    <string name="app_name">Simple Chat</string>
+
+    <!-- ── Actions ──────────────────────────────────────── -->
+    <string name="action_cancel">Cancel</string>
+    <string name="action_save">Save</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_edit">Edit</string>
+    <string name="action_close">Close</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_back">Back</string>
+    <string name="action_clear">Clear</string>
+    <string name="action_retry">Retry</string>
+    <string name="action_rename">Rename</string>
+    <string name="action_pin">Pin</string>
+    <string name="action_unpin">Unpin</string>
+
+    <!-- ── Labels & values ──────────────────────────────── -->
+    <string name="label_model">Model</string>
+    <string name="label_provider">Provider</string>
+    <string name="value_follow_system">Follow system</string>
+    <string name="value_light">Light</string>
+    <string name="value_dark">Dark</string>
+    <string name="conversation_default_title">New chat</string>
+
+    <!-- ── Language setting ─────────────────────────────── -->
+    <string name="settings_language">Language</string>
+    <string name="lang_chinese">简体中文</string>
+    <string name="lang_english">English</string>
+
+    <!-- ── Accent colors ────────────────────────────────── -->
+    <string name="theme_color_blue">Blue</string>
+    <string name="theme_color_green">Green</string>
+    <string name="theme_color_red">Red</string>
+    <string name="theme_color_pink">Pink</string>
+    <string name="theme_color_purple">Purple</string>
+    <string name="theme_color_brown">Brown</string>
+    <string name="theme_color_gray">Gray</string>
+    <string name="a11y_accent_color">%1$s accent color</string>
+
+    <!-- ── Errors & feedback ────────────────────────────── -->
+    <string name="error_unknown">Unknown error</string>
+    <string name="error_network">Network connection failed</string>
+    <string name="error_no_api_key">No API key yet. Fill it in under Settings → API, then retry.</string>
+    <string name="error_request_failed">Request failed</string>
+    <string name="error_no_content">The model returned no content</string>
+    <string name="error_write_failed">Could not write to the chosen location</string>
+    <string name="error_delete_failed">Delete failed: %1$s</string>
+    <string name="error_import_failed">Import failed: %1$s</string>
+    <string name="export_done">Exported to the chosen location</string>
+    <string name="export_failed">Export failed: %1$s</string>
+    <string name="export_failed_short">Export failed</string>
+    <string name="import_read_failed">Could not read the file</string>
+    <string name="list_separator">; </string>
+    <string name="import_note_separator"> | </string>
+
+    <!-- ── Settings: root page ──────────────────────────── -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_data">Data management</string>
+    <string name="settings_api">API</string>
+    <string name="settings_presets">Presets</string>
+    <string name="settings_font_size">Font size</string>
+    <string name="settings_about">About</string>
+    <string name="settings_group_account">Account</string>
+    <string name="settings_group_personal">Personal</string>
+    <string name="settings_group_backup">Backup</string>
+    <string name="settings_group_reset">Reset</string>
+    <string name="settings_group_service">Service</string>
+    <string name="settings_group_auth">Auth</string>
+    <string name="settings_group_presets">Prompt library</string>
+    <string name="settings_data_summary">Import · Export · Clear</string>
+    <string name="settings_appearance">Appearance</string>
+    <string name="settings_accent">Accent color</string>
+    <string name="settings_auto_collapse">Auto-collapse thinking</string>
+    <string name="settings_about_title">About SimpleChat</string>
+    <string name="settings_export_all">Export all data</string>
+    <string name="settings_export_all_summary">Exports conversations, messages and all versions</string>
+    <string name="settings_import_all">Import all data</string>
+    <string name="settings_import_all_summary">Supports the Chatbox format; merge or overwrite</string>
+    <string name="settings_delete_all">Delete all conversations</string>
+    <string name="settings_destructive_hint">Cannot be undone</string>
+    <string name="settings_delete_all_title">Delete all conversations?</string>
+    <string name="settings_delete_all_body">All conversations, messages and versions will be erased and cannot be recovered. Consider exporting a backup first.</string>
+    <string name="settings_delete_all_confirm">Delete all</string>
+    <string name="settings_delete_all_done">All conversations deleted</string>
+
+    <!-- ── Settings: API ────────────────────────────────── -->
+    <string name="api_test">Test connection</string>
+    <string name="api_testing">Testing…</string>
+    <string name="api_key_unset">Not set</string>
+    <string name="api_test_ok">Connected, %1$d models available</string>
+    <string name="api_test_failed">Connection failed: %1$s</string>
+
+    <!-- ── Settings: import & export ────────────────────── -->
+    <string name="import_mode_title">Import mode</string>
+    <string name="import_mode_merge">Merge (skip existing conversations)</string>
+    <string name="import_mode_overwrite">Overwrite (clear local conversations first)</string>
+    <string name="import_done">Imported from %1$s: %2$d conversations · %3$d messages</string>
+    <string name="import_done_skipped"> · %1$d duplicates skipped</string>
+
+    <!-- ── Settings: presets ────────────────────────────── -->
+    <string name="preset_count_empty">None</string>
+    <string name="preset_count">%1$d</string>
+    <string name="preset_empty">No presets yet</string>
+    <string name="preset_new">New preset</string>
+    <string name="preset_new_hint">Tick them in the chat settings as needed</string>
+    <string name="preset_order_hint">Concatenated before the conversation prompt, in tick order.</string>
+    <string name="preset_delete_action">Delete preset</string>
+    <string name="preset_delete_title">Delete preset “%1$s”?</string>
+    <string name="preset_delete_body">Conversations using it will drop it automatically; their content is untouched.</string>
+    <string name="preset_edit">Edit preset</string>
+    <string name="preset_name_hint">Name, e.g. “Third-person narration”</string>
+    <string name="preset_body_hint">Prompt body. Spell out what the model must do and what it must avoid.</string>
+
+    <!-- ── Settings: font size ──────────────────────────── -->
+    <string name="font_step_small">Small</string>
+    <string name="font_step_smaller">Smaller</string>
+    <string name="font_step_standard">Standard</string>
+    <string name="font_step_larger">Larger</string>
+    <string name="font_step_large">Large</string>
+    <string name="font_step_largest">Largest</string>
+    <string name="font_preview_label">Preview text size</string>
+    <string name="font_scale_hint">Affects chat text, thinking content and all interface text.</string>
+
+    <!-- ── Settings: about ──────────────────────────────── -->
+    <string name="about_version">Version</string>
+    <string name="about_package">Package</string>
+    <string name="about_licenses">Open-source licenses</string>
+    <string name="about_icon">Icon</string>
+    <string name="about_libs_net">Networking &amp; serialization</string>
+    <string name="about_libs_storage">Storage &amp; UI</string>
+    <string name="about_libs_parsing">Parsing &amp; highlighting</string>
+    <string name="about_libs_crypto">Encryption</string>
+    <string name="about_ai_disclaimer">Generated content comes from the model; use your own judgement.</string>
+
+    <!-- ── Conversations ────────────────────────────────── -->
+    <string name="conversation_fork_suffix">(copy)</string>
+    <string name="conversation_fork_suffix_n">(copy %1$d)</string>
+
+    <!-- ── Chat page ────────────────────────────────────── -->
+    <string name="chat_export_empty">This conversation is not saved yet; there is nothing to export</string>
+    <string name="chat_scroll_bottom">Scroll to bottom</string>
+    <string name="chat_banner_close">Dismiss</string>
+    <string name="chat_vision_unsupported">“%1$s” cannot read images. Switch to a vision-capable model in the thinking menu first (e.g. DeepSeek V4.1 Flash).</string>
+    <string name="msg_edit_input">Edit input</string>
+    <string name="msg_delete_title">Delete this message?</string>
+    <string name="msg_delete_body">All versions of this message are deleted together. This cannot be undone.</string>
+
+    <!-- ── Attachments ──────────────────────────────────── -->
+    <string name="attach_read_failed">Could not read the attachment</string>
+    <string name="attach_camera_file_failed">Could not create the camera file</string>
+    <string name="attach_default_text_name">Untitled.txt</string>
+    <string name="err_image_too_big">Image exceeds 24MB; compress it first</string>
+    <string name="err_image_read">Could not read this image</string>
+    <string name="err_file_read">Could not read this file</string>
+    <string name="err_file_too_big">File too large (over %1$dKB)</string>
+    <string name="err_not_plain_text">This does not look like a plain-text file</string>
+    <string name="err_text_too_long">Text too long (%1$d characters, limit %2$d)</string>
+    <string name="err_file_empty">The file is empty</string>
+    <string name="err_doc_legacy">Legacy .doc / .xls is not supported; save it as .docx first</string>
+    <string name="err_pdf_too_big">PDF exceeds 40MB; split it first</string>
+    <string name="err_pdf_open">Could not open this PDF</string>
+    <string name="err_pdf_no_pages">This PDF has no pages</string>
+    <string name="pdf_page_name">%1$s · page %2$d</string>
+    <string name="warn_pdf_truncated">The PDF has %1$d pages; only the first %2$d were taken (about 1024 tokens each, more would blow up the context)</string>
+    <string name="err_docx_not_zip">This is a zip archive but not a .docx document (word/document.xml not found)</string>
+    <string name="err_docx_too_big">File exceeds 40MB; make it smaller first</string>
+    <string name="err_docx_empty">No readable text in this docx</string>
+    <string name="err_docx_too_long">Document too long (%1$d characters, limit %2$d)</string>
+
+    <!-- ── Model list / stats / compaction ──────────────── -->
+    <string name="models_fetched">Fetched %1$d models</string>
+    <string name="models_fetch_failed">Fetch failed: %1$s</string>
+    <string name="models_fetch_needs_key">(API key required first)</string>
+    <string name="compact_too_few">Not enough messages to compact yet.</string>
+    <string name="compact_failed">Compaction failed</string>
+    <string name="compact_failed_detail">Compaction failed: %1$s</string>
+
+    <!-- ── Providers ────────────────────────────────────── -->
+    <string name="provider_name_deepseek">DeepSeek official</string>
+    <string name="provider_name_opencode">OpenCode Go</string>
+    <string name="provider_name_custom">Custom</string>
+
+    <!-- ── Conversation modes & reasoning ───────────────── -->
+    <string name="mode_creative_title">Writing mode</string>
+    <string name="mode_roleplay_title">Roleplay mode</string>
+    <string name="mode_creative_empty">Write prose</string>
+    <string name="mode_roleplay_empty">Advance the plot</string>
+    <string name="mode_creative_caption">AI writes the prose, keeping voice and point of view consistent</string>
+    <string name="mode_roleplay_caption">AI role-plays the characters, advancing the plot through dialogue and action</string>
+    <string name="reasoning_off">Off</string>
+    <string name="reasoning_high">high</string>
+    <string name="reasoning_max">max</string>
+
+    <!-- ── Conversation list groups ─────────────────────── -->
+    <string name="group_pinned">Pinned</string>
+    <string name="group_today">Today</string>
+    <string name="group_yesterday">Yesterday</string>
+    <string name="group_week">Past 7 days</string>
+    <string name="group_older">Earlier</string>
+
+    <!-- ── Markdown rendering ───────────────────────────── -->
+    <string name="md_code_label">Code</string>
+    <string name="md_line_count">· %1$d lines</string>
+    <string name="md_copied">Copied</string>
+    <string name="md_copy_code">Copy code</string>
+    <string name="md_collapse">Collapse</string>
+    <string name="md_expand_all">Expand all (%1$d lines)</string>
+    <string name="md_image">Image</string>
+
+    <!-- ── Message index rail ───────────────────────────── -->
+    <string name="msg_index_empty">(no content)</string>
+    <string name="msg_index_attachments">(%1$d attachments)</string>
+    <string name="msg_index_image">(image)</string>
+    <string name="msg_index_file">(file · %1$s)</string>
+
+    <!-- ── Backup: sources & import feedback ────────────── -->
+    <string name="backup_source_simplechat">SimpleChat backup</string>
+    <string name="backup_source_chatbox">Chatbox backup</string>
+    <string name="err_unrecognised_file">Unrecognised file: neither a zip archive nor JSON</string>
+    <string name="err_unrecognised_format">Unrecognised file (format=%1$s)</string>
+    <string name="err_scratch_dir">Temp directory unavailable: %1$s</string>
+    <string name="err_no_manifest">No manifest.json in the zip; this does not look like a Chatbox backup</string>
+    <string name="err_manifest_parse">Failed to parse manifest.json</string>
+    <string name="err_not_chatbox">Not a Chatbox backup (format=%1$s)</string>
+    <string name="err_no_sessions">No importable conversations in this backup</string>
+    <string name="err_not_our_backup">Not a backup from this app (format=%1$s)</string>
+    <string name="warn_dropped_images">%1$d images could not be recovered (missing resources in the backup)</string>
+    <string name="warn_no_messages">Some conversations had no importable messages</string>
+    <string name="warn_single_branch">Only the branch in view was imported; versions left by regenerations are not kept</string>
+    <string name="import_image_name">Image %1$d×%2$d</string>
+    <string name="import_image_default_name">Imported image</string>
+    <string name="import_conversation_default">Imported conversation</string>
+
+    <!-- ── Markdown export template ─────────────────────── -->
+    <string name="export_unknown_model">Unknown model</string>
+    <string name="export_meta">%1$d messages · exported %2$s</string>
+    <string name="export_scope_note">Current branch and active versions only; thinking content excluded</string>
+    <string name="export_role_me">Me</string>
+    <string name="export_role_ai">AI</string>
+    <string name="export_image_attachment">🖼 Image attachment: %1$s (%2$d×%3$d, image data not included in the text export)</string>
+    <string name="export_attachment">Attachment: %1$s</string>
+
+    <!-- ── Built-in presets (seeded into the database) ──── -->
+    <string name="preset_novel_name">Fiction</string>
+    <string name="preset_novel_body">You are a fiction writing partner with literary judgement. Write fiction with me; do not take over, and do not drag me towards wish-fulfilment and formula. Respect my point of view, tense, voice and setting. Help me see the characters\' desires and shadows, the roots of conflict, the air of a scene, and the rhythm of sentences. When you can continue, just write: no recap of what came before, no explaining intent. Do not rush towards uplift, do not let characters lecture, do not use pretty empty sentences. When the setting is unclear, ask me first; when I say to just write, make reasonable assumptions and flag them in one line at the start.</string>
+    <string name="preset_prose_name">Prose</string>
+    <string name="preset_prose_body">You are a prose writing partner who understands the weight of memory and silence. Help me turn personal experience into writing, not into descriptions of emotion. Enter through concrete people, objects, smells, light and motion, and let meaning seep out of the detail. Keep my voice, my hesitations and my cracks; do not invent experiences of mine, do not sentimentalise, do not force quotable lines. When revising my sentences, prefer restraint and precision over ornament.</string>
+    <string name="preset_poem_name">Poetry</string>
+    <string name="preset_poem_body">You are a contemporary poetry writing partner. Write poems with me; do not turn poems into line-broken prose, and do not turn them into philosophical slogans. Treat image, sound, breath and white space as materials. Ambiguity, fracture, leaps and incompletion are allowed. Give me versions in different voices, but do not take away my core images. Explain less; let the language speak for itself.</string>
+
+    <!-- ── Prompts sent to the model ─────────────────────── -->
+    <string name="prompt_title_system">You name conversations. Summarise what this conversation is about in at most 5 words. Output the title only: no quotes, no book-title marks, no trailing punctuation, no explanation or prefix.</string>
+    <string name="prompt_compact_system">You are a context compressor for long-form creative writing. Compress the conversation log the user gives you into a recap.\n\nAlways keep:\n1. Every character name, form of address, and changes in kinship and relationships\n2. Place names, times, and scene/setting details\n3. Key plot events that already happened, and their cause and effect\n4. Style conventions already established (person, point of view, tone, taboos)\n5. Foreshadowing and suspense not yet resolved\n\nRules:\n- Use declarative prose, not dialogue\n- Do not evaluate, do not continue the story, and do not write meta lines such as “this was a summary”\n- Keep it within 10% of the original length\n- Output the recap body directly</string>
+    <string name="prompt_recap_intro">Below is a recap of the earlier conversation, to keep settings and plot consistent. Do not repeat it; just continue.\n\n</string>
+    <string name="prompt_compact_existing">[Existing recap]\n</string>
+    <string name="prompt_compact_new">\n\n[New conversation since]\n</string>
+    <string name="prompt_user_prefix">User: </string>
+    <string name="prompt_ai_prefix">AI: </string>
+    <string name="prompt_has_image">(this message contains an image)</string>
+    <string name="prompt_role_user">[User]</string>
+    <string name="prompt_role_assistant">[Assistant]</string>
+
+    <!-- ==== from group g2 ==== -->
+<!-- Input bar (InputBar) -->
+    <string name="input_hint">Send a message</string>
+    <string name="input_cancel_edit">Cancel editing</string>
+    <string name="input_settings">Chat settings</string>
+    <string name="input_thinking">Thinking level</string>
+    <string name="input_stop">Stop generating</string>
+    <string name="input_send">Send</string>
+    <string name="input_attach_collapse">Collapse the attachment menu</string>
+    <string name="input_attach_add">Add images or files</string>
+
+    <!-- Panel 1: thinking level + model list -->
+    <string name="input_model_unsupported">Not supported by this model</string>
+    <string name="input_thinking_hint">The higher the level, the longer the model thinks before answering, and the more time and cost it takes.</string>
+    <string name="input_thinking_unsupported">The current model does not support thinking. Switch models to use it.</string>
+    <string name="models_refresh">Fetch the list</string>
+    <string name="models_refreshing">Fetching…</string>
+    <string name="models_empty">No model list yet. Tap the top right to fetch it.</string>
+    <string name="model_tag_vision">Vision</string>
+    <string name="model_tag_thinking">Thinking</string>
+    <string name="model_current">Current model</string>
+
+    <!-- Panel 2: context usage + chat statistics -->
+    <string name="stats_context_usage">Context usage</string>
+    <string name="stats_tokens_estimate">%1$s / %2$s tokens (estimated)</string>
+    <string name="stats_compacted_saving">Compaction saved about %1$s tokens</string>
+    <string name="stats_title">Conversation statistics</string>
+    <string name="stats_total_tokens">Total local content</string>
+    <string name="stats_message_count">Messages</string>
+    <string name="stats_messages">%1$d</string>
+    <string name="stats_avg_ttft">Average time to first token</string>
+    <string name="stats_avg_tps">Average generation speed</string>
+    <string name="stats_total_thinking">Total thinking time</string>
+    <string name="stats_seconds">%1$d seconds</string>
+
+    <!-- Context compaction -->
+    <string name="compact_title">Context compaction</string>
+    <string name="compact_note">Only affects what is sent to the model; local messages are not affected.</string>
+    <string name="compact_running">Generating the recap…</string>
+    <string name="compact_summarized">Earlier conversation summarized</string>
+    <string name="compact_redo">Compact again</string>
+    <string name="compact_discard">Discard</string>
+    <string name="compact_start">Compact context</string>
+    <string name="compact_desc">Summarizes the earlier conversation and keeps the last 6 messages in full.</string>
+
+    <!-- Panel 4: chat settings -->
+    <string name="input_conversation_name">Conversation name</string>
+    <string name="input_conversation_name_hint">Give this conversation a name</string>
+    <string name="input_system_prompt">System prompt</string>
+    <string name="input_preset_count">%1$d/%2$d presets</string>
+    <string name="input_extra_prompt">Conversation prompt</string>
+    <string name="input_extra_prompt_hint">Setup for this conversation, concatenated after the presets</string>
+    <string name="input_prompt_preview">Preview the final prompt</string>
+    <string name="input_prompt_empty">Final prompt: empty</string>
+    <string name="input_prompt_blank">(No presets enabled and no conversation prompt)</string>
+    <string name="input_sampling">Sampling parameters</string>
+    <string name="input_param_temperature">Temperature</string>
+    <string name="input_param_temp_disabled">Controlled by the server in thinking mode; has no effect</string>
+    <string name="input_param_top_p_disabled">Only takes effect in thinking mode</string>
+    <string name="input_export_title">Export this conversation</string>
+    <string name="input_export_hint">Markdown document or JSON backup</string>
+    <string name="input_export">Export</string>
+    <string name="input_export_markdown">Markdown document</string>
+    <string name="input_export_json">JSON backup</string>
+
+
+    <!-- ==== from group g3 ==== -->
+<!-- ── Message list / message actions ─────────────────────── -->
+    <string name="msg_regenerate">Regenerate</string>
+    <string name="msg_fork_from_here">Start a new chat from here</string>
+    <string name="msg_expand_all">Expand all</string>
+    <string name="msg_variant_prev">Previous version</string>
+    <string name="msg_variant_next">Next version</string>
+    <string name="msg_edit_title">Edit reply</string>
+    <string name="msg_save_and_send">Save and send</string>
+    <string name="msg_index_no_messages">No messages yet</string>
+
+    <!-- ── Process panel ─────────────────────────────────────── -->
+    <string name="process_thinking">Thinking</string>
+    <string name="process_thought">Finished thinking</string>
+    <string name="process_thought_seconds">Thought for %1$d seconds</string>
+    <string name="process_collapse">Collapse</string>
+    <string name="process_expand">Expand</string>
+
+    <!-- ── Attachments ───────────────────────────────────────── -->
+    <string name="attach_remove">Remove attachment</string>
+    <string name="attach_char_count">%1$d characters</string>
+    <string name="attach_camera">Camera</string>
+    <string name="attach_gallery">Photos</string>
+    <string name="attach_file">File</string>
+    <string name="attach_viewer_multi"> (this message has %1$d images, only the first is enlarged)</string>
+
+    <!-- ── Top bar ───────────────────────────────────────────── -->
+    <string name="topbar_history">Chat history</string>
+    <string name="topbar_new_chat">New chat</string>
+
+    <!-- ── Empty state ───────────────────────────────────────── -->
+    <string name="empty_greeting">Let\'s chat and start creating</string>
+
+
+    <!-- ==== from group g4 ==== -->
+<!-- ── Drawer (history) ─────────────────────────────── -->
+    <string name="hist_empty">No conversations yet</string>
+    <string name="hist_selected_count">Selected %1$d items</string>
+    <string name="hist_multi_select">Select multiple</string>
+
+    <!-- ── Rename / delete confirmation dialogs (RootScreen) ── -->
+    <string name="hist_rename_title">Rename conversation</string>
+    <string name="hist_delete_title">Once deleted, this conversation cannot be recovered</string>
+    <string name="hist_delete_body">All messages and versions in this conversation will be removed as well</string>
+    <string name="hist_delete_confirm">Delete this conversation</string>
+    <string name="hist_delete_selected_title">Once deleted, these %1$d conversations cannot be recovered</string>
+    <string name="hist_delete_selected_body">All their messages and versions will be removed as well</string>
+
+    <!-- ── Full-screen search page ──────────────────────── -->
+    <string name="search_hint">Search conversation content…</string>
+    <string name="search_prompt">Enter keywords to search titles and message text</string>
+    <string name="search_no_result">No matching conversations or messages</string>
+</resources>
+

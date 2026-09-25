@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    FileProvider 能对外暴露的路径。
+
+    只开 `cacheDir/captures` 一个子目录 —— 这是「拍照」的中转站：
+    相机把照片写进来，我们读完转成 base64 落库，然后立刻删掉。
+    范围开到整个 cacheDir 是没必要的扩大面。
+-->
+<paths>
+    <cache-path name="captures" path="captures/" />
+</paths>

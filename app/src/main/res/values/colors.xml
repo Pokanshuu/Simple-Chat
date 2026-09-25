@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="window_background">#FFFFFFFF</color>
+    <!-- 启动图底色取图标气泡本体的颜色，冷启动时图标与背景连成一片 -->
+    <color name="splash_background">#FFF3F5F8</color>
+    <color name="brand_primary">#FF4D6BFE</color>
+</resources>
