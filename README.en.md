@@ -1,10 +1,10 @@
 # SimpleChat
 
-> A lightweight, natively fast AI chat client for Android. Built with Jetpack Compose; the R8-minified release APK is about 2.02 MB.
+> A lightweight, natively fast AI chat client for Android. Built with Jetpack Compose; the R8-minified release APK is about 2.17 MB.
 
 **[中文](README.md) | English**
 
-[![Version](https://img.shields.io/badge/version-0.9.0--beta.7-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## Introduction
@@ -174,3 +174,4 @@ Issues and pull requests are welcome. Please keep the change focused and run `./
 ## License
 
 Released under the [MIT](LICENSE) license.
+

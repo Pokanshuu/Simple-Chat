@@ -1,10 +1,10 @@
 # SimpleChat
 
-> 轻量、原生性能的 Android AI 对话客户端。Jetpack Compose 实现，release 经 R8 压缩后约 2.02 MB。
+> 轻量、原生性能的 Android AI 对话客户端。Jetpack Compose 实现，release 经 R8 压缩后约 2.17 MB。
 
 **中文 | [English](README.en.md)**
 
-[![Version](https://img.shields.io/badge/version-0.9.0--beta.7-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## 简介
@@ -175,3 +175,4 @@ app/src/main/java/com/simplechat/app/
 ## 许可证
 
 基于 [MIT](LICENSE) 许可证开源。
+
