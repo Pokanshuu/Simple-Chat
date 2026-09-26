@@ -27,6 +27,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -111,7 +112,12 @@ fun RootScreen() {
     val searchHits by historyViewModel.searchHits.collectAsStateWithLifecycle()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
 
-    var route by remember { mutableStateOf(Route.CHAT) }
+    /*
+     * `rememberSaveable` 而不是 `remember`：换语言是 `recreate()` 整页重建，
+     * 普通 `remember` 会把导航状态丢掉 —— 表现就是"切个语言，人被送回对话页"。
+     * 存档过一次实例状态，重建后就还停在原来那一页（设置）。
+     */
+    var route by rememberSaveable { mutableStateOf(Route.CHAT) }
 
     /** 抽屉是否处于搜索态。见类注释：它是抽屉的状态，不是一条路由。 */
     var searchMode by remember { mutableStateOf(false) }

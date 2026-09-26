@@ -40,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -155,7 +156,8 @@ fun SettingsScreen(
     val repository = container.chatRepository
 
     var stored by remember { mutableStateOf(StoredSettings()) }
-    var page by remember { mutableStateOf(SettingsPage.ROOT) }
+    // rememberSaveable：换语言会 recreate()（见 MainActivity），二级页要停在原地
+    var page by rememberSaveable { mutableStateOf(SettingsPage.ROOT) }
     var dialog by remember { mutableStateOf<SettingsDialog?>(null) }
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }
