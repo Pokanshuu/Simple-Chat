@@ -21,8 +21,9 @@ class App : Application() {
         private set
 
     override fun attachBaseContext(newBase: Context) {
-        // 先按语言设置包一层：数据层 / ViewModel 取词（Res）都走这个 context。
-        super.attachBaseContext(LocaleHelper.wrap(newBase))
+        // 先按语言设置包一层：数据层 / ViewModel 取词（Res）都走这条路。
+        // wrapAppBase 会把**未包装**的 base 记给 LocaleHelper —— 换语言后 Res 要从它现算。
+        super.attachBaseContext(LocaleHelper.wrapAppBase(newBase))
     }
 
     override fun onCreate() {

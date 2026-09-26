@@ -28,7 +28,10 @@ object Res {
     }
 
     fun get(@StringRes resId: Int, vararg args: Any): String {
-        val context = checkNotNull(app) { "Res 还没 init —— App.onCreate 里漏了 Res.init(this)" }
+        val app = checkNotNull(app) { "Res 还没 init —— App.onCreate 里漏了 Res.init(this)" }
+        // 必须经 LocaleHelper 现算：Application 的 resources 是启动时冻结的，
+        // 换语言后不换它的话，取到的永远是旧语言（见 localizedContext 的说明）
+        val context = LocaleHelper.localizedContext(app)
         return if (args.isEmpty()) context.getString(resId) else context.getString(resId, *args)
     }
 }

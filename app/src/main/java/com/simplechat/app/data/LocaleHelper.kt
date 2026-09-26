@@ -42,6 +42,19 @@ object LocaleHelper {
     @Volatile
     private var cached: AppLanguage? = null
 
+    /**
+     * App 的 base context —— **未包装**的那份。
+     *
+     * [localizedContext] 必须从它现算：Application 的 base 在进程启动时包好一层
+     * 就不再动，往它上面再包会把"跟随系统"的判定带偏（读到的是启动时的 locale）。
+     */
+    @Volatile
+    private var rawAppBase: Context? = null
+
+    /** [localizedContext] 的缓存，按语言档失效 —— 换语言后自然重建。 */
+    @Volatile
+    private var localizedCache: Pair<AppLanguage, Context>? = null
+
     /** 当前生效的档位（缓存，未读过则从 DataStore 同步读一次）。 */
     fun currentLanguage(context: Context): AppLanguage =
         cached ?: readStoredLanguageSync(context).also { cached = it }
@@ -51,9 +64,32 @@ object LocaleHelper {
         cached = language
     }
 
+    /** App 的 `attachBaseContext` 用：记下原始 base，再按当前语言包一层返回。 */
+    fun wrapAppBase(base: Context): Context {
+        rawAppBase = base
+        return wrap(base)
+    }
+
     /** 给 [base] 包一层当前语言的配置。档位不需要改配置时原样返回。 */
-    fun wrap(base: Context): Context {
-        val language = currentLanguage(base)
+    fun wrap(base: Context): Context =
+        wrapWith(base, currentLanguage(base))
+
+    /**
+     * 非界面侧取词（[Res]）用的 context，**跟着语言切换走**。
+     *
+     * ⚠️ 不能直接拿 Application 的 resources —— 那份是**进程启动时**按当时语言
+     * 包好的，而设置里换语言只重建 Activity、不重建 Application。不跟着换的话，
+     * 换语言后 [Res] 出来的永远是启动时那个语言（真机踩到：切到 English 后
+     * 「新对话」不变成 New chat、AI 起的标题也还是中文 —— 提示词同样是 [Res] 取的）。
+     */
+    fun localizedContext(fallback: Context): Context {
+        val language = currentLanguage(fallback)
+        localizedCache?.let { (lang, context) -> if (lang == language) return context }
+        val base = rawAppBase ?: fallback
+        return wrapWith(base, language).also { localizedCache = language to it }
+    }
+
+    private fun wrapWith(base: Context, language: AppLanguage): Context {
         val locale = resolveLocale(language, base.resources.configuration.locales[0]) ?: return base
         val config = Configuration(base.resources.configuration)
         config.setLocale(locale)
