@@ -49,6 +49,21 @@
 
 ---
 
+## 🐛 已知问题
+
+- [ ] **切换语言后状态栏不沉浸（真机：澎湃 OS3）** —— 切语言 = `recreate()`，重建后状态栏
+      失去沉浸；**冷启动正常**（退出重进即恢复），模拟器（AOSP）复现不了。已排除：
+      ① `enableEdgeToEdge` 本身没问题（解剖 activity-1.13.0 字节码确认它设
+      `decorFitsSystemWindows(false)` / 系统栏上色 / `ContrastEnforced=false`）；
+      ② 在 `ON_RESUME` 重施一遍 + 一帧 `decorView.post` 补刀 + 显式补写
+      `isStatusBarContrastEnforced = false` —— **真机上仍复现**。嫌疑：MIUI / HyperOS
+      自己的窗口管线在重建 / resume **之后**还会重设窗口属性，比 resume 更晚。
+      以后可试的方向：`onWindowFocusChanged` 或更长延迟后重施；或干脆绕开
+      `recreate()` —— 语言切换改成运行时换 locale（CompositionLocal + 取词路径跟走），
+      没有重建就没有这条竞态。**影响小、有冷启动兜底，用户已接受**。
+
+---
+
 ## ⚠️ 待补验
 
 - [ ] **附件随压缩摘要、随会话分叉、随 Markdown 导出的实际产物** —— 逻辑已写，纯函数有单测，未在真机走完整流程。
