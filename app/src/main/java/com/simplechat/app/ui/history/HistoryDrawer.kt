@@ -369,6 +369,8 @@ internal fun ConversationRow(
     showMultiSelect: Boolean = true,
 ) {
     val colors = LocalChatColors.current
+    // 高亮跟着主题色（Material 的 primary 就是设置页里选的品牌色）
+    val highlightColor = MaterialTheme.colorScheme.primary
     var menuOpen by remember { mutableStateOf(false) }
 
     // 长按落点：菜单跟手从这里弹出，而不是贴到行边缘
@@ -415,7 +417,7 @@ internal fun ConversationRow(
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = highlightedTitle(conversation.title, highlightQuery),
+                    text = highlightedTitle(conversation.title, highlightQuery, highlightColor),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
@@ -424,7 +426,7 @@ internal fun ConversationRow(
                 if (snippet != null) {
                     Spacer(Modifier.size(2.dp))
                     Text(
-                        text = highlightedTitle(snippet, highlightQuery),
+                        text = highlightedTitle(snippet, highlightQuery, highlightColor),
                         style = MaterialTheme.typography.labelSmall,
                         color = colors.placeholder,
                         maxLines = 1,
@@ -471,8 +473,12 @@ internal fun ConversationRow(
     }
 }
 
-/** 搜索时高亮匹配片段。 */
-private fun highlightedTitle(title: String, query: String) = buildAnnotatedString {
+/** 搜索时高亮匹配片段。高亮色由调用方给 —— **跟着主题色走**，写死品牌蓝会在换主题色后脱节。 */
+private fun highlightedTitle(
+    title: String,
+    query: String,
+    highlightColor: Color,
+) = buildAnnotatedString {
     if (query.isBlank()) {
         append(title)
         return@buildAnnotatedString
@@ -484,13 +490,11 @@ private fun highlightedTitle(title: String, query: String) = buildAnnotatedStrin
     }
     val end = start + query.length
     append(title.substring(0, start))
-    withStyle(SpanStyle(color = PrimaryBlue)) {
+    withStyle(SpanStyle(color = highlightColor)) {
         append(title.substring(start, end))
     }
     append(title.substring(end))
 }
-
-private val PrimaryBlue = Color(0xFF4D6BFE)
 
 /** 按时间分组。置顶恒在最前。 */
 fun groupConversations(    conversations: List<ConversationEntity>,
