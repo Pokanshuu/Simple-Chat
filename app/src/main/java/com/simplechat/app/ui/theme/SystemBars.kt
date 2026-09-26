@@ -6,8 +6,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 
 /**
  * 系统栏（状态栏 / 导航栏，含 MIUI · HyperOS 的「小白条」）跟着**本 App 的主题**走，
@@ -32,10 +37,18 @@ import androidx.compose.ui.platform.LocalContext
  * 所以这里三件事：两个系统栏的样式都显式写成透明、把 `detectDarkMode` 换成 **App 的深浅**、
  * 再把系统那道兜底（以及 MIUI 额外画的一条分割线）关掉。
  *
- * ### 为什么放在 `SideEffect` 里，而不是 `onCreate` 调一次
+ * ### 为什么放在 `SideEffect` + `ON_RESUME` 里，而不是 `onCreate` 调一次
  *
  * 主题在设置页随时可改，改完必须重新施加。`SideEffect` 每次重组都跑，`dark` 一变就重来一遍；
  * 它设的都是几个窗口属性，重设的代价可以忽略。
+ *
+ * `ON_RESUME` 那一遍是**竞态兜底**（真机：澎湃 OS3 上「换语言后状态栏不沉浸」）：
+ * 换语言 = `recreate()`，系统会在重建 / resume 前后把窗口属性重设回它那套
+ * （`decorFitsSystemWindows`、对比度兜底），而那次重设落在最后一次 `SideEffect`
+ * **之后**，界面又是静止的设置页、没有下一次重组来纠正 —— 就停在"不沉浸"上；
+ * 冷启动时序不同，退出重进反而正常。resume 是重建 / 切后台回来 / 跳出去再回来
+ * 都必然经过的点，在它之后重施一遍就能赢下这场竞态，再补一帧 `decorView.post`
+ * 兜住"重设发生在 resume 之后一拍"的时序。
  *
  * ### 布局侧的前提（这里不负责）
  *
@@ -48,27 +61,46 @@ fun ApplySystemBarAppearance() {
     val dark = LocalIsDarkTheme.current
     val activity = LocalContext.current as? ComponentActivity ?: return
 
-    SideEffect {
-        val window = activity.window
+    SideEffect { applySystemBarAppearance(activity, dark) }
 
-        activity.enableEdgeToEdge(
-            statusBarStyle = transparentBar(dark),
-            navigationBarStyle = navigationBar(dark),
-        )
+    // 竞态兜底：resume 时重施一遍（机制见类注释「ON_RESUME 那一遍」）
+    val latestDark by rememberUpdatedState(dark)
+    DisposableEffect(activity) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                applySystemBarAppearance(activity, latestDark)
+                activity.window.decorView.post {
+                    applySystemBarAppearance(activity, latestDark)
+                }
+            }
+        }
+        activity.lifecycle.addObserver(observer)
+        onDispose { activity.lifecycle.removeObserver(observer) }
+    }
+}
 
+/** 施加系统栏样式。`SideEffect` 与 `ON_RESUME` 共用这一份，别让两处各写一遍。 */
+private fun applySystemBarAppearance(activity: ComponentActivity, dark: Boolean) {
+    val window = activity.window
+
+    activity.enableEdgeToEdge(
+        statusBarStyle = transparentBar(dark),
+        navigationBarStyle = navigationBar(dark),
+    )
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
         /*
-         * 系统给导航栏补的「对比度底」。三键导航下它确实有用（不然三个键压在浅色
-         * 正文上会看不见），但手势导航下它就是我们要去掉的那条带子 —— 而本 App 的
-         * 底部永远铺着自己的底色，不存在"看不见"的问题。
+         * 两个对比度兜底都关掉：系统给系统栏垫的「半透明底」正是肉眼看到的
+         * 「不沉浸」。状态栏那道 `enableEdgeToEdge`（Api29 起）也会关，但系统
+         * 可能在重建后把它设回去 —— 这里显式再写一遍，不依赖调用顺序。
          */
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            window.isNavigationBarContrastEnforced = false
-        }
+        window.isStatusBarContrastEnforced = false
+        window.isNavigationBarContrastEnforced = false
+    }
 
-        // MIUI 还会在导航栏上沿画一条 1px 的分割线，一并去掉
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            window.navigationBarDividerColor = Color.TRANSPARENT
-        }
+    // MIUI 还会在导航栏上沿画一条 1px 的分割线，一并去掉
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        window.navigationBarDividerColor = Color.TRANSPARENT
     }
 }
 
