@@ -463,6 +463,28 @@ private val collapsibleCodeFence: @Composable (MarkdownComponentModel) -> Unit =
     val lineCount = code.count { it == '\n' } + 1
     val collapsible = lineCount > CollapseLineThreshold
 
+    /*
+     * ```mermaid 不走代码块，走图表卡片。
+     *
+     * 判据是**语言标记**而不是去猜内容：猜错的下场是一段普通代码被执行成图，
+     * 那比不渲染糟得多。
+     */
+    if (language.equals("mermaid", ignoreCase = true)) {
+        MermaidBlock(code = code.trim(), modifier = Modifier.fillMaxWidth())
+    } else {
+        CodeFenceCard(model = model, language = language, code = code, lineCount = lineCount, collapsible = collapsible)
+    }
+}
+
+/** 普通代码块卡片（渲染 / 高亮 / 超长折叠）。 */
+@Composable
+private fun CodeFenceCard(
+    model: MarkdownComponentModel,
+    language: String?,
+    code: String,
+    lineCount: Int,
+    collapsible: Boolean,
+) {
     // 内容一变（换版本 / 重新生成）就重新收起，免得上一条的展开状态串到这一条
     var expanded by remember(model.content) { mutableStateOf(false) }
 
@@ -472,7 +494,7 @@ private val collapsibleCodeFence: @Composable (MarkdownComponentModel) -> Unit =
             // ⚠️ 不用 `clip`：代码块展开后可能很长，带裁剪的图形层会让下半部分点不动（§31）
             .background(LocalChatColors.current.fieldBackground, SoftShape),
     ) {
-        CodeHeader(language = language, code = code, lineCount = lineCount)
+        CodeHeader(language = language.orEmpty(), code = code, lineCount = lineCount)
 
         Box(
             modifier = Modifier

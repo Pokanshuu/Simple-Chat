@@ -121,6 +121,8 @@ dependencies {
     implementation(libs.markdown.renderer.m3)
     implementation(libs.markdown.renderer.code)
     implementation(libs.highlights)
+    implementation(libs.latex.renderer)
+    implementation(libs.latex.renderer.fonts)
 
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)

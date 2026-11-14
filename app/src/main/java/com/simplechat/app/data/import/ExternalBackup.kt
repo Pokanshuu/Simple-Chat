@@ -10,6 +10,7 @@ import com.simplechat.app.data.BackupFile
 import com.simplechat.app.data.BackupMessage
 import com.simplechat.app.data.BackupPreset
 import com.simplechat.app.data.Res
+import com.simplechat.app.data.archive.ChatArchive
 import java.io.File
 import java.util.Base64
 import java.util.UUID
@@ -137,8 +138,18 @@ object ExternalBackup {
         throw AppTextException(R.string.err_unrecognised_format, format ?: "null")
     }
 
-    // ── ZIP 形态的 Chatbox 备份 ───────────────────────────
+    /**
+     * 读本应用自己的 ZIP 归档（`manifest.json` + `backup.json`）。
+     *
+     * 返回 null 表示"不是我们的包"，调用方接着按 Chatbox 处理。
+     * 同一份 `BackupFile` 模型贯穿两种导出形态，所以这里不需要任何映射。
+     */
+    private fun readOwnArchive(zip: ZipFile): BackupFile? =
+        ChatArchive.readBackupJson { name ->
+            zip.getEntry(name)?.let { entry -> zip.getInputStream(entry).readBytes() }
+        }
 
+    // ── ZIP 形态的 Chatbox 备份 ───────────────────────────
     /**
      * ZIP 形态必须用 [ZipFile]，**不能用 `ZipInputStream`**。
      *
@@ -169,6 +180,17 @@ object ExternalBackup {
             temp.writeBytes(bytes)
 
             ZipFile(temp).use { zip ->
+                /*
+                 * 先认**自己的**归档（`manifest.format = simplechat-archive`）：
+                 * 里面就是一份完整的 `backup.json`，与单文件 JSON 备份同一套模型，
+                 * 所以无需另写一套解析 —— 直接交给 [BackupFile]。
+                 *
+                 * 这一步必须排在 Chatbox 分支之前：两种包的 `manifest.json` 都叫这个名字，
+                 * 靠 format 字段区分。
+                 */
+                val ours = readOwnArchive(zip)
+                if (ours != null) return Parsed(Source.SIMPLE_CHAT, ours)
+
                 val manifestEntry = zip.getEntry("manifest.json")
                     ?: throw AppTextException(R.string.err_no_manifest)
 

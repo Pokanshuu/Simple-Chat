@@ -12,6 +12,7 @@ import com.simplechat.app.db.MessageEntity
 import com.simplechat.app.db.MessageTree
 import com.simplechat.app.db.PresetEntity
 import com.simplechat.app.data.import.ExternalBackup
+import com.simplechat.app.data.archive.ChatArchive
 import com.simplechat.app.net.ReplyBlock
 import com.simplechat.app.net.ReplyBlocks
 import com.simplechat.app.ui.chat.ConversationMode
@@ -636,12 +637,33 @@ class ChatRepository(private val db: AppDatabase) {
     suspend fun conversationCount(): Int = conversations.count()
 
     /** 导出为可读的 JSON 文本。含**所有版本**，不只当前激活的。 */
-    suspend fun exportBackup(): String {
+    suspend fun exportBackup(): String = backupJson.encodeToString(fullBackup())
+
+    /**
+     * 导出为 **ZIP 归档**：`manifest.json` + `backup.json` + 每个会话的 Markdown 文稿。
+     *
+     * 与 [exportBackup] 是**同一份数据**的两种形态 —— 消息、附件、预设、分支一个不少，
+     * 只是多了压缩外壳与可读文稿。图省事少写一套模型的收益在于：
+     * 以后加字段只改一处，不会出现"JSON 备份有、ZIP 备份没有"这种分叉。
+     */
+    suspend fun exportArchive(): ByteArray {
+        val backup = fullBackup()
+        val documents = conversations.getAllRaw().mapIndexed { index, row ->
+            ChatArchive.Document(
+                fileName = ChatArchive.documentName(index + 1, row.title),
+                markdown = exportConversationMarkdown(row.id).orEmpty(),
+            )
+        }.filter { it.markdown.isNotBlank() }
+        return ChatArchive.write(backup, documents)
+    }
+
+    /** 完整的备份模型（JSON 导出与 ZIP 归档共用）。 */
+    private suspend fun fullBackup(): BackupFile {
         val messageByConversation = messages.getAllRaw().groupBy { it.conversationId }
         val presetByConversation = conversationPresets.getAllRaw()
             .groupBy { it.conversationId }
 
-        val file = BackupFile(
+        return BackupFile(
             exportedAt = System.currentTimeMillis(),
             conversations = conversations.getAllRaw().map { row ->
                 row.toBackup(
@@ -654,7 +676,6 @@ class ChatRepository(private val db: AppDatabase) {
             },
             presets = presets.getAll().map { it.toBackup() },
         )
-        return backupJson.encodeToString(file)
     }
 
     /**

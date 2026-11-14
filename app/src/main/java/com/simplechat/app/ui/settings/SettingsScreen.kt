@@ -250,6 +250,37 @@ fun SettingsScreen(
         exportLauncher.launch("simplechat-$stamp.json")
     }
 
+    /*
+     * ZIP 归档：同一份备份 + 每个会话一份 Markdown 文稿。
+     *
+     * 与 JSON 导出并列而不是替换：JSON 好读好 diff，ZIP 好传好归档
+     * （一个大文件里既有可导入的数据，也有能直接看的文稿）。
+     */
+    val archiveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching {
+                    val bytes = repository.exportArchive()
+                    context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                        ?: error(Res.get(R.string.error_write_failed))
+                }
+            }
+            dataMessage = outcome.fold(
+                onSuccess = { Res.get(R.string.export_done) },
+                onFailure = { Res.get(R.string.export_failed, it.message.toString()) },
+            )
+        }
+    }
+
+    fun startArchiveExport() {
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
+        dataMessage = null
+        archiveLauncher.launch("simplechat-$stamp.zip")
+    }
+
     // ── 页面 ──────────────────────────────────────────────
 
     Column(
@@ -316,6 +347,7 @@ fun SettingsScreen(
                         SettingsPage.DATA -> DataPage(
                             message = dataMessage,
                             onExport = { startExport() },
+                            onExportArchive = { startArchiveExport() },
                             onImport = {
                                 // 全放行：Chatbox 的备份是 .zip，有的设备报的 MIME 还很不标准。
                                 // 真正的判定放在解析那一步，认不出来会给出明确原因。
@@ -738,6 +770,7 @@ private fun RootPage(
 private fun DataPage(
     message: String?,
     onExport: () -> Unit,
+    onExportArchive: () -> Unit,
     onImport: () -> Unit,
     onDeleteAll: () -> Unit,
 ) {
@@ -748,6 +781,12 @@ private fun DataPage(
             label = stringResource(R.string.settings_export_all),
             hint = stringResource(R.string.settings_export_all_summary),
             onClick = onExport,
+        )
+        RowDivider()
+        SettingsActionRow(
+            label = stringResource(R.string.settings_export_archive),
+            hint = stringResource(R.string.settings_export_archive_summary),
+            onClick = onExportArchive,
         )
         RowDivider()
         SettingsActionRow(

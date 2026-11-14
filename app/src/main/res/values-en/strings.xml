@@ -464,5 +464,13 @@
     <string name="tts_stop">Stop reading</string>
     <string name="tts_failed">Could not read this aloud, please retry</string>
     <string name="tts_empty">This reply has no text to read</string>
+
+    <!-- ── Mermaid diagrams ─────────────────────────────── -->
+    <string name="mermaid_label">Diagram</string>
+    <string name="mermaid_show_code">Code</string>
+    <string name="mermaid_show_diagram">Diagram</string>
+    <string name="mermaid_render_failed">Could not render the diagram. Raw code below.</string>
+    <string name="settings_export_archive">Export all chats (ZIP archive)</string>
+    <string name="settings_export_archive_summary">A complete backup of every chat and attachment, plus a Markdown document per chat. Can be imported back directly.</string>
 </resources>
 

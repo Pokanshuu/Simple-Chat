@@ -1091,6 +1091,7 @@ fun ChatScreen(
                             vm.continueMessage(message)
                         },
                         speakingId = speaker.speakingId,
+                        autoCollapseThinking = vm.autoCollapseThinking,
                         onSpeak = { message ->
                             // 朗读正文（不是时间线里的过程文字）：用户要听的是回答本身
                             speaker.toggle(message.id, message.content)

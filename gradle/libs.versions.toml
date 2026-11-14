@@ -15,6 +15,11 @@ markdown = "0.45.0"
 # 显式声明是为了能直接用它的 API 做**增量高亮**（见 ui/markdown/CodeFence.kt）。
 highlights = "1.1.0"
 
+# 数学公式。Compose 原生渲染（不引 WebView + KaTeX），见 docs/05 §11.4 的选型记录。
+# 两个 artifact：渲染器本体 + KaTeX 字体（字体单独一个包，不引它公式里的字会掉回系统字体，
+# 分式、根号、积分号的形状全都不对）。
+latexRenderer = "1.7.3"
+
 room = "2.8.5"
 datastore = "1.2.1"
 
@@ -45,6 +50,8 @@ markdown-renderer = { group = "com.mikepenz", name = "multiplatform-markdown-ren
 markdown-renderer-m3 = { group = "com.mikepenz", name = "multiplatform-markdown-renderer-m3", version.ref = "markdown" }
 markdown-renderer-code = { group = "com.mikepenz", name = "multiplatform-markdown-renderer-code", version.ref = "markdown" }
 highlights = { group = "dev.snipme", name = "highlights", version.ref = "highlights" }
+latex-renderer = { group = "io.github.huarangmeng", name = "latex-renderer", version.ref = "latexRenderer" }
+latex-renderer-fonts = { group = "io.github.huarangmeng", name = "latex-fonts-katex", version.ref = "latexRenderer" }
 
 # --- 存储 ---
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }

@@ -36,12 +36,18 @@ Good for:
 ## Features
 
 - Multiple providers: any OpenAI-compatible endpoint, with built-in presets for DeepSeek and OpenCode Go.
+- **Two protocol channels**: the official DeepSeek endpoint can use the **Anthropic-compatible** extended channel (web search / link reading / citations / server-side titles / time-and-place reminder), while every other endpoint stays on OpenAI-compatible. Both coexist and can be pinned manually.
+- **Smart search**: `deepseek_web_search`. The process renders as a timeline (search / browse pages / find in page / read links), the answer carries `[ⁿ]` citation marks, and the source strip and source sheet share one numbering.
 - Streaming output: SSE token by token, live Markdown rendering, pixel-identical before and after finalisation.
-- Thinking panel: `reasoning_content` shown collapsed, timing counts real thinking time only, folds as soon as the answer starts.
+- Thinking panel: `reasoning_content` shown collapsed, timing counts real thinking time only, folds as soon as the answer starts (can be turned off).
+- **Continue generating**: a reply you stopped, or one cut off by the output limit, can be continued in place (trailing-assistant prefix).
+- **Math**: `$…$` / `$$…$$` / `\[…\]` rendered natively by Compose (no WebView + KaTeX).
+- **Mermaid diagrams**: ```mermaid fences render as diagrams with a switch back to source; the script ships in the APK, so it works offline.
+- **Voice input and read-aloud**: the system recogniser and system TTS, no extra backend; code blocks and tables are stripped before reading.
 - Message tree organised by `parentId`. Regenerating creates an in-conversation branch; switching versions carries the downstream along instead of deleting history; long-press forks into a new conversation.
 - Context management: CJK-weighted token estimate, usage ring on the input bar, incremental compaction (keeps the last 6 messages in full).
 - Attachments: camera / gallery / files, none of which need runtime permission; images, plain text, docx and PDF.
-- Data out: JSON backup and Markdown export; imports Chatbox backups.
+- Data out: JSON backup, **ZIP archive** (backup plus a Markdown document per conversation) and Markdown export; imports this app's backups, ZIP archives and Chatbox backups.
 - Search: full-text over titles and bodies, with hit snippets in the results.
 - Long messages: collapsed past 10 lines, whole message stays tappable once expanded.
 - Appearance: dark mode, accent colours, font scale, follow the system.
@@ -50,7 +56,7 @@ Good for:
 ## Not included
 
 - Client-side rewriting of content. Requests go to your configured endpoint as-is.
-- Tool calls, math formula rendering, voice input, TTS.
+- Client-side tool calls (server search tools are supported; local functions are not), voice cloning.
 - Automatic backup, cloud sync, accounts.
 - Navigation, Hilt, Koin, Retrofit, Markwon, material-icons-extended.
 

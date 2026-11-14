@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <style>
+    html, body { margin: 0; padding: 0; background: transparent; }
+    #c { display: flex; justify-content: center; padding: 2px 0; }
+    /* 图形按容器宽度自适应，不出现横向滚动条 */
+    #c svg { max-width: 100%; height: auto; }
+  </style>
+  <script src="mermaid.min.js"></script>
+</head>
+<body>
+<div id="c"></div>
+<script>
+  // 每次渲染换一个 token，用来丢弃"上一张图还没画完、用户已经换了内容"的迟到结果
+  var token = 0;
+
+  function reportHeight() {
+    var box = document.getElementById('c');
+    if (!box || !window.Bridge) return;
+    Bridge.onHeight(Math.ceil(box.getBoundingClientRect().height));
+  }
+
+  function render(code, dark, id) {
+    token = id;
+    var box = document.getElementById('c');
+    box.innerHTML = '';
+    try {
+      mermaid.initialize({
+        startOnLoad: false,
+        // strict：图形代码来自模型输出，禁止其中的脚本 / 点击事件执行
+        securityLevel: 'strict',
+        theme: dark ? 'dark' : 'default',
+        fontFamily: 'sans-serif'
+      });
+      mermaid.render('m' + id, code).then(function (result) {
+        if (id !== token) return;
+        box.innerHTML = result.svg;
+        reportHeight();
+        // 字体 / 布局稳定后再量一次，避免高度差几像素留白
+        setTimeout(reportHeight, 120);
+      }).catch(function (err) {
+        if (id !== token) return;
+        if (window.Bridge) Bridge.onError(String(err && err.message ? err.message : err));
+      });
+    } catch (e) {
+      if (window.Bridge) Bridge.onError(String(e && e.message ? e.message : e));
+    }
+  }
+
+  window.addEventListener('resize', reportHeight);
+  // 页面就绪：告诉原生侧可以发第一批内容了
+  window.addEventListener('load', function () {
+    if (window.Bridge) Bridge.onReady();
+  });
+</script>
+</body>
+</html>

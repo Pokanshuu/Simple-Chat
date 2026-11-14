@@ -464,5 +464,13 @@
     <string name="tts_stop">停止朗读</string>
     <string name="tts_failed">朗读失败，请稍后再试</string>
     <string name="tts_empty">这条没有可朗读的正文</string>
+
+    <!-- ── Mermaid 图表 ──────────────────────────────────── -->
+    <string name="mermaid_label">图表</string>
+    <string name="mermaid_show_code">代码</string>
+    <string name="mermaid_show_diagram">图表</string>
+    <string name="mermaid_render_failed">图表渲染失败，以下是原始代码</string>
+    <string name="settings_export_archive">导出全部对话（ZIP 归档）</string>
+    <string name="settings_export_archive_summary">包含所有对话与附件的完整备份，另附每个对话的 Markdown 文稿；可直接用于导入恢复。</string>
 </resources>
 

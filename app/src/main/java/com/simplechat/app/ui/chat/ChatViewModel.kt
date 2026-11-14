@@ -174,6 +174,16 @@ class ChatViewModel(
         private set
 
     /**
+     * 思考内容是否在**正文开始时自动收起**（全局显示设置）。
+     *
+     * 语义定案见 `TODO.md`：开着 → 正文一出现就收成一行「已深度思考 · N 秒」；
+     * 关掉 → 全文保持展开，想收自己点。**只影响定稿后的初态与自动收起**，
+     * 流式期间的尾巴模式（只看最后几行）与它无关。
+     */
+    var autoCollapseThinking by mutableStateOf(true)
+        private set
+
+    /**
      * 已经向服务端要过标题的会话。
      *
      * 与 [titleGeneratedFor] 同一个作用：**每个会话只试一次**。
@@ -262,6 +272,7 @@ class ChatViewModel(
         }
         apiStyle = ApiStyle.resolve(kind, value.apiStyleId, value.baseUrl)
         webSearch = value.webSearch
+        autoCollapseThinking = value.autoCollapseThinking
         settings = settings.copy(
             model = ModelCatalog.find(kind, value.modelId),
             reasoningLevel = runCatching { ReasoningLevel.valueOf(value.reasoningLevelId) }

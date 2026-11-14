@@ -62,6 +62,7 @@ import com.simplechat.app.ui.common.IconCircleButton
 import com.simplechat.app.ui.common.SoftShape
 import com.simplechat.app.ui.common.rememberPressPosition
 import com.simplechat.app.ui.markdown.MarkdownText
+import com.simplechat.app.ui.markdown.MarkdownWithMath
 import com.simplechat.app.ui.theme.ChatColors
 import com.simplechat.app.ui.theme.LocalChatColors
 import com.simplechat.app.ui.common.PillShape
@@ -116,6 +117,14 @@ fun MessageList(
      * 那份补偿已无用（调用方传的是 `{}`），只剩下这套 Δ 记账在空转。
      */
     onFoldToggle: () -> Unit = {},
+    /**
+     * 思考内容是否在正文开始时自动收起（全局显示设置）。
+     *
+     * 只决定**初态**：开着 → 收成一行摘要；关掉 → 保持展开。
+     * 它并进 [AssistantBlock] 里 `remember` 的 key，所以设置一改，
+     * 连历史消息的初态也跟着变（用户在设置里刚改完，回头看旧会话该是新行为）。
+     */
+    autoCollapseThinking: Boolean = true,
 ) {
     /*
      * 「谁被碰过」。
@@ -176,6 +185,7 @@ fun MessageList(
                  */
                 canContinue = canContinueReply(message, isLastOnPath = index == messages.lastIndex),
                 speakingId = speakingId,
+                autoCollapseThinking = autoCollapseThinking,
                 /*
                  * 折叠/展开**不需要任何视口补偿**（顶部为原点）。
                  *
@@ -219,6 +229,7 @@ private fun MessageRow(
     peeked: Boolean,
     canContinue: Boolean,
     speakingId: String?,
+    autoCollapseThinking: Boolean,
     onTogglePeek: () -> Unit,
     onCopy: () -> Unit,
     onRegenerate: () -> Unit,
@@ -300,6 +311,7 @@ private fun MessageRow(
             MessageRole.ASSISTANT -> AssistantBlock(
                 message = message,
                 interactive = actionable,
+                autoCollapseThinking = autoCollapseThinking,
                 // 点一下 = 看这条是谁写的、占多少 token（再点收起）
                 onClick = onTogglePeek,
                 onLongClick = { menuOpen = true },
@@ -610,8 +622,20 @@ fun AssistantBlock(
      * 用户展开 / 收起思考面板时调用 —— 原样转达给 `ChatScreen`（见 `MessageList` 的同名参数）。
      */
     onFoldToggle: () -> Unit = {},
+    /** 思考内容是否自动收起；见 `MessageList` 的同名参数。 */
+    autoCollapseThinking: Boolean = true,
 ) {
-    var reasoningExpanded by remember { mutableStateOf(false) }
+    /*
+     * 初态由设置决定（`TODO.md` 里那条"只写不读"的开关就是这里接上的）：
+     * 开 = 收起（一行的摘要），关 = 展开（全文可见，想收自己点）。
+     *
+     * 设置并进 `remember` 的 key：用户刚改完设置回头看旧会话，看到的就是新行为。
+     * 代价是切换设置会把手动展开/收起的状态重置一次 —— 可接受，
+     * 因为那一刻用户要看的正是"这个开关到底有没有用"。
+     */
+    var reasoningExpanded by remember(autoCollapseThinking) {
+        androidx.compose.runtime.mutableStateOf(!autoCollapseThinking)
+    }
     val hasReasoning = !message.reasoning.isNullOrBlank()
 
     /*
@@ -709,7 +733,7 @@ fun AssistantBlock(
          * 流式的开销靠两道闸压住：上游按固定节奏采样（见 `MarkdownText`），
          * 下游逐块渲染、只有尾块重解析（见 `MarkdownTextBlocks`）。
          */
-        MarkdownText(
+        MarkdownWithMath(
             content = answer,
             streaming = message.streaming,
         )
