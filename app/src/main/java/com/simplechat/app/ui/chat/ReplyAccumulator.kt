@@ -41,6 +41,18 @@ class ReplyAccumulator {
     val thinking: String
         get() = blocks.filterIsInstance<ReplyBlock.Thinking>().joinToString("") { it.thinking }
 
+    /**
+     * 续写：以已有回复开局，新事件往**后面**接。
+     *
+     * 只种内容、不种 `indexOf` —— 续写是**新的一次响应**，它的块序号从 0 重新开始，
+     * 与旧的块下标毫无关系。种进去才不会有"第 0 块被新内容覆盖"这种事。
+     */
+    fun seed(existing: List<ReplyBlock>) {
+        blocks = existing
+        indexOf.clear()
+        stopReason = null
+    }
+
     fun consume(event: StreamEvent, now: Long) {
         when (event) {
             is StreamEvent.BlockStart -> {

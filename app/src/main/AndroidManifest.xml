@@ -4,6 +4,29 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!--
+        语音输入（录音 → 系统识别）。
+
+        这是本项目**唯一**的运行时权限，而且只在用户点麦克风时才要 ——
+        附件、拍照、相册、文件全都走系统选择器，不需要任何权限。
+    -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!--
+        Android 11 起，应用看不见别的应用里声明的组件 —— 包括系统识别服务。
+        不声明这段 `<queries>`，`SpeechRecognizer.isRecognitionAvailable()` 会
+        恒为 false，麦克风按钮就会永远"点了没反应"。
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
+
     <application
         android:name=".App"
         android:allowBackup="false"

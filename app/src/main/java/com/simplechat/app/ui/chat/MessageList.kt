@@ -95,6 +95,12 @@ fun MessageList(
     contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
     onCopy: (UiMessage) -> Unit = {},
     onRegenerate: (UiMessage) -> Unit = {},
+    /** 继续生成：接着这条回复往下写（只有扩展通道能续，见 `ContinuePolicy`）。 */
+    onContinue: (UiMessage) -> Unit = {},
+    /** 朗读这条回复（系统 TTS）。 */
+    onSpeak: (UiMessage) -> Unit = {},
+    /** 正在朗读的那条消息 id。 */
+    speakingId: String? = null,
     onEdit: (UiMessage) -> Unit = {},
     onFork: (UiMessage) -> Unit = {},
     onDelete: (UiMessage) -> Unit = {},
@@ -165,6 +171,12 @@ fun MessageList(
                 message = message,
                 peeked = peekedId == message.id,
                 /*
+                 * 能不能续写由**位置 + 状态**共同决定（见 `ContinuePolicy`）。
+                 * 「最后一条」在这里判最准：列表本身就是活跃路径。
+                 */
+                canContinue = canContinueReply(message, isLastOnPath = index == messages.lastIndex),
+                speakingId = speakingId,
+                /*
                  * 折叠/展开**不需要任何视口补偿**（顶部为原点）。
                  *
                  * 锚点是"最上面那条可见项的顶边"，LazyList 按 (下标, 偏移) 保持不动：
@@ -181,6 +193,8 @@ fun MessageList(
                 },
                 onCopy = { onCopy(message) },
                 onRegenerate = { onRegenerate(message) },
+                onContinue = { onContinue(message) },
+                onSpeak = { onSpeak(message) },
                 onEdit = { onEdit(message) },
                 onFork = { onFork(message) },
                 onDelete = { onDelete(message) },
@@ -203,9 +217,13 @@ fun MessageList(
 private fun MessageRow(
     message: UiMessage,
     peeked: Boolean,
+    canContinue: Boolean,
+    speakingId: String?,
     onTogglePeek: () -> Unit,
     onCopy: () -> Unit,
     onRegenerate: () -> Unit,
+    onContinue: () -> Unit,
+    onSpeak: () -> Unit,
     onEdit: () -> Unit,
     onFork: () -> Unit,
     onDelete: () -> Unit,
@@ -238,6 +256,13 @@ private fun MessageRow(
                 AppMenuItem(stringResource(R.string.msg_regenerate), AppIcons.Refresh) {
                     menuOpen = false
                     onRegenerate()
+                }
+                // 续写：只在真能续的时候出现（见 ContinuePolicy 的五条否决）
+                if (canContinue) {
+                    AppMenuItem(stringResource(R.string.msg_continue), AppIcons.Play) {
+                        menuOpen = false
+                        onContinue()
+                    }
                 }
             }
             AppMenuItem(stringResource(R.string.action_edit), AppIcons.Edit) {
@@ -311,8 +336,12 @@ private fun MessageRow(
             MessageActions(
                 message = message,
                 peeked = peeked,
+                canContinue = canContinue,
+                speaking = speakingId == message.id,
                 onCopy = onCopy,
                 onRegenerate = onRegenerate,
+                onContinue = onContinue,
+                onSpeak = onSpeak,
                 onEdit = onEdit,
                 onDelete = onDelete,
                 onVariantChange = onVariantChange,
@@ -736,8 +765,12 @@ fun AssistantBlock(
 private fun MessageActions(
     message: UiMessage,
     peeked: Boolean,
+    canContinue: Boolean,
+    speaking: Boolean,
     onCopy: () -> Unit,
     onRegenerate: () -> Unit,
+    onContinue: () -> Unit,
+    onSpeak: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onVariantChange: (Int) -> Unit,
@@ -768,6 +801,17 @@ private fun MessageActions(
         ActionIcon(AppIcons.Copy, stringResource(R.string.action_copy), onCopy, colors)
         if (message.role == MessageRole.ASSISTANT) {
             ActionIcon(AppIcons.Refresh, stringResource(R.string.msg_regenerate), onRegenerate, colors)
+            // 续写紧挨着「重新生成」：两者是同一件事的两个方向（重来 / 接着写）
+            if (canContinue) {
+                ActionIcon(AppIcons.Play, stringResource(R.string.msg_continue), onContinue, colors)
+            }
+            // 朗读：进行中换成停止图标，按同一下即停
+            ActionIcon(
+                if (speaking) AppIcons.Stop else AppIcons.Volume,
+                stringResource(if (speaking) R.string.tts_stop else R.string.tts_speak),
+                onSpeak,
+                colors,
+            )
         }
         ActionIcon(AppIcons.Edit, stringResource(R.string.action_edit), onEdit, colors)
         ActionIcon(AppIcons.Trash, stringResource(R.string.action_delete), onDelete, colors)

@@ -377,6 +377,14 @@ class ChatRepository(private val db: AppDatabase) {
     suspend fun resetForRetry(id: String, model: String?) =
         messages.resetForRetry(id, model, MessageStatus.STREAMING.toStorage())
 
+    /**
+     * 续写：原地转回流式，**内容保留**。
+     *
+     * 与 [resetForRetry] 相对：那个是"这次请求重来"，这个是"接着上一次写"。
+     */
+    suspend fun resumeStreaming(id: String) =
+        messages.resumeStreaming(id, MessageStatus.STREAMING.toStorage())
+
     suspend fun finishMessage(
         id: String,
         content: String,

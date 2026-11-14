@@ -114,6 +114,11 @@ fun InputBar(
     /** 智能搜索是否已开启。 */
     webSearchEnabled: Boolean = false,
     onToggleWebSearch: () -> Unit = {},
+    /** 设备有没有可用的语音识别服务。没有就不露麦克风。 */
+    showVoice: Boolean = false,
+    /** 是否正在录音 —— 按钮换成"结束"状态。 */
+    voiceListening: Boolean = false,
+    onToggleVoice: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalChatColors.current
@@ -325,6 +330,28 @@ fun InputBar(
                         size = RowButtonSize,
                         iconSize = 24.dp,
                         modifier = Modifier.graphicsLayer { rotationZ = spin },
+                    )
+                }
+
+                /*
+                 * ── 语音输入 ─────────────────────────────
+                 *
+                 * 放在 ⊕ 与发送键之间：位置固定、紧邻发送，录完就能直接发。
+                 * 录音中换成品牌色实心 + 停止图标 —— 与发送键的流式态同一套语言。
+                 */
+                if (showVoice) {
+                    IconCircleButton(
+                        icon = if (voiceListening) AppIcons.Stop else AppIcons.Mic,
+                        contentDescription = stringResource(
+                            if (voiceListening) R.string.voice_stop else R.string.voice_input,
+                        ),
+                        onClick = onToggleVoice,
+                        size = RowButtonSize,
+                        iconSize = if (voiceListening) 14.dp else 18.dp,
+                        background = if (voiceListening) MaterialTheme.colorScheme.primary else null,
+                        tint = if (voiceListening) Color.White else MaterialTheme.colorScheme.onSurface,
+                        outlined = true,
+                        outlineColor = if (voiceListening) MaterialTheme.colorScheme.primary else null,
                     )
                 }
 

@@ -340,6 +340,7 @@
     <!-- ==== from group g3 ==== -->
 <!-- ── Message list / message actions ─────────────────────── -->
     <string name="msg_regenerate">Regenerate</string>
+    <string name="msg_continue">Continue generating</string>
     <string name="msg_fork_from_here">Start a new chat from here</string>
     <string name="msg_expand_all">Expand all</string>
     <string name="msg_variant_prev">Previous version</string>
@@ -445,5 +446,23 @@
     <string name="settings_location">Region</string>
     <string name="settings_location_hint">Sent along as the location in the time reminder. Leave empty to omit. e.g. “Hangzhou”.</string>
     <string name="settings_location_hint_short">Used for the time reminder</string>
+
+    <!-- ── Voice input (system recognizer) ──────────────── -->
+    <string name="voice_input">Voice input</string>
+    <string name="voice_stop">Stop recording</string>
+    <string name="voice_unavailable">No speech recognition service is available on this device</string>
+    <string name="voice_empty">Didn\'t catch that, please try again</string>
+    <string name="voice_error_audio">Recording failed, please retry</string>
+    <string name="voice_error_permission">Microphone permission is required for voice input</string>
+    <string name="voice_error_network">Speech recognition needs a network connection</string>
+    <string name="voice_error_busy">The recognition service is busy, try again shortly</string>
+    <string name="voice_error_server">The recognition service failed, try again shortly</string>
+    <string name="voice_permission_denied">Microphone permission denied, voice input unavailable</string>
+
+    <!-- ── Read aloud (system TTS) ──────────────────────── -->
+    <string name="tts_speak">Read aloud</string>
+    <string name="tts_stop">Stop reading</string>
+    <string name="tts_failed">Could not read this aloud, please retry</string>
+    <string name="tts_empty">This reply has no text to read</string>
 </resources>
 

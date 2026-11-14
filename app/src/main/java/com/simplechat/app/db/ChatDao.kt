@@ -225,6 +225,21 @@ interface MessageDao {
     )
     suspend fun resetForRetry(id: String, model: String?, status: String)
 
+    /**
+     * 续写：把这条回复重新标成流式，**内容一个字都不动**。
+     *
+     * 与 [resetForRetry] 的区别就是"清不清空"。续写是接着写，
+     * 清空等于把用户想续的那半篇文章删了。
+     */
+    @Query(
+        """
+        UPDATE messages
+        SET status = :status, errorMessage = NULL, stopReason = NULL
+        WHERE id = :id
+        """,
+    )
+    suspend fun resumeStreaming(id: String, status: String)
+
     @Query("DELETE FROM messages WHERE id IN (:ids)")
     suspend fun deleteByIds(ids: List<String>)
 

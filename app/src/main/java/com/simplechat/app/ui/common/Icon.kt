@@ -1156,4 +1156,58 @@ object AppIcons {
             }
         }
     }
+
+    /** 继续生成（Lucide: play） */
+    val Play: ImageVector by lazy {
+        vector("Play") {
+            stroke {
+                moveTo(7f, 4f)
+                lineTo(19f, 12f)
+                lineTo(7f, 20f)
+                close()
+            }
+        }
+    }
+
+    /** 朗读（Lucide: volume-2） */
+    val Volume: ImageVector by lazy {
+        vector("Volume") {
+            stroke {
+                // 喇叭
+                moveTo(11f, 5f)
+                lineTo(6f, 9f)
+                horizontalLineTo(2f)
+                verticalLineTo(15f)
+                horizontalLineTo(6f)
+                lineTo(11f, 19f)
+                close()
+                // 两道声波
+                moveTo(15.54f, 8.46f)
+                arcToRelative(5f, 5f, 0f, false, true, 0f, 7.07f)
+                moveTo(19.07f, 4.93f)
+                arcToRelative(10f, 10f, 0f, false, true, 0f, 14.14f)
+            }
+        }
+    }
+
+    /** 语音输入（Lucide: mic） */
+    val Mic: ImageVector by lazy {
+        vector("Mic") {
+            stroke {
+                moveTo(12f, 2f)
+                arcToRelative(3f, 3f, 0f, false, true, 3f, 3f)
+                verticalLineTo(12f)
+                arcToRelative(3f, 3f, 0f, false, true, -6f, 0f)
+                verticalLineTo(5f)
+                arcToRelative(3f, 3f, 0f, false, true, 3f, -3f)
+                close()
+                moveTo(19f, 10f)
+                verticalLineTo(12f)
+                arcToRelative(7f, 7f, 0f, false, true, -14f, 0f)
+                verticalLineTo(10f)
+                moveTo(12f, 19f)
+                verticalLineTo(22f)
+            }
+        }
+    }
 }

@@ -1,5 +1,7 @@
 package com.simplechat.app.ui.chat
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -73,6 +75,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.R
 import com.simplechat.app.data.Attachment
@@ -170,6 +173,61 @@ fun ChatScreen(
 
     /** 附件相关的报错。与网络错误分开 —— 后者是 vm.banner，语义不同。 */
     var attachError by remember { mutableStateOf<String?>(null) }
+
+    /*
+     * ── 语音输入 / 朗读 ──────────────────────────────────
+     *
+     * `voiceBase` 记住"按下麦克风之前输入框里已经有什么"：系统的中间结果是
+     * **累计全文**（不是增量），所以每次都用 base + 最新结果重写，
+     * 而不是往上追加 —— 否则说到第三个字时输入框里会出现三份前两个字。
+     */
+    var voiceBase by remember { mutableStateOf("") }
+    var speechError by remember { mutableStateOf<String?>(null) }
+    val voice = rememberVoiceInput(onText = { text -> input = voiceBase + text })
+    val speaker = rememberSpeechOutput()
+
+    val microphonePermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            voiceBase = input
+            voice.start()
+        } else {
+            speechError = Res.get(R.string.voice_permission_denied)
+        }
+    }
+
+    /** 点麦克风：没在录 → 先确认权限再开录；正在录 → 收尾并出结果。 */
+    fun toggleVoice() {
+        if (voice.state.listening) {
+            voice.stop()
+            return
+        }
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            voiceBase = input
+            voice.start()
+        } else {
+            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    // 识别失败 / 朗读失败都以 banner 告知：与附件报错同一套呈现
+    LaunchedEffect(voice.state.error) {
+        voice.state.error?.let {
+            speechError = it
+            voice.consumeError()
+        }
+    }
+    LaunchedEffect(speaker.error) {
+        speaker.error?.let {
+            speechError = it
+            speaker.consumeError()
+        }
+    }
 
     /** 全屏查看的图片：本条的全部图片 + 当前点开的那张。 */
     var viewingImage by remember { mutableStateOf<Pair<List<Attachment>, Attachment>?>(null) }
@@ -1024,6 +1082,19 @@ fun ChatScreen(
                             detached = false
                             vm.regenerate(message)
                         },
+                        onContinue = { message ->
+                            /*
+                             * 续写**跟底**：新内容接在这条末尾，用户按它就是想看接下来写什么。
+                             * 与「重新生成」同一个判断（那条把内容清空，锚不住）。
+                             */
+                            detached = false
+                            vm.continueMessage(message)
+                        },
+                        speakingId = speaker.speakingId,
+                        onSpeak = { message ->
+                            // 朗读正文（不是时间线里的过程文字）：用户要听的是回答本身
+                            speaker.toggle(message.id, message.content)
+                        },
                         onEdit = { message ->
                             if (message.role == MessageRole.USER) {
                                 if (editingMessage == null) inputBeforeEdit = input
@@ -1184,6 +1255,10 @@ fun ChatScreen(
                     BannerBar(message = message, onDismiss = { attachError = null })
                 }
 
+                speechError?.let { message ->
+                    BannerBar(message = message, onDismiss = { speechError = null })
+                }
+
                 // 待发送附件排在输入栏**上面**：先看到"我挂了什么"，再看到输入框
                 PendingAttachmentsRow(
                     attachments = pending,
@@ -1208,6 +1283,10 @@ fun ChatScreen(
                     showWebSearch = vm.apiStyle == ApiStyle.ANTHROPIC,
                     webSearchEnabled = vm.webSearch,
                     onToggleWebSearch = { vm.toggleWebSearch() },
+                    // 语音输入：设备没有识别服务就不露麦克风
+                    showVoice = voice.state.available,
+                    voiceListening = voice.state.listening,
+                    onToggleVoice = { toggleVoice() },
                     thinkingEnabled = vm.settings.thinkingEnabled,
                     thinkingPanelOpen = panel == InputPanelState.THINKING,
                     onOpenThinkingPanel = { openPanel(InputPanelState.THINKING) },

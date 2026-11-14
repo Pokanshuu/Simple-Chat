@@ -831,6 +831,38 @@ class ChatViewModel(
     }
 
     /**
+     * 继续生成（续写）。
+     *
+     * 语义是「接着这条写下去」，不是"重新生成一段" —— 所以：
+     * - **不新增版本**，就写在这一条里（与 [regenerate] 相反）；
+     * - 已有内容一个字不动，新内容接在后面；
+     * - 请求把这条 assistant 作为**末尾前缀**发出去，服务端据此续写。
+     *
+     * 准入规则见 [canContinueReply]：只有活跃路径的最后一条、被停止或被上限截断的
+     * 扩展通道回复才允许续写。不满足就静默返回 —— 按钮本来也不该出现。
+     */
+    fun continueMessage(target: UiMessage) {
+        if (isStreaming) return
+        val conversationId = currentConversationId ?: return
+        val index = messages.indexOfFirst { it.id == target.id }
+        if (index < 0) return
+        if (!canContinueReply(target, isLastOnPath = index == messages.lastIndex)) return
+
+        viewModelScope.launch {
+            switchJob?.join()
+            repository.resumeStreaming(target.id)
+            patch(target.id) {
+                it.copy(
+                    status = MessageStatus.STREAMING,
+                    errorMessage = null,
+                    stopReason = null,
+                )
+            }
+            startStream(conversationId, target.id, prefix = target)
+        }
+    }
+
+    /**
      * 编辑一条消息。
      *
      * 新版本挂在**原消息的父亲**下，成为它的**兄弟**：
@@ -989,7 +1021,9 @@ class ChatViewModel(
              * 落盘、节流、性能统计全部共用，避免为了一个功能复制一整套流式调度。
              */
             val accumulator = if (extended) ReplyAccumulator() else null
-            var timeline: List<ReplyBlock> = emptyList()
+            // 续写：以已有块开局，新内容往后面接（见 ReplyAccumulator.seed）
+            if (accumulator != null && prefix != null) accumulator.seed(prefix.timeline)
+            var timeline: List<ReplyBlock> = prefix?.timeline.orEmpty()
             var dirty = false
 
             /** 正文（或正文块）一出现 = 思维链已经写完，思考栏当场收口。 */
@@ -1279,10 +1313,16 @@ class ChatViewModel(
         val requestTitle = shouldRequestTitle()
         if (requestTitle) serverTitleRequestedFor = currentConversationId
 
+        /*
+         * 续写时把这条 assistant 从历史里摘出去：它要以**末尾前缀**的身份出现，
+         * 留在历史里就是同一轮回答发了两遍，服务端会把它当成两个不同的回答。
+         */
+        val path = orderedOutgoingMessages(messages, active).filter { it.id != prefix?.id }
+
         return buildAnthropicRequest(
             model = settings.model.id,
             systemPrompt = system,
-            path = orderedOutgoingMessages(messages, active),
+            path = path,
             searchEnabled = webSearch,
             thinkingEnabled = settings.thinkingEnabled,
             requestTitle = requestTitle,
