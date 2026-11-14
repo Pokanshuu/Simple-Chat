@@ -23,10 +23,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,6 +72,7 @@ import com.simplechat.app.ui.theme.MarkdownMarkerStyle
 import com.simplechat.app.ui.theme.MarkdownTableStyle
 import com.simplechat.app.ui.theme.SimpleChatTypography
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 /**
  * AI 正文的 Markdown 渲染。
@@ -85,10 +88,10 @@ import kotlinx.coroutines.delay
  *
  * ### 那性能怎么办（两道闸）
  *
- * **一、控股频率**：markdown 库每次内容变化都会重新解析整篇文档。数据层是 50ms
- * 提交一次（`ChatViewModel.STREAM_THROTTLE_MS`），这里就按**同一个节奏**采样
- * （见 [rememberThrottledWhile]）—— 再快不会有新内容，再慢就多丢一档：
- * 屏是 60Hz、内容只有 20Hz，节流越狠"每跳"越大，看着越顿。
+ * **一、控股频率**：markdown 库每次内容变化都会重新解析整篇文档。这里的做法是
+ * **帧对齐 + 按帧耗时自适应**（见 [rememberAdaptiveMarkdown]）——
+ * 与官方 Chat Demo 的 `useThrottleMarkdownRender` 同一套思路：
+ * 预算够就每帧提交，一帧被拖长了就按拖长的倍数冷却。
  * 定稿后不再节流（内容已经不动了）。
  *
  * **二、降单次量**：真正的大头是"每次提交都重解析**整篇**"。切块渲染
@@ -96,7 +99,7 @@ import kotlinx.coroutines.delay
  * 解析器不重解析，只有尾块随 token 变。解析量从 O(全文) 降到 O(尾块)。
  *
  * 两者叠加：频率决定"多久动一次"，分块决定"每次要做多少"。
- * 频率提到与数据同频之后，真正扛住开销的是**分块**这一道。
+ * 定稿前后**像素级一致**由"两阶段用同一套渲染"保证，不靠降级。
  */
 @Composable
 fun MarkdownText(
@@ -111,7 +114,7 @@ fun MarkdownText(
      * 三千字也就几十微秒，扛得住 50ms 一次的提交。
      */
     val text = remember(content) { normalizeSoftBreaks(normalizeHtml(content)) }
-    val shown = rememberThrottledWhile(streaming = streaming, value = text)
+    val shown = rememberAdaptiveMarkdown(streaming = streaming, value = text)
 
     MarkdownTextBlocks(
         source = shown,
@@ -292,51 +295,101 @@ private val MarkdownBlockGap = 8.dp
 private val MarkdownBlockColumnGap = 16.dp
 
 /**
- * 流式期间的渲染节流间隔（毫秒）—— **跟数据层同频**
- * （`ChatViewModel.STREAM_THROTTLE_MS = 50`）。
+ * 一帧的预算（毫秒）。60Hz 是 16.7ms，取 16 留一点余量给排版抖动。
  *
- * 它现在的作用不是"降频"，而是"**不加频**"：中间不额外解析一遍。
- * 单次开销由分块兜住（只有尾块重解析），所以这里可以放心提到这个节奏。
+ * 一帧没被拖过这个数，就说明"渲染追得上"，不需要额外冷却。
  */
-private const val MarkdownStreamIntervalMs = 50L
+private const val FrameBudgetMs = 16L
 
 /**
- * 按固定节奏采样最新值 —— 把高频变化的流式文本喂给 markdown 渲染。
+ * 自适应冷却的上限。
+ *
+ * 只有"文档大到渲染一次要几百毫秒"才会碰到（几万字 + 表格 + 代码块）。
+ * 那时宁可一秒只更新两次，也比每一帧都超时、整屏卡死要好。
+ */
+private const val MaxCooldownMs = 2_000L
+
+/** 采样循环的唤醒间隔。只做一次字符串比较，代价可以忽略。 */
+private const val SamplePollMs = 10L
+
+/**
+ * 下一次允许更新前要等多久（毫秒）。
+ *
+ * 直接对应官方 Chat Demo 的 `useThrottleMarkdownRender`：**上次渲染耗时 × 2，上限 2 秒**。
+ * 差别只在"耗时"怎么取 —— 那边用 `performance.now()` 前后差，这边拿**帧周期**当代理：
+ * 内容是在某一帧里提交并排版的，那一帧被拖长了多少，就是这次更新花了多少。
+ *
+ * 纯函数，有单测（`MarkdownFrameBudgetTest`）。
+ */
+internal fun adaptiveCooldownMs(frameCostMs: Long): Long {
+    val over = frameCostMs - FrameBudgetMs
+    return if (over <= 0L) 0L else (over * 2).coerceAtMost(MaxCooldownMs)
+}
+
+/**
+ * 把高频变化的流式文本喂给 markdown 渲染：**帧对齐 + 按帧耗时自适应**。
+ *
+ * 这是把官方 demo 的两档时钟搬进 Compose：
+ *
+ * | | 官方（浏览器） | 这里 |
+ * |---|---|---|
+ * | 提交时机 | `requestAnimationFrame` | `withFrameNanos` |
+ * | 下次冷却 | 本次渲染耗时 × 2 | 帧周期超出预算的部分 × 2 |
+ *
+ * 与原来的「固定 50ms 采样」比，两处不同：
+ *
+ * 1. **领先边沿**：预算够就**立刻**提交，不再额外等一个固定的 50ms。
+ *    原来是"数据层 50ms 提交一次 → 渲染层再 50ms 采一次"，两个**独立**的 50ms 时钟
+ *    会互相 beat，相邻两次更新实际落在 50～100ms 之间抖 ——
+ *    看得见的就是"一跳一跳"。官方只有一把尺子（rAF），所以是连续流动的。
+ * 2. **贵了就自己降频**：一帧被拖长多少毫秒，就冷却多少毫秒。
+ *    内容轻时等于每帧都更新（和官方一样连续）；内容重时自动少跳几帧，
+ *    但**不掉帧** —— 这正是"自适应"与"固定节流"最本质的区别。
  *
  * ⚠️ 不能写成 `LaunchedEffect(value) { delay(n); shown = value }`：
- * 那是 **debounce**，流式期间 `value` 每 50ms 就变一次，计时器永远重新开始，
+ * 那是 **debounce**，流式期间 `value` 每几十毫秒变一次、计时器永远重启，
  * 界面会**一直不动**，直到流结束才"啪"地全部出现 —— 比不节流还糟。
  *
- * 这里用常驻循环 + [rememberUpdatedState] 读最新值：每 [MarkdownStreamIntervalMs]
- * 提交一次，不管中间变了多少次。
- *
- * 非流式状态直接返回入参、并且**不启动循环** —— 否则每一条已定稿的消息都会
- * 挂一个每 80ms 醒一次的协程，一屏十几条就是几百次空唤醒。
- *
- * 定稿之后内容不再变，不需要循环（上面那次"追上"仍然保留，
- * 于是定稿后立刻就是最终文本）。
+ * 非流式状态**不挂循环**（只做一次追赶）—— 否则每条已定稿的消息都会留一个
+ * 每 10ms 醒一次的协程，一屏十几条就是上百次空唤醒。
  */
 @Composable
-private fun rememberThrottledWhile(
-    streaming: Boolean,
-    value: String,
-    intervalMs: Long = MarkdownStreamIntervalMs,
-): String {
-    var sampled by remember { mutableStateOf(value) }
+private fun rememberAdaptiveMarkdown(streaming: Boolean, value: String): String {
+    var shown by remember { mutableStateOf(value) }
     val latest by rememberUpdatedState(value)
+    var cooldownMs by remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(streaming) {
-        // 先追上最新，再按节奏走
-        if (sampled != latest) sampled = latest
-        if (!streaming) return@LaunchedEffect
-        while (true) {
-            delay(intervalMs)
-            if (sampled != latest) sampled = latest
+        if (!streaming) {
+            // 定稿：一次追上，然后退出。此后内容不再变，不需要循环
+            if (shown != latest) shown = latest
+            return@LaunchedEffect
+        }
+        while (isActive) {
+            // 没有新内容就只是醒来比一下字符串引用，代价可以忽略
+            if (shown == latest) {
+                delay(SamplePollMs)
+                continue
+            }
+            // 上次更新把帧拖长了 → 先按冷却睡一会；新内容不会打断这次冷却
+            if (cooldownMs > 0L) delay(cooldownMs)
+
+            val target = latest
+            if (shown == target) continue
+
+            // 对齐到帧的开始：让"提交 → 分块 → 解析尾块 → 排版 → 绘制"落在同一帧里
+            val startNs = withFrameNanos { it }
+            shown = target
+            // 再等下一帧：它的开始时刻减去上一帧的开始，就是这一帧的实际耗时
+            val nextNs = withFrameNanos { it }
+            cooldownMs = adaptiveCooldownMs((nextNs - startNs) / 1_000_000)
         }
     }
 
-    return if (streaming) sampled else value
+    // 定稿后直接给最新值：不再经过采样状态，避免"最后一帧还差一点"
+    return if (streaming) shown else value
 }
+
 
 // ══════════════════════════════════════════════════════════
 //  代码块：语言标签 + 复制 + 超长折叠

@@ -58,8 +58,8 @@ import kotlinx.coroutines.withContext
  *   若每个 token 都回写 Room，一次 2000 字回复就是 2000 次磁盘事务。
  *
  * 其他关键点：
- * - **节流合并**：token 先进缓冲区，由独立 flusher 每 [STREAM_THROTTLE_MS] 合并提交一次，
- *   避免每个 token 都触发列表重组（§8）。
+ * - **节流合并**：token 先进缓冲区，由独立 flusher 每 [STREAM_THROTTLE_MS] 合并提交一次
+ *   （≈ 一帧一次，对齐官方 demo 的 rAF 节拍），避免每个 token 都触发列表重组（§8）。
  * - **不发送 `reasoning_content`**：本期不带 `tools`，官方明确无需回传（§11.1）。
  */
 class ChatViewModel(
@@ -1542,7 +1542,26 @@ class ChatViewModel(
     }
 
     companion object {
-        private const val STREAM_THROTTLE_MS = 50L
+        /**
+         * 流式增量的提交间隔（毫秒）。
+         *
+         * **16ms ≈ 一帧**，对齐官方 Chat Demo 的 `requestAnimationFrame` 节拍：
+         * 那一层是"**至多一帧一次**"，而不是"每 N 毫秒硬跳一次"。
+         *
+         * 早先这里是 50（20Hz）。问题是**两把尺子**：数据层 50ms 一提交，
+         * 渲染层再按自己的 50ms 采样一次，两个独立时钟互相 beat ——
+         * 相邻两次屏幕更新实际落在 50～100ms 之间抖，看着就是一跳一跳。
+         * 官方只有 rAF 一把尺子，所以是连续流动的。
+         *
+         * 单次提交的**重活由渲染层兜住**：`MarkdownText` 现在按帧耗时自适应
+         * 冷却（`adaptiveCooldownMs`），一帧被拖长就自动少跳几帧。
+         * 也就是说"提频"与"防卡"分别由两层各管一段，而不是靠一个保守的常数两头兼顾。
+         *
+         * ⚠️ 真机上若出现滚动掉帧，先量一次帧时间再回调这个值 ——
+         * 而不是凭感觉改回 50（那会连"连续"一起丢掉）。
+         */
+        private const val STREAM_THROTTLE_MS = 16L
+
         private const val CHECKPOINT_INTERVAL_MS = 1_500L
 
         /**
