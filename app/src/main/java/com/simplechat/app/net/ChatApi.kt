@@ -1,6 +1,9 @@
 package com.simplechat.app.net
 
 import com.simplechat.app.BuildConfig
+import com.simplechat.app.net.anthropic.AnthropicApi
+import com.simplechat.app.net.anthropic.AnthropicRequest
+import com.simplechat.app.net.anthropic.anthropicMessagesUrl
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -24,8 +27,27 @@ import okhttp3.Request
 class ChatApi(
     private val client: OkHttpClient,
     private val sseClient: SseClient,
+    private val anthropicApi: AnthropicApi,
     private val json: Json,
 ) {
+
+    /**
+     * 走 Anthropic 兼容通道发起流式对话（扩展模式：搜索 / 读链接 / 引用 / 服务端标题）。
+     *
+     * 与 [streamChat] 并列而不是合并：两条通道的请求体、事件模型、结束信号都不同，
+     * 合并只会让两套判断缠在一起（见 `AnthropicApi` 的注释）。
+     */
+    fun streamMessage(
+        baseUrl: String,
+        apiKey: String,
+        request: AnthropicRequest,
+        extraHeaders: Map<String, String> = emptyMap(),
+    ): Flow<StreamEvent> = anthropicApi.streamMessage(
+        url = anthropicMessagesUrl(baseUrl),
+        apiKey = apiKey,
+        request = request,
+        extraHeaders = extraHeaders,
+    )
 
     /**
      * 发起流式对话。

@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <!--
   界面与文案的默认资源（简体中文）。
 
@@ -389,5 +389,61 @@
     <string name="search_hint">搜索对话内容…</string>
     <string name="search_prompt">输入关键词，搜索标题和正文</string>
     <string name="search_no_result">没有匹配的对话或消息</string>
+
+    <!-- ═══════════════════════════════════════════════════════
+         扩展通道（Anthropic 兼容协议，对齐官方 Chat Demo）
+         ═══════════════════════════════════════════════════════ -->
+
+    <!-- 智能搜索 / 链接阅读 -->
+    <string name="web_search">智能搜索</string>
+    <string name="web_search_on">已开启智能搜索</string>
+    <string name="web_search_off">智能搜索已关闭</string>
+    <string name="search_searching">搜索中…</string>
+    <string name="search_image_searching">图像搜索中…</string>
+    <string name="search_intro">搜索</string>
+    <string name="search_found_one">搜索到 1 个网页</string>
+    <string name="search_found_many">搜索到 %1$d 个网页</string>
+    <string name="search_read_one">已阅读 1 个网页</string>
+    <string name="search_read_many">已阅读 %1$d 个网页</string>
+    <string name="search_failed">联网搜索暂不可用</string>
+    <string name="search_no_content">未搜索到合适内容</string>
+    <string name="search_message_no_content">未搜索到相关内容</string>
+    <string name="search_stopped">搜索已停止</string>
+    <string name="search_deep_searching">正在搜索</string>
+    <string name="search_open_one">浏览 1 个页面</string>
+    <string name="search_open_many">浏览 %1$d 个页面</string>
+    <string name="search_open_failed">浏览页面失败</string>
+    <string name="search_open_failed_tip">浏览失败</string>
+    <string name="search_find_keyword">查找关键词</string>
+    <string name="search_find_failed">查找失败</string>
+    <string name="search_find_failed_tip">未查找到相关内容</string>
+    <string name="search_reading">正在阅读</string>
+    <string name="search_browsing">正在浏览网页</string>
+    <string name="search_view_all">查看全部</string>
+    <string name="search_results">搜索结果</string>
+    <string name="search_panel_empty">这次没有可展示的来源</string>
+
+    <!-- 思考标题（扩展通道用「已思考（用时 N 秒）」的官方措辞） -->
+    <string name="thinking_running">正在思考</string>
+    <string name="thinking_done_seconds">已思考（用时 %1$d 秒）</string>
+    <string name="thinking_stopped">已停止</string>
+
+    <!-- 安全拒绝 -->
+    <string name="reply_refused">你好，这个问题我暂时无法回答，让我们换个话题再聊聊吧。</string>
+
+    <!-- 时间地点提醒（latest_reminder 的第 5 项与界面文案） -->
+    <string name="prompt_language_name">中文</string>
+
+    <!-- 设置：协议通道 / 搜索 / 地区 -->
+    <string name="settings_api_style">协议通道</string>
+    <string name="settings_api_style_hint">扩展通道支持联网搜索、链接阅读、正文引用与服务端标题；OpenAI 兼容通道覆盖面更广。</string>
+    <string name="api_style_auto">自动（按端点选择）</string>
+    <string name="api_style_openai">OpenAI 兼容</string>
+    <string name="api_style_anthropic">Anthropic 兼容（扩展）</string>
+    <string name="settings_web_search">智能搜索</string>
+    <string name="settings_web_search_hint">开启后模型可按需联网搜索；仅在扩展通道上可用。</string>
+    <string name="settings_location">地区</string>
+    <string name="settings_location_hint">用于随请求发送的时间地点提醒，留空则不填。例如「杭州」。</string>
+    <string name="settings_location_hint_short">用于时间地点提醒</string>
 </resources>
 

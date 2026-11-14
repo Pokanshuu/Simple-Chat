@@ -198,6 +198,20 @@ data class UiMessage(
     val ttftMs: Long? = null,
     /** 每秒输出 token 数估算。 */
     val tps: Float? = null,
+    /**
+     * 内容块时间线（仅 Anthropic 兼容通道有值）。
+     *
+     * 空 = 这条回复没有结构（OpenAI 兼容通道、或老数据），界面走原来的
+     * 「思考栏 + 正文」渲染。非空 = 按块渲染：思考 / 搜索 / 浏览网页 / 正文 + 引用角标。
+     */
+    val timeline: List<com.simplechat.app.net.ReplyBlock> = emptyList(),
+    /**
+     * 结束原因（`end_turn` / `max_tokens` / `tool_use` / `refusal`）。
+     *
+     * 只有 Anthropic 通道会写。它决定两件事：`refusal` 时已下发的思考与正文
+     * 按协议要丢弃；`max_tokens` 或用户中断时这条回复**可以续写**。
+     */
+    val stopReason: String? = null,
 ) {
     val streaming: Boolean get() = status == MessageStatus.STREAMING
 

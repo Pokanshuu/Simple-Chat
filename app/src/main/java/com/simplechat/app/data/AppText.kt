@@ -1,6 +1,7 @@
 package com.simplechat.app.data
 
 import android.app.Application
+import androidx.annotation.BoolRes
 import androidx.annotation.StringRes
 import com.simplechat.app.R
 
@@ -33,6 +34,12 @@ object Res {
         // 换语言后不换它的话，取到的永远是旧语言（见 localizedContext 的说明）
         val context = LocaleHelper.localizedContext(app)
         return if (args.isEmpty()) context.getString(resId) else context.getString(resId, *args)
+    }
+
+    /** 读布尔资源（目前只有 `ui_is_cjk`：界面语言是不是中文）。 */
+    fun bool(@BoolRes resId: Int): Boolean {
+        val app = checkNotNull(app) { "Res 还没 init —— App.onCreate 里漏了 Res.init(this)" }
+        return LocaleHelper.localizedContext(app).resources.getBoolean(resId)
     }
 }
 

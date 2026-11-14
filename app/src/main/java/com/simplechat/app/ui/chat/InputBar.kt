@@ -52,6 +52,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.R
 import com.simplechat.app.ui.common.ContainerShape
@@ -59,6 +60,7 @@ import com.simplechat.app.ui.common.AppIcons
 import com.simplechat.app.ui.common.AppShadow
 import com.simplechat.app.ui.common.ContainerShape
 import com.simplechat.app.data.TokenEstimate
+import com.simplechat.app.data.Res
 import com.simplechat.app.ui.common.IconCircleButton
 import com.simplechat.app.ui.common.MotionEasing
 import com.simplechat.app.ui.common.PillShape
@@ -107,6 +109,11 @@ fun InputBar(
     contextStats: ContextStats,
     statsPanelOpen: Boolean,
     onOpenStatsPanel: () -> Unit,
+    /** 当前通道是否支持智能搜索（只有 Anthropic 兼容通道支持）。 */
+    showWebSearch: Boolean = false,
+    /** 智能搜索是否已开启。 */
+    webSearchEnabled: Boolean = false,
+    onToggleWebSearch: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalChatColors.current
@@ -274,6 +281,16 @@ fun InputBar(
                     onClick = onOpenThinkingPanel,
                 )
 
+                /*
+                 * ── 智能搜索 ─────────────────────────────
+                 *
+                 * **只在扩展通道上出现**。OpenAI 兼容通道根本没有这个能力，
+                 * 露出一个点了也不生效的按钮，比不露更糟（同类判断见 §M5 的 ⊕ 入口）。
+                 */
+                if (showWebSearch) {
+                    WebSearchToggle(enabled = webSearchEnabled, onClick = onToggleWebSearch)
+                }
+
                 // ── 上下文占用 ────────────────────────────
                 ContextMeterPill(
                     stats = contextStats,
@@ -377,6 +394,53 @@ private fun ThinkingToggle(
             modifier = Modifier
                 .size(14.dp)
                 .rotate(if (expanded) 180f else 0f),
+        )
+    }
+}
+
+/**
+ * 智能搜索入口。
+ *
+ * 与 [ThinkingToggle] 同一套视觉（同高、同圆角、同激活样式），
+ * 但**没有箭头**：它是个开关，不是面板入口 —— 点了就开/关，没有下一层。
+ *
+ * 开启态用「淡底 + 品牌色描边 + 品牌色图标」，与旁边的思考档位一致；
+ * 关闭态用描边 + 黑色图标，与 ⊕ / 发送键一致。
+ */
+@Composable
+private fun WebSearchToggle(enabled: Boolean, onClick: () -> Unit) {
+    val colors = LocalChatColors.current
+    val content = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+    val label = stringResource(R.string.web_search)
+
+    Row(
+        modifier = Modifier
+            .height(RowButtonSize)
+            .clip(PillShape)
+            .background(if (enabled) colors.capsuleSelected else Color.Transparent)
+            .border(
+                width = 1.dp,
+                color = if (enabled) MaterialTheme.colorScheme.primary else colors.outline,
+                shape = PillShape,
+            )
+            .clickable(onClick = onClick)
+            .semantics {
+                contentDescription = label
+                role = Role.Button
+                stateDescription = if (enabled) {
+                    Res.get(R.string.web_search_on)
+                } else {
+                    Res.get(R.string.web_search_off)
+                }
+            }
+            .padding(horizontal = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = AppIcons.Globe,
+            contentDescription = null,
+            tint = content,
+            modifier = Modifier.size(17.dp),
         )
     }
 }

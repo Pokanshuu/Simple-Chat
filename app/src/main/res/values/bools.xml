@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  跨资源文件才用得到的「界面语言是否中文」开关。
+
+  用途：时间地点提醒里的**星期**要用中文还是英文写法（见 data/LatestReminder.kt）。
+  为什么不比字符串：把 `prompt_language_name` 拿去和 "English" 比，文案一改就悄悄失效；
+  布尔资源跟随 values / values-en 目录，天生不会漂。
+-->
+<resources>
+    <bool name="ui_is_cjk">true</bool>
+</resources>

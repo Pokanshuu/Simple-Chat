@@ -148,17 +148,24 @@ interface MessageDao {
     @Query(
         """
         UPDATE messages
-        SET content = :content, reasoning = :reasoning, status = :status
+        SET content = :content, reasoning = :reasoning, status = :status, timeline = :timeline
         WHERE id = :id
         """,
     )
-    suspend fun checkpoint(id: String, content: String, reasoning: String?, status: String)
+    suspend fun checkpoint(
+        id: String,
+        content: String,
+        reasoning: String?,
+        status: String,
+        timeline: String?,
+    )
 
     @Query(
         """
         UPDATE messages
         SET status = :status, errorMessage = :error,
-            ttftMs = :ttftMs, tps = :tps, thinkingMs = :thinkingMs
+            ttftMs = :ttftMs, tps = :tps, thinkingMs = :thinkingMs,
+            timeline = :timeline, stopReason = :stopReason
         WHERE id = :id
         """,
     )
@@ -169,6 +176,8 @@ interface MessageDao {
         ttftMs: Long?,
         tps: Float?,
         thinkingMs: Long?,
+        timeline: String?,
+        stopReason: String?,
     )
 
     /**
@@ -209,7 +218,8 @@ interface MessageDao {
         """
         UPDATE messages
         SET content = '', reasoning = NULL, model = :model,
-            status = :status, errorMessage = NULL
+            status = :status, errorMessage = NULL,
+            timeline = NULL, stopReason = NULL
         WHERE id = :id
         """,
     )

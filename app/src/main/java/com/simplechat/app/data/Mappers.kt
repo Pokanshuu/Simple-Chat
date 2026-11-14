@@ -3,6 +3,7 @@ package com.simplechat.app.data
 import com.simplechat.app.db.ConversationEntity
 import com.simplechat.app.db.MessageEntity
 import com.simplechat.app.db.PresetEntity
+import com.simplechat.app.net.ReplyBlocks
 import com.simplechat.app.ui.chat.ConversationMode
 import com.simplechat.app.ui.chat.MessageRole
 import com.simplechat.app.ui.chat.MessageStatus
@@ -53,6 +54,8 @@ fun MessageEntity.toUi(): UiMessage = UiMessage(
     variantIndex = variantIndex,
     ttftMs = ttftMs,
     tps = tps,
+    timeline = ReplyBlocks.decode(timeline),
+    stopReason = stopReason,
 )
 
 fun MessageStatus.toStorage(): String = name

@@ -586,6 +586,34 @@ fun AssistantBlock(
     val hasReasoning = !message.reasoning.isNullOrBlank()
 
     /*
+     * 扩展通道的回复带**内容块时间线**，渲染成「思考 / 搜索 / 浏览 / 正文」的交错结构；
+     * OpenAI 通道与老数据的 `timeline` 为空，继续走原来的「思考栏 + 正文」。
+     *
+     * 两条路并存而不是二选一替换：老会话还得能看，而 OpenAI 通道本来就产不出
+     * 搜索块 —— 强行统一只会让老消息丢内容。
+     */
+    val timeline = remember(message.timeline, message.streaming) {
+        if (message.timeline.isEmpty()) {
+            null
+        } else {
+            buildTimelineView(message.timeline, message.streaming)
+        }
+    }
+    /** 当前打开的来源列表；null 表示不显示弹窗。 */
+    var sourceSheet by remember { mutableStateOf<List<SourceRef>?>(null) }
+
+    /*
+     * 正文：扩展通道走时间线推出来的那份（含引用角标），其余直接就是 `content`。
+     * 角标占位换真链接这一步很便宜（纯字符串替换），但**不能省** ——
+     * 没换的话点角标会去打不开的 `#cite-N`。
+     */
+    val answer = if (timeline == null) {
+        message.content
+    } else {
+        remember(timeline) { resolveCitationLinks(timeline.answer, timeline.sources) }
+    }
+
+    /*
      * ⚠️ 同样**不能用 `clip`** —— 见 `UserBubble` 上方与设计文档 §31。
      * AI 回复也可能很长，一层带裁剪的图形层同样会让下半部分点不动。
      * 按压反馈改用「按下时给同形状的背景上色」，不产生图形层。
@@ -609,7 +637,21 @@ fun AssistantBlock(
             )
             .padding(2.dp),
     ) {
-        if (hasReasoning) {
+        if (timeline != null) {
+            if (timeline.hasSteps) {
+                TimelinePanel(
+                    view = timeline,
+                    streaming = message.streaming,
+                    expanded = reasoningExpanded,
+                    onToggleExpand = {
+                        reasoningExpanded = !reasoningExpanded
+                        onFoldToggle()
+                    },
+                    onOpenSources = { sourceSheet = it },
+                )
+                Spacer(Modifier.size(MessageGap))
+            }
+        } else if (hasReasoning) {
             ProcessPanel(
                 reasoning = message.reasoning.orEmpty(),
                 /*
@@ -639,9 +681,22 @@ fun AssistantBlock(
          * 下游逐块渲染、只有尾块重解析（见 `MarkdownTextBlocks`）。
          */
         MarkdownText(
-            content = message.content,
+            content = answer,
             streaming = message.streaming,
         )
+
+        // 正文下方的来源条：与正文角标同一套编号，两条路都能点开
+        if (timeline != null && timeline.sources.isNotEmpty()) {
+            Spacer(Modifier.size(10.dp))
+            SourcesStrip(
+                sources = timeline.sources,
+                onOpenSources = { sourceSheet = it },
+            )
+        }
+
+        sourceSheet?.let { sources ->
+            SourceSheet(sources = sources, onDismiss = { sourceSheet = null })
+        }
 
         message.errorMessage?.let { error ->
             Spacer(Modifier.size(8.dp))

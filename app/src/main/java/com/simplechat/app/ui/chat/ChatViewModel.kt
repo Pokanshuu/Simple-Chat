@@ -1,4 +1,4 @@
-﻿package com.simplechat.app.ui.chat
+package com.simplechat.app.ui.chat
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -20,18 +20,22 @@ import com.simplechat.app.data.TITLE_MAX_TOKENS
 import com.simplechat.app.data.isAutoTitle
 import com.simplechat.app.data.TokenEstimate
 import com.simplechat.app.data.cleanGeneratedTitle
+import com.simplechat.app.data.createLatestReminder
 import com.simplechat.app.data.derivedTitle
 import com.simplechat.app.data.titleSystemPrompt
 import com.simplechat.app.data.userMessage
 import com.simplechat.app.db.CompactionEntity
 import com.simplechat.app.db.DraftEntity
 import com.simplechat.app.net.ChatApi
+import com.simplechat.app.net.ApiStyle
 import com.simplechat.app.net.MessageContent
 import com.simplechat.app.net.ModelCatalog
 import com.simplechat.app.net.ModelInfo
 import com.simplechat.app.net.OutMessageDto
 import com.simplechat.app.net.ProviderKind
+import com.simplechat.app.net.ReplyBlock
 import com.simplechat.app.net.StreamEvent
+import com.simplechat.app.net.anthropic.AnthropicRequest
 import com.simplechat.app.net.headersFor
 import androidx.compose.runtime.derivedStateOf
 import java.util.UUID
@@ -155,6 +159,35 @@ class ChatViewModel(
     var models by mutableStateOf(ModelCatalog.knownModels(ProviderKind.DEEPSEEK))
         private set
 
+    /**
+     * 实际生效的协议通道。
+     *
+     * 由「配置的档位 + 端点」共同决定（见 `ApiStyle.resolve`）：
+     * `AUTO` 时 DeepSeek 官方走扩展通道（能拿到搜索 / 引用 / 服务端标题），
+     * 其余端点走 OpenAI 兼容。
+     */
+    var apiStyle by mutableStateOf(ApiStyle.ANTHROPIC)
+        private set
+
+    /** 智能搜索开关：这一轮要不要向服务端声明 `deepseek_web_search`。 */
+    var webSearch by mutableStateOf(false)
+        private set
+
+    /**
+     * 已经向服务端要过标题的会话。
+     *
+     * 与 [titleGeneratedFor] 同一个作用：**每个会话只试一次**。
+     * 标题不值得为它反复烧 token，兜底标题本来就是能看的。
+     */
+    private var serverTitleRequestedFor: String? = null
+
+    /** 切换智能搜索（输入栏那个开关）。立即落库，下次启动保持。 */
+    fun toggleWebSearch() {
+        val next = !webSearch
+        webSearch = next
+        viewModelScope.launch { settingsStore.setWebSearch(next) }
+    }
+
     var refreshingModels by mutableStateOf(false)
         private set
 
@@ -227,6 +260,8 @@ class ChatViewModel(
             models = ModelCatalog.knownModels(kind)
             modelHint = null
         }
+        apiStyle = ApiStyle.resolve(kind, value.apiStyleId, value.baseUrl)
+        webSearch = value.webSearch
         settings = settings.copy(
             model = ModelCatalog.find(kind, value.modelId),
             reasoningLevel = runCatching { ReasoningLevel.valueOf(value.reasoningLevelId) }
@@ -921,10 +956,11 @@ class ChatViewModel(
 
     // ── 流式实现 ──────────────────────────────────────────
 
-    private fun startStream(conversationId: String, replyId: String) {
+    private fun startStream(conversationId: String, replyId: String, prefix: UiMessage? = null) {
         isStreaming = true
         stoppedByUser = false
         lastCheckpointAt = System.currentTimeMillis()
+        val extended = apiStyle == ApiStyle.ANTHROPIC
 
         streamJob = viewModelScope.launch {
             val startedAt = System.currentTimeMillis()
@@ -944,111 +980,202 @@ class ChatViewModel(
             var contentText = ""
             val reasonBuf = StringBuilder()
             val contentBuf = StringBuilder()
+
+            /*
+             * 扩展通道的块累加器。
+             *
+             * OpenAI 通道的回复没有"结构"（只有正文 + 思考两股流），所以这里为 null，
+             * 走原来的 StringBuilder 路径。两条通道只在**收事件**时分叉，
+             * 落盘、节流、性能统计全部共用，避免为了一个功能复制一整套流式调度。
+             */
+            val accumulator = if (extended) ReplyAccumulator() else null
+            var timeline: List<ReplyBlock> = emptyList()
             var dirty = false
+
+            /** 正文（或正文块）一出现 = 思维链已经写完，思考栏当场收口。 */
+            fun noteBody() {
+                if (firstTokenAt == null) firstTokenAt = System.currentTimeMillis()
+                if (reasoningEndedAt != null) return
+                val endedAt = System.currentTimeMillis()
+                reasoningEndedAt = endedAt
+                val ms = endedAt - (reasoningStartedAt ?: startedAt)
+                patch(replyId) {
+                    it.copy(reasoningDone = true, reasoningSeconds = thinkingSeconds(ms))
+                }
+            }
+
+            fun noteThinking() {
+                if (reasoningStartedAt == null) reasoningStartedAt = System.currentTimeMillis()
+            }
 
             // 节流提交器：与 collect 同在主线程调度器，天然串行，无需加锁
             val flusher = launch {
                 while (isActive) {
                     delay(STREAM_THROTTLE_MS)
-                    if (dirty) {
-                        flush(replyId, reasonBuf, contentBuf)
-                        reasoningText = messages.firstOrNull { it.id == replyId }?.reasoning.orEmpty()
-                        contentText = messages.firstOrNull { it.id == replyId }?.content.orEmpty()
-                        dirty = false
+                    if (!dirty) continue
 
-                        // §4.4：流中每约 1.5s 落一次盘，崩溃不丢内容
-                        val now = System.currentTimeMillis()
-                        if (now - lastCheckpointAt >= CHECKPOINT_INTERVAL_MS) {
-                            lastCheckpointAt = now
-                            val r = reasoningText
-                            val c = contentText
-                            withContext(NonCancellable) {
-                                runCatching { repository.checkpoint(replyId, c, r) }
-                            }
+                    if (accumulator != null) {
+                        // 块通道是**全量替换**：顺序与内容都由累加器持有
+                        timeline = accumulator.blocks
+                        patch(replyId) {
+                            it.copy(
+                                content = accumulator.answer,
+                                reasoning = accumulator.thinking.ifEmpty { null },
+                                timeline = accumulator.blocks,
+                            )
+                        }
+                    } else {
+                        flush(replyId, reasonBuf, contentBuf)
+                    }
+                    reasoningText = messages.firstOrNull { it.id == replyId }?.reasoning.orEmpty()
+                    contentText = messages.firstOrNull { it.id == replyId }?.content.orEmpty()
+                    dirty = false
+
+                    // §4.4：流中每约 1.5s 落一次盘，崩溃不丢内容
+                    val now = System.currentTimeMillis()
+                    if (now - lastCheckpointAt >= CHECKPOINT_INTERVAL_MS) {
+                        lastCheckpointAt = now
+                        val r = reasoningText
+                        val c = contentText
+                        val t = timeline
+                        withContext(NonCancellable) {
+                            runCatching { repository.checkpoint(replyId, c, r, t) }
                         }
                     }
                 }
             }
 
             var failure: String? = null
+            var serverTitle: String? = null
 
             try {
-                chatApi.streamChat(
-                    baseUrl = stored.baseUrl.ifBlank { providerKind.defaultBaseUrl },
-                    apiKey = stored.apiKey,
-                    model = settings.model,
-                    messages = buildRequestMessages(),
-                    thinkingEnabled = settings.reasoningLevel.enabled,
-                    reasoningEffort = settings.reasoningEffort,
-                    maxTokens = settings.maxTokens,
-                    temperature = settings.temperature.toDouble(),
-                    topP = settings.topP.toDouble(),
-                    extraHeaders = providerKind.headersFor(openCodeSessionId),
-                ).collect { event ->
-                    when (event) {
-                        is StreamEvent.Reasoning -> {
-                            /*
-                             * 用户选了「关闭思考」就不收思考内容。
-                             *
-                             * 请求里已经带了 `thinking.type = disabled`，但**有些模型 / 网关
-                             * 仍会吐 `reasoning_content`** —— 实测：opencode 那边已停用的
-                             * `deepseek-v4-flash` 会被路由到 `deepseek-flash`，而网关不认
-                             * 我们发过去的 disabled。
-                             *
-                             * 既然用户选的是关闭，就当它没来过：不落库、不显示，
-                             * 界面与设置保持一致。（服务端是否真的少算这部分 token，
-                             * 客户端管不着 —— 那是上游的事。）
-                             */
-                            if (!settings.reasoningLevel.enabled) return@collect
-                            if (reasoningStartedAt == null) {
-                                reasoningStartedAt = System.currentTimeMillis()
+                if (accumulator != null) {
+                    chatApi.streamMessage(
+                        baseUrl = stored.baseUrl.ifBlank { providerKind.defaultBaseUrl },
+                        apiKey = stored.apiKey,
+                        request = buildAnthropicRequestNow(prefix),
+                        extraHeaders = providerKind.headersFor(openCodeSessionId),
+                    ).collect { event ->
+                        when (event) {
+                            is StreamEvent.BlockStart -> {
+                                if (event.block is ReplyBlock.Text) noteBody()
+                                if (event.block is ReplyBlock.Thinking) noteThinking()
+                                accumulator.consume(event, System.currentTimeMillis())
+                                dirty = true
                             }
-                            reasonBuf.append(event.text)
-                            dirty = true
-                        }
 
-                        is StreamEvent.Content -> {
-                            if (firstTokenAt == null) firstTokenAt = System.currentTimeMillis()
-
-                            /*
-                             * 正文一出现 = 思维链已经写完。
-                             *
-                             * **就在这一刻**把思考栏收起来、把秒数定下来。
-                             * 不能等整条流结束 —— 那时正文都写了一大半，
-                             * 思考栏还挂在"正在思考"的尾巴模式上。
-                             */
-                            if (reasoningEndedAt == null) {
-                                val endedAt = System.currentTimeMillis()
-                                reasoningEndedAt = endedAt
-                                val ms = endedAt - (reasoningStartedAt ?: startedAt)
-                                patch(replyId) {
-                                    it.copy(
-                                        reasoningDone = true,
-                                        reasoningSeconds = thinkingSeconds(ms),
-                                    )
+                            is StreamEvent.TextDelta -> {
+                                if (event.text.isNotEmpty()) {
+                                    noteBody()
+                                    contentChars += event.text.length
                                 }
+                                accumulator.consume(event, System.currentTimeMillis())
+                                dirty = true
                             }
 
-                            contentBuf.append(event.text)
-                            contentChars += event.text.length
-                            dirty = true
+                            is StreamEvent.ThinkingDelta -> {
+                                noteThinking()
+                                accumulator.consume(event, System.currentTimeMillis())
+                                dirty = true
+                            }
+
+                            is StreamEvent.Title -> serverTitle = event.text
+
+                            is StreamEvent.CitationDelta, is StreamEvent.SignatureDelta,
+                            is StreamEvent.BlockStop, is StreamEvent.Stopped -> {
+                                accumulator.consume(event, System.currentTimeMillis())
+                                dirty = true
+                            }
+
+                            is StreamEvent.Usage -> Unit
+
+                            StreamEvent.Done -> Unit
+
+                            is StreamEvent.Error -> failure = event.message
+
+                            // 块通道不该出现这两类增量；出现了说明通道配错，忽略
+                            is StreamEvent.Content, is StreamEvent.Reasoning -> Unit
                         }
+                    }
+                } else {
+                    chatApi.streamChat(
+                        baseUrl = stored.baseUrl.ifBlank { providerKind.defaultBaseUrl },
+                        apiKey = stored.apiKey,
+                        model = settings.model,
+                        messages = buildRequestMessages(),
+                        thinkingEnabled = settings.reasoningLevel.enabled,
+                        reasoningEffort = settings.reasoningEffort,
+                        maxTokens = settings.maxTokens,
+                        temperature = settings.temperature.toDouble(),
+                        topP = settings.topP.toDouble(),
+                        extraHeaders = providerKind.headersFor(openCodeSessionId),
+                    ).collect { event ->
+                        when (event) {
+                            is StreamEvent.Reasoning -> {
+                                /*
+                                 * 用户选了「关闭思考」就不收思考内容。
+                                 *
+                                 * 请求里已经带了 `thinking.type = disabled`，但**有些模型 / 网关
+                                 * 仍会吐 `reasoning_content`** —— 实测：opencode 那边已停用的
+                                 * `deepseek-v4-flash` 会被路由到 `deepseek-flash`，而网关不认
+                                 * 我们发过去的 disabled。
+                                 *
+                                 * 既然用户选的是关闭，就当它没来过：不落库、不显示，
+                                 * 界面与设置保持一致。（服务端是否真的少算这部分 token，
+                                 * 客户端管不着 —— 那是上游的事。）
+                                 */
+                                if (!settings.reasoningLevel.enabled) return@collect
+                                noteThinking()
+                                reasonBuf.append(event.text)
+                                dirty = true
+                            }
 
-                        is StreamEvent.Usage -> Unit // 后续接入用量与成本展示
+                            is StreamEvent.Content -> {
+                                noteBody()
+                                contentBuf.append(event.text)
+                                contentChars += event.text.length
+                                dirty = true
+                            }
 
-                        StreamEvent.Done -> Unit
+                            is StreamEvent.Usage -> Unit // 后续接入用量与成本展示
 
-                        is StreamEvent.Error -> failure = event.message
+                            StreamEvent.Done -> Unit
+
+                            is StreamEvent.Error -> failure = event.message
+
+                            // 块级事件只属于 Anthropic 通道；这条路径上忽略
+                            else -> Unit
+                        }
                     }
                 }
             } catch (t: Throwable) {
                 if (!stoppedByUser) failure = t.userMessage()
             } finally {
                 flusher.cancel()
-                flush(replyId, reasonBuf, contentBuf)
+                if (accumulator != null) {
+                    accumulator.settle(System.currentTimeMillis())
+                    timeline = accumulator.blocks
+                    patch(replyId) {
+                        it.copy(
+                            content = accumulator.answer,
+                            reasoning = accumulator.thinking.ifEmpty { null },
+                            timeline = accumulator.blocks,
+                        )
+                    }
+                } else {
+                    flush(replyId, reasonBuf, contentBuf)
+                }
             }
 
             val finishedAt = System.currentTimeMillis()
+            /*
+             * 安全拒绝：服务端明确判定这一轮不能被看到。
+             * 已下发的思考与正文由 `settle` 丢掉，这里只补一句给用户看的话。
+             */
+            val refused = accumulator?.stopReason == ReplyAccumulator.Refusal
+            if (refused && !stoppedByUser && failure == null) {
+                banner = Res.get(R.string.reply_refused)
+            }
             val status = when {
                 stoppedByUser -> MessageStatus.STOPPED
                 failure != null -> MessageStatus.ERROR
@@ -1079,6 +1206,8 @@ class ChatViewModel(
                     ttftMs = ttft,
                     tps = tps,
                     reasoningSeconds = thinkingMs?.let { thinkingSeconds(it) },
+                    timeline = timeline,
+                    stopReason = accumulator?.stopReason,
                 )
             }
 
@@ -1094,9 +1223,23 @@ class ChatViewModel(
                         ttftMs = ttft,
                         tps = tps,
                         thinkingMs = thinkingMs,
+                        timeline = timeline,
+                        stopReason = accumulator?.stopReason,
                     )
                     repository.touchConversation(conversationId)
                 }
+            }
+
+            /*
+             * 服务端给了标题就用它 —— 比另发一次请求让模型起名更省、更准，
+             * 而且这是官方 Chat Demo 的做法（`title.enabled` 的返回值）。
+             */
+            val title = serverTitle?.trim()
+            if (!title.isNullOrEmpty()) {
+                withContext(NonCancellable) {
+                    runCatching { repository.renameConversation(conversationId, title) }
+                }
+                serverTitleRequestedFor = conversationId
             }
 
             if (failure != null) banner = failure
@@ -1108,10 +1251,75 @@ class ChatViewModel(
              *
              * 刻意放在这里而不是"发出去就生成"：拿到回复才知道这段在聊什么，
              * 只根据提问猜出来的标题经常跑偏。
+             *
+             * 扩展通道已经由服务端给了标题（[serverTitle]），就不再自己发一轮请求。
              */
-            if (status == MessageStatus.DONE) maybeGenerateTitle(conversationId)
+            if (status == MessageStatus.DONE && title.isNullOrEmpty()) {
+                maybeGenerateTitle(conversationId)
+            }
         }
     }
+
+    /**
+     * 组装扩展通道的请求。
+     *
+     * 与 [`buildRequestMessages`] 的差别不只是协议：扩展通道的 `system` 只有一个字符串，
+     * 所以压缩摘要只能**拼进系统提示词**，不能像 OpenAI 通道那样再塞一条 system 消息。
+     */
+    private fun buildAnthropicRequestNow(prefix: UiMessage?): AnthropicRequest {
+        val active = compaction
+        val system = buildString {
+            append(settings.composedSystemPrompt(presets))
+            if (active != null && active.summary.isNotBlank()) {
+                if (isNotEmpty()) appendLine().appendLine()
+                append(Res.get(R.string.prompt_recap_intro))
+                append(active.summary)
+            }
+        }
+        val requestTitle = shouldRequestTitle()
+        if (requestTitle) serverTitleRequestedFor = currentConversationId
+
+        return buildAnthropicRequest(
+            model = settings.model.id,
+            systemPrompt = system,
+            path = orderedOutgoingMessages(messages, active),
+            searchEnabled = webSearch,
+            thinkingEnabled = settings.thinkingEnabled,
+            requestTitle = requestTitle,
+            latestReminder = latestReminder(),
+            maxTokens = settings.maxTokens,
+            prefix = prefix,
+        )
+    }
+
+    /**
+     * 本轮的时间地点提醒。
+     *
+     * 每次请求现算 —— "今天几号"必须跟着真实时间走，缓存一次就会在跨日之后说谎。
+     */
+    private fun latestReminder(): String = createLatestReminder(
+        now = java.time.LocalDateTime.now(),
+        cjk = Res.bool(R.bool.ui_is_cjk),
+        region = stored.locationRegion,
+        languageLabel = Res.get(R.string.prompt_language_name),
+    )
+
+    /**
+     * 这一轮要不要请服务端顺手起个标题。
+     *
+     * 三条护栏与 [maybeGenerateTitle] 完全一致：只在首轮、只在标题还是兜底值、
+     * 每个会话只试一次。区别只是"谁来起名"（服务端 vs 自己再发一轮请求）。
+     */
+    private fun shouldRequestTitle(): Boolean {
+        val id = currentConversationId ?: return false
+        if (serverTitleRequestedFor == id) return false
+        if (messages.count { it.role == MessageRole.USER } != 1) return false
+        val current = currentConversationTitle ?: return true
+        if (current.isBlank() || isAutoTitle(current)) return true
+        val first = messages.firstOrNull { it.role == MessageRole.USER }?.content.orEmpty()
+        return current == derivedTitle(first, Res.get(R.string.conversation_default_title))
+    }
+
 
     // ── 会话标题 ──────────────────────────────────────────
 

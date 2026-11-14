@@ -9,6 +9,7 @@ import com.simplechat.app.data.SettingsStore
 import com.simplechat.app.db.AppDatabase
 import com.simplechat.app.net.ChatApi
 import com.simplechat.app.net.SseClient
+import com.simplechat.app.net.anthropic.AnthropicApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -51,7 +52,9 @@ class AppContainer(private val app: Application) {
 
     private val sseClient: SseClient by lazy { SseClient(httpClient, json) }
 
-    val chatApi: ChatApi by lazy { ChatApi(httpClient, sseClient, json) }
+    private val anthropicApi: AnthropicApi by lazy { AnthropicApi(httpClient, json) }
+
+    val chatApi: ChatApi by lazy { ChatApi(httpClient, sseClient, anthropicApi, json) }
 
     val settingsStore: SettingsStore by lazy { SettingsStore(app) }
 

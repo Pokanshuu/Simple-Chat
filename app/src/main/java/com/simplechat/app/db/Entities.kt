@@ -158,6 +158,15 @@ data class MessageEntity(
     val tps: Float? = null,
     @ColumnInfo(name = "tokens_in") val tokensIn: Int? = null,
     @ColumnInfo(name = "tokens_out") val tokensOut: Int? = null,
+    /**
+     * 内容块时间线（JSON 数组，见 [com.simplechat.app.net.ReplyBlock]）。
+     *
+     * 仅 Anthropic 兼容通道写入。null = 这条回复没有结构，界面走
+     * 「思考栏 + 正文」的老渲染 —— 两条通道因此可以共存而互不干扰。
+     */
+    val timeline: String? = null,
+    /** 结束原因（`end_turn` / `max_tokens` / `tool_use` / `refusal`），仅 Anthropic 通道写入。 */
+    val stopReason: String? = null,
     val createdAt: Long,
 ) {
     companion object {

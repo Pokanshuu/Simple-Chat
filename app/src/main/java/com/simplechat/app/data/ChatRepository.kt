@@ -12,6 +12,8 @@ import com.simplechat.app.db.MessageEntity
 import com.simplechat.app.db.MessageTree
 import com.simplechat.app.db.PresetEntity
 import com.simplechat.app.data.import.ExternalBackup
+import com.simplechat.app.net.ReplyBlock
+import com.simplechat.app.net.ReplyBlocks
 import com.simplechat.app.ui.chat.ConversationMode
 import java.io.File
 import com.simplechat.app.ui.chat.MessageRole
@@ -353,8 +355,18 @@ class ChatRepository(private val db: AppDatabase) {
         ).id
 
     /** 流式 checkpoint。调用频率由 ViewModel 控制在 ~1.5s（§4.4）。 */
-    suspend fun checkpoint(id: String, content: String, reasoning: String?) =
-        messages.checkpoint(id, content, reasoning, MessageStatus.STREAMING.toStorage())
+    suspend fun checkpoint(
+        id: String,
+        content: String,
+        reasoning: String?,
+        timeline: List<ReplyBlock> = emptyList(),
+    ) = messages.checkpoint(
+        id = id,
+        content = content,
+        reasoning = reasoning,
+        status = MessageStatus.STREAMING.toStorage(),
+        timeline = ReplyBlocks.encode(timeline),
+    )
 
     /**
      * 把一条**失败**的消息原地重置，准备重新请求。
@@ -374,6 +386,8 @@ class ChatRepository(private val db: AppDatabase) {
         ttftMs: Long? = null,
         tps: Float? = null,
         thinkingMs: Long? = null,
+        timeline: List<ReplyBlock> = emptyList(),
+        stopReason: String? = null,
     ) = messages.finish(
         id = id,
         status = status.toStorage(),
@@ -381,8 +395,16 @@ class ChatRepository(private val db: AppDatabase) {
         ttftMs = ttftMs,
         tps = tps,
         thinkingMs = thinkingMs,
+        timeline = ReplyBlocks.encode(timeline),
+        stopReason = stopReason,
     ).also {
-        messages.checkpoint(id, content, reasoning, status.toStorage())
+        messages.checkpoint(
+            id = id,
+            content = content,
+            reasoning = reasoning,
+            status = status.toStorage(),
+            timeline = ReplyBlocks.encode(timeline),
+        )
     }
 
     /**
@@ -453,6 +475,8 @@ class ChatRepository(private val db: AppDatabase) {
             ttftMs = ttftMs,
             tps = tps,
             thinkingMs = thinkingMs,
+            timeline = null,
+            stopReason = null,
         )
         toUiWithCounts(conversationId, messages.findById(entity.id)!!)
     }

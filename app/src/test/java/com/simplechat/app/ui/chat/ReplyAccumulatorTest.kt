@@ -1,0 +1,150 @@
+package com.simplechat.app.ui.chat
+
+import com.simplechat.app.net.Citation
+import com.simplechat.app.net.ReplyBlock
+import com.simplechat.app.net.StreamEvent
+import com.simplechat.app.net.WebSource
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * 块级流式事件的归并。
+ *
+ * 这一层错了的表现极难定位：界面少一段正文、引用角标错位、
+ * 思考计时算成了整轮耗时。所以边界都单独钉一遍。
+ */
+class ReplyAccumulatorTest {
+
+    private val acc = ReplyAccumulator()
+
+    @Test
+    fun `正文增量按 index 累加`() {
+        acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Text("")), 1_000)
+        acc.consume(StreamEvent.TextDelta(0, "雨是从"), 1_001)
+        acc.consume(StreamEvent.TextDelta(0, "傍晚开始下的"), 1_002)
+        assertEquals("雨是从傍晚开始下的", acc.answer)
+    }
+
+    @Test
+    fun `未知 index 的增量被忽略，不抛异常`() {
+        acc.consume(StreamEvent.TextDelta(9, "幽灵"), 1_000)
+        assertTrue(acc.blocks.isEmpty())
+    }
+
+    @Test
+    fun `思考块记录起止时刻`() {
+        acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Thinking("")), 1_000)
+        acc.consume(StreamEvent.ThinkingDelta(0, "先想一下"), 1_100)
+        acc.consume(StreamEvent.BlockStop(0), 3_000)
+        val block = acc.blocks.single() as ReplyBlock.Thinking
+        assertEquals(1_000L, block.startedAt)
+        assertEquals(3_000L, block.endedAt)
+        assertEquals(2_000L, acc.thinkingMillis(9_999))
+    }
+
+    @Test
+    fun `未结束的思考按当前时刻计用时`() {
+        acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Thinking("")), 1_000)
+        assertEquals(4_000L, acc.thinkingMillis(5_000))
+    }
+
+    @Test
+    fun `没有思考块时用时为 null`() {
+        acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Text("正文")), 1_000)
+        assertNull(acc.thinkingMillis(5_000))
+    }
+
+    @Test
+    fun `签名为增量拼接`() {
+        acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Thinking("想")), 1_000)
+        acc.consume(StreamEvent.SignatureDelta(0, "abc"), 1_100)
+        acc.consume(StreamEvent.SignatureDelta(0, "def"), 1_200)
+        assertEquals("abcdef", (acc.blocks.single() as ReplyBlock.Thinking).signature)
+    }
+
+    @Test
+    fun `同一块内引用按 url 去重`() {
+        acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Text("甲")), 1_000)
+        val citation = Citation("https://a/1", "标题", "甲")
+        acc.consume(StreamEvent.CitationDelta(0, citation), 1_100)
+        acc.consume(StreamEvent.CitationDelta(0, citation.copy(citedText = "甲更多")), 1_200)
+        assertEquals(1, (acc.blocks.single() as ReplyBlock.Text).citations.size)
+    }
+
+    @Test
+    fun `多个块保持到达顺序`() {
+        acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Thinking("")), 1_000)
+        acc.consume(StreamEvent.BlockStop(0), 2_000)
+        acc.consume(
+            StreamEvent.BlockStart(
+                1,
+                ReplyBlock.ToolUse("t1", "deepseek_web_search", "search", "search", listOf("天气")),
+            ),
+            2_100,
+        )
+        acc.consume(
+            StreamEvent.BlockStart(
+                2,
+                ReplyBlock.SearchResult("t1", "search", listOf(WebSource("https://a/1", "甲"))),
+            ),
+            3_000,
+        )
+        acc.consume(StreamEvent.BlockStart(3, ReplyBlock.Text("")), 3_100)
+        acc.consume(StreamEvent.TextDelta(3, "回答"), 3_200)
+
+        assertEquals(4, acc.blocks.size)
+        assertTrue(acc.blocks[1] is ReplyBlock.ToolUse)
+        assertEquals("回答", acc.answer)
+    }
+
+    @Test
+    fun `块序号在新一轮里可以重来`() {
+        acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Text("甲")), 1_000)
+        acc.consume(StreamEvent.BlockStop(0), 1_100)
+        acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Text("乙")), 1_200)
+        acc.consume(StreamEvent.TextDelta(0, "丙"), 1_300)
+        assertEquals("甲乙丙", acc.answer)
+    }
+
+    @Test
+    fun `标题与结束原因被记下`() {
+        acc.consume(StreamEvent.Title("新标题"), 1_000)
+        acc.consume(StreamEvent.Stopped("max_tokens"), 1_100)
+        assertEquals("新标题", acc.title)
+        assertEquals("max_tokens", acc.stopReason)
+    }
+
+    @Test
+    fun `安全拒绝时丢弃正文与思考，保留工具块`() {
+        acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Thinking("")), 1_000)
+        acc.consume(StreamEvent.ThinkingDelta(0, "不该被看到"), 1_100)
+        acc.consume(
+            StreamEvent.BlockStart(1, ReplyBlock.ToolUse("t", "deepseek_web_search", "search", "search")),
+            1_200,
+        )
+        acc.consume(StreamEvent.BlockStart(2, ReplyBlock.Text("也不该被看到")), 1_300)
+        acc.consume(StreamEvent.Stopped("refusal"), 1_400)
+        acc.settle(2_000)
+
+        assertEquals(1, acc.blocks.size)
+        assertTrue(acc.blocks.single() is ReplyBlock.ToolUse)
+        assertEquals("", acc.answer)
+    }
+
+    @Test
+    fun `正常结束时只收口未结束的思考`() {
+        acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Text("正文")), 1_000)
+        acc.consume(StreamEvent.BlockStart(1, ReplyBlock.Thinking("")), 1_100)
+        acc.consume(StreamEvent.ThinkingDelta(1, "想了"), 1_200)
+        acc.consume(StreamEvent.Stopped("end_turn"), 1_300)
+        acc.settle(4_000)
+
+        assertEquals(2, acc.blocks.size)
+        assertNotNull((acc.blocks[1] as ReplyBlock.Thinking).endedAt)
+        assertEquals("正文", acc.answer)
+        assertEquals("想了", acc.thinking)
+    }
+}

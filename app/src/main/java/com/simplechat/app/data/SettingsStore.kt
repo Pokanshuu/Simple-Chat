@@ -55,6 +55,26 @@ data class StoredSettings(
     val defaultModeId: String = "CREATIVE",
     /** 界面语言：AppLanguage 的枚举名，见 data/LocaleHelper.kt。 */
     val languageId: String = "SYSTEM",
+    /**
+     * 协议通道：`AUTO` / `OPENAI` / `ANTHROPIC`。
+     *
+     * `AUTO` 按端点解析 —— DeepSeek 官方走扩展通道，其余走 OpenAI 兼容（见 `ApiStyle`）。
+     */
+    val apiStyleId: String = "AUTO",
+    /**
+     * 智能搜索（联网搜索）开关。
+     *
+     * 默认**关**：搜索会让这一轮变慢、变贵，而长文创作绝大多数轮次用不上。
+     * 与官方 Chat Demo 的默认值一致。
+     */
+    val webSearch: Boolean = false,
+    /**
+     * 地区（用于「时间地点提醒」里的地点那一项），自由文本，留空则不填。
+     *
+     * 不做省/市二级联动：那套 13KB 的数据与三级选择器，收益远小于维护成本，
+     * 而提醒里这一项本来就只是给模型一个「用户在哪儿」的粗略印象。
+     */
+    val locationRegion: String = "",
 
 ) {
     val hasKey: Boolean get() = apiKey.isNotBlank()
@@ -89,6 +109,9 @@ class SettingsStore(private val context: Context) {
                 ?: StoredSettings().autoCollapseThinking,
             defaultModeId = prefs[Keys.DEFAULT_MODE] ?: StoredSettings().defaultModeId,
             languageId = prefs[LANGUAGE_KEY] ?: StoredSettings().languageId,
+            apiStyleId = prefs[Keys.API_STYLE] ?: StoredSettings().apiStyleId,
+            webSearch = prefs[Keys.WEB_SEARCH] ?: StoredSettings().webSearch,
+            locationRegion = prefs[Keys.LOCATION] ?: StoredSettings().locationRegion,
 
         )
     }
@@ -182,6 +205,18 @@ class SettingsStore(private val context: Context) {
         context.settingsDataStore.edit { it[LANGUAGE_KEY] = languageId }
     }
 
+    suspend fun setApiStyle(styleId: String) {
+        context.settingsDataStore.edit { it[Keys.API_STYLE] = styleId }
+    }
+
+    suspend fun setWebSearch(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.WEB_SEARCH] = enabled }
+    }
+
+    suspend fun setLocationRegion(region: String) {
+        context.settingsDataStore.edit { it[Keys.LOCATION] = region.trim() }
+    }
+
 
 
     /** 清空全部配置（「删除所有数据」时一并调用）。 */
@@ -215,6 +250,9 @@ class SettingsStore(private val context: Context) {
         val FOLLOW_SYSTEM_FONT = booleanPreferencesKey("follow_system_font")
         val AUTO_COLLAPSE_THINKING = booleanPreferencesKey("auto_collapse_thinking")
         val DEFAULT_MODE = stringPreferencesKey("default_mode")
+        val API_STYLE = stringPreferencesKey("api_style")
+        val WEB_SEARCH = booleanPreferencesKey("web_search")
+        val LOCATION = stringPreferencesKey("location_region")
 
     }
 }

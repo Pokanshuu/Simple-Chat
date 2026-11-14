@@ -158,6 +158,49 @@ fun ProviderKind.headersFor(sessionId: String): Map<String, String> = when (this
     ProviderKind.DEEPSEEK, ProviderKind.CUSTOM -> emptyMap()
 }
 
+/**
+ * 通信协议通道（设计文档 §5.1，v1.9 起由单通道改为双通道）。
+ *
+ * | 通道 | 端点 | 能拿到什么 |
+ * |---|---|---|
+ * | [OPENAI] | `/chat/completions` | 正文、`reasoning_content`、`reasoning_effort` 三档思考强度 |
+ * | [ANTHROPIC] | `/anthropic/v1/messages` | 联网搜索、链接阅读、正文引用、服务端标题、时间地点提醒 |
+ *
+ * 官方 Chat Demo 的全部扩展能力只在后者上提供，而前者覆盖面更广
+ * （OpenCode Go / 自建端点）。两者**并存**，由用户与端点共同决定走哪条。
+ */
+enum class ApiStyle {
+    OPENAI,
+    ANTHROPIC;
+
+    companion object {
+        fun fromId(id: String?): ApiStyle? = when (id) {
+            "OPENAI" -> OPENAI
+            "ANTHROPIC" -> ANTHROPIC
+            // "AUTO" 与未知值都交给下面的按端点解析
+            else -> null
+        }
+
+        /**
+         * 实际走哪条通道。
+         *
+         * `AUTO` 的判据是**端点**而不是"当前模型"：
+         * - `provider = DEEPSEEK` 且 Base URL 仍指向官方端点 → 扩展通道；
+         * - 其余（OpenCode Go、自建、以及把 DeepSeek 的 Base URL 改成自家网关的）→ OpenAI 兼容。
+         *
+         * 为什么还要看 Base URL：`provider = DEEPSEEK` 只是个"预设"，
+         * 用户可以把它改成任何地址。那种情况下扩展端点不存在，猜过去就是**每一次请求都 404**，
+         * 而"没拿到搜索能力"只是少个功能 —— 两害相权，默认走覆盖面最广的那条。
+         * 用户确实需要扩展能力时，在设置里把通道显式设成 Anthropic 即可。
+         */
+        fun resolve(kind: ProviderKind, configuredId: String?, baseUrl: String): ApiStyle =
+            fromId(configuredId) ?: run {
+                val official = baseUrl.trim().trimEnd('/').contains("api.deepseek.com")
+                if (kind == ProviderKind.DEEPSEEK && official) ANTHROPIC else OPENAI
+            }
+    }
+}
+
 /** 拼装 `/chat/completions` 地址，兼容用户填不填 `/v1`、末尾带不带斜杠。 */
 fun chatCompletionsUrl(baseUrl: String): String {
     val base = baseUrl.trim().trimEnd('/')

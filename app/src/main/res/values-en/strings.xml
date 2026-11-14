@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <!--
   English strings. Kept 1:1 with `values/strings.xml` — same keys, same order.
 
@@ -389,5 +389,61 @@
     <string name="search_hint">Search conversation content…</string>
     <string name="search_prompt">Enter keywords to search titles and message text</string>
     <string name="search_no_result">No matching conversations or messages</string>
+
+    <!-- ═══════════════════════════════════════════════════════
+         Extended channel (Anthropic-compatible, mirrors the official chat demo)
+         ═══════════════════════════════════════════════════════ -->
+
+    <!-- Smart search / link reading -->
+    <string name="web_search">Smart search</string>
+    <string name="web_search_on">Smart search on</string>
+    <string name="web_search_off">Smart search off</string>
+    <string name="search_searching">Searching…</string>
+    <string name="search_image_searching">Searching images…</string>
+    <string name="search_intro">Search</string>
+    <string name="search_found_one">Found 1 page</string>
+    <string name="search_found_many">Found %1$d pages</string>
+    <string name="search_read_one">Read 1 page</string>
+    <string name="search_read_many">Read %1$d pages</string>
+    <string name="search_failed">Web search is unavailable</string>
+    <string name="search_no_content">Nothing relevant found</string>
+    <string name="search_message_no_content">No relevant results</string>
+    <string name="search_stopped">Search stopped</string>
+    <string name="search_deep_searching">Searching</string>
+    <string name="search_open_one">Browsed 1 page</string>
+    <string name="search_open_many">Browsed %1$d pages</string>
+    <string name="search_open_failed">Could not open pages</string>
+    <string name="search_open_failed_tip">Failed</string>
+    <string name="search_find_keyword">Keyword lookup</string>
+    <string name="search_find_failed">Lookup failed</string>
+    <string name="search_find_failed_tip">Not found on page</string>
+    <string name="search_reading">Reading</string>
+    <string name="search_browsing">Browsing the web</string>
+    <string name="search_view_all">View all</string>
+    <string name="search_results">Search results</string>
+    <string name="search_panel_empty">No sources to show for this turn</string>
+
+    <!-- Thinking header (official wording) -->
+    <string name="thinking_running">Thinking</string>
+    <string name="thinking_done_seconds">Thought for %1$d sec</string>
+    <string name="thinking_stopped">Stopped</string>
+
+    <!-- Safety refusal -->
+    <string name="reply_refused">Sorry, I can\'t help with that one. Shall we try a different topic?</string>
+
+    <!-- Time/location reminder -->
+    <string name="prompt_language_name">English</string>
+
+    <!-- Settings: protocol channel / search / region -->
+    <string name="settings_api_style">Protocol channel</string>
+    <string name="settings_api_style_hint">The extended channel adds web search, link reading, citations, and server-side titles; the OpenAI-compatible channel covers more endpoints.</string>
+    <string name="api_style_auto">Auto (decide by endpoint)</string>
+    <string name="api_style_openai">OpenAI compatible</string>
+    <string name="api_style_anthropic">Anthropic compatible (extended)</string>
+    <string name="settings_web_search">Smart search</string>
+    <string name="settings_web_search_hint">Let the model search the web when needed. Only available on the extended channel.</string>
+    <string name="settings_location">Region</string>
+    <string name="settings_location_hint">Sent along as the location in the time reminder. Leave empty to omit. e.g. “Hangzhou”.</string>
+    <string name="settings_location_hint_short">Used for the time reminder</string>
 </resources>
 

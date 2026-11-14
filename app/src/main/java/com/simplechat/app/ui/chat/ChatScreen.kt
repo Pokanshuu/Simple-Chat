@@ -78,6 +78,7 @@ import com.simplechat.app.R
 import com.simplechat.app.data.Attachment
 import com.simplechat.app.data.AttachmentImport
 import com.simplechat.app.data.Res
+import com.simplechat.app.net.ApiStyle
 import com.simplechat.app.ui.common.SoftShape
 import com.simplechat.app.ui.common.AppConfirmDialog
 import com.simplechat.app.ui.common.AppIcons
@@ -1203,6 +1204,10 @@ fun ChatScreen(
                     contextStats = vm.contextStats,
                     statsPanelOpen = panel == InputPanelState.STATS,
                     onOpenStatsPanel = { openPanel(InputPanelState.STATS) },
+                    // 智能搜索只有扩展通道支持，别的通道上不露这个入口
+                    showWebSearch = vm.apiStyle == ApiStyle.ANTHROPIC,
+                    webSearchEnabled = vm.webSearch,
+                    onToggleWebSearch = { vm.toggleWebSearch() },
                     thinkingEnabled = vm.settings.thinkingEnabled,
                     thinkingPanelOpen = panel == InputPanelState.THINKING,
                     onOpenThinkingPanel = { openPanel(InputPanelState.THINKING) },

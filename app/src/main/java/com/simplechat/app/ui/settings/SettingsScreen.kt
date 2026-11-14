@@ -119,13 +119,35 @@ private sealed interface SettingsDialog {
     data object ApiKey : SettingsDialog
     data object DeleteAll : SettingsDialog
     data object ImportMode : SettingsDialog
+    /** 协议通道（自动 / OpenAI 兼容 / Anthropic 兼容）。 */
+    data object ApiStyle : SettingsDialog
+    /** 地区（时间地点提醒里的地点那一项）。 */
+    data object Location : SettingsDialog
     /** 编辑预设；[preset] 为 null 表示新建。 */
     data class PresetEditor(val preset: Preset?) : SettingsDialog
     data class DeletePreset(val preset: Preset) : SettingsDialog
 }
 
-/** 字号档位。与官方一致：中间一档为「标准」。 */
-private val fontSizeSteps = listOf(
+/**
+ * 协议通道的**可选档位**（持久化的是枚举名）。
+ *
+ * 与 `net.ApiStyle` 刻意分开：那个是"实际走哪条"，只有两档；
+ * 这里的 `AUTO` 是用户意图（"你看着办"），落库后由 `ApiStyle.resolve` 按端点解析。
+ * 把 `AUTO` 塞进 `ApiStyle` 会让"实际通道"变成可选值，到处都是 null 判断。
+ */
+private enum class ApiStylePreference(val labelRes: Int) {
+    AUTO(R.string.api_style_auto),
+    OPENAI(R.string.api_style_openai),
+    ANTHROPIC(R.string.api_style_anthropic),
+    ;
+
+    companion object {
+        fun fromId(id: String?): ApiStylePreference =
+            entries.firstOrNull { it.name == id } ?: AUTO
+    }
+}
+
+/** 字号档位。与官方一致：中间一档为「标准」。 */private val fontSizeSteps = listOf(
     0.85f to R.string.font_step_small,
     0.925f to R.string.font_step_smaller,
     1.0f to R.string.font_step_standard,
@@ -308,6 +330,9 @@ fun SettingsScreen(
                             testing = testing,
                             testResult = testResult,
                             onPick = { dialog = it },
+                            onWebSearch = { enabled ->
+                                scope.launch { store.setWebSearch(enabled) }
+                            },
                             onTest = {
                                 if (testing) return@ApiPage
                                 testing = true
@@ -401,6 +426,28 @@ fun SettingsScreen(
             onConfirm = { value ->
                 dialog = null
                 scope.launch { store.setApiKey(value) }
+            },
+        )
+
+        SettingsDialog.ApiStyle -> ChoiceDialog(
+            title = stringResource(R.string.settings_api_style),
+            options = ApiStylePreference.entries.map { it to stringResource(it.labelRes) },
+            selected = ApiStylePreference.fromId(stored.apiStyleId),
+            onDismiss = { dialog = null },
+            onSelect = { picked ->
+                dialog = null
+                scope.launch { store.setApiStyle(picked.name) }
+            },
+        )
+
+        SettingsDialog.Location -> TextInputDialog(
+            title = stringResource(R.string.settings_location),
+            initial = stored.locationRegion,
+            placeholder = stringResource(R.string.settings_location_hint_short),
+            onDismiss = { dialog = null },
+            onConfirm = { value ->
+                dialog = null
+                scope.launch { store.setLocationRegion(value) }
             },
         )
 
@@ -744,6 +791,7 @@ private fun ApiPage(
     testResult: String?,
     onPick: (SettingsDialog) -> Unit,
     onTest: () -> Unit,
+    onWebSearch: (Boolean) -> Unit,
 ) {
     val colors = LocalChatColors.current
 
@@ -798,6 +846,55 @@ private fun ApiPage(
             modifier = Modifier.padding(horizontal = 4.dp),
         )
     }
+
+    /*
+     * 通道与联网。
+     *
+     * 这一组是「扩展能力」的开关：协议通道决定走哪条端到端路径，
+     * 智能搜索决定本轮要不要向服务端声明搜索工具，地区只进时间地点提醒。
+     * 三者都不是必填项 —— 不碰它们，原来的行为一点不变。
+     */
+    SettingsSectionLabel(stringResource(R.string.settings_api_style))
+
+    SettingsCard {
+        SettingsNavRow(
+            icon = null,
+            label = stringResource(R.string.settings_api_style),
+            value = stringResource(ApiStylePreference.fromId(stored.apiStyleId).labelRes),
+            onClick = { onPick(SettingsDialog.ApiStyle) },
+        )
+        RowDivider(inset = 16.dp)
+        SettingsSwitchRow(
+            icon = null,
+            label = stringResource(R.string.settings_web_search),
+            checked = stored.webSearch,
+            onCheckedChange = onWebSearch,
+        )
+        RowDivider(inset = 16.dp)
+        SettingsNavRow(
+            icon = null,
+            label = stringResource(R.string.settings_location),
+            value = stored.locationRegion.ifBlank {
+                stringResource(R.string.settings_location_hint_short)
+            },
+            onClick = { onPick(SettingsDialog.Location) },
+        )
+    }
+
+    Spacer(Modifier.size(10.dp))
+    Text(
+        text = stringResource(R.string.settings_api_style_hint),
+        style = MaterialTheme.typography.labelMedium,
+        color = colors.placeholder,
+        modifier = Modifier.padding(horizontal = 4.dp),
+    )
+    Spacer(Modifier.size(10.dp))
+    Text(
+        text = stringResource(R.string.settings_location_hint),
+        style = MaterialTheme.typography.labelMedium,
+        color = colors.placeholder,
+        modifier = Modifier.padding(horizontal = 4.dp),
+    )
 }
 
 // ══════════════════════════════════════════════════════════

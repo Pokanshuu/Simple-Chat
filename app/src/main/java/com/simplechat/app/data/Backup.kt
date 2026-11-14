@@ -94,6 +94,16 @@ data class BackupMessage(
     val thinkingMs: Long? = null,
     val ttftMs: Long? = null,
     val tps: Float? = null,
+    /**
+     * 内容块时间线（扩展通道：思考 / 搜索 / 引用 / 网页）。
+     *
+     * 与附件同一个道理：**备份里丢了它，搜索过程与引用角标就永久没了** ——
+     * 正文还在，但它凭什么这么说、看了哪几个网页全没了。
+     * 旧版本读到这一列会忽略（`ignoreUnknownKeys = true`），不需要升版本号。
+     */
+    val timeline: List<com.simplechat.app.net.ReplyBlock> = emptyList(),
+    /** 结束原因（`end_turn` / `max_tokens` / `refusal` 等）。 */
+    val stopReason: String? = null,
     val createdAt: Long,
 )
 
@@ -151,6 +161,8 @@ internal fun MessageEntity.toBackup(): BackupMessage = BackupMessage(
     thinkingMs = thinkingMs,
     ttftMs = ttftMs,
     tps = tps,
+    timeline = com.simplechat.app.net.ReplyBlocks.decode(timeline),
+    stopReason = stopReason,
     createdAt = createdAt,
 )
 
@@ -170,6 +182,8 @@ internal fun BackupMessage.toEntity(conversationId: String): MessageEntity = Mes
     thinkingMs = thinkingMs,
     ttftMs = ttftMs,
     tps = tps,
+    timeline = com.simplechat.app.net.ReplyBlocks.encode(timeline),
+    stopReason = stopReason,
     createdAt = createdAt,
 )
 

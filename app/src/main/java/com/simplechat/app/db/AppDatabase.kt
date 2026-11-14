@@ -21,7 +21,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     // v4：messages 增加 model（记下这条是哪个模型写的）
     // v5：新增 drafts（未发送的输入草稿）
     // v6：drafts 增加 title（「新对话」的待用标题）
-    version = 6,
+    // v7：messages 增加 timeline / stopReason（Anthropic 兼容通道的内容块时间线）
+    version = 7,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -99,13 +100,36 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v6 → v7：`messages` 加两列，纯增量。
+         *
+         * - `timeline`：Anthropic 兼容通道的内容块时间线（JSON），null 表示这条回复
+         *   没有结构（OpenAI 兼容通道、或升级前的老消息）。
+         * - `stopReason`：结束原因，续写能力与安全拒绝的收尾都依赖它。
+         *
+         * 老消息两列都是 NULL —— 界面照旧走「思考栏 + 正文」的老渲染，
+         * 不需要回填，也无从回填（信息当初就没收到）。
+         */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN timeline TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN stopReason TEXT")
+            }
+        }
+
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 "simplechat.db",
             )
-                .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(
+                    MIGRATION_2_3,
+                    MIGRATION_3_4,
+                    MIGRATION_4_5,
+                    MIGRATION_5_6,
+                    MIGRATION_6_7,
+                )
                 .build()
     }
 }
