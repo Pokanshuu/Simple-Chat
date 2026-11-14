@@ -147,4 +147,36 @@ class ReplyAccumulatorTest {
         assertEquals("正文", acc.answer)
         assertEquals("想了", acc.thinking)
     }
+
+    @Test
+    fun `续写时新内容接在已有块之后`() {
+        acc.seed(listOf(ReplyBlock.Text("前半段")))
+        acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Text("")), 2_000)
+        acc.consume(StreamEvent.TextDelta(0, "后半段"), 2_100)
+        acc.consume(StreamEvent.Stopped("end_turn"), 2_200)
+        acc.settle(2_300)
+
+        assertEquals(2, acc.blocks.size)
+        assertEquals("前半段后半段", acc.answer)
+    }
+
+    @Test
+    fun `续写遇到安全拒绝时不丢续写前的正文`() {
+        val seeded = ReplyBlock.Text("已经写好的半篇")
+        acc.seed(listOf(seeded))
+        acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Text("这一轮不该被看到")), 2_000)
+        acc.consume(StreamEvent.Stopped("refusal"), 2_100)
+        acc.settle(2_200)
+
+        // 丢的是这一轮，不是上一轮 —— 否则「继续生成」等于删稿
+        assertEquals(1, acc.blocks.size)
+        assertEquals("已经写好的半篇", acc.answer)
+    }
+
+    @Test
+    fun `续写后块序号从 0 重新开始，不覆盖已有块`() {
+        acc.seed(listOf(ReplyBlock.Text("甲")))
+        acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Text("乙")), 2_000)
+        assertEquals(listOf("甲", "乙"), acc.blocks.map { (it as ReplyBlock.Text).text })
+    }
 }

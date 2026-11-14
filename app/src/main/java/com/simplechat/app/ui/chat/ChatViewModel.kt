@@ -1239,10 +1239,13 @@ class ChatViewModel(
              * 却挂在「已深度思考」后面 —— 想 5 秒、写 25 秒会显示成 30 秒。
              *
              * 没等到正文就结束（用户中断 / 出错）时，用结束时刻兜底。
+             *
+             * 续写且这一轮没再思考时，思考时长要**沿用上一轮的值** ——
+             * 否则一条「已深度思考 · 8 秒」的回复，点一下继续生成就变成"没思考过"。
              */
             val thinkingMs = reasoningStartedAt?.let { start ->
                 (reasoningEndedAt ?: finishedAt) - start
-            }
+            } ?: prefix?.reasoningSeconds?.times(1000)
 
             patch(replyId) {
                 it.copy(

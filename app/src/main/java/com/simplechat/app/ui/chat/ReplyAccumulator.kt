@@ -22,6 +22,9 @@ class ReplyAccumulator {
 
     private val indexOf = mutableMapOf<Int, Int>()
 
+    /** 续写开局时已经存在多少块 —— [settle] 绝不能碰它们。 */
+    private var seededCount = 0
+
     var blocks: List<ReplyBlock> = emptyList()
         private set
 
@@ -49,6 +52,7 @@ class ReplyAccumulator {
      */
     fun seed(existing: List<ReplyBlock>) {
         blocks = existing
+        seededCount = existing.size
         indexOf.clear()
         stopReason = null
     }
@@ -118,17 +122,30 @@ class ReplyAccumulator {
      * 工具块保留：那是"搜过什么"的事实，不是生成内容。
      */
     fun settle(now: Long) {
-        blocks = blocks.flatMap { block ->
-            if (stopReason == Refusal && (block is ReplyBlock.Text || block is ReplyBlock.Thinking)) {
-                emptyList()
-            } else if (block is ReplyBlock.Thinking && block.startedAt != null &&
-                block.endedAt == null
-            ) {
-                listOf(block.copy(endedAt = now))
-            } else {
-                listOf(block)
+        val kept = mutableListOf<ReplyBlock>()
+        blocks.forEachIndexed { index, block ->
+            /*
+             * 续写之前就存在的块**一个都不能动**。
+             *
+             * 安全拒绝丢的是"这一轮生成的东西"：如果连上一轮那半篇文章一起丢了，
+             * 用户点「继续生成」的代价就是**原有的正文凭空消失** —— 那是数据丢失，
+             * 比拒绝本身严重得多。
+             */
+            if (index < seededCount) {
+                kept += block
+                return@forEachIndexed
+            }
+            when {
+                stopReason == Refusal &&
+                    (block is ReplyBlock.Text || block is ReplyBlock.Thinking) -> Unit
+
+                block is ReplyBlock.Thinking && block.startedAt != null && block.endedAt == null ->
+                    kept += block.copy(endedAt = now)
+
+                else -> kept += block
             }
         }
+        blocks = kept
         indexOf.clear()
     }
 

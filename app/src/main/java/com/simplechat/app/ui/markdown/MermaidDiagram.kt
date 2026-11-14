@@ -119,7 +119,8 @@ fun MermaidDiagram(
                 // JS 回调在别的线程：一律 post 回主线程再改 Compose 状态
                 addJavascriptInterface(
                     MermaidBridge(
-                        post = { block -> post(block) },
+                        // 显式包一层 Runnable：函数类型的值直接传给 Java 的 SAM 形参不可靠
+                        post = { block -> post(Runnable { block() }) },
                         applyHeight = { px -> if (px > 0) heightPx = px },
                         reportError = { failed = true },
                         reportReady = {

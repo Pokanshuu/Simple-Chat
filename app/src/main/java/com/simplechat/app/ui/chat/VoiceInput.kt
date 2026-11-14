@@ -173,7 +173,9 @@ private fun Bundle?.firstResult(): String? =
 @Composable
 fun rememberVoiceInput(onText: (String) -> Unit): VoiceInputController {
     val context = LocalContext.current
-    val controller = remember(context) { VoiceInputController(context, onText) }
+    // 用 applicationContext：识别服务会持有传入的 Context，拿 Activity 会把它一起留住
+    val appContext = remember(context) { context.applicationContext }
+    val controller = remember(appContext) { VoiceInputController(appContext, onText) }
     DisposableEffect(controller) {
         controller.refreshAvailability()
         onDispose { controller.release() }

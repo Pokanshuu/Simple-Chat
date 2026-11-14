@@ -181,7 +181,9 @@ private fun flattenInline(line: String): String {
 @Composable
 fun rememberSpeechOutput(): SpeechOutputController {
     val context = LocalContext.current
-    val controller = remember(context) { SpeechOutputController(context) }
+    // 与语音输入同一个道理：TTS 引擎会持有 Context，别把 Activity 留在地基里
+    val appContext = remember(context) { context.applicationContext }
+    val controller = remember(appContext) { SpeechOutputController(appContext) }
     DisposableEffect(controller) {
         controller.initialize()
         onDispose { controller.release() }
