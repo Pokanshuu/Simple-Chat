@@ -252,3 +252,25 @@ data class CompactionEntity(
     val createdAt: Long,
     val updatedAt: Long,
 )
+/**
+ * 落盘图片的**引用登记**。
+ *
+ * ### 为什么要单独一张表
+ *
+ * 图片字节搬进 `filesDir/attachments/` 之后，删会话时要跟着删文件。
+ * 但"这条会话用了哪些文件"**不能**从 `messages.attachments` 里查 ——
+ * 那一列正是几兆的大 JSON，读它就会撞上 `CursorWindow` 的 2MB 上限
+ * （实测"删除所有历史对话"直接失败：`Row too big to fit into CursorWindow`）。
+ *
+ * 所以在写库时顺手登记一行（`path` 很小），删除时只查这张表。
+ *
+ * 行数 = 图片张数，单行几十字节，与图片大小无关。
+ */
+@Entity(
+    tableName = "attachment_refs",
+    indices = [Index(value = ["conversationId"])],
+)
+data class AttachmentRefEntity(
+    @PrimaryKey val path: String,
+    val conversationId: String,
+)

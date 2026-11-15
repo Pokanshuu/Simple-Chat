@@ -43,6 +43,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -456,82 +461,141 @@ private fun AttachmentTile(
 //  全屏查看
 // ══════════════════════════════════════════════════════════
 
-/** 点开看大图。纯查看，不做保存/分享 —— 那是系统相册的事。 */
+/**
+ * 点开看大图 —— **全屏**，纯查看，不做保存/分享（那是系统相册的事）。
+ *
+ * ### 为什么是整屏而不是对话框
+ *
+ * 先前是个居中的圆角卡片：图片被塞进固定高度的盒子里（min 160 / max 520），
+ * 竖图两侧、横图上下都会留出一大块底色 —— 那块空白既不是图片也不是背景，
+ * 看着就像"图没加载完"。看图这件事本来就是"尽量占满"，
+ * 所以改成整屏铺满：图片按 `Fit` 缩放居中，点任意处关闭，
+ * 多张时左右可翻。
+ *
+ * 背景用近黑而不是主题色：图片本身可能是浅底，深底才看得清边界。
+ */
 @Composable
 fun AttachmentViewerDialog(
     images: List<Attachment>,
     initial: Attachment,
     onDismiss: () -> Unit,
 ) {
-    val colors = LocalChatColors.current
     val density = LocalDensity.current
-    // 附件的字节数要问文件系统：落盘的附件 data 是空的（见 AttachmentFiles）
     val context = LocalContext.current
     // 全屏尺寸解码：屏幕最长边的像素数，够清楚又不至于把原图解进内存
     val target = with(density) { 1080.dp.roundToPx() }
-    val bitmap = rememberAttachmentImage(initial, target)
 
-    Dialog(onDismissRequest = onDismiss) {
-        Column(
+    val pages = images.ifEmpty { listOf(initial) }
+    val startIndex = pages.indexOfFirst { it.name == initial.name && it.data == initial.data }
+        .coerceAtLeast(0)
+    val pagerState = rememberPagerState(initialPage = startIndex) { pages.size }
+    val current = pages.getOrNull(pagerState.currentPage) ?: initial
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            // 自己处理系统栏：整屏看图不该被默认的 insets 再缩一圈
+            decorFitsSystemWindows = false,
+        ),
+    ) {
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .clip(ContainerShape)
-                .background(colors.card)
-                .padding(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+                .fillMaxSize()
+                .background(ViewerBackground)
+                // 点任意处关闭（看图时最直觉的退出方式）
+                .clickable(onClick = onDismiss),
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 160.dp, max = 520.dp)
-                    .clip(SoftShape)
-                    .background(colors.fieldBackground),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (bitmap != null) {
-                    Image(
-                        bitmap = bitmap,
-                        contentDescription = initial.name,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                } else {
-                    Icon(
-                        imageVector = AppIcons.Image,
-                        contentDescription = null,
-                        tint = colors.placeholder,
-                        modifier = Modifier.size(28.dp),
-                    )
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize(),
+            ) { page ->
+                val attachment = pages[page]
+                // 每页各解各的：Pager 只组合当前页与左右邻页，不会把整组图读进内存
+                val pageBitmap = rememberAttachmentImage(attachment, target)
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (pageBitmap != null) {
+                        Image(
+                            bitmap = pageBitmap,
+                            contentDescription = attachment.name,
+                            // Fit：整张图都在屏幕内，不裁切；空白由深底兜住，不显眼
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                        )
+                    } else {
+                        Icon(
+                            imageVector = AppIcons.Image,
+                            contentDescription = null,
+                            tint = ViewerTextDim,
+                            modifier = Modifier.size(28.dp),
+                        )
+                    }
                 }
             }
 
-            val multiNote = stringResource(R.string.attach_viewer_multi, images.size)
+            // ── 顶栏：关闭 + 计数 ──────────────────────────
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .systemBarsPadding()
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = AppIcons.Close,
+                        contentDescription = stringResource(R.string.action_close),
+                        tint = ViewerText,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                if (pages.size > 1) {
+                    Text(
+                        text = "${pagerState.currentPage + 1}/${pages.size}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = ViewerText,
+                    )
+                    Spacer(Modifier.size(12.dp))
+                }
+            }
+
+            // ── 底栏：文件名 · 尺寸 · 大小 ─────────────────
             Text(
                 text = buildString {
-                    append(initial.name)
-                    if (initial.width > 0) append(" · ${initial.width}×${initial.height}")
+                    append(current.name)
+                    if (current.width > 0) append(" · ${current.width}×${current.height}")
                     // 落盘的附件 `data` 是空的，字节数要问文件系统（否则显示成 0 B）
-                    append(" · ${Attachments.formatSize(AttachmentFiles.sizeOf(context, initial))}")
-                    if (images.size > 1) append(multiNote)
+                    append(" · ${Attachments.formatSize(AttachmentFiles.sizeOf(context, current))}")
                 },
                 style = MaterialTheme.typography.labelSmall,
-                color = colors.placeholder,
-                modifier = Modifier.padding(top = 8.dp),
-            )
-
-            Box(
+                color = ViewerTextDim,
                 modifier = Modifier
-                    .padding(top = 8.dp)
-                    .clip(PillShape)
-                    .clickable(onClick = onDismiss)
-                    .padding(horizontal = 24.dp, vertical = 10.dp),
-            ) {
-                Text(
-                    text = stringResource(R.string.action_close),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .systemBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                textAlign = TextAlign.Center,
+            )
         }
     }
 }
+
+/** 全屏看图的底色：近黑。图片可能是浅底，深底才看得清边界。 */
+private val ViewerBackground = Color(0xF2000000)
+
+/** 顶栏 / 底栏文字。 */
+private val ViewerText = Color(0xFFEDEDED)
+
+/** 次要文字（尺寸、大小）。 */
+private val ViewerTextDim = Color(0xFF9E9E9E)

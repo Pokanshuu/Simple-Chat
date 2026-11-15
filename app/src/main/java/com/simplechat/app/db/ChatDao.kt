@@ -362,3 +362,30 @@ interface DraftDao {
     @Query("SELECT COUNT(*) FROM drafts")
     suspend fun count(): Int
 }
+/**
+ * 落盘图片的引用表（见 [AttachmentRefEntity]）。
+ *
+ * 只有三件事：登记、按会话查、按会话删。**刻意不做"全表 JOIN 消息"** ——
+ * 那是为了避开 messages.attachments 那列大 JSON。
+ */
+@Dao
+interface AttachmentRefDao {
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(refs: List<AttachmentRefEntity>)
+
+    @Query("SELECT path FROM attachment_refs WHERE conversationId = :conversationId")
+    suspend fun pathsOf(conversationId: String): List<String>
+
+    @Query("SELECT path FROM attachment_refs")
+    suspend fun allPaths(): List<String>
+
+    @Query("DELETE FROM attachment_refs WHERE conversationId = :conversationId")
+    suspend fun clear(conversationId: String)
+
+    @Query("DELETE FROM attachment_refs WHERE conversationId IN (:ids)")
+    suspend fun clearAll(ids: List<String>)
+
+    @Query("DELETE FROM attachment_refs")
+    suspend fun clearEverything()
+}

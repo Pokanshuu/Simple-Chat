@@ -15,6 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ConversationPresetEntity::class,
         CompactionEntity::class,
         DraftEntity::class,
+        AttachmentRefEntity::class,
     ],
     // v2：messages 从「槽位」改成「树」（slotIndex → parentId）
     // v3：messages 增加 attachments（图片 / 纯文本附件）
@@ -22,7 +23,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     // v5：新增 drafts（未发送的输入草稿）
     // v6：drafts 增加 title（「新对话」的待用标题）
     // v7：messages 增加 timeline / stopReason（Anthropic 兼容通道的内容块时间线）
-    version = 7,
+    // v8：新增 attachment_refs（落盘图片的引用，删会话时据此清理文件）
+    version = 8,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -38,6 +40,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun compactionDao(): CompactionDao
 
     abstract fun draftDao(): DraftDao
+
+    abstract fun attachmentRefDao(): AttachmentRefDao
 
     companion object {
 
@@ -117,6 +121,27 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v7 → v8：新增落盘图片的引用表。
+         *
+         * 只加表、不动老数据。**旧的图片仍在 `messages.attachments` 里内联**
+         * （历史数据不迁移，读写两条路并存），所以升级不会丢图，也不会变大。
+         */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `attachment_refs` (" +
+                        "`path` TEXT NOT NULL, " +
+                        "`conversationId` TEXT NOT NULL, " +
+                        "PRIMARY KEY(`path`))",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_attachment_refs_conversationId` " +
+                        "ON `attachment_refs` (`conversationId`)",
+                )
+            }
+        }
+
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(
                 context.applicationContext,
@@ -129,6 +154,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_4_5,
                     MIGRATION_5_6,
                     MIGRATION_6_7,
+                    MIGRATION_7_8,
                 )
                 .build()
     }

@@ -6,6 +6,7 @@ import android.database.sqlite.SQLiteBlobTooBigException
 import androidx.room.withTransaction
 import com.simplechat.app.R
 import com.simplechat.app.db.AppDatabase
+import com.simplechat.app.db.AttachmentRefEntity
 import com.simplechat.app.db.CompactionEntity
 import com.simplechat.app.db.ConversationEntity
 import com.simplechat.app.db.ConversationPresetEntity
@@ -65,6 +66,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     private val conversationPresets = db.conversationPresetDao()
     private val compactionDao = db.compactionDao()
     private val drafts = db.draftDao()
+    private val attachmentRefs = db.attachmentRefDao()
 
     // ── 会话列表 ──────────────────────────────────────────
 
@@ -164,12 +166,18 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         conversations.setPinned(id, pinned, if (pinned) System.currentTimeMillis() else null)
 
     suspend fun deleteConversations(ids: List<String>) {
-        // 先把这些会话用到的落盘图片路径收出来，删完行再删文件
-        val files = ids.flatMap { id -> messages.getAllFor(id).flatMap { it.attachmentPaths() } }
+        /*
+         * 落盘图片的路径从**引用表**查，不读 `messages.attachments` ——
+         * 那一列是几兆的大 JSON，读它必然撞 `CursorWindow` 的 2MB 上限
+         * （实测「删除所有历史对话」就是这么失败的：
+         * `Row too big to fit into CursorWindow requiredPos=954`）。
+         */
+        val files = ids.flatMap { attachmentRefs.pathsOf(it) }
         db.withTransaction {
             conversations.deleteAll(ids)
             // 会话没了草稿就没人读 —— 同步清掉，别留死数据
             drafts.clearAll(ids)
+            attachmentRefs.clearAll(ids)
         }
         files.forEach { AttachmentFiles.delete(context, it) }
     }
@@ -195,9 +203,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         return copy(attachments = Attachments.encode(offloaded))
     }
 
-    /** 一条消息里落盘附件的文件名（给删除时的清理用）。 */
-    private fun MessageEntity.attachmentPaths(): List<String> =
-        Attachments.decode(attachments).mapNotNull { it.path }
+
 
     suspend fun touchConversation(id: String) = conversations.touch(id, System.currentTimeMillis())
 
@@ -689,11 +695,12 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
 
     /** 删除全部会话。消息 / 预设挂载 / 摘要靠外键级联一并清除。 */
     suspend fun deleteAllConversations() {
-        // 全清也要把落盘图片一起删干净，否则 filesDir 会越积越大
-        val files = messages.getAllRaw().flatMap { it.attachmentPaths() }
+        // 全清也要把落盘图片一起删干净：路径同样只查引用表，不碰 messages 的大列
+        val files = attachmentRefs.allPaths()
         db.withTransaction {
             conversations.deleteEverything()
             drafts.clearEverything()
+            attachmentRefs.clearEverything()
         }
         files.forEach { AttachmentFiles.delete(context, it) }
     }
@@ -1118,6 +1125,19 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
 
         // 恢复挂载的预设（顺序有意义：拼接顺序会影响模型对主次的判断）
         writePresetLinks(conversation.id, conversation.enabledPresetIds)
+
+        /*
+         * 登记落盘图片的引用。
+         *
+         * 只记 path（几十字节），删除会话时据此删文件 —— 避开 messages.attachments
+         * 那一列的大 JSON（读它会撞 CursorWindow）。
+         */
+        val refs = conversation.messages
+            .flatMap { message -> message.attachments.mapNotNull { it.path } }
+            .distinct()
+            .map { path -> AttachmentRefEntity(path = path, conversationId = conversation.id) }
+        if (refs.isNotEmpty()) attachmentRefs.upsertAll(refs)
+
         return false to written
     }
     /**
