@@ -82,7 +82,9 @@ import com.simplechat.app.data.Attachment
 import com.simplechat.app.data.AttachmentImport
 import com.simplechat.app.data.Res
 import com.simplechat.app.net.ApiStyle
+import com.simplechat.app.ui.common.ReadAloudEnabled
 import com.simplechat.app.ui.common.SoftShape
+import com.simplechat.app.ui.common.VoiceInputEnabled
 import com.simplechat.app.ui.common.AppConfirmDialog
 import com.simplechat.app.ui.common.AppIcons
 import com.simplechat.app.ui.common.AppShadow
@@ -1128,11 +1130,13 @@ fun ChatScreen(
                             detached = false
                             vm.continueMessage(message)
                         },
-                        speakingId = speaker.speakingId,
+                        // 朗读暂时下线（见 ReadAloudEnabled）：开关关着时按钮不出现、
+                        // TTS 引擎也不会被初始化
+                        speakingId = if (ReadAloudEnabled) speaker.speakingId else null,
                         autoCollapseThinking = vm.autoCollapseThinking,
                         onSpeak = { message ->
                             // 朗读正文（不是时间线里的过程文字）：用户要听的是回答本身
-                            speaker.toggle(message.id, message.content)
+                            if (ReadAloudEnabled) speaker.toggle(message.id, message.content)
                         },
                         onEdit = { message ->
                             if (message.role == MessageRole.USER) {
@@ -1320,18 +1324,17 @@ fun ChatScreen(
                     contextStats = vm.contextStats,
                     statsPanelOpen = panel == InputPanelState.STATS,
                     onOpenStatsPanel = { openPanel(InputPanelState.STATS) },
-                    // 语音输入：设备没有识别服务就不露麦克风
-                    showVoice = voice.state.available,
-                    voiceListening = voice.state.listening,
-                    onToggleVoice = { toggleVoice() },
                     /*
-                     * 长按输入框说话。
+                     * 语音输入：**暂时整体下线**（见 `VoiceInputEnabled`）。
                      *
-                     * 三个前提：设备有识别服务、麦克风已授权、输入框是空的
-                     * （空框那一条在 `InputBar` 里判，见那里的注释）。
-                     * 没授权时不挂手势：长按弹权限框、松手却什么都没录到，比不给这个手势更糟。
+                     * 开关关着时这里一律传 false —— 内部逻辑（识别回调、上滑取消、
+                     * 松手即发）全部保留，重新开启只需把常量改回 true，
+                     * 不用再翻一遍这里。
                      */
-                    holdToTalkEnabled = voice.state.available && hasMicrophonePermission,
+                    showVoice = VoiceInputEnabled && voice.state.available,
+                    voiceListening = voice.state.listening,
+                    onToggleVoice = { if (VoiceInputEnabled) toggleVoice() },
+                    holdToTalkEnabled = VoiceInputEnabled && voice.state.available && hasMicrophonePermission,
                     onVoiceHoldStart = {
                         voiceBase = input
                         voice.start()

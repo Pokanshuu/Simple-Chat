@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import com.simplechat.app.R
 import com.simplechat.app.data.Attachment
 import com.simplechat.app.data.TokenEstimate
+import com.simplechat.app.ui.common.ReadAloudEnabled
 import com.simplechat.app.ui.common.FoldAnimMs
 import com.simplechat.app.ui.common.BubbleShapeOut
 import com.simplechat.app.ui.common.AppIcons
@@ -829,13 +830,16 @@ private fun MessageActions(
             if (canContinue) {
                 ActionIcon(AppIcons.Play, stringResource(R.string.msg_continue), onContinue, colors)
             }
-            // 朗读：进行中换成停止图标，按同一下即停
-            ActionIcon(
-                if (speaking) AppIcons.Stop else AppIcons.Volume,
-                stringResource(if (speaking) R.string.tts_stop else R.string.tts_speak),
-                onSpeak,
-                colors,
-            )
+            // 朗读：进行中换成停止图标，按同一下即停。
+            // 暂时下线时整颗按钮不出现（见 ReadAloudEnabled）—— 留着但点了没反应更糟。
+            if (ReadAloudEnabled) {
+                ActionIcon(
+                    if (speaking) AppIcons.Stop else AppIcons.Volume,
+                    stringResource(if (speaking) R.string.tts_stop else R.string.tts_speak),
+                    onSpeak,
+                    colors,
+                )
+            }
         }
         ActionIcon(AppIcons.Edit, stringResource(R.string.action_edit), onEdit, colors)
         ActionIcon(AppIcons.Trash, stringResource(R.string.action_delete), onDelete, colors)
