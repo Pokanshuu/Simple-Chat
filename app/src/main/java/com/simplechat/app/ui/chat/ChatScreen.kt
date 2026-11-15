@@ -1350,6 +1350,8 @@ fun ChatScreen(
                     },
                     sendSignal = voiceSendSignal,
                     thinkingEnabled = vm.settings.thinkingEnabled,
+                    // 搜索也在这个面板里，开着就算激活（见 InputBar 的说明）
+                    webSearchEnabled = vm.supportsWebSearch && vm.webSearch,
                     thinkingPanelOpen = panel == InputPanelState.THINKING,
                     onOpenThinkingPanel = { openPanel(InputPanelState.THINKING) },
                     settingsPanelOpen = panel == InputPanelState.SETTINGS,

@@ -90,6 +90,13 @@ fun InputBar(
     onTextChange: (String) -> Unit,
     thinkingEnabled: Boolean,
     thinkingPanelOpen: Boolean,
+    /**
+     * 智能搜索是否开启。
+     *
+     * ✦ 是「这一轮怎么生成」的唯一入口（思考档位与联网搜索都在面板里），
+     * 所以两者**任一开启**都算激活 —— 否则开了搜索、星星还是黑的，用户会以为没生效。
+     */
+    webSearchEnabled: Boolean = false,
     onOpenThinkingPanel: () -> Unit,
     settingsPanelOpen: Boolean,
     onOpenSettingsPanel: () -> Unit,
@@ -370,7 +377,7 @@ fun InputBar(
 
                 // ── 思考档位 + 模型 ───────────────────────
                 ThinkingToggle(
-                    enabled = thinkingEnabled,
+                    enabled = thinkingEnabled || webSearchEnabled,
                     expanded = thinkingPanelOpen,
                     onClick = onOpenThinkingPanel,
                 )
