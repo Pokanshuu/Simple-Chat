@@ -467,8 +467,13 @@ internal object DeepSeekHistory {
     /** 一次导入的图片总量上限（base64 之后还会再涨三分之一）。 */
     private const val MaxImportedImageBytes = 24 * 1024 * 1024
 
-    /** 单个会话 JSON 的上限。超过就跳过这一条会话。 */
-    private const val MaxSessionJsonBytes = 24 * 1024 * 1024
+    /**
+     * 单个会话 JSON 的上限（8 MB）。超过就跳过这一条会话。
+     *
+     * 不设 24MB 的原因：JSON 解析成 JsonObject 之后会膨胀好几倍，
+     * 20MB 的文本能吃掉上百兆堆 —— 一条异常大的会话不该把整次导入拖垮。
+     */
+    private const val MaxSessionJsonBytes = 8 * 1024 * 1024
 
     /** 没有标题的会话用首条提问的前若干字当标题。 */
     private const val FallbackTitleChars = 24
