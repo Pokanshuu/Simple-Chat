@@ -596,14 +596,14 @@ object AppShadow {
      * 面积大，同样的 alpha 会比小卡片显眼得多，所以两档之间保持一倍以上差距。
      * 数值是实机来回比对出来的：再低就"没有"，再高就"发脏"。
      */
-    val PanelElevation = 5.dp
-    val PanelAmbient = Color.Black.copy(alpha = 0.06f)
-    val PanelSpot = Color.Black.copy(alpha = 0.10f)
+    val PanelElevation = 8.dp
+    val PanelAmbient = Color.Black.copy(alpha = 0.08f)
+    val PanelSpot = Color.Black.copy(alpha = 0.14f)
 
     /** 浮层（菜单）与抽屉：需要明确"浮起来"。 */
-    val RaisedElevation = 10.dp
-    val RaisedAmbient = Color.Black.copy(alpha = 0.13f)
-    val RaisedSpot = Color.Black.copy(alpha = 0.18f)
+    val RaisedElevation = 14.dp
+    val RaisedAmbient = Color.Black.copy(alpha = 0.16f)
+    val RaisedSpot = Color.Black.copy(alpha = 0.22f)
 }
 
 /**

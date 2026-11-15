@@ -71,6 +71,7 @@ import com.simplechat.app.ui.theme.MarkdownInlineCodeStyle
 import com.simplechat.app.ui.theme.MarkdownMarkerStyle
 import com.simplechat.app.ui.theme.MarkdownTableStyle
 import com.simplechat.app.ui.theme.SimpleChatTypography
+import kotlin.math.ceil
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
@@ -89,7 +90,7 @@ import kotlinx.coroutines.isActive
  * ### 那性能怎么办（两道闸）
  *
  * **一、控股频率**：markdown 库每次内容变化都会重新解析整篇文档。这里的做法是
- * **帧对齐 + 按帧耗时自适应**（见 [rememberAdaptiveMarkdown]）——
+ * **匀速出字 + 帧对齐 + 按帧耗时自适应**（见 [rememberSmoothReveal]）——
  * 与官方 Chat Demo 的 `useThrottleMarkdownRender` 同一套思路：
  * 预算够就每帧提交，一帧被拖长了就按拖长的倍数冷却。
  * 定稿后不再节流（内容已经不动了）。
@@ -108,16 +109,16 @@ fun MarkdownText(
     streaming: Boolean = false,
 ) {
     /*
-     * 先把正文里的 HTML 折算成 markdown（见 `normalizeHtml`），再把单换行补成
-     * 段落边界（见 `normalizeSoftBreaks`）。顺序不能反 —— `<br>` 折算出的
-     * 硬换行标记要被后一步认出来。
-     * 三千字也就几十微秒，扛得住 50ms 一次的提交。
+     * 先**匀速放出一段前缀**（见 [rememberSmoothReveal]），再做 HTML 折算与软换行补全 ——
+     * 后面每一步都只处理已经稳定的那段文本。
+     *
+     * 顺序不能反：归一化只做一次才便宜；先归一化再截断，等于每个字符都要重跑一遍整篇。
      */
-    val text = remember(content) { normalizeSoftBreaks(normalizeHtml(content)) }
-    val shown = rememberAdaptiveMarkdown(streaming = streaming, value = text)
+    val revealed = rememberSmoothReveal(streaming = streaming, value = content)
+    val text = remember(revealed) { normalizeSoftBreaks(normalizeHtml(revealed)) }
 
     MarkdownTextBlocks(
-        source = shown,
+        source = text,
         streaming = streaming,
         modifier = modifier,
         blockGap = MarkdownBlockColumnGap,
@@ -326,25 +327,26 @@ internal fun adaptiveCooldownMs(frameCostMs: Long): Long {
     return if (over <= 0L) 0L else (over * 2).coerceAtMost(MaxCooldownMs)
 }
 
+/** 匀速出字的节拍（毫秒）与每拍追赶比例。 */
+private const val RevealTickMs = 32L
+private const val RevealRatio = 0.3f
+
 /**
- * 把高频变化的流式文本喂给 markdown 渲染：**帧对齐 + 按帧耗时自适应**。
+ * 把高频变化的流式文本喂给 markdown 渲染：**匀速出字 + 帧对齐 + 按帧耗时自适应**。
  *
- * 这是把官方 demo 的两档时钟搬进 Compose：
+ * 这一层同时解决两个不同的问题，缺一个都不好看：
  *
- * | | 官方（浏览器） | 这里 |
- * |---|---|---|
- * | 提交时机 | `requestAnimationFrame` | `withFrameNanos` |
- * | 下次冷却 | 本次渲染耗时 × 2 | 帧周期超出预算的部分 × 2 |
+ * **一、匀速（对齐 Simple-Agent 的 `useSmoothReveal`）**
+ * 网络侧的增量是**突发**的（一个 SSE 包 0 字、下一个 12 字）。来多少画多少，
+ * 排版和光标位置就会一段一段跳。这里把"到达"和"显示"解耦：
  *
- * 与原来的「固定 50ms 采样」比，两处不同：
+ * - 每 ~[RevealTickMs] 推进一步，而不是每来一个增量推一次
+ * - 每步推进 `max(1, 积压 × [RevealRatio])` —— 积压多时追得快，少时逐字落定
+ * - 流结束立刻补齐，尾巴不会拖在缓冲里
  *
- * 1. **领先边沿**：预算够就**立刻**提交，不再额外等一个固定的 50ms。
- *    原来是"数据层 50ms 提交一次 → 渲染层再 50ms 采一次"，两个**独立**的 50ms 时钟
- *    会互相 beat，相邻两次更新实际落在 50～100ms 之间抖 ——
- *    看得见的就是"一跳一跳"。官方只有一把尺子（rAF），所以是连续流动的。
- * 2. **贵了就自己降频**：一帧被拖长多少毫秒，就冷却多少毫秒。
- *    内容轻时等于每帧都更新（和官方一样连续）；内容重时自动少跳几帧，
- *    但**不掉帧** —— 这正是"自适应"与"固定节流"最本质的区别。
+ * **二、自适应（对齐官方 Chat Demo 的 `useThrottleMarkdownRender`）**
+ * 一帧被拖长了多少毫秒，就冷却多少毫秒；实在追不上时这一拍**少放几个字**。
+ * 轻内容等于每帧都在走（连续流动），重内容自动放慢，但**不掉帧**。
  *
  * ⚠️ 不能写成 `LaunchedEffect(value) { delay(n); shown = value }`：
  * 那是 **debounce**，流式期间 `value` 每几十毫秒变一次、计时器永远重启，
@@ -354,7 +356,7 @@ internal fun adaptiveCooldownMs(frameCostMs: Long): Long {
  * 每 10ms 醒一次的协程，一屏十几条就是上百次空唤醒。
  */
 @Composable
-private fun rememberAdaptiveMarkdown(streaming: Boolean, value: String): String {
+private fun rememberSmoothReveal(streaming: Boolean, value: String): String {
     var shown by remember { mutableStateOf(value) }
     val latest by rememberUpdatedState(value)
     var cooldownMs by remember { mutableLongStateOf(0L) }
@@ -366,29 +368,51 @@ private fun rememberAdaptiveMarkdown(streaming: Boolean, value: String): String 
             return@LaunchedEffect
         }
         while (isActive) {
-            // 没有新内容就只是醒来比一下字符串引用，代价可以忽略
-            if (shown == latest) {
+            val target = latest
+            val current = shown
+            // 没有新内容：只醒来比一下字符串引用，代价可以忽略
+            if (target == current) {
                 delay(SamplePollMs)
                 continue
             }
             // 上次更新把帧拖长了 → 先按冷却睡一会；新内容不会打断这次冷却
             if (cooldownMs > 0L) delay(cooldownMs)
 
-            val target = latest
-            if (shown == target) continue
+            /*
+             * 整段被换掉了（换消息 / 重新生成 / 从别处切回来）：
+             * 没有"逐步浮现"可言，直接跳过去，否则会看到旧内容被一个字一个字擦掉。
+             */
+            if (!target.startsWith(current)) {
+                shown = target
+                continue
+            }
+
+            // 积压多少，就按比例放出来；至少一个字，保证不会停住
+            val backlog = target.length - current.length
+            var advance = maxOf(1, ceil(backlog * RevealRatio).toInt())
+            var end = minOf(current.length + advance, target.length)
+            // 不要把代理对切成两半（emoji 会闪一帧方块）
+            if (end < target.length && target[end - 1].isHighSurrogate()) end -= 1
+            if (end <= current.length) continue
 
             // 对齐到帧的开始：让"提交 → 分块 → 解析尾块 → 排版 → 绘制"落在同一帧里
             val startNs = withFrameNanos { it }
-            shown = target
+            shown = target.substring(0, end)
             // 再等下一帧：它的开始时刻减去上一帧的开始，就是这一帧的实际耗时
             val nextNs = withFrameNanos { it }
-            cooldownMs = adaptiveCooldownMs((nextNs - startNs) / 1_000_000)
+            val frameMs = (nextNs - startNs) / 1_000_000
+            cooldownMs = adaptiveCooldownMs(frameMs)
+
+            // 节奏：不足一拍就补足；这一帧已经很贵就不再额外等
+            val wait = RevealTickMs - frameMs
+            if (wait > 0L) delay(wait)
         }
     }
 
     // 定稿后直接给最新值：不再经过采样状态，避免"最后一帧还差一点"
     return if (streaming) shown else value
 }
+
 
 
 // ══════════════════════════════════════════════════════════

@@ -128,11 +128,20 @@ private const val SwitchLoadTimeoutMs = 2_000L
 /** 打字时草稿落库的防抖间隔。与「会话标题」那条同档。 */
 private const val DraftSaveDelayMs = 400L
 
-/** 输入栏上方"淡出"的高度。正文滑进这一段就渐渐看不见了。 */
-private val BottomFadeHeight = 22.dp
+/**
+ * 输入栏**下面**那条渐变的宽度（从屏幕底边往上量）。
+ *
+ * 只盖底部一条：正文滚到底就在这里化开。输入栏以上不铺任何遮罩 ——
+ * 那会把正在读的字从中间洗掉。
+ */
+private val BottomFadeHeight = 36.dp
 
-/** 淡出带整体下移量：正文多留一点实字，贴着输入栏才淡完（尾段落在输入栏背后）。 */
-private val BottomFadeDrop = 6.dp
+/**
+ * 淡出带整体下移量：正文多留一点实字，贴着输入栏才淡完（尾段落在输入栏背后）。
+ *
+ * 取 0：羽化从**输入栏顶边**起算，不分走正文的可见高度。
+ */
+private val BottomFadeDrop = 0.dp
 
 /**
  * 对话主界面。
@@ -186,9 +195,22 @@ fun ChatScreen(
     val voice = rememberVoiceInput(onText = { text -> input = voiceBase + text })
     val speaker = rememberSpeechOutput()
 
+    /*
+     * 麦克风权限的当前状态。
+     *
+     * 要**可观察**：用户可能在系统设置里刚授权完回来，这时"长按说话"应该立刻可用，
+     * 而不是等下一次重组才悄悄生效。授权回调里也主动刷一次。
+     */
+    var hasMicrophonePermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED,
+        )
+    }
     val microphonePermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
+        hasMicrophonePermission = granted
         if (granted) {
             voiceBase = input
             voice.start()
@@ -203,11 +225,8 @@ fun ChatScreen(
             voice.stop()
             return
         }
-        val granted = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.RECORD_AUDIO,
-        ) == PackageManager.PERMISSION_GRANTED
-        if (granted) {
+        // 用可观察的那份状态，避免"设置里刚授权过、这里还认为没权限"
+        if (hasMicrophonePermission) {
             voiceBase = input
             voice.start()
         } else {
@@ -1210,28 +1229,22 @@ fun ChatScreen(
             }
 
             /*
-             * 输入区背后的"压底"。
+             * 输入栏**下面**那一层渐变：只铺屏幕最底部的一条，正文滚到这里就化开。
              *
-             * 正文滑到输入栏下面就该**消失**，而不是从输入栏四周的圆角、以及
-             * 它下方那段空隙里露出来（实测露出来很脏）。这里垫一层
-             * "透明 → 页面底色"的竖向渐变：正文是**淡出**的，而不是被一条硬边切断。
-             *
-             * 渐变带整体比输入栏顶边**下移 [BottomFadeDrop]**：正文多留一点实字，
-             * 淡完的位置压到输入栏背后一点（尾段反正被输入栏盖住）。
+             * 输入栏以上**一律不铺** —— 之前那层从输入栏顶边往上羽化的带子，
+             * 会把正在读的那行字从中间洗掉，比硬边还难看。正文应该一直清晰到
+             * 输入栏的边，然后被输入栏自己盖住。
              */
             if (inputAreaHeight > 0) {
-                val fadeTotal = inputAreaPadding + BottomFadeHeight - BottomFadeDrop
-                val fadeStop = (BottomFadeHeight / fadeTotal).coerceIn(0f, 0.98f)
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .height(fadeTotal)
+                        .height(BottomFadeHeight)
                         .background(
                             Brush.verticalGradient(
                                 colorStops = arrayOf(
                                     0f to Color.Transparent,
-                                    fadeStop to colors.pageBackground,
                                     1f to colors.pageBackground,
                                 ),
                             ),
@@ -1288,6 +1301,19 @@ fun ChatScreen(
                     showVoice = voice.state.available,
                     voiceListening = voice.state.listening,
                     onToggleVoice = { toggleVoice() },
+                    /*
+                     * 长按输入框说话。
+                     *
+                     * 三个前提：设备有识别服务、麦克风已授权、输入框是空的
+                     * （空框那一条在 `InputBar` 里判，见那里的注释）。
+                     * 没授权时不挂手势：长按弹权限框、松手却什么都没录到，比不给这个手势更糟。
+                     */
+                    holdToTalkEnabled = voice.state.available && hasMicrophonePermission,
+                    onVoiceHoldStart = {
+                        voiceBase = input
+                        voice.start()
+                    },
+                    onVoiceHoldEnd = { voice.stop() },
                     thinkingEnabled = vm.settings.thinkingEnabled,
                     thinkingPanelOpen = panel == InputPanelState.THINKING,
                     onOpenThinkingPanel = { openPanel(InputPanelState.THINKING) },

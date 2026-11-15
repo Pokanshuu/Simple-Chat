@@ -141,6 +141,8 @@
     <string name="about_libs_storage">Storage &amp; UI</string>
     <string name="about_libs_parsing">Parsing &amp; highlighting</string>
     <string name="about_libs_crypto">Encryption</string>
+    <string name="about_libs_math">Math</string>
+    <string name="about_libs_diagram">Diagrams</string>
     <string name="about_ai_disclaimer">Generated content comes from the model; use your own judgement.</string>
 
     <!-- ── Conversations ────────────────────────────────── -->
@@ -437,15 +439,14 @@
 
     <!-- Settings: protocol channel / search / region -->
     <string name="settings_api_style">Protocol channel</string>
-    <string name="settings_api_style_hint">The extended channel adds web search, link reading, citations, and server-side titles; the OpenAI-compatible channel covers more endpoints.</string>
     <string name="api_style_auto">Auto (decide by endpoint)</string>
     <string name="api_style_openai">OpenAI compatible</string>
     <string name="api_style_anthropic">Anthropic compatible (extended)</string>
     <string name="settings_web_search">Smart search</string>
     <string name="settings_web_search_hint">Let the model search the web when needed. Only available on the extended channel.</string>
     <string name="settings_location">Region</string>
-    <string name="settings_location_hint">Sent along as the location in the time reminder. Leave empty to omit. e.g. “Hangzhou”.</string>
     <string name="settings_location_hint_short">Used for the time reminder</string>
+    <string name="settings_location_placeholder">City or country, e.g. “Hangzhou”</string>
 
     <!-- ── Voice input (system recognizer) ──────────────── -->
     <string name="voice_input">Voice input</string>
@@ -458,6 +459,8 @@
     <string name="voice_error_busy">The recognition service is busy, try again shortly</string>
     <string name="voice_error_server">The recognition service failed, try again shortly</string>
     <string name="voice_permission_denied">Microphone permission denied, voice input unavailable</string>
+    <string name="voice_listening">Listening… release to finish</string>
+    <string name="input_hint_hold_to_talk">Tap to type, or hold to speak</string>
 
     <!-- ── Read aloud (system TTS) ──────────────────────── -->
     <string name="tts_speak">Read aloud</string>
@@ -470,6 +473,7 @@
     <string name="mermaid_show_code">Code</string>
     <string name="mermaid_show_diagram">Diagram</string>
     <string name="mermaid_render_failed">Could not render the diagram. Raw code below.</string>
+    <string name="mermaid_loading">Rendering diagram…</string>
     <string name="settings_export_archive">Export all chats (ZIP archive)</string>
     <string name="settings_export_archive_summary">A complete backup of every chat and attachment, plus a Markdown document per chat. Can be imported back directly.</string>
 </resources>

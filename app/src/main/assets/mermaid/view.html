@@ -14,8 +14,29 @@
 <body>
 <div id="c"></div>
 <script>
+(function () {
+  'use strict';
+
   // 每次渲染换一个 token，用来丢弃"上一张图还没画完、用户已经换了内容"的迟到结果
-  var token = 0;
+  var token = '0';
+  var ready = false;
+
+  /** 一切异常都回给原生侧：界面上至少能看到"为什么没图"，而不是一块白板。 */
+  function report(msg, detail) {
+    var text = String(msg || 'unknown') + (detail ? ' | ' + String(detail).slice(0, 300) : '');
+    try { if (window.Bridge) Bridge.onLog(text); } catch (e) {}
+  }
+  function fail(msg) {
+    try { if (window.Bridge) Bridge.onError(String(msg || 'render failed').slice(0, 300)); }
+    catch (e) {}
+  }
+
+  window.addEventListener('error', function (e) {
+    report('window.onerror', e && e.message);
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    report('unhandledrejection', e && e.reason && (e.reason.message || e.reason));
+  });
 
   function reportHeight() {
     var box = document.getElementById('c');
@@ -23,38 +44,88 @@
     Bridge.onHeight(Math.ceil(box.getBoundingClientRect().height));
   }
 
-  function render(code, dark, id) {
-    token = id;
-    var box = document.getElementById('c');
-    box.innerHTML = '';
-    try {
-      mermaid.initialize({
-        startOnLoad: false,
-        // strict：图形代码来自模型输出，禁止其中的脚本 / 点击事件执行
-        securityLevel: 'strict',
-        theme: dark ? 'dark' : 'default',
-        fontFamily: 'sans-serif'
-      });
-      mermaid.render('m' + id, code).then(function (result) {
-        if (id !== token) return;
-        box.innerHTML = result.svg;
-        reportHeight();
-        // 字体 / 布局稳定后再量一次，避免高度差几像素留白
-        setTimeout(reportHeight, 120);
-      }).catch(function (err) {
-        if (id !== token) return;
-        if (window.Bridge) Bridge.onError(String(err && err.message ? err.message : err));
-      });
-    } catch (e) {
-      if (window.Bridge) Bridge.onError(String(e && e.message ? e.message : e));
-    }
+  /**
+   * 等 mermaid 就绪再渲染。
+   *
+   * 直接调 `mermaid.render` 的前提是那个 3.4MB 的脚本已经执行完 ——
+   * 在低端机上它可能还没跑完，直接调就是"静默什么都不发生"，
+   * 而这正是"一块空白灰框"最常见的成因。
+   */
+  function whenReady(cb) {
+    if (window.mermaid) { cb(); return; }
+    var tries = 0;
+    var timer = setInterval(function () {
+      if (window.mermaid) { clearInterval(timer); cb(); return; }
+      if (++tries > 120) {
+        clearInterval(timer);
+        fail('mermaid 脚本没有加载成功');
+      }
+    }, 50);
   }
 
+  function render(code, dark, id) {
+    token = String(id);
+    whenReady(function () {
+      var box = document.getElementById('c');
+      if (!box) { fail('容器 #c 不存在'); return; }
+      box.innerHTML = '';
+      try {
+        mermaid.initialize({
+          startOnLoad: false,
+          // strict：图形代码来自模型输出，禁止其中的脚本 / 点击事件
+          securityLevel: 'strict',
+          theme: dark ? 'dark' : 'default',
+          fontFamily: 'sans-serif'
+        });
+      } catch (e) {
+        fail('initialize 失败: ' + (e && e.message ? e.message : e));
+        return;
+      }
+
+      var pending;
+      try {
+        pending = mermaid.render('m' + id, code);
+      } catch (e) {
+        // 语法错误是同步抛的，包一层才不会静默
+        fail(e && e.message ? e.message : String(e));
+        return;
+      }
+
+      Promise.resolve(pending).then(function (result) {
+        if (String(id) !== token) return;
+        var svg = result && result.svg;
+        if (!svg) { fail('mermaid 返回了空图形'); return; }
+        box.innerHTML = svg;
+        // 内联样式兜一层：主题色与页面底色撞车时，图形会"渲染成功但看不见"
+        var el = box.querySelector('svg');
+        if (el) {
+          el.style.maxWidth = '100%';
+          el.style.height = 'auto';
+        }
+        requestAnimationFrame(reportHeight);
+        // 字体 / 布局稳定后再量一次，避免高度差几像素留白
+        setTimeout(reportHeight, 200);
+      }).catch(function (err) {
+        if (String(id) !== token) return;
+        fail(err && err.message ? err.message : String(err));
+      });
+    });
+  }
+
+  window.render = render;
   window.addEventListener('resize', reportHeight);
-  // 页面就绪：告诉原生侧可以发第一批内容了
-  window.addEventListener('load', function () {
-    if (window.Bridge) Bridge.onReady();
-  });
+
+  function onReady() {
+    if (ready) return;
+    ready = true;
+    try { if (window.Bridge) Bridge.onReady(); } catch (e) {}
+  }
+
+  // 两个时机都报一次：脚本先跑完、以及 load 事件。
+  if (document.readyState === 'complete') onReady();
+  else window.addEventListener('load', onReady);
+  setTimeout(onReady, 0);
+})();
 </script>
 </body>
 </html>

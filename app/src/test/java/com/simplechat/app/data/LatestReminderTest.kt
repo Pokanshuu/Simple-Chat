@@ -17,7 +17,7 @@ class LatestReminderTest {
     @Test
     fun `中文界面输出中文星期`() {
         assertEquals(
-            "2026-11-14,星期六,杭州,Android,中文",
+            "2026-11-14,星期六,杭州,App,中文",
             createLatestReminder(noon, cjk = true, region = "杭州", languageLabel = "中文"),
         )
     }
@@ -25,7 +25,7 @@ class LatestReminderTest {
     @Test
     fun `英文界面输出英文星期与平台`() {
         assertEquals(
-            "2026-11-14,Saturday,Hangzhou,Android,English",
+            "2026-11-14,Saturday,Hangzhou,App,English",
             createLatestReminder(
                 noon,
                 cjk = false,
@@ -38,7 +38,7 @@ class LatestReminderTest {
     @Test
     fun `月份和日期补零`() {
         assertEquals(
-            "2026-01-05,Monday,,Android,English",
+            "2026-01-05,Monday,,App,English",
             createLatestReminder(
                 LocalDateTime.of(2026, 1, 5, 8, 0),
                 cjk = false,
@@ -51,7 +51,7 @@ class LatestReminderTest {
     @Test
     fun `地区留空时该位为空串而不是省略该项`() {
         val reminder = createLatestReminder(noon, cjk = true, region = "  ", languageLabel = "中文")
-        assertEquals("2026-11-14,星期六,,Android,中文", reminder)
+        assertEquals("2026-11-14,星期六,,App,中文", reminder)
         // 五项齐全：服务端按位置取值，少一项就整体错位
         assertEquals(5, reminder.split(",").size)
     }
@@ -59,7 +59,7 @@ class LatestReminderTest {
     @Test
     fun `地区首尾空白被裁掉`() {
         assertEquals(
-            "2026-11-14,星期六,杭州,Android,中文",
+            "2026-11-14,星期六,杭州,App,中文",
             createLatestReminder(noon, cjk = true, region = "  杭州 ", languageLabel = "中文"),
         )
     }
@@ -76,5 +76,42 @@ class LatestReminderTest {
                 languageLabel = "中文",
             ),
         )
+    }
+
+    // ── 地区清洗 ──────────────────────────────────────────
+
+    @Test
+    fun `地区里的逗号被换成空格，不会把五项挤成七项`() {
+        val reminder = createLatestReminder(
+            noon,
+            cjk = true,
+            region = "杭州, 浙江",
+            languageLabel = "中文",
+        )
+        assertEquals("2026-11-14,星期六,杭州 浙江,App,中文", reminder)
+        assertEquals(5, reminder.split(",").size)
+    }
+
+    @Test
+    fun `中文逗号与顿号同样处理`() {
+        assertEquals("杭州 浙江", normalizeRegion("杭州，浙江"))
+        assertEquals("杭州 浙江", normalizeRegion("杭州、浙江"))
+    }
+
+    @Test
+    fun `换行与制表符被压成单个空格`() {
+        assertEquals("杭州 浙江", normalizeRegion("杭州\n\t浙江"))
+        assertEquals("杭州 浙江", normalizeRegion("杭州  浙江"))
+    }
+
+    @Test
+    fun `地区超长时截断`() {
+        assertEquals(RegionMaxChars, normalizeRegion("杭".repeat(50)).length)
+    }
+
+    @Test
+    fun `纯空白地区归一为空串`() {
+        assertEquals("", normalizeRegion("   \n  "))
+        assertEquals("", normalizeRegion(""))
     }
 }

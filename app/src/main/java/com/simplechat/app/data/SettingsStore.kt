@@ -214,7 +214,8 @@ class SettingsStore(private val context: Context) {
     }
 
     suspend fun setLocationRegion(region: String) {
-        context.settingsDataStore.edit { it[Keys.LOCATION] = region.trim() }
+        // 存**洗过**的值：逗号会把时间地点提醒的五个字段挤成六段（见 normalizeRegion）
+        context.settingsDataStore.edit { it[Keys.LOCATION] = normalizeRegion(region) }
     }
 
 

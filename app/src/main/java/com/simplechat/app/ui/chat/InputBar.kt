@@ -6,6 +6,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +49,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -54,6 +58,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.withTimeoutOrNull
 import com.simplechat.app.R
 import com.simplechat.app.ui.common.ContainerShape
 import com.simplechat.app.ui.common.AppIcons
@@ -119,12 +124,30 @@ fun InputBar(
     /** 是否正在录音 —— 按钮换成"结束"状态。 */
     voiceListening: Boolean = false,
     onToggleVoice: () -> Unit = {},
+    /**
+     * 是否开启「长按输入框说话」。
+     *
+     * 由调用方决定：**设备有识别服务 + 已授权 + 扩展通道可用** 时才为 true。
+     * 关掉时输入框一个手势都不多挂。
+     */
+    holdToTalkEnabled: Boolean = false,
+    /** 长按开始（手指按住不放）。 */
+    onVoiceHoldStart: () -> Unit = {},
+    /** 松手结束。 */
+    onVoiceHoldEnd: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalChatColors.current
     val shape = ContainerShape
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+
+    /**
+     * 「空框 + 有语音能力」才挂长按热区。
+     *
+     * 有字时长按要让位给**选词** —— 那是文本框自己的默认语义，抢掉它编辑会变得很难用。
+     */
+    val holdToTalkActive = holdToTalkEnabled && text.isEmpty()
 
     // 面板展开 → 投影淡出；收起 → 淡入。否则接缝处会同时压着两条阴影。
     val shadowElevation by animateDpAsState(
@@ -207,38 +230,101 @@ fun InputBar(
                     fieldValue = TextFieldValue(text = text, selection = TextRange(text.length))
                 }
             }
-            BasicTextField(
-                value = fieldValue,
-                onValueChange = {
-                    fieldValue = it
-                    if (it.text != text) onTextChange(it.text)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 26.dp, max = 160.dp)
-                    .focusRequester(focusRequester)
-                    // 用户点回输入框时收起面板，避免键盘与面板同时占屏
-                    .onFocusChanged { if (it.isFocused) onTextFieldFocused() },
-                textStyle = LocalTextStyle.current.merge(
-                    MaterialTheme.typography.bodyLarge.copy(
-                        color = MaterialTheme.colorScheme.onSurface,
+
+            /*
+             * 输入区 + 「按住说话」热区。
+             *
+             * 长按输入框说话只在**空输入框**上生效，这一点是刻意的：
+             * 输入框里已经有字时，长按的默认语义是**选词**，抢掉它会让编辑变得很难用。
+             * 而空框里本来就没有可选的东西 —— 这时长按除了"说话"没有别的合理动作。
+             *
+             * 实现上用一层透明覆盖层，而不是给 `BasicTextField` 加手势：
+             * 文本框自己会消费长按（起选区），挂在外层抢不过它。
+             * 覆盖层只在空框时存在，点一下照样聚焦并拉起键盘。
+             */
+            Box(modifier = Modifier.fillMaxWidth()) {
+                BasicTextField(
+                    value = fieldValue,
+                    onValueChange = {
+                        fieldValue = it
+                        if (it.text != text) onTextChange(it.text)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 26.dp, max = 160.dp)
+                        .focusRequester(focusRequester)
+                        // 用户点回输入框时收起面板，避免键盘与面板同时占屏
+                        .onFocusChanged { if (it.isFocused) onTextFieldFocused() },
+                    textStyle = LocalTextStyle.current.merge(
+                        MaterialTheme.typography.bodyLarge.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
                     ),
-                ),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                maxLines = 6,
-                decorationBox = { inner ->
-                    Box {
-                        if (text.isEmpty()) {
-                            Text(
-                                text = stringResource(R.string.input_hint),
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = colors.placeholder,
-                            )
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    maxLines = 6,
+                    decorationBox = { inner ->
+                        Box {
+                            if (text.isEmpty()) {
+                                Text(
+                                    text = when {
+                                        voiceListening -> stringResource(R.string.voice_listening)
+                                        holdToTalkActive -> stringResource(R.string.input_hint_hold_to_talk)
+                                        else -> stringResource(R.string.input_hint)
+                                    },
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = if (voiceListening) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        colors.placeholder
+                                    },
+                                )
+                            }
+                            inner()
                         }
-                        inner()
-                    }
-                },
-            )
+                    },
+                )
+
+                if (holdToTalkActive) {
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .pointerInput(holdToTalkActive) {
+                                /*
+                                 * 自己判定"长按 / 点击"，不用 `detectTapGestures`：
+                                 * 它的 `onLongPress` 回调**不带** PressGestureScope
+                                 * （拿不到 `tryAwaitRelease`），而"按住说话"必须知道
+                                 * 手指什么时候松开。
+                                 *
+                                 * 这里的做法是：按下后等 `longPressTimeoutMillis`；
+                                 *   - 先松手 → 超时协程返回 pending change，当成**点击**
+                                 *   - 先超时 → 返回 null，进入"说话"，一直等到松手才结束
+                                 */
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false)
+                                    val released = withTimeoutOrNull(
+                                        viewConfiguration.longPressTimeoutMillis,
+                                    ) { waitForUpOrCancellation() }
+
+                                    if (released != null) {
+                                        // 短按：照常聚焦并拉起键盘
+                                        focusRequester.requestFocus()
+                                        keyboard?.show()
+                                        return@awaitEachGesture
+                                    }
+
+                                    down.consume()
+                                    onVoiceHoldStart()
+                                    // 一直等到手指离开（或滑出取消区）
+                                    waitForUpOrCancellation()
+                                    onVoiceHoldEnd()
+                                    // 说完把焦点还给输入框，用户能直接改识别结果
+                                    focusRequester.requestFocus()
+                                    keyboard?.show()
+                                }
+                            },
+                    )
+                }
+            }
 
             Spacer(Modifier.size(12.dp))
 

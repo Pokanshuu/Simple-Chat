@@ -143,6 +143,8 @@
     <string name="about_libs_storage">存储与界面</string>
     <string name="about_libs_parsing">解析与高亮</string>
     <string name="about_libs_crypto">加密</string>
+    <string name="about_libs_math">公式</string>
+    <string name="about_libs_diagram">图表</string>
     <string name="about_ai_disclaimer">生成内容由模型产出，请自行判断使用。</string>
 
     <!-- ── 会话（仓库 / 顶栏 / 抽屉共用） ───────────────── -->
@@ -437,15 +439,14 @@
 
     <!-- 设置：协议通道 / 搜索 / 地区 -->
     <string name="settings_api_style">协议通道</string>
-    <string name="settings_api_style_hint">扩展通道支持联网搜索、链接阅读、正文引用与服务端标题；OpenAI 兼容通道覆盖面更广。</string>
     <string name="api_style_auto">自动（按端点选择）</string>
     <string name="api_style_openai">OpenAI 兼容</string>
     <string name="api_style_anthropic">Anthropic 兼容（扩展）</string>
     <string name="settings_web_search">智能搜索</string>
     <string name="settings_web_search_hint">开启后模型可按需联网搜索；仅在扩展通道上可用。</string>
     <string name="settings_location">地区</string>
-    <string name="settings_location_hint">用于随请求发送的时间地点提醒，留空则不填。例如「杭州」。</string>
     <string name="settings_location_hint_short">用于时间地点提醒</string>
+    <string name="settings_location_placeholder">城市或国家，例如「杭州」</string>
 
     <!-- ── 语音输入（系统识别服务） ───────────────────────── -->
     <string name="voice_input">语音输入</string>
@@ -458,6 +459,8 @@
     <string name="voice_error_busy">识别服务正忙，请稍后再试</string>
     <string name="voice_error_server">识别服务出错了，请稍后再试</string>
     <string name="voice_permission_denied">未授予麦克风权限，语音输入不可用</string>
+    <string name="voice_listening">正在聆听…松手结束</string>
+    <string name="input_hint_hold_to_talk">点击输入文字或按住说话</string>
 
     <!-- ── 朗读（系统 TTS） ──────────────────────────────── -->
     <string name="tts_speak">朗读</string>
@@ -470,6 +473,7 @@
     <string name="mermaid_show_code">代码</string>
     <string name="mermaid_show_diagram">图表</string>
     <string name="mermaid_render_failed">图表渲染失败，以下是原始代码</string>
+    <string name="mermaid_loading">图表生成中…</string>
     <string name="settings_export_archive">导出全部对话（ZIP 归档）</string>
     <string name="settings_export_archive_summary">包含所有对话与附件的完整备份，另附每个对话的 Markdown 文稿；可直接用于导入恢复。</string>
 </resources>

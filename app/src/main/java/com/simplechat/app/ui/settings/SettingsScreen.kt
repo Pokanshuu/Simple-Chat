@@ -475,7 +475,8 @@ fun SettingsScreen(
         SettingsDialog.Location -> TextInputDialog(
             title = stringResource(R.string.settings_location),
             initial = stored.locationRegion,
-            placeholder = stringResource(R.string.settings_location_hint_short),
+            // 占位符要给出**可照抄的例子**，而不是复述"这是干什么用的"
+            placeholder = stringResource(R.string.settings_location_placeholder),
             onDismiss = { dialog = null },
             onConfirm = { value ->
                 dialog = null
@@ -919,21 +920,6 @@ private fun ApiPage(
             onClick = { onPick(SettingsDialog.Location) },
         )
     }
-
-    Spacer(Modifier.size(10.dp))
-    Text(
-        text = stringResource(R.string.settings_api_style_hint),
-        style = MaterialTheme.typography.labelMedium,
-        color = colors.placeholder,
-        modifier = Modifier.padding(horizontal = 4.dp),
-    )
-    Spacer(Modifier.size(10.dp))
-    Text(
-        text = stringResource(R.string.settings_location_hint),
-        style = MaterialTheme.typography.labelMedium,
-        color = colors.placeholder,
-        modifier = Modifier.padding(horizontal = 4.dp),
-    )
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1299,6 +1285,14 @@ private fun AboutPage() {
         InfoRow(label = stringResource(R.string.about_libs_parsing), value = "JetBrains markdown · Highlights")
         RowDivider(inset = 16.dp)
         InfoRow(label = stringResource(R.string.about_libs_crypto), value = "Android Keystore (AES-256-GCM)")
+        RowDivider(inset = 16.dp)
+        InfoRow(label = stringResource(R.string.about_libs_math), value = "latex-renderer (MIT)")
+        RowDivider(inset = 16.dp)
+        InfoRow(label = stringResource(R.string.about_libs_diagram), value = "Mermaid (MIT)")
+        RowDivider(inset = 16.dp)
+        InfoRow(label = "DeepSeek Chat Demo", value = "MIT")
+        RowDivider(inset = 16.dp)
+        InfoRow(label = "Simple-Agent", value = "MIT")
     }
 
     Spacer(Modifier.size(16.dp))
