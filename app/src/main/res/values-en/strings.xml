@@ -102,6 +102,9 @@
     <string name="api_test_failed">Connection failed: %1$s</string>
 
     <!-- ── Settings: import & export ────────────────────── -->
+    <string name="import_reading">Reading the file…</string>
+    <string name="import_working">Importing…</string>
+    <string name="import_progress">%1$d%% processed</string>
     <string name="import_mode_title">Import mode</string>
     <string name="import_mode_merge">Add new only (skip conversations already here)</string>
     <string name="import_mode_replace_same">Overwrite same name (replace them with the file)</string>

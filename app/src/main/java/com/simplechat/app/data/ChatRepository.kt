@@ -803,8 +803,26 @@ class ChatRepository(private val db: AppDatabase) {
         bytes: ByteArray,
         scratchDir: File,
         mode: ImportMode,
+    ): Pair<ImportResult, String> = importExternal(ExternalBackup.parse(bytes, scratchDir), mode)
+
+    /**
+     * 从**磁盘上的文件**导入 —— 大文件（几百 MB 的 DeepSeek 导出）必须走这条。
+     *
+     * 整包读进 `ByteArray` 会 OOM 或长时间无响应，而 `ZipFile` 只需要文件本身。
+     * 调用方负责在导入结束后删掉临时文件。
+     */
+    suspend fun importExternal(
+        file: File,
+        scratchDir: File,
+        mode: ImportMode,
+        onProgress: (Float) -> Unit = {},
+    ): Pair<ImportResult, String> =
+        importExternal(ExternalBackup.parse(file, scratchDir, onProgress = onProgress), mode)
+
+    private suspend fun importExternal(
+        parsed: ExternalBackup.Parsed,
+        mode: ImportMode,
     ): Pair<ImportResult, String> {
-        val parsed = ExternalBackup.parse(bytes, scratchDir)
         val result = importParsed(parsed.file, mode)
         val note = buildString {
             append(Res.get(parsed.source.nameRes))

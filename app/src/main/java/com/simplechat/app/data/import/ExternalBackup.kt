@@ -172,6 +172,31 @@ object ExternalBackup {
      * 代价是它要一个 `File`，所以这里落一个临时文件。4MB 落一次盘，
      * 换掉一个"导入直接失败"的 bug，划算。
      */
+    /**
+     * 从**已经在磁盘上的文件**解析 —— 大文件必须走这条。
+     *
+     * 实测：228MB 的 DeepSeek 导出包，先前用 `readBytes()` 整包读进内存，
+     * 结果要么 OOM、要么长时间无响应，最后什么都没发生（用户看到的就是"点了没反应"）。
+     *
+     * `ZipFile` 本来就是按中央目录随机访问的，文件在磁盘上就够了 ——
+     * 既不需要整个包进内存，也不需要再落一份临时副本。
+     */
+    fun parse(
+        file: File,
+        scratchDir: File,
+        naming: ImportNaming = ImportNaming(),
+        onProgress: (Float) -> Unit = {},
+    ): Parsed {
+        // 只读两个字节判 ZIP 魔数，不碰包体
+        val head = ByteArray(2)
+        val read = runCatching { file.inputStream().use { input -> input.read(head) } }.getOrDefault(0)
+        if (read >= 2 && head[0] == ZIP_MAGIC_0 && head[1] == ZIP_MAGIC_1) {
+            ZipFile(file).use { zip -> return parseZip(zip, naming, onProgress) }
+        }
+        // 非 ZIP（单文件 JSON 备份）才整份读成文本，那种文件不会有多大
+        return parse(file.readBytes(), scratchDir, naming)
+    }
+
     private fun parseZip(bytes: ByteArray, scratchDir: File, naming: ImportNaming): Parsed {
         if (!scratchDir.exists()) scratchDir.mkdirs()
         if (!scratchDir.isDirectory) {
@@ -179,10 +204,16 @@ object ExternalBackup {
         }
 
         val temp = File.createTempFile("chatbox-import-", ".zip", scratchDir)
-        try {
+        return try {
             temp.writeBytes(bytes)
+            ZipFile(temp).use { zip -> parseZip(zip, naming, {}) }
+        } finally {
+            temp.delete()
+        }
+    }
 
-            ZipFile(temp).use { zip ->
+    /** 真正的 ZIP 解析：只看中央目录，不复制、不整包读。 */
+    private fun parseZip(zip: ZipFile, naming: ImportNaming, onProgress: (Float) -> Unit): Parsed {
                 /*
                  * 先认**自己的**归档（`manifest.format = simplechat-archive`）：
                  * 里面就是一份完整的 `backup.json`，与单文件 JSON 备份同一套模型，
@@ -199,7 +230,7 @@ object ExternalBackup {
                  * 与另外两种的 `format` 字段**天然不冲突**，但仍排在自家之后、
                  * Chatbox 之前 —— 顺序只影响"同一份包被谁认领"，不存在歧义时无所谓。
                  */
-                DeepSeekHistory.parse(zip, naming)?.let { file ->
+                DeepSeekHistory.parse(zip, naming, onProgress)?.let { file ->
                     return Parsed(
                         source = Source.DEEPSEEK,
                         file = file,
@@ -252,16 +283,12 @@ object ExternalBackup {
                     key to buildImageAttachment(ref, zip.getInputStream(entry).readBytes(), naming)
                 }.toMap()
 
-                return buildParsed(
-                    sessions = sessions,
-                    manifest = manifest,
-                    imageOf = images::get,
-                    naming = naming,
-                )
-            }
-        } finally {
-            temp.delete()
-        }
+        return buildParsed(
+            sessions = sessions,
+            manifest = manifest,
+            imageOf = images::get,
+            naming = naming,
+        )
     }
 
     /** 一个资源条目在 manifest 里的登记信息。 */

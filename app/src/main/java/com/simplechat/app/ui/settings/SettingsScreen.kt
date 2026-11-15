@@ -1,6 +1,7 @@
 package com.simplechat.app.ui.settings
 
 import android.content.Intent
+import java.io.File
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -31,6 +32,9 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import kotlinx.coroutines.flow.MutableStateFlow
+import androidx.compose.runtime.collectAsState
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -184,7 +188,10 @@ fun SettingsScreen(
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }
     var dataMessage by remember { mutableStateOf<String?>(null) }
-    var pendingImport by remember { mutableStateOf<ByteArray?>(null) }
+    var pendingImport by remember { mutableStateOf<File?>(null) }
+    // 导入进度：null = 没在导入；0..1 = 解析进度（拷贝阶段是 indeterminate）
+    val importProgress = remember { MutableStateFlow<Float?>(null) }
+    val importPercent by importProgress.collectAsState()
     var presets by remember { mutableStateOf<List<Preset>>(emptyList()) }
 
     LaunchedEffect(Unit) { store.flow.collect { stored = it } }
@@ -229,16 +236,31 @@ fun SettingsScreen(
     ) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
-            val bytes = withContext(Dispatchers.IO) {
+            /*
+             * **流式**落到缓存文件，不再整包读进内存。
+             *
+             * 实测一份 228MB 的 DeepSeek 导出包：`readBytes()` 会直接 OOM，
+             * 或者卡到用户以为"点了没反应"。这里改成按块拷贝 —— 内存占用是常量，
+             * 之后 `ZipFile` 直接按中央目录读这个文件。
+             */
+            importProgress.value = 0f
+            dataMessage = Res.get(R.string.import_reading)
+            val file = withContext(Dispatchers.IO) {
                 runCatching {
-                    context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    val target = File(context.cacheDir, "import-${System.currentTimeMillis()}.bak")
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        target.outputStream().use { output -> input.copyTo(output, DEFAULT_BUFFER_SIZE * 8) }
+                    } ?: error(Res.get(R.string.import_read_failed))
+                    target
                 }.getOrNull()
             }
-            if (bytes == null || bytes.isEmpty()) {
+            if (file == null || file.length() == 0L) {
+                file?.delete()
                 dataMessage = Res.get(R.string.import_read_failed)
             } else {
-                // 存**字节**而不是文本：Chatbox 的完整备份是 ZIP，按字符串读会坏掉
-                pendingImport = bytes
+                dataMessage = null
+                importProgress.value = null
+                pendingImport = file
                 dialog = SettingsDialog.ImportMode
             }
         }
@@ -346,6 +368,7 @@ fun SettingsScreen(
 
                         SettingsPage.DATA -> DataPage(
                             message = dataMessage,
+                            progress = importPercent,
                             onExport = { startExport() },
                             onExportArchive = { startArchiveExport() },
                             onImport = {
@@ -516,14 +539,24 @@ fun SettingsScreen(
             },
             onSelect = { mode ->
                 dialog = null
-                val bytes = pendingImport
+                val file = pendingImport
                 pendingImport = null
-                if (bytes == null) return@ChoiceDialog
+                if (file == null) return@ChoiceDialog
                 scope.launch {
-                    // 认得两种备份：本应用的 JSON，和 Chatbox 的 ZIP / JSON
+                    dataMessage = Res.get(R.string.import_working)
+                    importProgress.value = 0f
+                    // 认得三种备份：本应用的 JSON / ZIP、Chatbox 的 ZIP / JSON、DeepSeek 导出
                     val outcome = runCatching {
-                        repository.importExternal(bytes, context.cacheDir, mode)
+                        withContext(Dispatchers.IO) {
+                            repository.importExternal(file, context.cacheDir, mode) { p ->
+                                // 回调来自 IO 线程：StateFlow 是线程安全的，界面侧 collectAsState 收
+                                importProgress.value = p.coerceIn(0f, 1f)
+                            }
+                        }
                     }
+                    importProgress.value = null
+                    // 大文件的临时副本用过就删，别占着缓存
+                    withContext(Dispatchers.IO) { file.delete() }
                     dataMessage = outcome.fold(
                         onSuccess = { (result, source) ->
                             Res.get(R.string.import_done, source, result.conversations, result.messages) +
@@ -771,6 +804,8 @@ private fun RootPage(
 @Composable
 private fun DataPage(
     message: String?,
+    /** 导入进度：null = 没在导入；0..1 = 已解析的会话占比。 */
+    progress: Float? = null,
     onExport: () -> Unit,
     onExportArchive: () -> Unit,
     onImport: () -> Unit,
@@ -795,7 +830,31 @@ private fun DataPage(
             label = stringResource(R.string.settings_import_all),
             hint = stringResource(R.string.settings_import_all_summary),
             onClick = onImport,
+            // 导入期间不能重复点：同一份包并发解析会把内存和数据库都顶爆
+            enabled = progress == null,
         )
+    }
+
+    /*
+     * 进度条。大包（几百 MB）要走上分钟，没有进度的话界面上就是"点了没反应"——
+     * 这正是先前那份 228MB 导出包给人的印象。
+     *
+     * 解析阶段按"已处理多少条会话"给确定进度；拷贝与收尾阶段只有 indeterminate。
+     */
+    if (progress != null) {
+        Spacer(Modifier.size(12.dp))
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth(),
+                progress = { progress },
+            )
+            Spacer(Modifier.size(6.dp))
+            Text(
+                text = stringResource(R.string.import_progress, (progress * 100).toInt()),
+                style = MaterialTheme.typography.labelMedium,
+                color = LocalChatColors.current.placeholder,
+            )
+        }
     }
 
     SettingsSectionLabel(stringResource(R.string.settings_group_reset))
@@ -1521,12 +1580,14 @@ private fun SettingsActionRow(
     hint: String?,
     onClick: () -> Unit,
     destructive: Boolean = false,
+    /** 导入进行中之类的"暂时不能点"。 */
+    enabled: Boolean = true,
 ) {
     val colors = LocalChatColors.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {

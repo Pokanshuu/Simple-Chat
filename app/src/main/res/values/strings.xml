@@ -104,6 +104,9 @@
     <string name="api_test_failed">连接失败：%1$s</string>
 
     <!-- ── 设置：导入导出 ───────────────────────────────── -->
+    <string name="import_reading">正在读取文件…</string>
+    <string name="import_working">正在导入…</string>
+    <string name="import_progress">已处理 %1$d%%</string>
     <string name="import_mode_title">导入方式</string>
     <string name="import_mode_merge">增量（只导入本机没有的对话）</string>
     <string name="import_mode_replace_same">覆盖同名（同名对话替换为本包内容）</string>

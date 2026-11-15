@@ -65,7 +65,11 @@ internal object DeepSeekHistory {
      * 认出来就翻译成我们的备份模型；`manifest.json` 里没有
      * `export_format_version` 说明不是这份格式，返回 null（交给别的分支）。
      */
-    fun parse(zip: ZipFile, naming: ExternalBackup.ImportNaming): BackupFile? {
+    fun parse(
+        zip: ZipFile,
+        naming: ExternalBackup.ImportNaming,
+        onProgress: (Float) -> Unit = {},
+    ): BackupFile? {
         val manifest = readJson(zip, MANIFEST) ?: return null
         val version = manifest["export_format_version"]?.jsonPrimitive?.intOrNull ?: return null
         if (version != FORMAT_VERSION) {
@@ -82,14 +86,31 @@ internal object DeepSeekHistory {
             .filter { !it.name.removePrefix(SESSIONS).contains('/') }
             .toList()
 
+        val total = sessionEntries.size.coerceAtLeast(1)
+        var done = 0
+        /*
+         * 图片总量预算。
+         *
+         * 图片是以 base64 存进数据库的，一份 228MB 的导出包里绝大多数体积都是图 ——
+         * 全导进来会让数据库涨到几百 MB，应用从此又慢又卡。这里按总量封顶，
+         * 超出的部分跳过（导入完成时的提示里已说明）。
+         */
+        var imageBudget = MaxImportedImageBytes
         val sessions = sessionEntries.mapNotNull { entry ->
+            // 进度按"解析完多少条会话"报，含图片读取 —— 228MB 的包主要时间都在这
+            onProgress((done.toFloat() / total).coerceIn(0f, 1f))
+            done++
             val raw = runCatching { zip.getInputStream(entry).readBytes().decodeToString() }
                 .getOrNull() ?: return@mapNotNull null
             val obj = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull()
                 ?: return@mapNotNull null
             // 先把这一条会话用到的图片读出来，再解析 —— 图片按 `export_path` 直接定位条目
             val images = imagePathsOf(obj).mapNotNull { path ->
-                readImage(zip, path, naming)?.let { path to it }
+                if (imageBudget <= 0) return@mapNotNull null
+                readImage(zip, path, naming)?.let { image ->
+                    imageBudget -= image.sizeBytes
+                    path to image
+                }
             }.toMap()
             mapSession(obj, naming) { images[it] }
         }
@@ -260,7 +281,7 @@ internal object DeepSeekHistory {
         val entry = zip.getEntry(path) ?: return null
         val bytes = runCatching { zip.getInputStream(entry).readBytes() }.getOrNull()
             ?: return null
-        if (bytes.isEmpty()) return null
+        if (bytes.isEmpty() || bytes.size > MaxSingleImageBytes) return null
         val size = imageSizeOf(bytes)
         return Attachment(
             kind = Attachment.Kind.IMAGE,
@@ -300,6 +321,12 @@ internal object DeepSeekHistory {
         runCatching { this[key]?.jsonPrimitive?.longOrNull }.getOrNull()
 
     private fun JsonObject.longOrZero(key: String): Long = long(key) ?: 0L
+
+    /** 单张图片上限：再大的塞进数据库只会拖垮列表滚动。 */
+    private const val MaxSingleImageBytes = 8 * 1024 * 1024
+
+    /** 一次导入的图片总量上限（base64 之后还会再涨三分之一）。 */
+    private const val MaxImportedImageBytes = 48 * 1024 * 1024
 
     /** 没有标题的会话用首条提问的前若干字当标题。 */
     private const val FallbackTitleChars = 24
