@@ -1214,13 +1214,13 @@ class ChatViewModel(
 
             val finishedAt = System.currentTimeMillis()
             /*
-             * 安全拒绝：服务端明确判定这一轮不能被看到。
-             * 已下发的思考与正文由 `settle` 丢掉，这里只补一句给用户看的话。
+             * 这里**不做任何"审核/撤回"处理**。
+             *
+             * 客户端只负责一件事：服务端发来什么就显示什么、存什么。`stop_reason` 原样记进
+             * 数据库（`stopReason`），不据此删改内容 —— 早先按 Anthropic 文档的
+             * "refusal 时丢弃已下发内容"做过一次，结果是一段已经写完的回复在收尾瞬间被吞掉，
+             * 用户看到的只有"写完了，然后没了"。那是数据丢失，客户端没有理由替服务端做这件事。
              */
-            val refused = accumulator?.stopReason == ReplyAccumulator.Refusal
-            if (refused && !stoppedByUser && failure == null) {
-                banner = Res.get(R.string.reply_refused)
-            }
             val status = when {
                 stoppedByUser -> MessageStatus.STOPPED
                 failure != null -> MessageStatus.ERROR

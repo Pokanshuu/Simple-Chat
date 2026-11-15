@@ -208,8 +208,9 @@ data class UiMessage(
     /**
      * 结束原因（`end_turn` / `max_tokens` / `tool_use` / `refusal`）。
      *
-     * 只有 Anthropic 通道会写。它决定两件事：`refusal` 时已下发的思考与正文
-     * 按协议要丢弃；`max_tokens` 或用户中断时这条回复**可以续写**。
+     * 只有 Anthropic 通道会写，**仅作为记录**：不据此删改任何已经收到的内容，
+     * 也不据此否决续写。客户端只做透传 —— 服务端发来什么就显示什么、存什么。
+     * （唯一用到它的是 `max_tokens`：表示"被上限截断"，可以续写。）
      */
     val stopReason: String? = null,
 ) {

@@ -13,19 +13,20 @@ package com.simplechat.app.ui.chat
  * 而那个端点不在本项目配置的 Base URL 上。与其把"半能用"的按钮摆出来，
  * 不如只在真能用的通道上出现（`timeline` 是否为空就是通道标志）。
  *
- * ### 五条否决
+ * ### 四条否决
  * 1. 不是**活跃路径的最后一条** —— 续写接在末尾，中间那条没地方接
  * 2. 正在流式 / 不在可见终态 —— 并发写同一条会打架
  * 3. 没有时间线（OpenAI 通道或老数据）
- * 4. 被安全拒绝（`refusal`）—— 服务端已判定这一轮不该被看到
- * 5. 用过服务端工具 —— 官方明确这类回复不能续写（工具块要一起回传才对得上）
+ * 4. 用过服务端工具 —— 官方明确这类回复不能续写（工具块要一起回传才对得上）
+ *
+ * 刻意**不看 `stop_reason`**：那是服务端"为什么停"的记录，不是客户端该不该放行的判据。
+ * 早先按 `refusal` 否决过，等于客户端替服务端执行内容裁量 —— 已经不做了。
  */
 internal fun canContinueReply(message: UiMessage, isLastOnPath: Boolean): Boolean {
     if (!isLastOnPath) return false
     if (message.role != MessageRole.ASSISTANT) return false
     if (message.streaming) return false
     if (message.timeline.isEmpty()) return false
-    if (message.stopReason == ReplyRefusal) return false
     if (message.timeline.any { it is com.simplechat.app.net.ReplyBlock.ToolUse }) return false
     if (message.timeline.any { it is com.simplechat.app.net.ReplyBlock.SearchResult }) return false
     if (message.timeline.any { it is com.simplechat.app.net.ReplyBlock.FetchResult }) return false
@@ -38,8 +39,6 @@ internal fun canContinueReply(message: UiMessage, isLastOnPath: Boolean): Boolea
     }
 }
 
-/** 安全拒绝的结束原因字面值。 */
-internal const val ReplyRefusal = "refusal"
 
 /** 输出被上限截断的结束原因字面值。 */
 internal const val ReplyMaxTokens = "max_tokens"

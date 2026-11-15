@@ -118,20 +118,22 @@ class ReplyAccumulatorTest {
     }
 
     @Test
-    fun `安全拒绝时丢弃正文与思考，保留工具块`() {
+    fun `安全拒绝时保留已经收到的正文与思考`() {
         acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Thinking("")), 1_000)
-        acc.consume(StreamEvent.ThinkingDelta(0, "不该被看到"), 1_100)
+        acc.consume(StreamEvent.ThinkingDelta(0, "想过"), 1_100)
         acc.consume(
             StreamEvent.BlockStart(1, ReplyBlock.ToolUse("t", "deepseek_web_search", "search", "search")),
             1_200,
         )
-        acc.consume(StreamEvent.BlockStart(2, ReplyBlock.Text("也不该被看到")), 1_300)
+        acc.consume(StreamEvent.BlockStart(2, ReplyBlock.Text("已经写出来的字")), 1_300)
         acc.consume(StreamEvent.Stopped("refusal"), 1_400)
         acc.settle(2_000)
 
-        assertEquals(1, acc.blocks.size)
-        assertTrue(acc.blocks.single() is ReplyBlock.ToolUse)
-        assertEquals("", acc.answer)
+        // 第三方客户端不替服务端销毁：拒答只影响"还能不能继续写"，不影响"已经写了什么"
+        assertEquals(3, acc.blocks.size)
+        assertEquals("已经写出来的字", acc.answer)
+        assertEquals("想过", acc.thinking)
+        assertEquals("refusal", acc.stopReason)
     }
 
     @Test
@@ -161,16 +163,16 @@ class ReplyAccumulatorTest {
     }
 
     @Test
-    fun `续写遇到安全拒绝时不丢续写前的正文`() {
+    fun `续写遇到安全拒绝时两段正文都在`() {
         val seeded = ReplyBlock.Text("已经写好的半篇")
         acc.seed(listOf(seeded))
-        acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Text("这一轮不该被看到")), 2_000)
+        acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Text("这一轮写出来的")), 2_000)
         acc.consume(StreamEvent.Stopped("refusal"), 2_100)
         acc.settle(2_200)
 
-        // 丢的是这一轮，不是上一轮 —— 否则「继续生成」等于删稿
-        assertEquals(1, acc.blocks.size)
-        assertEquals("已经写好的半篇", acc.answer)
+        // 上一轮与这一轮的字都不动 —— 「继续生成」绝不能变成删稿
+        assertEquals(2, acc.blocks.size)
+        assertEquals("已经写好的半篇这一轮写出来的", acc.answer)
     }
 
     @Test

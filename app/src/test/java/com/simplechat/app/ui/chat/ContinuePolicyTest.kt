@@ -66,10 +66,11 @@ class ContinuePolicyTest {
     }
 
     @Test
-    fun `安全拒绝的回复不可续`() {
-        assertFalse(
+    fun `服务端的结束原因不参与续写判断`() {
+        // 拒绝、审核之类都不该影响"能不能接着写" —— 客户端不替服务端做内容裁量
+        assertTrue(
             canContinueReply(
-                reply(status = MessageStatus.DONE, stopReason = ReplyRefusal),
+                reply(status = MessageStatus.STOPPED, stopReason = "refusal"),
                 isLastOnPath = true,
             ),
         )

@@ -432,7 +432,6 @@
     <string name="thinking_stopped">Stopped</string>
 
     <!-- Safety refusal -->
-    <string name="reply_refused">Sorry, I can\'t help with that one. Shall we try a different topic?</string>
 
     <!-- Time/location reminder -->
     <string name="prompt_language_name">English</string>

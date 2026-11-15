@@ -432,7 +432,6 @@
     <string name="thinking_stopped">已停止</string>
 
     <!-- 安全拒绝 -->
-    <string name="reply_refused">你好，这个问题我暂时无法回答，让我们换个话题再聊聊吧。</string>
 
     <!-- 时间地点提醒（latest_reminder 的第 5 项与界面文案） -->
     <string name="prompt_language_name">中文</string>

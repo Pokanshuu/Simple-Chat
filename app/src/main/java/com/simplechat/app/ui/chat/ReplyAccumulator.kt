@@ -115,37 +115,29 @@ class ReplyAccumulator {
     }
 
     /**
-     * 收尾：把所有未结束的思考块按 [now] 收口，并按结束原因决定要不要丢弃内容。
+     * 收尾：把所有未结束的思考块按 [now] 收口。
      *
-     * **安全拒绝（`refusal`）时已下发的思考与正文按协议必须丢弃** ——
-     * 模型确实"想过、说过"，但服务端判定这一轮不能被用户看到。
-     * 工具块保留：那是"搜过什么"的事实，不是生成内容。
+     * ### 安全拒绝（`refusal`）**不丢任何已经收到的内容**
+     *
+     * 早先这里按 Anthropic 文档的字面意思"这一轮生成的东西必须丢弃"，
+     * 在 `stop_reason = refusal` 时删掉正文与思考。那是**想错了**：
+     *
+     * - 我们是**第三方客户端**，不是内容裁量的执行者。服务端说不写了，
+     *   它已经停了 —— 客户端再去把屏幕上已经出现的字擦掉，等于替服务端做销毁；
+     * - 这在本项目里是**数据丢失**：和"用户点了停止生成，正文却消失"同性质，
+     *   而且用户完全无从预料 —— 他看到字一个个写出来，然后整段不见了。
+     *
+     * 保留内容不影响任何判定：`stopReason` 仍然记着 `refusal`
+     * （`ContinuePolicy` 靠它禁掉"继续生成"），只是不再删字。
      */
     fun settle(now: Long) {
-        val kept = mutableListOf<ReplyBlock>()
-        blocks.forEachIndexed { index, block ->
-            /*
-             * 续写之前就存在的块**一个都不能动**。
-             *
-             * 安全拒绝丢的是"这一轮生成的东西"：如果连上一轮那半篇文章一起丢了，
-             * 用户点「继续生成」的代价就是**原有的正文凭空消失** —— 那是数据丢失，
-             * 比拒绝本身严重得多。
-             */
-            if (index < seededCount) {
-                kept += block
-                return@forEachIndexed
-            }
-            when {
-                stopReason == Refusal &&
-                    (block is ReplyBlock.Text || block is ReplyBlock.Thinking) -> Unit
-
-                block is ReplyBlock.Thinking && block.startedAt != null && block.endedAt == null ->
-                    kept += block.copy(endedAt = now)
-
-                else -> kept += block
+        blocks = blocks.map { block ->
+            if (block is ReplyBlock.Thinking && block.startedAt != null && block.endedAt == null) {
+                block.copy(endedAt = now)
+            } else {
+                block
             }
         }
-        blocks = kept
         indexOf.clear()
     }
 
