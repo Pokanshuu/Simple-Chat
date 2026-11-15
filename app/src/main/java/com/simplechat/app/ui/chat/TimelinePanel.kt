@@ -67,6 +67,9 @@ fun TimelinePanel(
     val colors = LocalChatColors.current
     val hasAnswer = view.hasAnswer
     val running = streaming && !hasAnswer
+    // 没有标题（这一轮没思考过）时不折叠，直接展示步骤
+    val header = timelineHeader(view, streaming)
+    val showHeader = header != null
 
     Column(
         modifier = modifier
@@ -77,7 +80,7 @@ fun TimelinePanel(
                 else Modifier.animateContentSize(tween(FoldAnimMs, easing = MotionEasing)),
             ),
     ) {
-        if (view.hasSteps) {
+        if (view.hasSteps && showHeader) {
             Row(
                 modifier = Modifier
                     .clip(PillShape)
@@ -93,7 +96,7 @@ fun TimelinePanel(
                     modifier = Modifier.size(15.dp),
                 )
                 Text(
-                    text = timelineHeader(view, streaming),
+                    text = header.orEmpty(),
                     style = MaterialTheme.typography.titleSmall,
                     color = colors.processText,
                 )
@@ -112,7 +115,7 @@ fun TimelinePanel(
         }
 
         // 流式期间始终展示（过程就是进度）；定稿后只在展开时展示
-        if (running || expanded) {
+        if (running || expanded || !showHeader) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 view.steps.forEach { step ->
                     when (step) {
@@ -140,17 +143,34 @@ fun TimelinePanel(
  * 有正文就说思考用时 —— 后者才是用户折叠过程之后真正想知道的量。
  */
 @Composable
-private fun timelineHeader(view: TimelineView, streaming: Boolean): String {
+private fun timelineHeader(view: TimelineView, streaming: Boolean): String? {
     if (view.hasAnswer) {
+        val seconds = view.thinkingSeconds()
+        /*
+         * 有正文了：只有**真的思考过**才写「已思考（用时 N 秒）」。
+         *
+         * 这一轮可能压根没开思考（只有搜索），以前这里会退回"正在思考" ——
+         * 于是正文都写完了，标题还挂着"正在思考"，纯属谎报。
+         * 没思考过就返回 null：不显示标题，让下面的搜索/浏览行自己说话。
+         */
+        return seconds?.let { stringResource(R.string.thinking_done_seconds, it) }
+    }
+    if (!streaming) return stringResource(R.string.thinking_stopped)
+    val last = view.steps.lastOrNull()
+    /*
+     * 思考块已经收口（服务端发过 content_block_stop）但正文还没开始 ——
+     * 这时候不该再写"正在思考"，那是谎报。改成"已思考（用时 N 秒）"，
+     * 与定稿后的文案一致，只是后面还会继续出现正文。
+     */
+    if (last is TimelineStep.Thinking && !last.active) {
         val seconds = view.thinkingSeconds()
         return if (seconds != null) {
             stringResource(R.string.thinking_done_seconds, seconds)
         } else {
-            stringResource(R.string.thinking_running)
+            stringResource(R.string.process_thought)
         }
     }
-    if (!streaming) return stringResource(R.string.thinking_stopped)
-    return when (val last = view.steps.lastOrNull()) {
+    return when (last) {
         is TimelineStep.Search ->
             if (last.status == ToolStatus.WIP) stringResource(R.string.search_deep_searching)
             else stringResource(R.string.thinking_running)

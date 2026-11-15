@@ -114,11 +114,6 @@ fun InputBar(
     contextStats: ContextStats,
     statsPanelOpen: Boolean,
     onOpenStatsPanel: () -> Unit,
-    /** 当前通道是否支持智能搜索（只有 Anthropic 兼容通道支持）。 */
-    showWebSearch: Boolean = false,
-    /** 智能搜索是否已开启。 */
-    webSearchEnabled: Boolean = false,
-    onToggleWebSearch: () -> Unit = {},
     /** 设备有没有可用的语音识别服务。没有就不露麦克风。 */
     showVoice: Boolean = false,
     /** 是否正在录音 —— 按钮换成"结束"状态。 */
@@ -135,6 +130,10 @@ fun InputBar(
     onVoiceHoldStart: () -> Unit = {},
     /** 松手结束。 */
     onVoiceHoldEnd: () -> Unit = {},
+    /** 按住后上滑取消：不发送、丢弃识别结果。 */
+    onVoiceHoldCancel: () -> Unit = {},
+    /** 外部请求「现在发送一次」。值一变就触发，复用同一条发送路径。 */
+    sendSignal: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalChatColors.current
@@ -148,6 +147,11 @@ fun InputBar(
      * 有字时长按要让位给**选词** —— 那是文本框自己的默认语义，抢掉它编辑会变得很难用。
      */
     val holdToTalkActive = holdToTalkEnabled && text.isEmpty()
+
+    // 语音说完自动发送：外部把 sendSignal 改一下，这里复用同一条发送路径
+    LaunchedEffect(sendSignal) {
+        if (sendSignal > 0) onSend()
+    }
 
     // 面板展开 → 投影淡出；收起 → 淡入。否则接缝处会同时压着两条阴影。
     val shadowElevation by animateDpAsState(
@@ -190,6 +194,27 @@ fun InputBar(
                 )
                 .clip(shape)
                 .background(colors.card)
+                /*
+                 * 按住说话：挂在**整条输入栏**上，而不是输入框上。
+                 *
+                 * 挂在输入框上会跟文本框自己的长按（选词 / 光标）打架 ——
+                 * 那正是"打字和说话互相抢"的来源。这里只在**空输入框**时响应，
+                 * 且**不消费**短按：点一下照常聚焦、光标照常落位。
+                 */
+                .pointerInput(holdToTalkActive) {
+                    if (!holdToTalkActive) return@pointerInput
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        // 先松手就是普通点击，交给文本框
+                        val releasedEarly = withTimeoutOrNull(
+                            viewConfiguration.longPressTimeoutMillis,
+                        ) { waitForUpOrCancellation() }
+                        if (releasedEarly != null) return@awaitEachGesture
+                        onVoiceHoldStart()
+                        waitForUpOrCancellation()
+                        onVoiceHoldEnd()
+                    }
+                }
                 .border(1.dp, colors.outline, shape)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         ) {
@@ -230,101 +255,79 @@ fun InputBar(
                     fieldValue = TextFieldValue(text = text, selection = TextRange(text.length))
                 }
             }
+            BasicTextField(
+                value = fieldValue,
+                onValueChange = {
+                    fieldValue = it
+                    if (it.text != text) onTextChange(it.text)
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 26.dp, max = 160.dp)
+                    .focusRequester(focusRequester)
+                    /*
+                     * 按住说话：只挂在**空输入框**上，且不消费短按 ——
+                     * 点一下照常聚焦、光标照常落位，打字与说话不会互相抢。
+                     */
+                    .pointerInput(holdToTalkActive) {
+                        if (!holdToTalkActive) return@pointerInput
+                        val cancelSlop = VoiceCancelSlop.toPx()
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val releasedEarly = withTimeoutOrNull(
+                                viewConfiguration.longPressTimeoutMillis,
+                            ) { waitForUpOrCancellation() }
+                            if (releasedEarly != null) return@awaitEachGesture
 
-            /*
-             * 输入区 + 「按住说话」热区。
-             *
-             * 长按输入框说话只在**空输入框**上生效，这一点是刻意的：
-             * 输入框里已经有字时，长按的默认语义是**选词**，抢掉它会让编辑变得很难用。
-             * 而空框里本来就没有可选的东西 —— 这时长按除了"说话"没有别的合理动作。
-             *
-             * 实现上用一层透明覆盖层，而不是给 `BasicTextField` 加手势：
-             * 文本框自己会消费长按（起选区），挂在外层抢不过它。
-             * 覆盖层只在空框时存在，点一下照样聚焦并拉起键盘。
-             */
-            Box(modifier = Modifier.fillMaxWidth()) {
-                BasicTextField(
-                    value = fieldValue,
-                    onValueChange = {
-                        fieldValue = it
-                        if (it.text != text) onTextChange(it.text)
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 26.dp, max = 160.dp)
-                        .focusRequester(focusRequester)
-                        // 用户点回输入框时收起面板，避免键盘与面板同时占屏
-                        .onFocusChanged { if (it.isFocused) onTextFieldFocused() },
-                    textStyle = LocalTextStyle.current.merge(
-                        MaterialTheme.typography.bodyLarge.copy(
-                            color = MaterialTheme.colorScheme.onSurface,
-                        ),
-                    ),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    maxLines = 6,
-                    decorationBox = { inner ->
-                        Box {
-                            if (text.isEmpty()) {
-                                Text(
-                                    text = when {
-                                        voiceListening -> stringResource(R.string.voice_listening)
-                                        holdToTalkActive -> stringResource(R.string.input_hint_hold_to_talk)
-                                        else -> stringResource(R.string.input_hint)
-                                    },
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = if (voiceListening) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        colors.placeholder
-                                    },
-                                )
-                            }
-                            inner()
-                        }
-                    },
-                )
-
-                if (holdToTalkActive) {
-                    Box(
-                        modifier = Modifier
-                            .matchParentSize()
-                            .pointerInput(holdToTalkActive) {
-                                /*
-                                 * 自己判定"长按 / 点击"，不用 `detectTapGestures`：
-                                 * 它的 `onLongPress` 回调**不带** PressGestureScope
-                                 * （拿不到 `tryAwaitRelease`），而"按住说话"必须知道
-                                 * 手指什么时候松开。
-                                 *
-                                 * 这里的做法是：按下后等 `longPressTimeoutMillis`；
-                                 *   - 先松手 → 超时协程返回 pending change，当成**点击**
-                                 *   - 先超时 → 返回 null，进入"说话"，一直等到松手才结束
-                                 */
-                                awaitEachGesture {
-                                    val down = awaitFirstDown(requireUnconsumed = false)
-                                    val released = withTimeoutOrNull(
-                                        viewConfiguration.longPressTimeoutMillis,
-                                    ) { waitForUpOrCancellation() }
-
-                                    if (released != null) {
-                                        // 短按：照常聚焦并拉起键盘
-                                        focusRequester.requestFocus()
-                                        keyboard?.show()
-                                        return@awaitEachGesture
-                                    }
-
-                                    down.consume()
-                                    onVoiceHoldStart()
-                                    // 一直等到手指离开（或滑出取消区）
-                                    waitForUpOrCancellation()
-                                    onVoiceHoldEnd()
-                                    // 说完把焦点还给输入框，用户能直接改识别结果
-                                    focusRequester.requestFocus()
-                                    keyboard?.show()
+                            onVoiceHoldStart()
+                            /*
+                             * 按住期间向上滑超过 [VoiceCancelSlop] 就算取消 ——
+                             * 松手时不发送、也不保留识别结果。这是"说错了想撤回"
+                             * 唯一的即时出口：不给它，用户只能等发出去再删。
+                             */
+                            var cancelled = false
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) break
+                                if (down.position.y - change.position.y > cancelSlop) {
+                                    cancelled = true
                                 }
-                            },
-                    )
-                }
-            }
+                                change.consume()
+                            }
+                            if (cancelled) onVoiceHoldCancel() else onVoiceHoldEnd()
+                        }
+                    }
+                    // 用户点回输入框时收起面板，避免键盘与面板同时占屏
+                    .onFocusChanged { if (it.isFocused) onTextFieldFocused() },
+                textStyle = LocalTextStyle.current.merge(
+                    MaterialTheme.typography.bodyLarge.copy(
+                        color = MaterialTheme.colorScheme.onSurface,
+                    ),
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                maxLines = 6,
+                decorationBox = { inner ->
+                    Box {
+                        if (text.isEmpty()) {
+                            Text(
+                                text = when {
+                                    voiceListening -> stringResource(R.string.voice_listening)
+                                    holdToTalkActive -> stringResource(R.string.input_hint_hold_to_talk)
+                                    else -> stringResource(R.string.input_hint)
+                                },
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = if (voiceListening) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    colors.placeholder
+                                },
+                            )
+                        }
+                        inner()
+                    }
+                },
+            )
 
             Spacer(Modifier.size(12.dp))
 
@@ -371,17 +374,6 @@ fun InputBar(
                     expanded = thinkingPanelOpen,
                     onClick = onOpenThinkingPanel,
                 )
-
-                /*
-                 * ── 智能搜索 ─────────────────────────────
-                 *
-                 * **只在扩展通道上出现**。OpenAI 兼容通道根本没有这个能力，
-                 * 露出一个点了也不生效的按钮，比不露更糟（同类判断见 §M5 的 ⊕ 入口）。
-                 */
-                if (showWebSearch) {
-                    WebSearchToggle(enabled = webSearchEnabled, onClick = onToggleWebSearch)
-                }
-
                 // ── 上下文占用 ────────────────────────────
                 ContextMeterPill(
                     stats = contextStats,
@@ -419,28 +411,6 @@ fun InputBar(
                     )
                 }
 
-                /*
-                 * ── 语音输入 ─────────────────────────────
-                 *
-                 * 放在 ⊕ 与发送键之间：位置固定、紧邻发送，录完就能直接发。
-                 * 录音中换成品牌色实心 + 停止图标 —— 与发送键的流式态同一套语言。
-                 */
-                if (showVoice) {
-                    IconCircleButton(
-                        icon = if (voiceListening) AppIcons.Stop else AppIcons.Mic,
-                        contentDescription = stringResource(
-                            if (voiceListening) R.string.voice_stop else R.string.voice_input,
-                        ),
-                        onClick = onToggleVoice,
-                        size = RowButtonSize,
-                        iconSize = if (voiceListening) 14.dp else 18.dp,
-                        background = if (voiceListening) MaterialTheme.colorScheme.primary else null,
-                        tint = if (voiceListening) Color.White else MaterialTheme.colorScheme.onSurface,
-                        outlined = true,
-                        outlineColor = if (voiceListening) MaterialTheme.colorScheme.primary else null,
-                    )
-                }
-
                 SendButton(
                     streaming = streaming,
                     enabled = streaming || text.isNotBlank() || pendingCount > 0,
@@ -453,6 +423,9 @@ fun InputBar(
 
 /** 输入栏第二行的统一控件高度。 */
 private val RowButtonSize = 32.dp
+
+/** 按住说话时，上滑超过这个距离即视为取消。 */
+private val VoiceCancelSlop = 56.dp
 
 /**
  * 思考档位入口。

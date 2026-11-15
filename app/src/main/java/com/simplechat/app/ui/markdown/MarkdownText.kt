@@ -23,6 +23,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -290,7 +291,7 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
  * 当前 8dp + 16dp = 24dp（约 72px）：真机核对时把原先的 12dp + 24dp
  * 一起收紧了一档 —— 那一档是"与改造前一致"的中立值，但聊天界面里偏空。
  */
-private val MarkdownBlockGap = 8.dp
+internal val MarkdownBlockGap = 8.dp
 
 /** 块间距（**外层 Column 那一层**），见 [MarkdownBlockGap] 的实测表。 */
 private val MarkdownBlockColumnGap = 16.dp
@@ -412,7 +413,6 @@ private fun rememberSmoothReveal(streaming: Boolean, value: String): String {
     // 定稿后直接给最新值：不再经过采样状态，避免"最后一帧还差一点"
     return if (streaming) shown else value
 }
-
 
 
 // ══════════════════════════════════════════════════════════
@@ -716,4 +716,3 @@ private fun copyToClipboard(context: Context, text: String) {
     val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
     manager.setPrimaryClip(ClipData.newPlainText("code", text))
 }
-

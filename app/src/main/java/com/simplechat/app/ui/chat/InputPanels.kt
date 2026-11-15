@@ -57,6 +57,7 @@ import com.simplechat.app.ui.common.AppMenu
 import com.simplechat.app.ui.common.AppMenuItem
 import com.simplechat.app.ui.common.AppShadow
 import com.simplechat.app.ui.common.AppSlider
+import com.simplechat.app.ui.common.AppSwitch
 import com.simplechat.app.ui.common.CapsuleButton
 import com.simplechat.app.ui.common.PillShape
 import com.simplechat.app.ui.common.SegmentedSwitch
@@ -164,6 +165,10 @@ fun ThinkingPanelContent(
     onRefreshModels: () -> Unit,
     refreshing: Boolean = false,
     hint: String? = null,
+    /** 当前通道是否支持智能搜索；不支持时不显示这一项。 */
+    showWebSearch: Boolean = false,
+    webSearchEnabled: Boolean = false,
+    onToggleWebSearch: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalChatColors.current
@@ -171,6 +176,37 @@ fun ThinkingPanelContent(
     val supportsThinking = settings.model.supportsThinking
 
     Column(modifier = modifier.fillMaxWidth()) {
+
+        /*
+         * ── 智能搜索 ──────────────────────────────────────
+         *
+         * 放在**最前面**：它是这一轮"要不要联网"的开关，与下面的思考档位同属
+         * "这一条消息怎么生成"。原先它在输入栏上是个独立图标，和思考入口并排时
+         * 两个都是"打开面板"的形状，功能却不同类 —— 收进同一个面板后语义就清楚了。
+         */
+        if (showWebSearch) {
+            PanelSectionTitle(text = stringResource(R.string.web_search))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onToggleWebSearch)
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = stringResource(R.string.web_search),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f),
+                )
+                // 全应用同一个 AppSwitch —— 别在这里用 M3 的 Switch（52dp，比行标题还大）
+                AppSwitch(
+                    checked = webSearchEnabled,
+                    onCheckedChange = { onToggleWebSearch() },
+                )
+            }
+            Spacer(Modifier.size(12.dp))
+        }
 
         // ── 思考档位 ──────────────────────────────────────
         PanelSectionTitle(

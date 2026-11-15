@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -54,6 +55,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -376,11 +378,16 @@ fun ProgressRing(
 // ══════════════════════════════════════════════════════════
 
 /**
- * 紧凑胶囊开关。
+ * 紧凑胶囊开关 —— **全应用唯一的开关**。
  *
- * 不用 Material3 `Switch`：默认 52×32dp，在设置列表里比行标题还抢眼，
- * 而且深色下描边偏粗。这里 40×24dp，轨道用胶囊形、滑块是正圆 ——
+ * 不用 Material3 `Switch`：它默认 52×32dp，在设置列表和输入面板里比行标题还抢眼，
+ * 而且深色下描边偏粗、滑块带一圈投影。这里 38×22dp，轨道胶囊形、滑块正圆 ——
  * 与「图标按钮是圆、带字按钮是胶囊」的规则保持一致。
+ *
+ * ⚠️ 想改开关大小**只改这里**。此前设置页和输入面板各写了一个 M3 `Switch`，
+ * 于是同一个列表里出现了两种大小（52dp 与 40dp），一眼就看出不齐。
+ *
+ * 用 `toggleable` 而不是 `clickable`：读屏才会念"开关，已选中"，而不是"按钮"。
  */
 @Composable
 fun AppSwitch(
@@ -390,19 +397,21 @@ fun AppSwitch(
     enabled: Boolean = true,
 ) {
     val colors = LocalChatColors.current
-    val trackWidth = 40.dp
-    val trackHeight = 24.dp
-    val thumbSize = 18.dp
+    val trackWidth = 38.dp
+    val trackHeight = 22.dp
+    val thumbSize = 16.dp
     val padding = 3.dp
 
     val thumbOffset by animateDpAsState(
         targetValue = if (checked) trackWidth - thumbSize - padding else padding,
+        animationSpec = tween(SwitchThumbMs, easing = MotionEasing),
         label = "switchThumb",
     )
 
     val trackColor = when {
         !enabled -> colors.divider
         checked -> MaterialTheme.colorScheme.primary
+        // 关闭态的轨道用描边色而不是另一种灰：深色下才和卡片分得开
         else -> colors.outline
     }
 
@@ -411,7 +420,12 @@ fun AppSwitch(
             .size(trackWidth, trackHeight)
             .clip(PillShape)
             .background(trackColor)
-            .clickable(enabled = enabled) { onCheckedChange(!checked) },
+            .toggleable(
+                value = checked,
+                enabled = enabled,
+                role = Role.Switch,
+                onValueChange = onCheckedChange,
+            ),
         contentAlignment = Alignment.CenterStart,
     ) {
         Box(
@@ -423,6 +437,9 @@ fun AppSwitch(
         )
     }
 }
+
+/** 滑块滑动时长。够看出"滑过去"，又不至于点完还等它。 */
+private const val SwitchThumbMs = 160
 
 // ══════════════════════════════════════════════════════════
 //  按钮：只有两种形状

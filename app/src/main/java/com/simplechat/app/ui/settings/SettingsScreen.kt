@@ -30,8 +30,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -81,6 +79,7 @@ import com.simplechat.app.ui.common.AppMenuCheck
 import com.simplechat.app.ui.common.AppMenuItem
 import com.simplechat.app.ui.chat.Preset
 import com.simplechat.app.ui.common.AppSlider
+import com.simplechat.app.ui.common.AppSwitch
 import com.simplechat.app.ui.common.ContainerShape
 import com.simplechat.app.ui.common.IconCircleButton
 import com.simplechat.app.ui.common.PillShape
@@ -1552,15 +1551,7 @@ private fun SettingsSwitchRow(
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f),
         )
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = androidx.compose.ui.graphics.Color.White,
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                checkedBorderColor = MaterialTheme.colorScheme.primary,
-            ),
-        )
+        AppSwitch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

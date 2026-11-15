@@ -129,12 +129,15 @@ private const val SwitchLoadTimeoutMs = 2_000L
 private const val DraftSaveDelayMs = 400L
 
 /**
- * 输入栏**下面**那条渐变的宽度（从屏幕底边往上量）。
+ * 输入栏**下面**那条渐变的高度（从屏幕底边往上量）。
  *
  * 只盖底部一条：正文滚到底就在这里化开。输入栏以上不铺任何遮罩 ——
  * 那会把正在读的字从中间洗掉。
+ *
+ * 36dp 那档太窄：深色页面上几乎看不出过渡，正文像被硬边切了一刀。
+ * 放到 64dp 才有"化开"的感觉，也才够盖住输入栏圆角外那圈空隙。
  */
-private val BottomFadeHeight = 36.dp
+private val BottomFadeHeight = 64.dp
 
 /**
  * 淡出带整体下移量：正文多留一点实字，贴着输入栏才淡完（尾段落在输入栏背后）。
@@ -201,6 +204,10 @@ fun ChatScreen(
      * 要**可观察**：用户可能在系统设置里刚授权完回来，这时"长按说话"应该立刻可用，
      * 而不是等下一次重组才悄悄生效。授权回调里也主动刷一次。
      */
+    /** 松手后是否要直接发送；以及驱动发送的信号值。 */
+    var sendAfterVoice by remember { mutableStateOf(false) }
+    var voiceSendSignal by remember { mutableStateOf(0) }
+
     var hasMicrophonePermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
@@ -216,6 +223,18 @@ fun ChatScreen(
             voice.start()
         } else {
             speechError = Res.get(R.string.voice_permission_denied)
+        }
+    }
+
+    // 松手后：识别一结束就发送；没识别到字则提示，不弹键盘
+    LaunchedEffect(voice.state.listening) {
+        if (!voice.state.listening && sendAfterVoice) {
+            sendAfterVoice = false
+            if (input.isBlank()) {
+                speechError = Res.get(R.string.voice_empty)
+            } else {
+                voiceSendSignal++
+            }
         }
     }
 
@@ -1243,8 +1262,16 @@ fun ChatScreen(
                         .height(BottomFadeHeight)
                         .background(
                             Brush.verticalGradient(
+                                /*
+                                 * 起点不透明 0 而是 0.28，末段再收满：
+                                 * 两段线性的渐变在中间那一段太"透"，正文走到这里
+                                 * 会有半截字一直若隐若现。加中间站之后是**越往下越实**，
+                                 * 而不是"忽然开始变淡"。
+                                 */
                                 colorStops = arrayOf(
-                                    0f to Color.Transparent,
+                                    0f to colors.pageBackground.copy(alpha = 0f),
+                                    0.35f to colors.pageBackground.copy(alpha = 0.28f),
+                                    0.68f to colors.pageBackground.copy(alpha = 0.68f),
                                     1f to colors.pageBackground,
                                 ),
                             ),
@@ -1293,10 +1320,6 @@ fun ChatScreen(
                     contextStats = vm.contextStats,
                     statsPanelOpen = panel == InputPanelState.STATS,
                     onOpenStatsPanel = { openPanel(InputPanelState.STATS) },
-                    // 智能搜索只有扩展通道支持，别的通道上不露这个入口
-                    showWebSearch = vm.apiStyle == ApiStyle.ANTHROPIC,
-                    webSearchEnabled = vm.webSearch,
-                    onToggleWebSearch = { vm.toggleWebSearch() },
                     // 语音输入：设备没有识别服务就不露麦克风
                     showVoice = voice.state.available,
                     voiceListening = voice.state.listening,
@@ -1313,7 +1336,16 @@ fun ChatScreen(
                         voiceBase = input
                         voice.start()
                     },
-                    onVoiceHoldEnd = { voice.stop() },
+                    onVoiceHoldEnd = {
+                        // 松手：结束录音，并标记「识别完就发」
+                        sendAfterVoice = true
+                        voice.stop()
+                    },
+                    onVoiceHoldCancel = {
+                        sendAfterVoice = false
+                        voice.cancel()
+                    },
+                    sendSignal = voiceSendSignal,
                     thinkingEnabled = vm.settings.thinkingEnabled,
                     thinkingPanelOpen = panel == InputPanelState.THINKING,
                     onOpenThinkingPanel = { openPanel(InputPanelState.THINKING) },
@@ -1407,6 +1439,9 @@ fun ChatScreen(
                         onRefreshModels = { vm.refreshModels() },
                         refreshing = vm.refreshingModels,
                         hint = vm.modelHint,
+                        showWebSearch = vm.apiStyle == ApiStyle.ANTHROPIC,
+                        webSearchEnabled = vm.webSearch,
+                        onToggleWebSearch = { vm.toggleWebSearch() },
                     )
                 }
 
