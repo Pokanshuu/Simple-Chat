@@ -234,10 +234,9 @@ object ExternalBackup {
                     return Parsed(
                         source = Source.DEEPSEEK,
                         file = file,
-                        warnings = listOf(
-                            AppText.of(R.string.warn_single_branch),
-                            AppText.of(R.string.warn_deepseek_limited),
-                        ),
+                        // 分支从 v1.1.1 起整棵保留（见 DeepSeekHistory.mapSession），
+                        // 所以这里**不再**挂"只导入了当前分支"那条提示
+                        warnings = listOf(AppText.of(R.string.warn_deepseek_limited)),
                     )
                 }
 
