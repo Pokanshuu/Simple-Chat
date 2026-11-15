@@ -1,6 +1,6 @@
 # SimpleChat
 
-> 轻量、原生性能的 Android AI 对话客户端。Jetpack Compose 实现，release 经 R8 压缩后约 2.17 MB。
+> 轻量、原生性能的 Android AI 对话客户端。Jetpack Compose 实现，release 经 R8 压缩后约 3.7 MB。
 
 **中文 | [English](README.en.md)**
 
@@ -49,6 +49,9 @@
 - 消息树：以 `parentId` 组织。重新生成为会话内分支，切换版本时下游整段跟随，不删除历史；长按支持会话间分叉。
 - 上下文管理：CJK 加权 token 估算、输入栏占用圆环、增量滚动压缩（保留最近 6 条完整消息）。
 - 附件：拍照 / 相册 / 文件三个入口，均无需申请权限；支持图片、纯文本、docx、PDF。
+  导入的图片字节落在应用私有目录，数据库只存文件名 —— 零配额导入，也不会有
+  「一行太大读不出来」的问题；点图进入整屏查看，多图左右翻。
+- 模型能力适配：所选模型不支持图片时，发请求会跳过图片并提示，而不是被服务端拒绝。
 - 数据出口：JSON 备份、**ZIP 归档**（备份 + 每个会话的 Markdown 文稿）与 Markdown 文稿导出；
   支持导入本应用备份、ZIP 归档、Chatbox 备份与 DeepSeek 官方导出
 （`deepseek_data-*.zip`）；导入方式可选增量 / 覆盖同名 / 同名新命名。
@@ -122,7 +125,7 @@ keyPassword=...
 ## 开发
 
 ```bash
-./gradlew testDebugUnitTest    # 单元测试（271 项）
+./gradlew testDebugUnitTest    # 单元测试（443 项）
 ./gradlew assembleDebug        # debug 包，包名后缀 .debug
 ./gradlew assembleRelease      # release 包，需签名配置
 ```

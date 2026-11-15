@@ -1,6 +1,6 @@
 # SimpleChat
 
-> A lightweight, natively fast AI chat client for Android. Built with Jetpack Compose; the R8-minified release APK is about 2.17 MB.
+> A lightweight, natively fast AI chat client for Android. Built with Jetpack Compose; the R8-minified release APK is about 3.7 MB.
 
 **[中文](README.md) | English**
 
@@ -46,7 +46,8 @@ Good for:
 - **Voice input and read-aloud**: the system recogniser and system TTS, no extra backend; code blocks and tables are stripped before reading.
 - Message tree organised by `parentId`. Regenerating creates an in-conversation branch; switching versions carries the downstream along instead of deleting history; long-press forks into a new conversation.
 - Context management: CJK-weighted token estimate, usage ring on the input bar, incremental compaction (keeps the last 6 messages in full).
-- Attachments: camera / gallery / files, none of which need runtime permission; images, plain text, docx and PDF.
+- Attachments: camera / gallery / files, none of which need runtime permission; images, plain text, docx and PDF. Imported images are stored as files in app-private storage with only the file name kept in the database, so imports have no quota and a row can never grow too large to read. Tapping an image opens a full-screen viewer with swipe between images.
+- Model capability aware: when the selected model does not accept images, they are skipped with a notice instead of being rejected by the server.
 - Data out: JSON backup, **ZIP archive** (backup plus a Markdown document per conversation) and Markdown export; imports this app's backups, ZIP archives, Chatbox backups and DeepSeek official exports (deepseek_data-*.zip), with three import modes: add new only, overwrite same name, or keep both.
 - Search: full-text over titles and bodies, with hit snippets in the results.
 - Long messages: collapsed past 10 lines, whole message stays tappable once expanded.
@@ -118,7 +119,7 @@ When the file is missing, `assembleRelease` falls back to the **debug signature*
 ## Development
 
 ```bash
-./gradlew testDebugUnitTest    # unit tests (271)
+./gradlew testDebugUnitTest    # unit tests (443)
 ./gradlew assembleDebug        # debug build, package suffix .debug
 ./gradlew assembleRelease      # release build, needs signing config
 ```
