@@ -1442,7 +1442,7 @@ fun ChatScreen(
                         onRefreshModels = { vm.refreshModels() },
                         refreshing = vm.refreshingModels,
                         hint = vm.modelHint,
-                        showWebSearch = vm.apiStyle == ApiStyle.ANTHROPIC,
+                        showWebSearch = vm.supportsWebSearch,
                         webSearchEnabled = vm.webSearch,
                         onToggleWebSearch = { vm.toggleWebSearch() },
                     )

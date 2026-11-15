@@ -902,13 +902,20 @@ private fun ApiPage(
             value = stringResource(ApiStylePreference.fromId(stored.apiStyleId).labelRes),
             onClick = { onPick(SettingsDialog.ApiStyle) },
         )
-        RowDivider(inset = 16.dp)
-        SettingsSwitchRow(
-            icon = null,
-            label = stringResource(R.string.settings_web_search),
-            checked = stored.webSearch,
-            onCheckedChange = onWebSearch,
-        )
+        /*
+         * 联网搜索只在扩展通道上有意义（`deepseek_web_search` 是那套协议里的工具），
+         * OpenAI 兼容通道没有对应入口 —— 那就**不显示**这一行，而不是显示一个
+         * 打开了也没用的开关。
+         */
+        if (stored.supportsWebSearch) {
+            RowDivider(inset = 16.dp)
+            SettingsSwitchRow(
+                icon = null,
+                label = stringResource(R.string.settings_web_search),
+                checked = stored.webSearch,
+                onCheckedChange = onWebSearch,
+            )
+        }
         RowDivider(inset = 16.dp)
         SettingsNavRow(
             icon = null,

@@ -1,6 +1,8 @@
 package com.simplechat.app.data
 
 import android.content.Context
+import com.simplechat.app.net.ApiStyle
+import com.simplechat.app.net.ProviderKind
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -78,6 +80,24 @@ data class StoredSettings(
 
 ) {
     val hasKey: Boolean get() = apiKey.isNotBlank()
+
+    /**
+     * 这一套配置**实际走的是不是扩展通道**（联网搜索等能力的唯一前提）。
+     *
+     * 判据与请求时用的是同一个 [`ApiStyle.resolve`]：配置档位 + 端点共同决定。
+     * 用在设置页与输入面板上"要不要显示联网搜索" —— 只有扩展通道有
+     * `deepseek_web_search` 这个工具，OpenAI 兼容通道没有对应入口，
+     * 那就别把一个打开了也没用的开关摆在用户面前。
+     */
+    val resolvedApiStyle: ApiStyle
+        get() = ApiStyle.resolve(
+            kind = runCatching { ProviderKind.valueOf(providerId) }.getOrDefault(ProviderKind.DEEPSEEK),
+            configuredId = apiStyleId,
+            baseUrl = baseUrl,
+        )
+
+    /** 当前通道是否支持联网搜索。 */
+    val supportsWebSearch: Boolean get() = resolvedApiStyle == ApiStyle.ANTHROPIC
 }
 
 /**

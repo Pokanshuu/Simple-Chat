@@ -169,6 +169,14 @@ class ChatViewModel(
     var apiStyle by mutableStateOf(ApiStyle.ANTHROPIC)
         private set
 
+    /**
+     * 当前通道能不能联网搜索 —— 它决定**要不要显示**那个开关。
+     *
+     * 搜索走的是扩展通道的工具（`deepseek_web_search`），OpenAI 兼容通道没有等价入口。
+     * 所以通道不支持时干脆不显示，而不是留一个按下去什么都不发生的开关。
+     */
+    val supportsWebSearch: Boolean get() = apiStyle == ApiStyle.ANTHROPIC
+
     /** 智能搜索开关：这一轮要不要向服务端声明 `deepseek_web_search`。 */
     var webSearch by mutableStateOf(false)
         private set
@@ -193,6 +201,8 @@ class ChatViewModel(
 
     /** 切换智能搜索（输入栏那个开关）。立即落库，下次启动保持。 */
     fun toggleWebSearch() {
+        // 通道不支持时不该有入口；这里再挡一道，避免其它路径把它打开
+        if (!supportsWebSearch) return
         val next = !webSearch
         webSearch = next
         viewModelScope.launch { settingsStore.setWebSearch(next) }
