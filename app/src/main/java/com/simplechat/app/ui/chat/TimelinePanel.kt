@@ -81,36 +81,13 @@ fun TimelinePanel(
             ),
     ) {
         if (view.hasSteps && showHeader) {
-            Row(
-                modifier = Modifier
-                    .clip(PillShape)
-                    .clickable(enabled = !running, onClick = onToggleExpand)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Icon(
-                    imageVector = AppIcons.Brain,
-                    contentDescription = null,
-                    tint = colors.processText,
-                    modifier = Modifier.size(15.dp),
-                )
-                Text(
-                    text = header.orEmpty(),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = colors.processText,
-                )
-                if (!running) {
-                    Icon(
-                        imageVector = if (expanded) AppIcons.ChevronUp else AppIcons.ChevronDown,
-                        contentDescription = stringResource(
-                            if (expanded) R.string.process_collapse else R.string.process_expand,
-                        ),
-                        tint = colors.processText,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-            }
+            // 与 OpenAI 通道**同一个**组件、同一套措辞（见 ThinkingHeader）
+            ThinkingHeader(
+                label = header.orEmpty(),
+                expanded = expanded,
+                enabled = !running,
+                onToggle = onToggleExpand,
+            )
             Spacer(Modifier.size(8.dp))
         }
 
@@ -167,7 +144,7 @@ private fun timelineHeader(view: TimelineView, streaming: Boolean): String? {
         return if (seconds != null) {
             stringResource(R.string.thinking_done_seconds, seconds)
         } else {
-            stringResource(R.string.process_thought)
+            stringResource(R.string.thinking_done)
         }
     }
     return when (last) {

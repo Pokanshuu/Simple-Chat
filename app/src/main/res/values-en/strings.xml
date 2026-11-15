@@ -352,9 +352,6 @@
     <string name="msg_index_no_messages">No messages yet</string>
 
     <!-- ── Process panel ─────────────────────────────────────── -->
-    <string name="process_thinking">Thinking</string>
-    <string name="process_thought">Finished thinking</string>
-    <string name="process_thought_seconds">Thought for %1$d seconds</string>
     <string name="process_collapse">Collapse</string>
     <string name="process_expand">Expand</string>
 
@@ -428,6 +425,7 @@
 
     <!-- Thinking header (official wording) -->
     <string name="thinking_running">Thinking</string>
+    <string name="thinking_done">Finished thinking</string>
     <string name="thinking_done_seconds">Thought for %1$d sec</string>
     <string name="thinking_stopped">Stopped</string>
 

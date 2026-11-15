@@ -353,9 +353,6 @@
     <string name="msg_index_no_messages">暂无消息</string>
 
     <!-- ── 过程面板（ProcessPanel.kt） ─────────────────────────── -->
-    <string name="process_thinking">正在思考</string>
-    <string name="process_thought">已深度思考</string>
-    <string name="process_thought_seconds">已深度思考 · %1$d 秒</string>
     <string name="process_collapse">折叠</string>
     <string name="process_expand">展开</string>
 
@@ -428,6 +425,7 @@
 
     <!-- 思考标题（扩展通道用「已思考（用时 N 秒）」的官方措辞） -->
     <string name="thinking_running">正在思考</string>
+    <string name="thinking_done">已思考</string>
     <string name="thinking_done_seconds">已思考（用时 %1$d 秒）</string>
     <string name="thinking_stopped">已停止</string>
 

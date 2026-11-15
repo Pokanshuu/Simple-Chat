@@ -59,7 +59,7 @@ import com.simplechat.app.ui.theme.ProcessTextStyle
  *    上限 [TailHeight]（约 4 行），内容**底部对齐** —— 新行从下方接入，
  *    旧行向上溢出被裁切，因此永远只看得见最后几行，且布局**不跳动**。
  *    溢出时顶部有渐隐遮罩。
- * 2. **思维链写完 + 折叠**：一行摘要「已深度思考 · 8 秒 ⌄」。
+ * 2. **思维链写完 + 折叠**：一行摘要「已思考（用时 8 秒）⌄」。
  * 3. **思维链写完 + 展开**：完整内容，高度不限。
  *
  * ⚠️ 判据是 [reasoningStreaming]（= 还在流 **且** 思维链没写完），
@@ -97,29 +97,13 @@ fun ProcessPanel(
             ),
     ) {
         // ── 标题行 ────────────────────────────────────────
-        Row(
-            modifier = Modifier
-                .clip(PillShape)
-                .clickable(enabled = !reasoningStreaming, onClick = onToggleExpand)
-                .padding(horizontal = 8.dp, vertical = 4.dp)
-                .offset(x = (-8).dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Text(
-                text = headerText(reasoningStreaming, reasoningSeconds),
-                style = MaterialTheme.typography.titleSmall,
-                color = colors.processText,
-            )
-            if (!reasoningStreaming) {
-                Icon(
-                    imageVector = if (expanded) AppIcons.ChevronUp else AppIcons.ChevronDown,
-                    contentDescription = if (expanded) stringResource(R.string.process_collapse) else stringResource(R.string.process_expand),
-                    tint = colors.processText,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-        }
+        // 与扩展通道**同一个**组件、同一套措辞（见 ThinkingHeader）
+        ThinkingHeader(
+            label = thinkingLabel(running = reasoningStreaming, seconds = reasoningSeconds),
+            expanded = expanded,
+            enabled = !reasoningStreaming,
+            onToggle = onToggleExpand,
+        )
 
         Spacer(Modifier.size(8.dp))
 
@@ -131,11 +115,6 @@ fun ProcessPanel(
     }
 }
 
-private fun headerText(reasoningStreaming: Boolean, seconds: Long?): String = when {
-    reasoningStreaming -> Res.get(R.string.process_thinking)
-    seconds != null -> Res.get(R.string.process_thought_seconds, seconds)
-    else -> Res.get(R.string.process_thought)
-}
 
 /**
  * Tail 模式：高度 = min(内容高度, [TailHeight])，内容底部对齐。
