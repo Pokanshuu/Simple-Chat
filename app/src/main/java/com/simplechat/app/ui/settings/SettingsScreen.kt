@@ -192,6 +192,8 @@ fun SettingsScreen(
     // 导入进度：null = 没在导入；0..1 = 解析进度（拷贝阶段是 indeterminate）
     val importProgress = remember { MutableStateFlow<Float?>(null) }
     val importPercent by importProgress.collectAsState()
+    // 读文件 / 开包阶段：没有可用进度，界面给循环进度条 + 「读取中」
+    var importReading by remember { mutableStateOf(false) }
     var presets by remember { mutableStateOf<List<Preset>>(emptyList()) }
 
     LaunchedEffect(Unit) { store.flow.collect { stored = it } }
@@ -243,8 +245,8 @@ fun SettingsScreen(
              * 或者卡到用户以为"点了没反应"。这里改成按块拷贝 —— 内存占用是常量，
              * 之后 `ZipFile` 直接按中央目录读这个文件。
              */
-            importProgress.value = 0f
-            dataMessage = Res.get(R.string.import_reading)
+            importReading = true
+            dataMessage = null
             val file = withContext(Dispatchers.IO) {
                 runCatching {
                     val target = File(context.cacheDir, "import-${System.currentTimeMillis()}.bak")
@@ -256,10 +258,12 @@ fun SettingsScreen(
             }
             if (file == null || file.length() == 0L) {
                 file?.delete()
+                importReading = false
                 dataMessage = Res.get(R.string.import_read_failed)
             } else {
                 dataMessage = null
                 importProgress.value = null
+                importReading = false
                 pendingImport = file
                 dialog = SettingsDialog.ImportMode
             }
@@ -369,6 +373,7 @@ fun SettingsScreen(
                         SettingsPage.DATA -> DataPage(
                             message = dataMessage,
                             progress = importPercent,
+                            reading = importReading,
                             onExport = { startExport() },
                             onExportArchive = { startArchiveExport() },
                             onImport = {
@@ -544,13 +549,14 @@ fun SettingsScreen(
                 if (file == null) return@ChoiceDialog
                 scope.launch {
                     dataMessage = Res.get(R.string.import_working)
-                    importProgress.value = 0f
+                    importPercent
                     // 认得三种备份：本应用的 JSON / ZIP、Chatbox 的 ZIP / JSON、DeepSeek 导出
                     val outcome = runCatching {
                         withContext(Dispatchers.IO) {
                             repository.importExternal(file, context.cacheDir, mode) { p ->
-                                // 回调来自 IO 线程：StateFlow 是线程安全的，界面侧 collectAsState 收
-                                importProgress.value = p.coerceIn(0f, 1f)
+                                // 回调来自 IO 线程：StateFlow 是线程安全的，界面侧 collectAsState 收。
+                                // 0 就先不给 —— 停在 0% 看着像卡死，等真有进展再显示百分比
+                                if (p > 0f) importProgress.value = p.coerceIn(0f, 1f)
                             }
                         }
                     }
@@ -804,8 +810,10 @@ private fun RootPage(
 @Composable
 private fun DataPage(
     message: String?,
-    /** 导入进度：null = 没在导入；0..1 = 已解析的会话占比。 */
+    /** 确定进度：null = 还没开始或已经结束；0..1 = 已解析的会话占比。 */
     progress: Float? = null,
+    /** 无进度阶段（读文件、开包）—— 给循环进度条，别让界面看着像卡死。 */
+    reading: Boolean = false,
     onExport: () -> Unit,
     onExportArchive: () -> Unit,
     onImport: () -> Unit,
@@ -831,7 +839,7 @@ private fun DataPage(
             hint = stringResource(R.string.settings_import_all_summary),
             onClick = onImport,
             // 导入期间不能重复点：同一份包并发解析会把内存和数据库都顶爆
-            enabled = progress == null,
+            enabled = !reading && progress == null,
         )
     }
 
@@ -841,19 +849,36 @@ private fun DataPage(
      *
      * 解析阶段按"已处理多少条会话"给确定进度；拷贝与收尾阶段只有 indeterminate。
      */
-    if (progress != null) {
+    if (reading || progress != null) {
         Spacer(Modifier.size(12.dp))
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-            LinearProgressIndicator(
-                modifier = Modifier.fillMaxWidth(),
-                progress = { progress },
-            )
-            Spacer(Modifier.size(6.dp))
-            Text(
-                text = stringResource(R.string.import_progress, (progress * 100).toInt()),
-                style = MaterialTheme.typography.labelMedium,
-                color = LocalChatColors.current.placeholder,
-            )
+            /*
+             * 两个阶段用两种进度条：
+             * - **读取中**（落盘、开 ZIP、读索引）：无从得知比例 → 循环进度条；
+             * - **导入中**（逐条会话）：按已处理会话数给百分比。
+             *
+             * 先前读文件阶段也塞了个 0% 的确定进度条，几十秒不动 —— 看着就是"卡死"。
+             */
+            if (reading) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.size(6.dp))
+                Text(
+                    text = stringResource(R.string.import_reading),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = LocalChatColors.current.placeholder,
+                )
+            } else if (progress != null) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth(),
+                    progress = { progress },
+                )
+                Spacer(Modifier.size(6.dp))
+                Text(
+                    text = stringResource(R.string.import_progress, (progress * 100).toInt()),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = LocalChatColors.current.placeholder,
+                )
+            }
         }
     }
 

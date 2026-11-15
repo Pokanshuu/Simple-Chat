@@ -100,7 +100,8 @@ internal object DeepSeekHistory {
             // 进度按"解析完多少条会话"报，含图片读取 —— 228MB 的包主要时间都在这
             onProgress((done.toFloat() / total).coerceIn(0f, 1f))
             done++
-            val raw = runCatching { zip.getInputStream(entry).readBytes().decodeToString() }
+            // 单个会话 JSON 也有上限：异常大的会话宁可跳过，也不要把整个导入拖垮
+            val raw = runCatching { zip.readBounded(entry, MaxSessionJsonBytes)?.decodeToString() }
                 .getOrNull() ?: return@mapNotNull null
             val obj = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull()
                 ?: return@mapNotNull null
@@ -279,9 +280,16 @@ internal object DeepSeekHistory {
         naming: ExternalBackup.ImportNaming,
     ): Attachment? {
         val entry = zip.getEntry(path) ?: return null
-        val bytes = runCatching { zip.getInputStream(entry).readBytes() }.getOrNull()
+        /*
+         * ⚠️ 必须在**读之前**看上限定。
+         *
+         * 先 `readBytes()` 再判断大小等于没判：一张 43MB 的截图会先分配 43MB，
+         * 而那时堆里往往只剩二三十兆 —— 直接 OOM（实测报错
+         * "Failed to allocate a 45388952 byte allocation"）。
+         */
+        val bytes = runCatching { zip.readBounded(entry, MaxSingleImageBytes) }.getOrNull()
             ?: return null
-        if (bytes.isEmpty() || bytes.size > MaxSingleImageBytes) return null
+        if (bytes.isEmpty()) return null
         val size = imageSizeOf(bytes)
         return Attachment(
             kind = Attachment.Kind.IMAGE,
@@ -296,6 +304,34 @@ internal object DeepSeekHistory {
             height = size?.second ?: 0,
         )
     }
+
+    /**
+     * 有界读取：超过 [limit] 直接放弃（返回 null），不会先把整块分配出来。
+     *
+     * 这是修 OOM 的关键 —— `readBytes()` 是按条目大小一次性分配的，
+     * 而归档里完全可能存在几十兆的图片，堆里根本放不下。
+     */
+    private fun ZipFile.readBounded(entry: java.util.zip.ZipEntry, limit: Int): ByteArray? {
+        // 中央目录里有长度：能提前否掉就不读
+        if (entry.size > limit) return null
+        val expected = entry.size.coerceAtLeast(0L).toInt()
+        val out = java.io.ByteArrayOutputStream(minOf(expected, limit))
+        getInputStream(entry).use { input ->
+            val buffer = ByteArray(BufferChunk)
+            var total = 0
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                total += read
+                if (total > limit) return null
+                out.write(buffer, 0, read)
+            }
+        }
+        return out.toByteArray()
+    }
+
+    /** 读取用的块大小。64KB：够快，又不会自己变成一次大分配。 */
+    private const val BufferChunk = 64 * 1024
 
     private fun readJson(zip: ZipFile, name: String): JsonObject? {
         val entry = zip.getEntry(name) ?: return null
@@ -323,10 +359,13 @@ internal object DeepSeekHistory {
     private fun JsonObject.longOrZero(key: String): Long = long(key) ?: 0L
 
     /** 单张图片上限：再大的塞进数据库只会拖垮列表滚动。 */
-    private const val MaxSingleImageBytes = 8 * 1024 * 1024
+    private const val MaxSingleImageBytes = 6 * 1024 * 1024
 
     /** 一次导入的图片总量上限（base64 之后还会再涨三分之一）。 */
-    private const val MaxImportedImageBytes = 48 * 1024 * 1024
+    private const val MaxImportedImageBytes = 24 * 1024 * 1024
+
+    /** 单个会话 JSON 的上限。超过就跳过这一条会话。 */
+    private const val MaxSessionJsonBytes = 24 * 1024 * 1024
 
     /** 没有标题的会话用首条提问的前若干字当标题。 */
     private const val FallbackTitleChars = 24
