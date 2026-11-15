@@ -12,6 +12,8 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.simplechat.app.R
 import com.simplechat.app.data.Attachment
 import com.simplechat.app.data.ChatRepository
+import com.simplechat.app.ui.markdown.warmMarkdownCache
+import kotlinx.coroutines.Dispatchers
 import com.simplechat.app.data.Res
 import com.simplechat.app.data.SettingsStore
 import com.simplechat.app.data.StoredSettings
@@ -62,6 +64,9 @@ import kotlinx.coroutines.withContext
  *   （≈ 一帧一次，对齐官方 demo 的 rAF 节拍），避免每个 token 都触发列表重组（§8）。
  * - **不发送 `reasoning_content`**：本期不带 `tools`，官方明确无需回传（§11.1）。
  */
+/** 换会话时后台预热的尾部消息条数：贴底打开先看到的就是这几条。 */
+private const val WarmTailMessages = 10
+
 class ChatViewModel(
     private val chatApi: ChatApi,
     private val settingsStore: SettingsStore,
@@ -370,6 +375,26 @@ class ChatViewModel(
             val loaded = repository.loadActivePath(id)
             val loadedCompaction = repository.getCompactions(id).lastOrNull()
             val conversation = repository.findConversation(id)
+
+            if (generation != switchGeneration) return@launch
+
+            /*
+             * ★ **先预热，再交给界面。**
+             *
+             * Markdown 解析是同步的（见 `MarkdownText` 的 `MarkdownStateCache`），
+             * 一条长消息第一次组合会在**主线程**逐块解析 —— 五百条消息的会话里，
+             * 这一步能吃掉几十毫秒，正好压在"侧边栏收起"和转圈动画上：
+             * 动画自己也会卡，转圈就白转了。
+             *
+             * 所以把"打开就能看到的那几条"（贴底打开 = 尾部）在**后台**先解析好，
+             * 再 publish 给界面。列表真正组合时只命中缓存，主线程保持空闲，
+             * 转圈因此是顺的。
+             */
+            withContext(Dispatchers.Default) {
+                loaded.asReversed().take(WarmTailMessages).forEach { message ->
+                    warmMarkdownCache(message.content)
+                }
+            }
 
             if (generation != switchGeneration) return@launch
 

@@ -26,7 +26,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.map
 
 /**
@@ -248,9 +250,18 @@ class ChatRepository(private val db: AppDatabase) {
     /** 当前对话：从根沿 active 走到底。 */
     suspend fun loadActivePath(conversationId: String): List<UiMessage> {
         val all = loadMessagesSafely(conversationId)
-        val counts = MessageTree.siblingCounts(all)
-        return MessageTree.activePath(all).map { entity ->
-            entity.toUi().copy(variantCount = counts[entity.parentId] ?: 1)
+        /*
+         * 映射放到后台线程。
+         *
+         * `toUi()` 要解 timeline / attachments 两段 JSON 并构造字符串，几百条消息
+         * 累计是几十毫秒级的活 —— 在调用方（主线程）上做，正好卡在"侧边栏收起来"
+         * 那段动画里，看起来就是动画一卡、然后内容才出现。
+         */
+        return withContext(Dispatchers.Default) {
+            val counts = MessageTree.siblingCounts(all)
+            MessageTree.activePath(all).map { entity ->
+                entity.toUi().copy(variantCount = counts[entity.parentId] ?: 1)
+            }
         }
     }
 

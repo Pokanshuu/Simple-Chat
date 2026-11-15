@@ -124,6 +124,9 @@ private const val BottomSettleMs = 900L
  */
 private const val HugeMessageChars = 20_000
 
+/** 换会话时，慢过这么久才显示转圈 —— 短会话不该闪一下圈圈。 */
+private const val SpinnerDelayMs = 120L
+
 /** 等新会话内容就位的兜底上限。超过就当它已经好了，不能让界面停在透明态。 */
 private const val SwitchLoadTimeoutMs = 2_000L
 
@@ -587,24 +590,24 @@ fun ChatScreen(
     /** 换会话期间列表还没就位 —— 用来决定要不要显示转圈。 */
     var loadingConversation by remember { mutableStateOf(false) }
 
-    /**
-     * 这个会话是不是"超长对话"（含单条两万字以上的消息）。
-     *
-     * 由切换 effect 在**读完库之后**判定 —— 切换那一刻 `vm.messages` 还是上一个会话的，
-     * 提前判会判错。
-     */
-    var hugeConversation by remember { mutableStateOf(false) }
-
-    /** 真正显示转圈。只有超长对话才置真。 */
+    /** 真正显示转圈。 */
     var showLoading by remember { mutableStateOf(false) }
 
-    LaunchedEffect(loadingConversation, hugeConversation) {
-        /*
-         * **只有超长对话才转圈。**
-         * 普通对话（哪怕很长）直接出内容 —— 首次布局对它们本来就是毫秒级的事，
-         * 闪个圈反而像卡了一下（对齐官方）。
-         */
-        showLoading = loadingConversation && hugeConversation
+    /*
+     * 转圈的时机：**慢过一小会儿才转**。
+     *
+     * 先前是"读完库之后才知道是不是超长对话"，可那时慢的地方已经过去了 ——
+     * 用户看到的是一段没有反馈的空白。现在改成按**耗时**判：
+     * 大多数会话几十毫秒就出来了，来不及转圈；真慢的（几百条消息、带图片）才会亮 ——
+     * 这也正好是用户看到"侧边栏动画卡住"的那一段。
+     */
+    LaunchedEffect(loadingConversation) {
+        if (!loadingConversation) {
+            showLoading = false
+            return@LaunchedEffect
+        }
+        delay(SpinnerDelayMs)
+        showLoading = true
     }
 
     /**
@@ -924,10 +927,7 @@ fun ChatScreen(
              */
             dissolve.snapTo(0f)
             awaitLoaded()
-            /*
-             * 读完库之后再判定"超长" —— 此时 `vm.messages` 才是新会话的。
-             */
-            hugeConversation = (vm.messages.maxOfOrNull { it.content.length } ?: 0) > HugeMessageChars
+
 
             /*
              * ★ 首屏贴底必须**逐帧补**，不能只滚一次。
