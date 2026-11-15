@@ -90,6 +90,59 @@ class DeepSeekHistoryTest {
 
     // ── 一条完整会话 ────────────────────────────────────────
 
+    @Test
+    fun `整棵树都导入，兄弟版本按变体保留`() {
+        val doc = session(
+            """
+            {"id": "s9", "title": "带分支", "current_message_id": 4,
+             "inserted_at": "2026-11-11T02:00:00.000Z", "updated_at": "2026-11-11T02:00:01.000Z",
+             "messages": [
+               {"id": 1, "parent_id": null, "role": "USER", "status": "FINISHED",
+                "fragments": [{"type": "REQUEST", "content": "问题"}]},
+               {"id": 2, "parent_id": 1, "role": "ASSISTANT", "status": "FINISHED",
+                "fragments": [{"type": "RESPONSE", "content": "旧回答"}]},
+               {"id": 3, "parent_id": 1, "role": "ASSISTANT", "status": "FINISHED",
+                "fragments": [{"type": "RESPONSE", "content": "新回答"}]},
+               {"id": 4, "parent_id": 3, "role": "USER", "status": "FINISHED",
+                "fragments": [{"type": "REQUEST", "content": "接着问"}]}
+             ]}
+            """.trimIndent(),
+        )
+        val conversation = DeepSeekHistory.mapSession(doc, naming) { null }!!
+
+        // 四条都在 —— 分支是数据里就有的，不是包的限制
+        assertEquals(4, conversation.messages.size)
+
+        val byId = conversation.messages.associateBy { it.id }
+        val old = byId.getValue("deepseek-s9-2")
+        val new = byId.getValue("deepseek-s9-3")
+        // 同一父下的两个回答 = 两个版本，当前分支上的那条被选中
+        assertEquals(0, old.variantIndex)
+        assertEquals(1, new.variantIndex)
+        assertEquals(false, old.active)
+        assertEquals(true, new.active)
+        // 旧分支的下游没有因为"没被选中"而丢掉
+        assertEquals("deepseek-s9-3", byId.getValue("deepseek-s9-4").parentId)
+        assertEquals(true, byId.getValue("deepseek-s9-4").active)
+    }
+
+    @Test
+    fun `断链的消息不导入`() {
+        val doc = session(
+            """
+            {"id": "s10", "title": "断链", "current_message_id": 1,
+             "inserted_at": "2026-11-11T02:00:00.000Z", "updated_at": "2026-11-11T02:00:01.000Z",
+             "messages": [
+               {"id": 1, "parent_id": null, "role": "USER", "status": "FINISHED",
+                "fragments": [{"type": "REQUEST", "content": "问题"}]},
+               {"id": 7, "parent_id": 999, "role": "ASSISTANT", "status": "FINISHED",
+                "fragments": [{"type": "RESPONSE", "content": "孤儿"}]}
+             ]}
+            """.trimIndent(),
+        )
+        val conversation = DeepSeekHistory.mapSession(doc, naming) { null }!!
+        assertEquals(listOf("deepseek-s10-1"), conversation.messages.map { it.id })
+    }
     private val full = session(
         """
         {

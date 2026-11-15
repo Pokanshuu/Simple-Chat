@@ -141,11 +141,65 @@ internal object DeepSeekHistory {
         imageOf: (String) -> Attachment?,
     ): BackupConversation? {
         val sessionId = session.str("id") ?: return null
-        val messages = session.arrOrEmpty("messages")
-        if (messages.isEmpty()) return null
+        val raw = session.arrOrEmpty("messages")
+        if (raw.isEmpty()) return null
 
-        val branch = linearize(messages, session.long("current_message_id"))
+        /*
+         * ★ **整棵树都导，不只当前分支。**
+         *
+         * 归档里每条消息都带 `parent_id`（官方 README 也写明"按 id / parent_id 还原"），
+         * 所以分支本来就在数据里 —— 早先只导当前分支是**我们的取舍**，不是包的限制。
+         * 我们的树模型（`parentId` + `variantIndex` + `active`）能原样表达它：
+         * 同父下按 id 升序编 `variantIndex`，当前正看着的那条标 `active`；
+         * 不在当前路径上的分支，按官方规则"默认选中 id 最大的子消息"。
+         */
+        val byNumber = LinkedHashMap<Long, JsonObject>()
+        for (message in raw) {
+            message.long("id")?.let { id -> if (id !in byNumber) byNumber[id] = message }
+        }
+        if (byNumber.isEmpty()) return null
+
+        // 当前分支：既用来判定"哪一条是选中的版本"，也用来取首条提问当标题
+        val branch = linearize(raw, session.long("current_message_id"))
         if (branch.isEmpty()) return null
+        val branchIds = branch.mapNotNull { it.long("id") }.toHashSet()
+
+        /*
+         * 按父节点分组，顺带把"断链"的行筛掉：`parent_id` 指向不存在的消息时，
+         * 那一支永远连不到根 —— 留着它只会在界面里变成一段谁也不认识的孤儿。
+         */
+        val childrenOf = LinkedHashMap<Long?, MutableList<Long>>()
+        for ((id, message) in byNumber) {
+            val rawParent = message.long("parent_id")
+            val parent = when {
+                rawParent == null -> null                       // 根
+                byNumber.containsKey(rawParent) -> rawParent     // 正常父子
+                else -> continue                                 // 断链：整支丢掉
+            }
+            childrenOf.getOrPut(parent) { mutableListOf() } += id
+        }
+        childrenOf.values.forEach { it.sort() }
+
+        // BFS 出全树顺序（父在子前，便于阅读与排错）
+        val ordered = ArrayList<Long>(byNumber.size)
+        val visited = HashSet<Long>()
+        val queue = ArrayDeque<Long>()
+        childrenOf[null]?.let { queue.addAll(it) }
+        while (queue.isNotEmpty()) {
+            val id = queue.removeFirst()
+            if (!visited.add(id)) continue
+            ordered += id
+            childrenOf[id]?.let { queue.addAll(it) }
+        }
+        if (ordered.isEmpty()) return null
+
+        // 同父下的序号 = 变体号；选中的那条 = 当前分支上的那条，否则 id 最大的那条
+        val variantIndexOf = HashMap<Long, Int>()
+        val selectedNumbers = HashSet<Long>()
+        for ((_, siblings) in childrenOf) {
+            siblings.forEachIndexed { index, id -> variantIndexOf[id] = index }
+            selectedNumbers += siblings.firstOrNull { it in branchIds } ?: siblings.last()
+        }
 
         val title = session.str("title")?.takeIf { it.isNotBlank() }
             ?: branch.firstOrNull { it.str("role") == "USER" }
@@ -157,8 +211,8 @@ internal object DeepSeekHistory {
         val insertedAt = parseIso(session.str("inserted_at")) ?: System.currentTimeMillis()
         val updatedAt = parseIso(session.str("updated_at")) ?: insertedAt
 
-        val mapped = branch.map { message ->
-            val number = message.long("id") ?: 0L
+        val mapped = ordered.map { number ->
+            val message = byNumber.getValue(number)
             val role = if (message.str("role") == "USER") "user" else "assistant"
             val content = if (role == "user") {
                 message.textOf("REQUEST")
@@ -190,8 +244,11 @@ internal object DeepSeekHistory {
             BackupMessage(
                 id = "$ID_PREFIX$sessionId-$number",
                 parentId = message.long("parent_id")
+                    ?.takeIf { byNumber.containsKey(it) }
                     ?.let { "$ID_PREFIX$sessionId-$it" }
                     ?: "",
+                variantIndex = variantIndexOf[number] ?: 0,
+                active = number in selectedNumbers,
                 role = role,
                 content = content,
                 attachments = images,
@@ -222,8 +279,8 @@ internal object DeepSeekHistory {
      * 把消息树线性化成"当前这一条分支"。
      *
      * 从 `current_message_id` 沿 `parent_id` 往上走，再反转 —— 用户当时看到的就是这条链。
-     * 兄弟版本（重新生成留下的分支）**只保留当前选中的那一支**：我们的备份模型能表达
-     * 变体，但导入时再造一套分支只会让"这条对话怎么长这样"变得难解释。
+     * 现在**不再用它筛消息**（整棵树都导，见 [mapSession]），只用来判定：
+     * 哪一条是用户当时选中的版本、以及拿首条提问当标题。
      *
      * `current_message_id` 缺失或不认识时退回"id 最大的那条"（导出工具都会写它，
      * 这里只是不让数据异常导致整条会话丢失）。
