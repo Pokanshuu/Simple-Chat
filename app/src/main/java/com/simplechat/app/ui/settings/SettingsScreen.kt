@@ -1,5 +1,6 @@
 package com.simplechat.app.ui.settings
 
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -505,7 +506,8 @@ fun SettingsScreen(
             title = stringResource(R.string.import_mode_title),
             options = listOf(
                 ImportMode.MERGE to stringResource(R.string.import_mode_merge),
-                ImportMode.OVERWRITE to stringResource(R.string.import_mode_overwrite),
+                ImportMode.REPLACE_SAME to stringResource(R.string.import_mode_replace_same),
+                ImportMode.RENAME to stringResource(R.string.import_mode_rename),
             ),
             selected = null,
             onDismiss = {
@@ -1277,6 +1279,21 @@ private fun AboutPage() {
         InfoRow(label = stringResource(R.string.about_package), value = BuildConfig.APPLICATION_ID)
     }
 
+    /*
+     * 项目地址单独一组，不与上面的版本信息混排：
+     * 这一行是**可点**的（点开跳到仓库），而上面几行是只读信息 ——
+     * 混在一张卡里会出现「有的能点有的不能点」。
+     */
+    SettingsSectionLabel(stringResource(R.string.about_project))
+
+    SettingsCard {
+        LinkRow(
+            label = stringResource(R.string.about_project_url),
+            value = ProjectUrl,
+            url = ProjectUrl,
+        )
+    }
+
     SettingsSectionLabel(stringResource(R.string.about_licenses))
 
     SettingsCard {
@@ -1559,6 +1576,51 @@ private fun SettingsSwitchRow(
             modifier = Modifier.weight(1f),
         )
         AppSwitch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+/**
+ * 仓库地址。写成常量而不是资源：它是**代码里的一个事实**，不随界面语言变，
+ * 也不该被翻译（翻成别的语言反而点不开）。改仓库时只改这一处。
+ */
+private const val ProjectUrl = "https://github.com/Pokanshuu/Simple-Chat"
+
+/**
+ * 可点击的信息行 —— 样式与 [InfoRow] 一致，只是值用主色、整行可点。
+ *
+ * 用系统的 `ACTION_VIEW` 交给浏览器：应用内 WebView 打开 GitHub 只会带来
+ * 一个返回键更别扭的界面，而"在浏览器里打开"也符合用户对这个动作的预期。
+ */
+@Composable
+private fun LinkRow(label: String, value: String, url: String) {
+    val colors = LocalChatColors.current
+    val context = LocalContext.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                // 没有浏览器时不要崩：提示一句就够了
+                runCatching { context.startActivity(intent) }
+            }
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.width(16.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary,
+            textAlign = TextAlign.End,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 

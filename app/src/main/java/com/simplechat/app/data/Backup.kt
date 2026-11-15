@@ -187,13 +187,60 @@ internal fun BackupMessage.toEntity(conversationId: String): MessageEntity = Mes
     createdAt = createdAt,
 )
 
-/** 导入策略。 */
+/**
+ * 导入策略。
+ *
+ * 三种**都只影响会话**：预设一律按 id 覆盖，从不清理 —— 那是用户长期积累的资产，
+ * 不该因为恢复一份备份就被删掉。
+ */
 enum class ImportMode {
-    /** 合并：已存在的 id 跳过，只补新数据。适合多设备汇总。 */
+    /** 增量：本机已有这个会话（按 id 判定）就跳过，只补新数据。多设备汇总用。 */
     MERGE,
 
-    /** 覆盖：先清空本机会话，再整体导入。适合换机恢复。 */
-    OVERWRITE,
+    /**
+     * 覆盖同名：本机有**同名**会话时，先删掉它再导入这一份。
+     *
+     * 判同名看标题而不是 id：同一条会话换台设备、或隔一次导出，id 就变了，
+     * 而标题才是用户认得出的"同一个对话"。
+     */
+    REPLACE_SAME,
+
+    /** 同名新命名：本机已有同名会话时，导入的这条改名「…（副本 N）」并换新 id，两条并存。 */
+    RENAME,
+}
+
+/**
+ * 给导入 / 分叉出来的会话起一个不撞名的副本标题。纯函数，有单测。
+ *
+ * 顺序：原名 → 原名（副本）→ 原名（副本 2）→ …
+ * 后缀文案由调用方给（[suffix] / [suffixN]），因为它要随界面语言变。
+ */
+internal fun uniqueCopyTitle(
+    title: String,
+    taken: Set<String>,
+    suffix: String,
+    suffixN: (Int) -> String,
+): String {
+    if (title !in taken) return title
+    val first = title + suffix
+    if (first !in taken) return first
+    var n = 2
+    while (title + suffixN(n) in taken) n++
+    return title + suffixN(n)
+}
+
+/**
+ * 换掉会话与**全部消息**的 id，父子引用同步重映射。
+ *
+ * 同名副本必须换 id：不换的话 `upsert` 会把原会话覆盖掉 —— 那正好变成"覆盖同名"，
+ * 而用户选的是"两条都留着"。消息同理，主键是全局的。
+ */
+internal fun BackupConversation.withFreshIds(newId: String): BackupConversation {
+    fun remap(old: String): String = if (old.isBlank()) "" else "$newId#$old"
+    return copy(
+        id = newId,
+        messages = messages.map { it.copy(id = remap(it.id), parentId = remap(it.parentId)) },
+    )
 }
 
 /** 导入结果，用于给出「到底导入了什么」的明确反馈。 */

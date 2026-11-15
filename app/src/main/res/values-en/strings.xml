@@ -103,8 +103,9 @@
 
     <!-- ── Settings: import & export ────────────────────── -->
     <string name="import_mode_title">Import mode</string>
-    <string name="import_mode_merge">Merge (skip existing conversations)</string>
-    <string name="import_mode_overwrite">Overwrite (clear local conversations first)</string>
+    <string name="import_mode_merge">Add new only (skip conversations already here)</string>
+    <string name="import_mode_replace_same">Overwrite same name (replace them with the file)</string>
+    <string name="import_mode_rename">Keep both (imported one gets a copy suffix)</string>
     <string name="import_done">Imported from %1$s: %2$d conversations · %3$d messages</string>
     <string name="import_done_skipped"> · %1$d duplicates skipped</string>
 
@@ -135,6 +136,8 @@
     <!-- ── Settings: about ──────────────────────────────── -->
     <string name="about_version">Version</string>
     <string name="about_package">Package</string>
+    <string name="about_project">Project</string>
+    <string name="about_project_url">Repository</string>
     <string name="about_licenses">Open-source licenses</string>
     <string name="about_icon">Icon</string>
     <string name="about_libs_net">Networking &amp; serialization</string>
@@ -229,6 +232,9 @@
     <!-- ── Backup: sources & import feedback ────────────── -->
     <string name="backup_source_simplechat">SimpleChat backup</string>
     <string name="backup_source_chatbox">Chatbox backup</string>
+    <string name="backup_source_deepseek">DeepSeek export</string>
+    <string name="err_deepseek_version">This DeepSeek archive is version %1$d; this app reads version %2$d</string>
+    <string name="warn_deepseek_limited">Search steps, link reading and non-image files were not imported</string>
     <string name="err_unrecognised_file">Unrecognised file: neither a zip archive nor JSON</string>
     <string name="err_unrecognised_format">Unrecognised file (format=%1$s)</string>
     <string name="err_scratch_dir">Temp directory unavailable: %1$s</string>

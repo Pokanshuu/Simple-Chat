@@ -62,6 +62,9 @@ object ExternalBackup {
     enum class Source(@StringRes val nameRes: Int) {
         SIMPLE_CHAT(R.string.backup_source_simplechat),
         CHATBOX(R.string.backup_source_chatbox),
+
+        /** DeepSeek 官方导出的聊天记录（deepseek_data-*.zip）。 */
+        DEEPSEEK(R.string.backup_source_deepseek),
     }
 
     /**
@@ -190,6 +193,22 @@ object ExternalBackup {
                  */
                 val ours = readOwnArchive(zip)
                 if (ours != null) return Parsed(Source.SIMPLE_CHAT, ours)
+
+                /*
+                 * DeepSeek 官方导出：`manifest.json` 里是 `export_format_version`，
+                 * 与另外两种的 `format` 字段**天然不冲突**，但仍排在自家之后、
+                 * Chatbox 之前 —— 顺序只影响"同一份包被谁认领"，不存在歧义时无所谓。
+                 */
+                DeepSeekHistory.parse(zip, naming)?.let { file ->
+                    return Parsed(
+                        source = Source.DEEPSEEK,
+                        file = file,
+                        warnings = listOf(
+                            AppText.of(R.string.warn_single_branch),
+                            AppText.of(R.string.warn_deepseek_limited),
+                        ),
+                    )
+                }
 
                 val manifestEntry = zip.getEntry("manifest.json")
                     ?: throw AppTextException(R.string.err_no_manifest)

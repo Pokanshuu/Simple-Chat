@@ -90,6 +90,15 @@ interface ConversationDao {
     @Query("SELECT id FROM conversations WHERE id = :id")
     suspend fun findExistingId(id: String): String?
 
+    /**
+     * 按**标题**找 id —— 导入时判定"同名"用。
+     *
+     * 为什么同名要靠标题而不是 id：同一条会话换个设备、或者隔一次导出，id 就变了，
+     * 而标题是用户认得出的那个"同一个对话"。
+     */
+    @Query("SELECT id FROM conversations WHERE title = :title ORDER BY createdAt ASC LIMIT 1")
+    suspend fun findIdByTitle(title: String): String?
+
     /** 导入（覆盖模式）用。会话删除会级联清掉消息 / 预设挂载 / 摘要。 */
     @Query("DELETE FROM conversations")
     suspend fun deleteEverything()

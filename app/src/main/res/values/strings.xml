@@ -88,7 +88,7 @@
     <string name="settings_export_all">导出所有数据</string>
     <string name="settings_export_all_summary">导出会话、消息与全部版本</string>
     <string name="settings_import_all">导入所有数据</string>
-    <string name="settings_import_all_summary">支持Chatbox格式，可选择合并或覆盖</string>
+    <string name="settings_import_all_summary">支持 Chatbox、DeepSeek 格式，可选增量 / 覆盖同名 / 同名新命名</string>
     <string name="settings_delete_all">删除所有历史对话</string>
     <string name="settings_destructive_hint">不可恢复</string>
     <string name="settings_delete_all_title">删除全部历史对话？</string>
@@ -105,8 +105,9 @@
 
     <!-- ── 设置：导入导出 ───────────────────────────────── -->
     <string name="import_mode_title">导入方式</string>
-    <string name="import_mode_merge">合并（跳过已存在的对话）</string>
-    <string name="import_mode_overwrite">覆盖（先清空本机对话）</string>
+    <string name="import_mode_merge">增量（只导入本机没有的对话）</string>
+    <string name="import_mode_replace_same">覆盖同名（同名对话替换为本包内容）</string>
+    <string name="import_mode_rename">同名新命名（两条都留，新的加「副本」后缀）</string>
     <string name="import_done">导入完成（%1$s）：会话 %2$d 个 · 消息 %3$d 条</string>
     <string name="import_done_skipped"> · 跳过重复 %1$d 个</string>
 
@@ -137,6 +138,8 @@
     <!-- ── 设置：关于 ───────────────────────────────────── -->
     <string name="about_version">版本</string>
     <string name="about_package">包名</string>
+    <string name="about_project">项目</string>
+    <string name="about_project_url">项目地址</string>
     <string name="about_licenses">开源许可</string>
     <string name="about_icon">图标</string>
     <string name="about_libs_net">网络与序列化</string>
@@ -231,6 +234,9 @@
     <!-- ── 备份：来源与导入反馈 ─────────────────────────── -->
     <string name="backup_source_simplechat">SimpleChat 备份</string>
     <string name="backup_source_chatbox">Chatbox 备份</string>
+    <string name="backup_source_deepseek">DeepSeek 导出</string>
+    <string name="err_deepseek_version">这个 DeepSeek 归档是第 %1$d 版，本应用只认第 %2$d 版</string>
+    <string name="warn_deepseek_limited">搜索与读链步骤、非图片附件未导入</string>
     <string name="err_unrecognised_file">认不出这份文件：既不是压缩包，也不是 JSON</string>
     <string name="err_unrecognised_format">认不出这份文件（format=%1$s）</string>
     <string name="err_scratch_dir">临时目录不可用：%1$s</string>

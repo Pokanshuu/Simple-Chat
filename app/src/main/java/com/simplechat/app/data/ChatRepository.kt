@@ -230,14 +230,13 @@ class ChatRepository(private val db: AppDatabase) {
      */
     private suspend fun forkedTitle(title: String): String {
         val base = title.replace(forkSuffix, "").ifBlank { title }
-        val existing = conversations.allTitles().toHashSet()
-
-        val first = base + Res.get(R.string.conversation_fork_suffix)
-        if (first !in existing) return first
-
-        var n = 2
-        while (base + Res.get(R.string.conversation_fork_suffix_n, n) in existing) n++
-        return base + Res.get(R.string.conversation_fork_suffix_n, n)
+        // 与导入的"同名新命名"共用一套编号规则（`uniqueCopyTitle`，纯函数有单测）
+        return uniqueCopyTitle(
+            title = base,
+            taken = conversations.allTitles().toHashSet(),
+            suffix = Res.get(R.string.conversation_fork_suffix),
+            suffixN = { n -> Res.get(R.string.conversation_fork_suffix_n, n) },
+        )
     }
 
     // ── 消息（树）─────────────────────────────────────────
@@ -831,17 +830,55 @@ class ChatRepository(private val db: AppDatabase) {
         var importedMessages = 0
 
         db.withTransaction {
-            if (mode == ImportMode.OVERWRITE) {
-                conversations.deleteEverything()
-                // 会话整表换血，草稿跟着走 —— 留着就是指向已不存在的会话的死数据
-                drafts.clearEverything()
-            }
+            /*
+             * 同名判定要反复用（每个会话一次），先取一份标题快照。
+             *
+             * 它同时充当"本次导入已经占用的标题"：同一份备份里出现两个同名会话时，
+             * 第二个也能拿到不同的副本名，不会两条都叫「副本」。
+             */
+            val titles = conversations.allTitles().toMutableSet()
 
-            for (conversation in file.conversations) {
-                if (mode == ImportMode.MERGE && conversations.findExistingId(conversation.id) != null) {
-                    skipped++
-                    continue
+            for (raw in file.conversations) {
+                var conversation = raw
+
+                when (mode) {
+                    ImportMode.MERGE -> {
+                        // 增量：按 id 去重。已存在就跳过，本地改动一律不动
+                        if (conversations.findExistingId(conversation.id) != null) {
+                            skipped++
+                            continue
+                        }
+                    }
+
+                    ImportMode.REPLACE_SAME -> {
+                        // 同名 = 同一条会话：先删旧的（消息 / 预设挂载 / 摘要靠外键级联）
+                        val clash = conversations.findIdByTitle(conversation.title)
+                            ?: conversations.findExistingId(conversation.id)
+                        if (clash != null) {
+                            deleteConversationRecords(clash)
+                            titles.remove(conversation.title)
+                        }
+                    }
+
+                    ImportMode.RENAME -> {
+                        // 标题或 id 撞了就改名 + 换 id：一条都不能覆盖，两条并存
+                        val clash = conversation.title in titles ||
+                            conversations.findExistingId(conversation.id) != null
+                        if (clash) {
+                            val title = uniqueCopyTitle(
+                                title = conversation.title,
+                                taken = titles,
+                                suffix = Res.get(R.string.conversation_fork_suffix),
+                                suffixN = { n -> Res.get(R.string.conversation_fork_suffix_n, n) },
+                            )
+                            conversation = conversation
+                                .copy(title = title)
+                                .withFreshIds("${conversation.id}~${System.currentTimeMillis()}")
+                        }
+                    }
                 }
+
+                titles += conversation.title
                 conversations.upsert(
                     ConversationEntity(
                         id = conversation.id,
@@ -857,7 +894,7 @@ class ChatRepository(private val db: AppDatabase) {
                     ),
                 )
                 for (message in conversation.messages) {
-                    // MERGE 下同一份消息可能已存在；OVERWRITE 下 id 也可能撞，同样跳过
+                    // 消息主键是全局的：已存在就跳过（增量的常规情形；换 id 后不会撞）
                     if (messages.findExistingId(message.id) != null) continue
                     messages.upsert(message.toEntity(conversation.id))
                     importedMessages++
@@ -887,6 +924,17 @@ class ChatRepository(private val db: AppDatabase) {
             presets = file.presets.size,
             skipped = skipped,
         )
+    }
+
+    /**
+     * 删掉一条会话及其附属记录 —— 「覆盖同名」用。
+     *
+     * 消息 / 预设挂载 / 压缩摘要有外键级联，会跟着走；**草稿不会**，
+     * 所以要手动清：留着就是一条指向已不存在会话的死数据。
+     */
+    private suspend fun deleteConversationRecords(id: String) {
+        conversations.delete(id)
+        drafts.clearAll(listOf(id))
     }
 
     private companion object {
