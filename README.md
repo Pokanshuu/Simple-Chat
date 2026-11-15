@@ -50,7 +50,8 @@
 - 上下文管理：CJK 加权 token 估算、输入栏占用圆环、增量滚动压缩（保留最近 6 条完整消息）。
 - 附件：拍照 / 相册 / 文件三个入口，均无需申请权限；支持图片、纯文本、docx、PDF。
 - 数据出口：JSON 备份、**ZIP 归档**（备份 + 每个会话的 Markdown 文稿）与 Markdown 文稿导出；
-  支持导入本应用备份、ZIP 归档与 Chatbox 备份。
+  支持导入本应用备份、ZIP 归档、Chatbox 备份与 DeepSeek 官方导出
+（`deepseek_data-*.zip`）；导入方式可选增量 / 覆盖同名 / 同名新命名。
 - 搜索：标题与正文全文搜索，结果行显示命中片段。
 - 长消息：超 10 行自动收起，展开后整条可点。
 - 外观：深色模式、主题色、字号倍率、跟随系统。
@@ -152,7 +153,7 @@ keyPassword=...
 ```text
 app/src/main/java/com/simplechat/app/
 ├─ data/          仓库层：会话粘合、备份导入导出、附件处理、Keystore 加解密、token 估算
-│  └─ import/     Chatbox 备份、docx 抽文本、图片尺寸
+│  └─ import/     Chatbox / DeepSeek 备份、docx 抽文本、图片尺寸
 ├─ db/            Room：实体、DAO、显式迁移、消息树纯函数
 ├─ net/           DTO、SSE 客户端与行解析、Provider 与模型能力表
 └─ ui/
