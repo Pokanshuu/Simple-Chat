@@ -60,7 +60,7 @@ class AppContainer(private val app: Application) {
 
     val database: AppDatabase by lazy { AppDatabase.build(app) }
 
-    val chatRepository: ChatRepository by lazy { ChatRepository(database) }
+    val chatRepository: ChatRepository by lazy { ChatRepository(database, app) }
 
     /**
      * OpenCode Go 的路由标识（`x-opencode-session`），安装级稳定即可。

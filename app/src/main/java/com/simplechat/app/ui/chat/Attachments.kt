@@ -36,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -47,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.simplechat.app.R
 import com.simplechat.app.data.Attachment
+import com.simplechat.app.data.AttachmentFiles
 import com.simplechat.app.data.Attachments
 import com.simplechat.app.ui.common.AppIcons
 import com.simplechat.app.ui.common.ContainerShape
@@ -84,15 +86,27 @@ private val BubbleImageMaxHeight = 300.dp
  */
 @Composable
 fun rememberAttachmentImage(attachment: Attachment, targetPx: Int): ImageBitmap? {
-    val state by produceState<ImageBitmap?>(initialValue = null, attachment.data, targetPx) {
-        value = withContext(Dispatchers.IO) { decodeSampled(attachment.data, targetPx) }
+    val context = LocalContext.current
+    /*
+     * key 里带上 `path`：落盘附件的 `data` 是空串，只用 data 当 key 会让
+     * "换了一张图但 key 没变"的情况（同一消息里两张落盘图）命中旧结果。
+     */
+    val state by produceState<ImageBitmap?>(
+        initialValue = null,
+        attachment.data,
+        attachment.path,
+        targetPx,
+    ) {
+        value = withContext(Dispatchers.IO) {
+            // 落盘的从文件读，内联的走 base64 —— 渲染层只认字节，不关心存哪
+            val stored = if (attachment.isStored) AttachmentFiles.read(context, attachment.path) else null
+            decodeSampled(stored ?: Base64.decode(attachment.data, Base64.NO_WRAP), targetPx)
+        }
     }
     return state
 }
 
-private fun decodeSampled(base64: String, targetPx: Int): ImageBitmap? = runCatching {
-    val bytes = Base64.decode(base64, Base64.NO_WRAP)
-
+private fun decodeSampled(bytes: ByteArray, targetPx: Int): ImageBitmap? = runCatching {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
 
@@ -451,6 +465,8 @@ fun AttachmentViewerDialog(
 ) {
     val colors = LocalChatColors.current
     val density = LocalDensity.current
+    // 附件的字节数要问文件系统：落盘的附件 data 是空的（见 AttachmentFiles）
+    val context = LocalContext.current
     // 全屏尺寸解码：屏幕最长边的像素数，够清楚又不至于把原图解进内存
     val target = with(density) { 1080.dp.roundToPx() }
     val bitmap = rememberAttachmentImage(initial, target)
@@ -494,7 +510,8 @@ fun AttachmentViewerDialog(
                 text = buildString {
                     append(initial.name)
                     if (initial.width > 0) append(" · ${initial.width}×${initial.height}")
-                    append(" · ${Attachments.formatSize(initial.sizeBytes)}")
+                    // 落盘的附件 `data` 是空的，字节数要问文件系统（否则显示成 0 B）
+                    append(" · ${Attachments.formatSize(AttachmentFiles.sizeOf(context, initial))}")
                     if (images.size > 1) append(multiNote)
                 },
                 style = MaterialTheme.typography.labelSmall,

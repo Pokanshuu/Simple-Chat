@@ -81,6 +81,14 @@ object ExternalBackup {
             { Res.get(R.string.import_image_default_name) },
         val conversationFallbackTitle: () -> String =
             { Res.get(R.string.import_conversation_default) },
+        /**
+         * 图片字节存哪：给实现就**落盘**（返回文件名塞进 `Attachment.path`），
+         * 返回 null 或没给就退回 base64 内联。
+         *
+         * 线上走落盘（见 `AttachmentFiles`）—— 内联会让"附件 + 正文"那一行超过
+         * `CursorWindow` 的 2MB，整条会话再也读不出来。单测里给 null，保持纯函数。
+         */
+        val storeImage: ((bytes: ByteArray, mime: String) -> String?)? = null,
     )
 
     data class Parsed(
@@ -335,15 +343,18 @@ object ExternalBackup {
         naming: ImportNaming,
     ): Attachment {
         val size = imageSizeOf(blob)
+        val stored = naming.storeImage?.invoke(blob, ref.mime)
         return Attachment(
             kind = Attachment.Kind.IMAGE,
             // 资源本身没有文件名（ZIP 里就是 resource-000002.jpg），
             // 用尺寸当可读标识，比一串 uuid 有用
             name = size?.let { naming.imageName(it.first, it.second) } ?: naming.imageFallbackName(),
             mime = ref.mime,
-            data = Base64.getEncoder().encodeToString(blob),
+            // 落盘成功就只留文件名，字节在 filesDir 里（见 AttachmentFiles）
+            data = if (stored != null) "" else Base64.getEncoder().encodeToString(blob),
             width = size?.first ?: 0,
             height = size?.second ?: 0,
+            path = stored,
         )
     }
 

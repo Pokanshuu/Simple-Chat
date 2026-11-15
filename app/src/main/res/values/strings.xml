@@ -239,7 +239,8 @@
     <string name="backup_source_chatbox">Chatbox 备份</string>
     <string name="backup_source_deepseek">DeepSeek 导出</string>
     <string name="err_deepseek_version">这个 DeepSeek 归档是第 %1$d 版，本应用只认第 %2$d 版</string>
-    <string name="warn_deepseek_limited">搜索与读链步骤、非图片附件未导入；图片按配额导入，超出部分已跳过</string>
+    <string name="images_skipped_no_vision">当前模型不支持图片，已忽略 %1$d 张</string>
+    <string name="warn_deepseek_limited">搜索与读链步骤、非图片附件未导入</string>
     <string name="err_unrecognised_file">认不出这份文件：既不是压缩包，也不是 JSON</string>
     <string name="err_unrecognised_format">认不出这份文件（format=%1$s）</string>
     <string name="err_scratch_dir">临时目录不可用：%1$s</string>

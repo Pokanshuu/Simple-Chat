@@ -125,14 +125,8 @@ internal object DeepSeekHistory {
 
         val total = sessionEntries.size.coerceAtLeast(1)
         var done = 0
-        /*
-         * 图片总量预算。
-         *
-         * 图片以 base64 存进数据库的**同一行**，一份 228MB 的导出包里绝大多数体积都是图 ——
-         * 全导进来会让数据库涨到几百 MB，应用从此又慢又卡。这里按总量封顶，
-         * 超出的部分跳过（导入完成时的提示里已说明）。
-         */
-        var imageBudget = MaxImportedImageBytes
+        // 图片字节落盘（见 AttachmentFiles），所以**不再有总量 / 单条配额**：
+        // 行里只留文件名，数据库不会被图片撑大，也没有 CursorWindow 的问题
 
         return sessionEntries.asSequence().mapNotNull { entry ->
             // 进度按"解析完多少条会话"报，含图片读取 —— 大包主要时间都在这
@@ -145,11 +139,7 @@ internal object DeepSeekHistory {
                 ?: return@mapNotNull null
             // 先把这一条会话用到的图片读出来，再解析 —— 图片按 `export_path` 直接定位条目
             val images = imagePathsOf(obj).mapNotNull { path ->
-                if (imageBudget <= 0) return@mapNotNull null
-                readImage(zip, path, naming)?.let { image ->
-                    imageBudget -= image.sizeBytes
-                    path to image
-                }
+                readImage(zip, path, naming)?.let { image -> path to image }
             }.toMap()
             mapSession(obj, naming) { images[it] }
         }
@@ -248,22 +238,11 @@ internal object DeepSeekHistory {
             }
             val think = message.fragmentsOf("THINK")
             val elapsedSecs = think.sumOf { it.longOrZero("elapsed_secs") }
-            /*
-             * 单条消息的附件也要封顶。
-             *
-             * 附件是**同一行**里的一个 JSON 列，图片 base64 一多，整行就会超过
-             * Android `CursorWindow` 的 2MB —— 那条会话从此打不开（`SQLiteBlobTooBigException`）。
-             * 实测导入后有单行 7.4MB，必须在这里挡住。
-             */
-            var perMessage = MaxPerMessageImageBytes
+            // 字节落盘，单条消息的附件也不再需要配额（行里只有文件名）
             val images = message.fragmentsOf("FILE").flatMap { file ->
                 file.arrOrEmpty("files").mapNotNull { entry ->
                     if (entry.str("is_image") != "true") return@mapNotNull null
-                    if (perMessage <= 0) return@mapNotNull null
-                    val path = entry.str("export_path") ?: return@mapNotNull null
-                    imageOf(path)?.also { image ->
-                        perMessage -= image.sizeBytes
-                    }
+                    imageOf(entry.str("export_path") ?: return@mapNotNull null)
                 }
             }
 
@@ -375,27 +354,32 @@ internal object DeepSeekHistory {
     ): Attachment? {
         val entry = zip.getEntry(path) ?: return null
         /*
-         * ⚠️ 必须在**读之前**看上限定。
+         * 有界读取，但只挡"异常的单张"（[MaxSingleImageBytes]，64MB）。
          *
-         * 先 `readBytes()` 再判断大小等于没判：一张 43MB 的截图会先分配 43MB，
-         * 而那时堆里往往只剩二三十兆 —— 直接 OOM（实测报错
-         * "Failed to allocate a 45388952 byte allocation"）。
+         * 早先这里有两个配额（单张 6MB、单次导入 24MB），那是**内联存库**时代的
+         * 妥协：附件与正文在同一行，而 CursorWindow 只有 2MB。字节落盘之后
+         * 行里只剩文件名，这两个配额就没有存在理由了 —— 现在只留一个防呆上限，
+         * 挡住"条目本身坏掉、size 是天文数字"的情况。
          */
         val bytes = runCatching { zip.readBounded(entry, MaxSingleImageBytes) }.getOrNull()
             ?: return null
         if (bytes.isEmpty()) return null
         val size = imageSizeOf(bytes)
+        val mime = when {
+            bytes.size >= 8 && bytes[0] == 0x89.toByte() -> "image/png"
+            bytes.size >= 3 && bytes[0] == 0xFF.toByte() -> "image/jpeg"
+            else -> "image/jpeg"
+        }
+        // 落盘：字节进 filesDir，行里只留文件名（见 AttachmentFiles）
+        val stored = naming.storeImage?.invoke(bytes, mime)
         return Attachment(
             kind = Attachment.Kind.IMAGE,
             name = size?.let { naming.imageName(it.first, it.second) } ?: naming.imageFallbackName(),
-            mime = when {
-                bytes.size >= 8 && bytes[0] == 0x89.toByte() -> "image/png"
-                bytes.size >= 3 && bytes[0] == 0xFF.toByte() -> "image/jpeg"
-                else -> "image/jpeg"
-            },
-            data = Base64.getEncoder().encodeToString(bytes),
+            mime = mime,
+            data = if (stored != null) "" else Base64.getEncoder().encodeToString(bytes),
             width = size?.first ?: 0,
             height = size?.second ?: 0,
+            path = stored,
         )
     }
 
@@ -453,19 +437,7 @@ internal object DeepSeekHistory {
     private fun JsonObject.longOrZero(key: String): Long = long(key) ?: 0L
 
     /** 单张图片上限：再大的塞进数据库只会拖垮列表滚动。 */
-    private const val MaxSingleImageBytes = 6 * 1024 * 1024
-
-    /**
-     * 单条消息的图片总量上限（原始字节）。
-     *
-     * 附件与正文在**同一行**，而 Android 的 CursorWindow 只有 2MB：
-     * base64 之后不能超过它，否则那条会话一次都读不出来。这里按 800KB 原始字节封顶
-     * （base64 约 1.07MB，留足余量）。
-     */
-    private const val MaxPerMessageImageBytes = 800 * 1024
-
-    /** 一次导入的图片总量上限（base64 之后还会再涨三分之一）。 */
-    private const val MaxImportedImageBytes = 24 * 1024 * 1024
+    private const val MaxSingleImageBytes = 64 * 1024 * 1024
 
     /**
      * 单个会话 JSON 的上限（8 MB）。超过就跳过这一条会话。

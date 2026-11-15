@@ -237,7 +237,8 @@
     <string name="backup_source_chatbox">Chatbox backup</string>
     <string name="backup_source_deepseek">DeepSeek export</string>
     <string name="err_deepseek_version">This DeepSeek archive is version %1$d; this app reads version %2$d</string>
-    <string name="warn_deepseek_limited">Search steps, link reading and non-image files were not imported; images are imported within a quota, extras were skipped</string>
+    <string name="images_skipped_no_vision">This model does not accept images; %1$d skipped</string>
+    <string name="warn_deepseek_limited">Search steps, link reading and non-image files were not imported</string>
     <string name="err_unrecognised_file">Unrecognised file: neither a zip archive nor JSON</string>
     <string name="err_unrecognised_format">Unrecognised file (format=%1$s)</string>
     <string name="err_scratch_dir">Temp directory unavailable: %1$s</string>

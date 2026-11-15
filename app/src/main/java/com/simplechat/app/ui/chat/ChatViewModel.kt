@@ -1349,7 +1349,7 @@ class ChatViewModel(
      * 与 [`buildRequestMessages`] 的差别不只是协议：扩展通道的 `system` 只有一个字符串，
      * 所以压缩摘要只能**拼进系统提示词**，不能像 OpenAI 通道那样再塞一条 system 消息。
      */
-    private fun buildAnthropicRequestNow(prefix: UiMessage?): AnthropicRequest {
+    private suspend fun buildAnthropicRequestNow(prefix: UiMessage?): AnthropicRequest {
         val active = compaction
         val system = buildString {
             append(settings.composedSystemPrompt(presets))
@@ -1366,7 +1366,14 @@ class ChatViewModel(
          * 续写时把这条 assistant 从历史里摘出去：它要以**末尾前缀**的身份出现，
          * 留在历史里就是同一轮回答发了两遍，服务端会把它当成两个不同的回答。
          */
-        val path = orderedOutgoingMessages(messages, active).filter { it.id != prefix?.id }
+        val path = orderedOutgoingMessages(messages, active)
+            .filter { it.id != prefix?.id }
+            // 落盘的附件在这里读回内存：`toDataUrl()` 只认内联（见 AttachmentFiles）
+            .map { message ->
+                val outgoing = outgoingAttachments(message.attachments)
+                if (outgoing.size == message.attachments.size) message
+                else message.copy(attachments = outgoing)
+            }
 
         return buildAnthropicRequest(
             model = settings.model.id,
@@ -1523,7 +1530,26 @@ class ChatViewModel(
         if (index >= 0) messages[index] = transform(messages[index])
     }
 
-    private fun buildRequestMessages(): List<OutMessageDto> {
+    /**
+     * 构造请求用的附件：**模型不支持图片时把图片摘掉**，只留文本附件。
+     *
+     * 服务端对非视觉模型直接 400（`messages.N.content.0: images are not supported
+     * by this model`），而历史里带图的会话很常见（导入来的、换过模型的、
+     * 以前用视觉模型聊过的）。让整条对话因为一张旧图发不出去，代价太大 ——
+     * 所以按模型能力过滤，并给一句普通提醒（不是错误）。
+     */
+    private suspend fun outgoingAttachments(attachments: List<Attachment>): List<Attachment> {
+        if (attachments.isEmpty()) return attachments
+        var filtered = attachments
+        if (!settings.model.supportsVision) {
+            filtered = attachments.filterNot { it.isImage }
+            val dropped = attachments.size - filtered.size
+            if (dropped > 0) banner = Res.get(R.string.images_skipped_no_vision, dropped)
+        }
+        return repository.materialize(filtered)
+    }
+
+    private suspend fun buildRequestMessages(): List<OutMessageDto> {
         val request = mutableListOf<OutMessageDto>()
 
         val system = settings.composedSystemPrompt(presets)
@@ -1556,7 +1582,7 @@ class ChatViewModel(
                 content = if (message.attachments.isEmpty()) {
                     MessageContent.text(message.content)
                 } else {
-                    userContent(message.content, message.attachments)
+                    userContent(message.content, outgoingAttachments(message.attachments))
                 },
             )
         }

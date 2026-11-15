@@ -1,5 +1,7 @@
 package com.simplechat.app.data
 
+import android.content.Context
+import android.util.Base64
 import android.database.sqlite.SQLiteBlobTooBigException
 import androidx.room.withTransaction
 import com.simplechat.app.R
@@ -55,7 +57,7 @@ internal fun titleForStorage(title: String?): String? = title?.trim()?.takeIf { 
  * - **对话流**以内存中的 `SnapshotStateList` 为准，按 §4.4 的策略**节流 checkpoint 落库**。
  *   若让每个 token 都回写 Room，一次 2000 字回复就是 2000 次磁盘事务。
  */
-class ChatRepository(private val db: AppDatabase) {
+class ChatRepository(private val db: AppDatabase, private val context: Context) {
 
     private val conversations = db.conversationDao()
     private val messages = db.messageDao()
@@ -162,12 +164,40 @@ class ChatRepository(private val db: AppDatabase) {
         conversations.setPinned(id, pinned, if (pinned) System.currentTimeMillis() else null)
 
     suspend fun deleteConversations(ids: List<String>) {
+        // 先把这些会话用到的落盘图片路径收出来，删完行再删文件
+        val files = ids.flatMap { id -> messages.getAllFor(id).flatMap { it.attachmentPaths() } }
         db.withTransaction {
             conversations.deleteAll(ids)
             // 会话没了草稿就没人读 —— 同步清掉，别留死数据
             drafts.clearAll(ids)
         }
+        files.forEach { AttachmentFiles.delete(context, it) }
     }
+
+    /**
+     * 写库前把**内联**的图片字节搬到磁盘。
+     *
+     * 备份里图片是 base64 内联的（格式不变），直接写进库又会回到"一行几兆、
+     * 读不出来"的老问题。所有导入路径（自家备份 / Chatbox / DeepSeek）都经过
+     * [writeConversation]，所以在这里统一落盘，等于给整条链路上了保险。
+     */
+    private fun MessageEntity.withOffloadedImages(): MessageEntity {
+        val decoded = Attachments.decode(attachments)
+        if (decoded.none { it.isImage && !it.isStored }) return this
+        val offloaded = decoded.map { attachment ->
+            if (!attachment.isImage || attachment.isStored) return@map attachment
+            val bytes = runCatching { Base64.decode(attachment.data, Base64.NO_WRAP) }.getOrNull()
+                ?: return@map attachment
+            val stored = AttachmentFiles.save(context, bytes, attachment.mime)
+                ?: return@map attachment
+            attachment.copy(data = "", path = stored)
+        }
+        return copy(attachments = Attachments.encode(offloaded))
+    }
+
+    /** 一条消息里落盘附件的文件名（给删除时的清理用）。 */
+    private fun MessageEntity.attachmentPaths(): List<String> =
+        Attachments.decode(attachments).mapNotNull { it.path }
 
     suspend fun touchConversation(id: String) = conversations.touch(id, System.currentTimeMillis())
 
@@ -659,10 +689,13 @@ class ChatRepository(private val db: AppDatabase) {
 
     /** 删除全部会话。消息 / 预设挂载 / 摘要靠外键级联一并清除。 */
     suspend fun deleteAllConversations() {
+        // 全清也要把落盘图片一起删干净，否则 filesDir 会越积越大
+        val files = messages.getAllRaw().flatMap { it.attachmentPaths() }
         db.withTransaction {
             conversations.deleteEverything()
             drafts.clearEverything()
         }
+        files.forEach { AttachmentFiles.delete(context, it) }
     }
 
     suspend fun conversationCount(): Int = conversations.count()
@@ -698,7 +731,7 @@ class ChatRepository(private val db: AppDatabase) {
             exportedAt = System.currentTimeMillis(),
             conversations = conversations.getAllRaw().map { row ->
                 row.toBackup(
-                    messages = messageByConversation[row.id].orEmpty(),
+                    messages = messageByConversation[row.id].orEmpty().withInlineAttachments(),
                     presetIds = presetByConversation[row.id]
                         .orEmpty()
                         .sortedBy { it.sortOrder }
@@ -721,7 +754,7 @@ class ChatRepository(private val db: AppDatabase) {
             exportedAt = System.currentTimeMillis(),
             conversations = listOf(
                 row.toBackup(
-                    messages = messages.getAllFor(conversationId),
+                    messages = messages.getAllFor(conversationId).withInlineAttachments(),
                     presetIds = conversationPresets.getFor(conversationId)
                         .sortedBy { it.sortOrder }
                         .map { it.presetId },
@@ -859,7 +892,7 @@ class ChatRepository(private val db: AppDatabase) {
         }.getOrDefault(false)
         if (isDeepSeek) {
             val result = ZipFile(file).use { zip ->
-                val stream = DeepSeekHistory.stream(zip, ExternalBackup.ImportNaming(), onProgress)
+                val stream = DeepSeekHistory.stream(zip, importNaming(), onProgress)
                     ?: throw AppTextException(R.string.err_unrecognised_file)
                 // 序列必须在 ZIP 关掉之前消费完，所以写库也在 use 里执行
                 importStream(stream, emptyList(), mode)
@@ -873,8 +906,42 @@ class ChatRepository(private val db: AppDatabase) {
             return result to note
         }
 
-        return importExternal(ExternalBackup.parse(file, scratchDir, onProgress = onProgress), mode)
+        return importExternal(ExternalBackup.parse(file, scratchDir, naming = importNaming(), onProgress = onProgress), mode)
     }
+
+    /**
+     * 导入时图片**落盘**：字节进 `filesDir/attachments/`，行里只留文件名。
+     *
+     * 内联会让"附件 + 正文"那一行超过 `CursorWindow` 的 2MB，整条会话读不出来；
+     * 落盘之后导入侧的图片配额才能全部取消（见 `AttachmentFiles`）。
+     */
+    private fun importNaming() = ExternalBackup.ImportNaming(
+        storeImage = { bytes, mime -> AttachmentFiles.save(context, bytes, mime) },
+    )
+
+    /** 把落盘附件的字节读回内存，供构造请求 / 导出备份使用（都在 IO 上做）。 */
+    internal suspend fun materialize(attachments: List<Attachment>): List<Attachment> =
+        if (attachments.none { it.isStored }) attachments
+        else withContext(Dispatchers.IO) { AttachmentFiles.materialize(context, attachments) }
+
+    /**
+     * 导出的前置处理：把落盘附件的字节读回 base64。
+     *
+     * 备份格式没变（图片仍是内联 base64），所以"导入 → 导出 → 再导入"这条链路
+     * 与原来自洽；区别只在**运行期**的存储位置。
+     */
+    private suspend fun List<MessageEntity>.withInlineAttachments(): List<MessageEntity> =
+        if (none { Attachments.decode(it.attachments).any { a -> a.isStored } }) {
+            this
+        } else withContext(Dispatchers.IO) {
+            map { message ->
+                val attachments = Attachments.decode(message.attachments)
+                if (attachments.none { it.isStored }) message
+                else message.copy(
+                    attachments = Attachments.encode(AttachmentFiles.materialize(context, attachments)),
+                )
+            }
+        }
 
     private suspend fun importExternal(
         parsed: ExternalBackup.Parsed,
@@ -1045,7 +1112,7 @@ class ChatRepository(private val db: AppDatabase) {
         for (message in conversation.messages) {
             // 消息主键是全局的：已存在就跳过（增量的常规情形；换 id 后不会撞）
             if (messages.findExistingId(message.id) != null) continue
-            messages.upsert(message.toEntity(conversation.id))
+            messages.upsert(message.toEntity(conversation.id).withOffloadedImages())
             written++
         }
 

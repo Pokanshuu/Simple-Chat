@@ -4,7 +4,7 @@
 
 **[中文](README.md) | English**
 
-[![Version](https://img.shields.io/badge/version-1.1.1-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
+[![Version](https://img.shields.io/badge/version-1.1.2-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## Introduction
