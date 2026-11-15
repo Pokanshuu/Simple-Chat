@@ -47,7 +47,7 @@ Good for:
 - Message tree organised by `parentId`. Regenerating creates an in-conversation branch; switching versions carries the downstream along instead of deleting history; long-press forks into a new conversation.
 - Context management: CJK-weighted token estimate, usage ring on the input bar, incremental compaction (keeps the last 6 messages in full).
 - Attachments: camera / gallery / files, none of which need runtime permission; images, plain text, docx and PDF.
-- Data out: JSON backup, **ZIP archive** (backup plus a Markdown document per conversation) and Markdown export; imports this app's backups, ZIP archives and Chatbox backups.
+- Data out: JSON backup, **ZIP archive** (backup plus a Markdown document per conversation) and Markdown export; imports this app's backups, ZIP archives, Chatbox backups and DeepSeek official exports (deepseek_data-*.zip), with three import modes: add new only, overwrite same name, or keep both.
 - Search: full-text over titles and bodies, with hit snippets in the results.
 - Long messages: collapsed past 10 lines, whole message stays tappable once expanded.
 - Appearance: dark mode, accent colours, font scale, follow the system.
@@ -149,7 +149,7 @@ Full dependency list: [`gradle/libs.versions.toml`](gradle/libs.versions.toml).
 ```text
 app/src/main/java/com/simplechat/app/
 ├─ data/          repository layer: conversations, backup import/export, attachments, Keystore crypto, token estimate
-│  └─ import/     Chatbox backup, docx text extraction, image size
+│  └─ import/     Chatbox / DeepSeek backups, docx text extraction, image size
 ├─ db/            Room: entities, DAOs, explicit migrations, message-tree pure functions
 ├─ net/           DTOs, SSE client and line parser, providers and model capability table
 └─ ui/
