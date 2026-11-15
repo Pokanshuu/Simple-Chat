@@ -12,12 +12,14 @@ import com.simplechat.app.db.DraftEntity
 import com.simplechat.app.db.MessageEntity
 import com.simplechat.app.db.MessageTree
 import com.simplechat.app.db.PresetEntity
+import com.simplechat.app.data.import.DeepSeekHistory
 import com.simplechat.app.data.import.ExternalBackup
 import com.simplechat.app.data.archive.ChatArchive
 import com.simplechat.app.net.ReplyBlock
 import com.simplechat.app.net.ReplyBlocks
 import com.simplechat.app.ui.chat.ConversationMode
 import java.io.File
+import java.util.zip.ZipFile
 import com.simplechat.app.ui.chat.MessageRole
 import com.simplechat.app.ui.chat.MessageStatus
 import com.simplechat.app.ui.chat.Preset
@@ -846,8 +848,33 @@ class ChatRepository(private val db: AppDatabase) {
         scratchDir: File,
         mode: ImportMode,
         onProgress: (Float) -> Unit = {},
-    ): Pair<ImportResult, String> =
-        importExternal(ExternalBackup.parse(file, scratchDir, onProgress = onProgress), mode)
+    ): Pair<ImportResult, String> {
+        /*
+         * DeepSeek 导出先走**流式**导入：它的会话数量级最大（一份归档几千个会话、
+         * 两万多条消息），整包建对象会 OOM。判定只看 `manifest.json` 一个字段，
+         * 代价是开一次 ZIP —— 与"导入过程中内存爆掉"相比不值一提。
+         */
+        val isDeepSeek = runCatching {
+            ZipFile(file).use { zip -> DeepSeekHistory.detect(zip) }
+        }.getOrDefault(false)
+        if (isDeepSeek) {
+            val result = ZipFile(file).use { zip ->
+                val stream = DeepSeekHistory.stream(zip, ExternalBackup.ImportNaming(), onProgress)
+                    ?: throw AppTextException(R.string.err_unrecognised_file)
+                // 序列必须在 ZIP 关掉之前消费完，所以写库也在 use 里执行
+                importStream(stream, emptyList(), mode)
+            }
+            if (result.conversations == 0 && result.skipped == 0) {
+                throw AppTextException(R.string.err_no_sessions)
+            }
+            val note = Res.get(R.string.backup_source_deepseek) +
+                Res.get(R.string.import_note_separator) +
+                Res.get(R.string.warn_deepseek_limited)
+            return result to note
+        }
+
+        return importExternal(ExternalBackup.parse(file, scratchDir, onProgress = onProgress), mode)
+    }
 
     private suspend fun importExternal(
         parsed: ExternalBackup.Parsed,
@@ -873,107 +900,159 @@ class ChatRepository(private val db: AppDatabase) {
      * 预设**两种模式都不删本地已有项**，只按 id 覆盖 —— 预设是用户长期积累的资产，
      * 不该因为恢复一份旧备份就被清掉。
      */
-    suspend fun importParsed(file: BackupFile, mode: ImportMode): ImportResult {
+    suspend fun importParsed(file: BackupFile, mode: ImportMode): ImportResult =
+        importStream(file.conversations.asSequence(), file.presets, mode)
+
+    /**
+     * **流式**导入：逐批取会话、逐批写库。
+     *
+     * 为什么不能"先建好整个 `BackupFile` 再写"：那个模型的峰值内存 = 全部会话 +
+     * 全部图片 base64 之和。实测 2106 个会话 / 24535 条消息的 DeepSeek 归档解压后
+     * 是几百兆，堆里放不下 —— 报错形如
+     * `Failed to allocate a 893424 byte allocation with 424432 free bytes`。
+     * 改成流式 + 分批事务之后，峰值只与"单条最大的会话"有关，与归档总量无关。
+     *
+     * 批次大小的取舍：太小则事务开销高（每条会话一次 fsync），太大又回到占内存。
+     * 100 条会话一批，实测在几千条的归档上既快又不涨内存。
+     */
+    private suspend fun importStream(
+        conversationsSeq: Sequence<BackupConversation>,
+        presetsToWrite: List<BackupPreset>,
+        mode: ImportMode,
+    ): ImportResult {
         var skipped = 0
         var importedMessages = 0
+        var importedConversations = 0
 
-        db.withTransaction {
-            /*
-             * 同名判定要反复用（每个会话一次），先取一份标题快照。
-             *
-             * 它同时充当"本次导入已经占用的标题"：同一份备份里出现两个同名会话时，
-             * 第二个也能拿到不同的副本名，不会两条都叫「副本」。
-             */
-            val titles = conversations.allTitles().toMutableSet()
+        /*
+         * 同名判定要反复用（每个会话一次），先取一份标题快照。
+         *
+         * 它同时充当"本次导入已经占用的标题"：同一份备份里出现两个同名会话时，
+         * 第二个也能拿到不同的副本名，不会两条都叫「副本」。
+         */
+        val titles = mutableSetOf<String>()
+        db.withTransaction { titles += conversations.allTitles() }
 
-            for (raw in file.conversations) {
-                var conversation = raw
-
-                when (mode) {
-                    ImportMode.MERGE -> {
-                        // 增量：按 id 去重。已存在就跳过，本地改动一律不动
-                        if (conversations.findExistingId(conversation.id) != null) {
-                            skipped++
-                            continue
-                        }
-                    }
-
-                    ImportMode.REPLACE_SAME -> {
-                        // 同名 = 同一条会话：先删旧的（消息 / 预设挂载 / 摘要靠外键级联）
-                        val clash = conversations.findIdByTitle(conversation.title)
-                            ?: conversations.findExistingId(conversation.id)
-                        if (clash != null) {
-                            deleteConversationRecords(clash)
-                            titles.remove(conversation.title)
-                        }
-                    }
-
-                    ImportMode.RENAME -> {
-                        // 标题或 id 撞了就改名 + 换 id：一条都不能覆盖，两条并存
-                        val clash = conversation.title in titles ||
-                            conversations.findExistingId(conversation.id) != null
-                        if (clash) {
-                            val title = uniqueCopyTitle(
-                                title = conversation.title,
-                                taken = titles,
-                                suffix = Res.get(R.string.conversation_fork_suffix),
-                                suffixN = { n -> Res.get(R.string.conversation_fork_suffix_n, n) },
-                            )
-                            conversation = conversation
-                                .copy(title = title)
-                                .withFreshIds("${conversation.id}~${System.currentTimeMillis()}")
-                        }
+        val batch = ArrayList<BackupConversation>(ImportBatchSize)
+        suspend fun flush() {
+            if (batch.isEmpty()) return
+            db.withTransaction {
+                for (conversation in batch) {
+                    val (wasSkipped, messagesWritten) = writeConversation(conversation, mode, titles)
+                    if (wasSkipped) skipped++ else {
+                        importedConversations++
+                        importedMessages += messagesWritten
                     }
                 }
-
-                titles += conversation.title
-                conversations.upsert(
-                    ConversationEntity(
-                        id = conversation.id,
-                        title = conversation.title,
-                        mode = conversation.mode,
-                        provider = conversation.provider,
-                        model = conversation.model,
-                        systemPrompt = conversation.systemPrompt,
-                        createdAt = conversation.createdAt,
-                        updatedAt = conversation.updatedAt,
-                        pinned = conversation.pinned,
-                        pinnedAt = conversation.pinnedAt,
-                    ),
-                )
-                for (message in conversation.messages) {
-                    // 消息主键是全局的：已存在就跳过（增量的常规情形；换 id 后不会撞）
-                    if (messages.findExistingId(message.id) != null) continue
-                    messages.upsert(message.toEntity(conversation.id))
-                    importedMessages++
-                }
-
-                // 恢复挂载的预设（顺序有意义：拼接顺序会影响模型对主次的判断）
-                writePresetLinks(conversation.id, conversation.enabledPresetIds)
             }
+            batch.clear()
+        }
 
-            for (preset in file.presets) {
-                presets.upsert(
-                    PresetEntity(
-                        id = preset.id,
-                        name = preset.name,
-                        content = preset.content,
-                        sortOrder = preset.sortOrder,
-                        createdAt = preset.createdAt,
-                        updatedAt = preset.updatedAt.takeIf { it > 0L } ?: preset.createdAt,
-                    ),
-                )
+        for (conversation in conversationsSeq) {
+            batch += conversation
+            if (batch.size >= ImportBatchSize) flush()
+        }
+        flush()
+
+        if (presetsToWrite.isNotEmpty()) {
+            db.withTransaction {
+                for (preset in presetsToWrite) {
+                    presets.upsert(
+                        PresetEntity(
+                            id = preset.id,
+                            name = preset.name,
+                            content = preset.content,
+                            sortOrder = preset.sortOrder,
+                            createdAt = preset.createdAt,
+                            updatedAt = preset.updatedAt.takeIf { it > 0L } ?: preset.createdAt,
+                        ),
+                    )
+                }
             }
         }
 
         return ImportResult(
-            conversations = file.conversations.size - skipped,
+            conversations = importedConversations,
             messages = importedMessages,
-            presets = file.presets.size,
+            presets = presetsToWrite.size,
             skipped = skipped,
         )
     }
 
+    /**
+     * 写**一条**会话（含它的消息与预设挂载）。返回 `(是否被跳过, 写入的消息数)`。
+     *
+     * 三种策略的判定都在这里，调用方（[importStream]）只负责分批与计数。
+     */
+    private suspend fun writeConversation(
+        raw: BackupConversation,
+        mode: ImportMode,
+        titles: MutableSet<String>,
+    ): Pair<Boolean, Int> {
+        var conversation = raw
+
+        when (mode) {
+            ImportMode.MERGE -> {
+                // 增量：按 id 去重。已存在就跳过，本地改动一律不动
+                if (conversations.findExistingId(conversation.id) != null) return true to 0
+            }
+
+            ImportMode.REPLACE_SAME -> {
+                // 同名 = 同一条会话：先删旧的（消息 / 预设挂载 / 摘要靠外键级联）
+                val clash = conversations.findIdByTitle(conversation.title)
+                    ?: conversations.findExistingId(conversation.id)
+                if (clash != null) {
+                    deleteConversationRecords(clash)
+                    titles.remove(conversation.title)
+                }
+            }
+
+            ImportMode.RENAME -> {
+                // 标题或 id 撞了就改名 + 换 id：一条都不能覆盖，两条并存
+                val clash = conversation.title in titles ||
+                    conversations.findExistingId(conversation.id) != null
+                if (clash) {
+                    val title = uniqueCopyTitle(
+                        title = conversation.title,
+                        taken = titles,
+                        suffix = Res.get(R.string.conversation_fork_suffix),
+                        suffixN = { n -> Res.get(R.string.conversation_fork_suffix_n, n) },
+                    )
+                    conversation = conversation
+                        .copy(title = title)
+                        .withFreshIds("${conversation.id}~${System.currentTimeMillis()}")
+                }
+            }
+        }
+
+        titles += conversation.title
+        conversations.upsert(
+            ConversationEntity(
+                id = conversation.id,
+                title = conversation.title,
+                mode = conversation.mode,
+                provider = conversation.provider,
+                model = conversation.model,
+                systemPrompt = conversation.systemPrompt,
+                createdAt = conversation.createdAt,
+                updatedAt = conversation.updatedAt,
+                pinned = conversation.pinned,
+                pinnedAt = conversation.pinnedAt,
+            ),
+        )
+
+        var written = 0
+        for (message in conversation.messages) {
+            // 消息主键是全局的：已存在就跳过（增量的常规情形；换 id 后不会撞）
+            if (messages.findExistingId(message.id) != null) continue
+            messages.upsert(message.toEntity(conversation.id))
+            written++
+        }
+
+        // 恢复挂载的预设（顺序有意义：拼接顺序会影响模型对主次的判断）
+        writePresetLinks(conversation.id, conversation.enabledPresetIds)
+        return false to written
+    }
     /**
      * 删掉一条会话及其附属记录 —— 「覆盖同名」用。
      *
@@ -1027,6 +1106,14 @@ class ChatRepository(private val db: AppDatabase) {
 
 /** 供 DAO 之外使用：把实体列表转成 UI 模型。 */
 fun List<MessageEntity>.toUiMessages(): List<UiMessage> = map { it.toUi() }
+
+/**
+ * 流式导入每批写多少条会话。
+ *
+ * 太小则事务开销高（每条会话一次 fsync），太大又回到占内存 —— 一批里带着
+ * 各会话的图片 base64，所以取 50 而不是 100。
+ */
+private const val ImportBatchSize = 50
 
 /** 附件列的截断长度：40 万字符 ≈ 300KB 图，远小于 2MB 的 CursorWindow。 */
 private const val CappedAttachmentsChars = 400_000

@@ -61,15 +61,46 @@ internal object DeepSeekHistory {
 
     private val json = Json { ignoreUnknownKeys = true }
 
+    /** 这份 ZIP 是不是 DeepSeek 导出（只看 `manifest.json` 的一个字段）。 */
+    fun detect(zip: ZipFile): Boolean {
+        val manifest = readJson(zip, MANIFEST) ?: return false
+        return manifest["export_format_version"]?.jsonPrimitive?.intOrNull != null
+    }
+
     /**
      * 认出来就翻译成我们的备份模型；`manifest.json` 里没有
      * `export_format_version` 说明不是这份格式，返回 null（交给别的分支）。
+     *
+     * ⚠️ 大包**不要走这条**：它把所有会话连同图片 base64 一次性放进 `BackupFile`，
+     * 228MB 的归档解压后能有几百兆，必 OOM。导入路径用 [stream]（逐条产出、逐批写库）。
      */
     fun parse(
         zip: ZipFile,
         naming: ExternalBackup.ImportNaming,
         onProgress: (Float) -> Unit = {},
     ): BackupFile? {
+        val streamed = stream(zip, naming, onProgress) ?: return null
+        return BackupFile(
+            exportedAt = System.currentTimeMillis(),
+            conversations = streamed.toList(),
+        )
+    }
+
+    /**
+     * **流式**产出会话：每 `next()` 才读一条会话 JSON 与它用到的图片。
+     *
+     * 为什么必须这样：整包解析的峰值内存 = 全部会话 + 全部图片 base64 之和。
+     * 实测 2106 个会话 / 24535 条消息的归档，在解压之后是几百兆，堆里放不下
+     * （报错形如 `Failed to allocate a 893424 byte allocation with 424432 free bytes`）。
+     * 流式之后内存只与**单条最大的会话**有关，与归档总量无关。
+     *
+     * 调用方必须在 `ZipFile` 关闭之前把序列消费完。
+     */
+    fun stream(
+        zip: ZipFile,
+        naming: ExternalBackup.ImportNaming,
+        onProgress: (Float) -> Unit = {},
+    ): Sequence<BackupConversation>? {
         val manifest = readJson(zip, MANIFEST) ?: return null
         val version = manifest["export_format_version"]?.jsonPrimitive?.intOrNull ?: return null
         if (version != FORMAT_VERSION) {
@@ -80,24 +111,31 @@ internal object DeepSeekHistory {
             ?.let { it.arrOrEmpty("sessions").mapNotNull { entry -> entry.str("id") } }
             .orEmpty()
 
+        // 索引里的顺序就是用户在 DeepSeek 里看到的顺序；没有索引就按文件名（≈ 会话 id）
+        val rank = indexOrder.withIndex().associate { (i, id) -> "$ID_PREFIX$id" to i }
         val sessionEntries = zip.entries().asSequence()
             .filter { !it.isDirectory && it.name.startsWith(SESSIONS) && it.name.endsWith(".json") }
             // 图片目录 `chat_sessions/{id}_files/` 里的东西不在这里（它们不叫 .json）
             .filter { !it.name.removePrefix(SESSIONS).contains('/') }
             .toList()
+            .sortedBy { entry ->
+                val id = entry.name.removePrefix(SESSIONS).removeSuffix(".json")
+                rank["$ID_PREFIX$id"] ?: Int.MAX_VALUE
+            }
 
         val total = sessionEntries.size.coerceAtLeast(1)
         var done = 0
         /*
          * 图片总量预算。
          *
-         * 图片是以 base64 存进数据库的，一份 228MB 的导出包里绝大多数体积都是图 ——
+         * 图片以 base64 存进数据库的**同一行**，一份 228MB 的导出包里绝大多数体积都是图 ——
          * 全导进来会让数据库涨到几百 MB，应用从此又慢又卡。这里按总量封顶，
          * 超出的部分跳过（导入完成时的提示里已说明）。
          */
         var imageBudget = MaxImportedImageBytes
-        val sessions = sessionEntries.mapNotNull { entry ->
-            // 进度按"解析完多少条会话"报，含图片读取 —— 228MB 的包主要时间都在这
+
+        return sessionEntries.asSequence().mapNotNull { entry ->
+            // 进度按"解析完多少条会话"报，含图片读取 —— 大包主要时间都在这
             onProgress((done.toFloat() / total).coerceIn(0f, 1f))
             done++
             // 单个会话 JSON 也有上限：异常大的会话宁可跳过，也不要把整个导入拖垮
@@ -115,18 +153,6 @@ internal object DeepSeekHistory {
             }.toMap()
             mapSession(obj, naming) { images[it] }
         }
-
-        if (sessions.isEmpty()) throw AppTextException(R.string.err_no_sessions)
-
-        // 索引里的顺序就是用户在 DeepSeek 里看到的顺序；没有索引就按时间倒序
-        val ordered = if (indexOrder.isEmpty()) {
-            sessions.sortedByDescending { it.updatedAt }
-        } else {
-            val rank = indexOrder.withIndex().associate { (i, id) -> "$ID_PREFIX$id" to i }
-            sessions.sortedBy { rank[it.id] ?: Int.MAX_VALUE }
-        }
-
-        return BackupFile(exportedAt = System.currentTimeMillis(), conversations = ordered)
     }
 
     /**
