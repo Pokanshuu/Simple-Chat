@@ -1,5 +1,6 @@
 package com.simplechat.app.data
 
+import android.database.sqlite.SQLiteBlobTooBigException
 import androidx.room.withTransaction
 import com.simplechat.app.R
 import com.simplechat.app.db.AppDatabase
@@ -246,7 +247,7 @@ class ChatRepository(private val db: AppDatabase) {
 
     /** 当前对话：从根沿 active 走到底。 */
     suspend fun loadActivePath(conversationId: String): List<UiMessage> {
-        val all = messages.getAllFor(conversationId)
+        val all = loadMessagesSafely(conversationId)
         val counts = MessageTree.siblingCounts(all)
         return MessageTree.activePath(all).map { entity ->
             entity.toUi().copy(variantCount = counts[entity.parentId] ?: 1)
@@ -254,6 +255,23 @@ class ChatRepository(private val db: AppDatabase) {
     }
 
     /** 路径末尾节点 id；空会话返回 [MessageEntity.ROOT_PARENT]。 */
+    /**
+     * 读一个会话的全部消息，**带超大行的兜底**。
+     *
+     * Android 的 `CursorWindow` 是 2MB：某一条消息的附件列（图片 base64）超过它，
+     * 整条 SQL 就抛 `SQLiteBlobTooBigException`，那个会话从列表点进去直接闪退 ——
+     * 一次导入几万条历史之后，这种行必然存在。
+     *
+     * 兜底策略：整行读不了就退到"截断附件"的查询。牺牲的只是那一条消息的图片，
+     * 正文、思考、时间线都还在，而且会话能打开。
+     */
+    private suspend fun loadMessagesSafely(conversationId: String): List<MessageEntity> =
+        runCatching { messages.getAllFor(conversationId) }
+            .getOrElse { error ->
+                if (error !is SQLiteBlobTooBigException) throw error
+                messages.getAllForCapped(conversationId, CappedAttachmentsChars)
+            }
+
     suspend fun tailId(conversationId: String): String =
         messages.getAllFor(conversationId)
             .let { MessageTree.activePath(it).lastOrNull()?.id }
@@ -500,7 +518,8 @@ class ChatRepository(private val db: AppDatabase) {
 
     /** 串行读取某个父亲下当前激活的版本。 */
     suspend fun activeMessageAt(conversationId: String, parentId: String): UiMessage? {
-        val all = messages.getAllFor(conversationId)
+        // 同样走兜底：这条路径也在"点开会话"的链路上，超大行一样会崩
+        val all = loadMessagesSafely(conversationId)
         val node = all.firstOrNull { it.parentId == parentId && it.active } ?: return null
         val count = MessageTree.siblingCounts(all)[parentId] ?: 1
         return node.toUi().copy(variantCount = count)
@@ -997,3 +1016,6 @@ class ChatRepository(private val db: AppDatabase) {
 
 /** 供 DAO 之外使用：把实体列表转成 UI 模型。 */
 fun List<MessageEntity>.toUiMessages(): List<UiMessage> = map { it.toUi() }
+
+/** 附件列的截断长度：40 万字符 ≈ 300KB 图，远小于 2MB 的 CursorWindow。 */
+private const val CappedAttachmentsChars = 400_000

@@ -168,11 +168,22 @@ internal object DeepSeekHistory {
             }
             val think = message.fragmentsOf("THINK")
             val elapsedSecs = think.sumOf { it.longOrZero("elapsed_secs") }
+            /*
+             * 单条消息的附件也要封顶。
+             *
+             * 附件是**同一行**里的一个 JSON 列，图片 base64 一多，整行就会超过
+             * Android `CursorWindow` 的 2MB —— 那条会话从此打不开（`SQLiteBlobTooBigException`）。
+             * 实测导入后有单行 7.4MB，必须在这里挡住。
+             */
+            var perMessage = MaxPerMessageImageBytes
             val images = message.fragmentsOf("FILE").flatMap { file ->
                 file.arrOrEmpty("files").mapNotNull { entry ->
                     if (entry.str("is_image") != "true") return@mapNotNull null
+                    if (perMessage <= 0) return@mapNotNull null
                     val path = entry.str("export_path") ?: return@mapNotNull null
-                    imageOf(path)
+                    imageOf(path)?.also { image ->
+                        perMessage -= image.sizeBytes
+                    }
                 }
             }
 
@@ -360,6 +371,15 @@ internal object DeepSeekHistory {
 
     /** 单张图片上限：再大的塞进数据库只会拖垮列表滚动。 */
     private const val MaxSingleImageBytes = 6 * 1024 * 1024
+
+    /**
+     * 单条消息的图片总量上限（原始字节）。
+     *
+     * 附件与正文在**同一行**，而 Android 的 CursorWindow 只有 2MB：
+     * base64 之后不能超过它，否则那条会话一次都读不出来。这里按 800KB 原始字节封顶
+     * （base64 约 1.07MB，留足余量）。
+     */
+    private const val MaxPerMessageImageBytes = 800 * 1024
 
     /** 一次导入的图片总量上限（base64 之后还会再涨三分之一）。 */
     private const val MaxImportedImageBytes = 24 * 1024 * 1024

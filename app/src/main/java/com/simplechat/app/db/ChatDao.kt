@@ -127,6 +127,25 @@ interface MessageDao {
     suspend fun getAllFor(conversationId: String): List<MessageEntity>
 
     /**
+     * 同 [getAllFor]，但把 `attachments` 截断到 [cap] 字符。
+     *
+     * **兜底用**：图片 base64 能到几兆，而 Android 的 `CursorWindow` 只有 2MB ——
+     * 整行塞不进去就抛 `SQLiteBlobTooBigException`，那个会话从此打不开（实测闪退）。
+     * 截断之后那一行的附件解析会失败，按约定当"没有附件"，至少正文还能看。
+     */
+    @Query(
+        """
+        SELECT id, conversationId, parentId, variantIndex, active, role, content,
+               substr(attachments, 1, :cap) AS attachments,
+               reasoning, status, errorMessage, model, excluded,
+               thinkingMs, ttftMs, tps, tokens_in, tokens_out,
+               timeline, stopReason, createdAt
+        FROM messages WHERE conversationId = :conversationId
+        """,
+    )
+    suspend fun getAllForCapped(conversationId: String, cap: Int): List<MessageEntity>
+
+    /**
      * 只要每条消息的 `parentId` —— 数兄弟版本用。
      *
      * 刻意**不**用 `getAllFor`：附件列里可能躺着几百 KB 的图片 base64，

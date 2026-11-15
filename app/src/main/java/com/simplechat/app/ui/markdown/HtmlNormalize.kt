@@ -38,7 +38,9 @@ internal fun normalizeHtml(
     markdown: String,
     imageAlt: () -> String = { Res.get(R.string.md_image) },
 ): String =
-    collapseBlankLines(transformOutsideFences(resolveReferenceLinks(markdown), imageAlt))
+    collapseBlankLines(
+        transformOutsideFences(fixEmphasisFlanking(resolveReferenceLinks(markdown)), imageAlt),
+    )
 
 /**
  * 把**引用式链接**内联成行内链接。
@@ -298,4 +300,112 @@ private fun collapseBlankLines(text: String): String {
         }
     }
     return out.joinToString("\n")
+}
+
+// ══════════════════════════════════════════════════════════
+//  强调符号（** / __）的定界修补
+// ══════════════════════════════════════════════════════════
+
+/**
+ * 修补 CommonMark「定界符左右侧」规则在中文 + 引号上的误伤。
+ *
+ * ### 现象
+ *
+ * `确实**"爆"**。` 会原样显示成一串星号。原因是 CommonMark 的
+ * **left-flanking** 判定：`**` 左边是汉字（不是空白也不是标点）、右边是引号（标点），
+ * 两个条件同时成立时它**不能当开定界符**，于是整对 `**` 退回字面量。
+ * 中文写作里「**"爆"**」这种"紧贴文字 + 内容是引号开头"的写法极常见，
+ * 官方客户端也是加粗的，所以这里在**送进解析器之前**补一刀。
+ *
+ * ### 怎么补
+ *
+ * 在开定界符后面、收定界符前面各插一个**零宽空格**（U+200B）：
+ * - 开：`**` 后面不再是标点 → 满足 left-flanking；
+ * - 收：`**` 前面不再是标点 → 满足 right-flanking。
+ *
+ * 零宽空格不可见、不占宽度，而且**只改显示用的文本**：
+ * 落库与发给模型的内容仍是原文（复制走的是消息本体，不是这份渲染文本）。
+ *
+ * ### 不动的地方
+ *
+ * 围栏代码块、行内代码里的 `**` 是**要给人看的内容**，一律不碰。
+ */
+internal fun fixEmphasisFlanking(markdown: String): String {
+    if (!markdown.contains("**") && !markdown.contains("__")) return markdown
+
+    val out = ArrayList<String>(markdown.lines().size)
+    var fence: String? = null
+    for (line in markdown.lines()) {
+        val marker = fenceMarkerOf(line.trimStart())
+        if (marker != null) {
+            when {
+                fence == null -> fence = marker
+                marker == fence -> fence = null
+            }
+            out += line
+            continue
+        }
+        out += if (fence == null) transformOutsideCode(line) { patchEmphasis(it) } else line
+    }
+    return out.joinToString("\n")
+}
+
+/** 一段**不含行内代码**的文本：给不满足定界规则的 `**x**` 补零宽空格。 */
+private fun patchEmphasis(segment: String): String {
+    if (segment.indexOf('*') < 0 && segment.indexOf('_') < 0) return segment
+    return EMPHASIS_PAIR.replace(segment) { m ->
+        val inner = m.groupValues[2]
+        if (inner.isBlank()) return@replace m.value
+
+        val start = m.range.first
+        val end = m.range.last
+        val before = segment.getOrNull(start - 1)
+        val first = inner.first()
+        val last = inner.last()
+        val after = segment.getOrNull(end + 1)
+
+        // 开定界符：左边是"普通字符"、右边是标点 → 不满足 left-flanking
+        val needsOpen = before != null && !before.isMdSpace() && !before.isMdPunct() &&
+            first.isMdPunct()
+        // 收定界符：左边是标点、右边是"普通字符" → 不满足 right-flanking
+        val needsClose = after != null && !after.isMdSpace() && !after.isMdPunct() &&
+            last.isMdPunct()
+        if (!needsOpen && !needsClose) return@replace m.value
+
+        buildString {
+            append(m.groupValues[1])
+            if (needsOpen) append(Zwsp)
+            append(inner)
+            if (needsClose) append(Zwsp)
+            append(m.groupValues[1])
+        }
+    }
+}
+
+/** 成对的 `**x**` 或 `__x__`（同一种定界符配对，不跨行）。 */
+private val EMPHASIS_PAIR = Regex("""(\*\*|__)([^\n]*?)\1""")
+
+/** 零宽空格：不占宽度、不可见，只用来让定界符满足 flanking 规则。 */
+private const val Zwsp = "\u200B"
+
+/** CommonMark 的空白：空格、制表、换行，以及 Unicode `Zs` 类。 */
+private fun Char.isMdSpace(): Boolean =
+    this == ' ' || this == '\t' || this == '\n' || Character.getType(this) == Character.SPACE_SEPARATOR.toInt()
+
+/** CommonMark 的标点：Unicode `P*` 与 `S*`。中文引号属于 `Pi` / `Pf`。 */
+private fun Char.isMdPunct(): Boolean = when (Character.getType(this)) {
+    Character.CONNECTOR_PUNCTUATION.toInt(),
+    Character.DASH_PUNCTUATION.toInt(),
+    Character.START_PUNCTUATION.toInt(),
+    Character.END_PUNCTUATION.toInt(),
+    Character.INITIAL_QUOTE_PUNCTUATION.toInt(),
+    Character.FINAL_QUOTE_PUNCTUATION.toInt(),
+    Character.OTHER_PUNCTUATION.toInt(),
+    Character.MATH_SYMBOL.toInt(),
+    Character.CURRENCY_SYMBOL.toInt(),
+    Character.MODIFIER_SYMBOL.toInt(),
+    Character.OTHER_SYMBOL.toInt(),
+    -> true
+
+    else -> false
 }
