@@ -51,6 +51,18 @@
     <!-- ── Errors & feedback ────────────────────────────── -->
     <string name="error_unknown">Unknown error</string>
     <string name="error_network">Network connection failed</string>
+    <string name="error_network_offline">Cannot reach the network. Check your connection or proxy and retry</string>
+    <string name="error_network_timeout">Connection timed out. Try again shortly</string>
+    <string name="error_network_interrupted">The connection was interrupted (server or network hiccup). Please retry</string>
+    <string name="error_network_insecure">Secure connection failed. Check your network or certificates</string>
+    <string name="error_server_busy">The service is busy or temporarily failing. Try again shortly</string>
+    <string name="error_http_status">Server returned HTTP %1$d</string>
+    <string name="error_http_unauthorized">Invalid or expired API key. Enter it again in Settings</string>
+    <string name="error_http_payment_required">Insufficient balance. Top up and retry</string>
+    <string name="error_http_forbidden">This API key has no permission for the request</string>
+    <string name="error_http_not_found">Endpoint not found. Check the Base URL and protocol channel</string>
+    <string name="error_http_too_large">The request is too large (images or history). Reduce it and retry</string>
+    <string name="error_http_rate_limited">Too many requests. Wait a moment and retry</string>
     <string name="error_no_api_key">No API key yet. Fill it in under Settings → API, then retry.</string>
     <string name="error_request_failed">Request failed</string>
     <string name="error_no_content">The model returned no content</string>
@@ -110,7 +122,18 @@
     <string name="import_mode_replace_same">Overwrite same name (replace them with the file)</string>
     <string name="import_mode_rename">Keep both (imported one gets a copy suffix)</string>
     <string name="import_done">Imported from %1$s: %2$d conversations · %3$d messages</string>
-    <string name="import_done_skipped"> · %1$d duplicates skipped</string>
+    <string name="import_done_expected"> · %1$d conversations in the archive</string>
+    <string name="import_done_duplicates"> · %1$d already present</string>
+    <string name="import_done_failed"> · %1$d could not be imported: %2$s</string>
+    <string name="import_fail_item">%1$s ×%2$d</string>
+    <string name="import_failed_titles"> (%1$s)</string>
+    <string name="import_fail_too_large">conversation file too large</string>
+    <string name="import_fail_unreadable">conversation file damaged</string>
+    <string name="import_fail_empty">no importable messages</string>
+    <string name="import_fail_broken_tree">message tree malformed</string>
+    <string name="import_fail_missing_entry">conversation file missing from archive</string>
+    <string name="import_fail_write_failed">write failed</string>
+    <string name="err_archive_damaged">The archive is incomplete or damaged (interrupted download?). Export it again and retry</string>
 
     <!-- ── Settings: presets ────────────────────────────── -->
     <string name="preset_count_empty">None</string>
@@ -238,6 +261,7 @@
     <string name="backup_source_deepseek">DeepSeek export</string>
     <string name="err_deepseek_version">This DeepSeek archive is version %1$d; this app reads version %2$d</string>
     <string name="images_skipped_no_vision">This model does not accept images; %1$d skipped</string>
+    <string name="images_skipped_unreadable">Skipped %1$d image(s): unsupported or damaged file</string>
     <string name="warn_deepseek_limited">Search steps, link reading and non-image files were not imported</string>
     <string name="err_unrecognised_file">Unrecognised file: neither a zip archive nor JSON</string>
     <string name="err_unrecognised_format">Unrecognised file (format=%1$s)</string>
@@ -247,8 +271,7 @@
     <string name="err_not_chatbox">Not a Chatbox backup (format=%1$s)</string>
     <string name="err_no_sessions">No importable conversations in this backup</string>
     <string name="err_not_our_backup">Not a backup from this app (format=%1$s)</string>
-    <string name="warn_dropped_images">%1$d images could not be recovered (missing resources in the backup)</string>
-    <string name="warn_no_messages">Some conversations had no importable messages</string>
+    <string name="warn_dropped_images">%1$d image(s) could not be retrieved (missing from the archive)</string>
     <string name="warn_single_branch">Chatbox: only the branch in view was imported (its fork semantics differ, so forks were not expanded)</string>
     <string name="import_image_name">Image %1$d×%2$d</string>
     <string name="import_image_default_name">Imported image</string>
@@ -474,6 +497,17 @@
     <string name="tts_stop">Stop reading</string>
     <string name="tts_failed">Could not read this aloud, please retry</string>
     <string name="tts_empty">This reply has no text to read</string>
+    <string name="tts_unavailable">No text-to-speech engine is available. Install one in system settings</string>
+    <!-- Read-aloud voice (Settings) -->
+    <string name="tts_voice">Reading voice</string>
+    <string name="tts_voice_default">System default</string>
+    <string name="tts_voice_online">online</string>
+    <string name="tts_voice_loading">Reading the voices installed on this device…</string>
+    <string name="tts_voice_empty">No text-to-speech engine is available on this device. Install one (for example Google Speech Services) and come back.</string>
+    <string name="tts_voice_hint">Voices come from the system text-to-speech engine. Voices marked online may stay silent when offline.</string>
+    <string name="tts_voice_preview">Preview</string>
+    <string name="tts_voice_preview_running">Previewing… tap again to stop</string>
+    <string name="tts_voice_preview_text">Hello, this is a short preview so you can pick a reading voice.</string>
 
     <!-- ── Mermaid diagrams ─────────────────────────────── -->
     <string name="mermaid_label">Diagram</string>

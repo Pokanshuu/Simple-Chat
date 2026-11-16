@@ -5,19 +5,23 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!--
-        语音输入（录音 → 系统识别）与朗读（TTS）**暂时下线**，
-        所以这里不再声明 `RECORD_AUDIO`，也不声明识别/TTS 的 `<queries>` ——
-        否则装完之后系统设置里会挂着一个用不上的"麦克风"权限。
+        语音输入（录音 → 系统识别）**仍然下线**，所以这里不声明 `RECORD_AUDIO`，
+        也不声明识别服务的 `<queries>` —— 否则装完之后系统设置里会挂着一个
+        用不上的"麦克风"权限。
 
-        重新开启时三样都要加回来（见 `ui/common/FeatureFlags.kt`）：
+        朗读（TTS）已开启：Android 11+ 的包可见性要求显式声明 TTS 服务的 intent，
+        否则 `TextToSpeech` 可能找不到引擎、读不出音色列表（见 `FeatureFlags`）。
+        重新开启语音输入时，把下面这两行也加回来：
         ```xml
         <uses-permission android:name="android.permission.RECORD_AUDIO" />
-        <queries>
-            <intent><action android:name="android.speech.RecognitionService" /></intent>
-            <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
-        </queries>
+        <intent><action android:name="android.speech.RecognitionService" /></intent>
         ```
     -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
 
     <application
         android:name=".App"

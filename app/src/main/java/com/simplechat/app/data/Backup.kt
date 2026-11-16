@@ -243,10 +243,4 @@ internal fun BackupConversation.withFreshIds(newId: String): BackupConversation 
     )
 }
 
-/** 导入结果，用于给出「到底导入了什么」的明确反馈。 */
-data class ImportResult(
-    val conversations: Int,
-    val messages: Int,
-    val presets: Int,
-    val skipped: Int,
-)
+/** 导入结果见 [ImportReport]（对账模型：声明数 / 导入数 / 失败原因）。 */

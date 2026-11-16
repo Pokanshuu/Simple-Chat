@@ -4,7 +4,9 @@ import androidx.annotation.StringRes
 import com.simplechat.app.R
 import com.simplechat.app.data.AppText
 import com.simplechat.app.data.AppTextException
+import com.simplechat.app.data.ApiImage
 import com.simplechat.app.data.Attachment
+import com.simplechat.app.data.ImportFailure
 import com.simplechat.app.data.BackupConversation
 import com.simplechat.app.data.BackupFile
 import com.simplechat.app.data.BackupMessage
@@ -96,6 +98,17 @@ object ExternalBackup {
         val file: BackupFile,
         /** 有损/跳过的部分，如实告诉用户，别让他以为"全都进来了"。 */
         val warnings: List<AppText> = emptyList(),
+        /**
+         * 归档**声明**的会话数（用于对账，见 [ImportReport]）。
+         *
+         * 默认与解析出来的条数相同 —— 那份文件本身就是清单；只有外部归档
+         * （DeepSeek 的索引、Chatbox 的会话文件）才有"声明的比读出来的多"这回事。
+         */
+        val expected: Int = file.conversations.size,
+        /** 解析阶段就没读下来的会话。 */
+        val failures: List<ImportFailure> = emptyList(),
+        /** 取不回来的图片张数。 */
+        val droppedImages: Int = 0,
     )
 
     private val json = Json {
@@ -157,7 +170,11 @@ object ExternalBackup {
      */
     private fun readOwnArchive(zip: ZipFile): BackupFile? =
         ChatArchive.readBackupJson { name ->
-            zip.getEntry(name)?.let { entry -> zip.getInputStream(entry).readBytes() }
+            // 读单个条目失败（包被截断）不该把整次导入变成一句英文异常：
+            // 读不到就当"不是我们的归档"，交给后面的分支给出更准确的判断
+            runCatching {
+                zip.getEntry(name)?.let { entry -> zip.getInputStream(entry).readBytes() }
+            }.getOrNull()
         }
 
     // ── ZIP 形态的 Chatbox 备份 ───────────────────────────
@@ -238,13 +255,28 @@ object ExternalBackup {
                  * 与另外两种的 `format` 字段**天然不冲突**，但仍排在自家之后、
                  * Chatbox 之前 —— 顺序只影响"同一份包被谁认领"，不存在歧义时无所谓。
                  */
-                DeepSeekHistory.parse(zip, naming, onProgress)?.let { file ->
+                val deepSeekFailures = mutableListOf<ImportFailure>()
+                var deepSeekDroppedImages = 0
+                val deepSeek = DeepSeekHistory.open(
+                    zip = zip,
+                    naming = naming,
+                    onProgress = onProgress,
+                    onFailure = { deepSeekFailures += it },
+                    onImageDropped = { deepSeekDroppedImages++ },
+                )
+                if (deepSeek != null) {
                     return Parsed(
                         source = Source.DEEPSEEK,
-                        file = file,
+                        file = BackupFile(
+                            exportedAt = System.currentTimeMillis(),
+                            conversations = deepSeek.toList(),
+                        ),
                         // 分支从 v1.1.1 起整棵保留（见 DeepSeekHistory.mapSession），
                         // 所以这里**不再**挂"只导入了当前分支"那条提示
                         warnings = listOf(AppText.of(R.string.warn_deepseek_limited)),
+                        expected = deepSeek.expected,
+                        failures = deepSeekFailures,
+                        droppedImages = deepSeekDroppedImages,
                     )
                 }
 
@@ -287,7 +319,10 @@ object ExternalBackup {
                 val images = needed.mapNotNull { key ->
                     val ref = resources[key] ?: return@mapNotNull null
                     val entry = zip.getEntry(ref.path) ?: return@mapNotNull null
-                    key to buildImageAttachment(ref, zip.getInputStream(entry).readBytes(), naming)
+                    // 单个图片条目读失败（包被截断）只丢这张图；数量由 Parsed.droppedImages 记账
+                    val blob = runCatching { zip.getInputStream(entry).readBytes() }.getOrNull()
+                        ?: return@mapNotNull null
+                    key to buildImageAttachment(ref, blob, naming)
                 }.toMap()
 
         return buildParsed(
@@ -343,13 +378,16 @@ object ExternalBackup {
         naming: ImportNaming,
     ): Attachment {
         val size = imageSizeOf(blob)
-        val stored = naming.storeImage?.invoke(blob, ref.mime)
+        // manifest 里的 mimeType 只是"当时上传者声明的"，与真实内容未必一致；
+        // 服务端只认内容，所以这里按字节校正（见 ApiImage）
+        val mime = ApiImage.mediaTypeOf(blob, declared = ref.mime)
+        val stored = naming.storeImage?.invoke(blob, mime)
         return Attachment(
             kind = Attachment.Kind.IMAGE,
             // 资源本身没有文件名（ZIP 里就是 resource-000002.jpg），
             // 用尺寸当可读标识，比一串 uuid 有用
             name = size?.let { naming.imageName(it.first, it.second) } ?: naming.imageFallbackName(),
-            mime = ref.mime,
+            mime = mime,
             // 落盘成功就只留文件名，字节在 filesDir 里（见 AttachmentFiles）
             data = if (stored != null) "" else Base64.getEncoder().encodeToString(blob),
             width = size?.first ?: 0,
@@ -367,22 +405,28 @@ object ExternalBackup {
         naming: ImportNaming,
     ): Parsed {
         val warnings = mutableListOf<AppText>()
+        val failures = mutableListOf<ImportFailure>()
         var droppedImages = 0
 
         val conversations = sessions.mapNotNull { session ->
-            runCatching { parseSession(session, imageOf, naming) { droppedImages++ } }.getOrNull()
+            val conversation = runCatching {
+                parseSession(session, imageOf, naming) { droppedImages++ }
+            }.getOrNull()
+            if (conversation == null) {
+                // 读不出来也要记账：归档里有几条会话、进来几条，用户对得上账
+                failures += ImportFailure(
+                    title = session["name"]?.jsonPrimitive?.contentOrNull,
+                    reference = session["id"]?.jsonPrimitive?.contentOrNull,
+                    reason = ImportFailure.Reason.EMPTY,
+                )
+            }
+            conversation
         }
 
         if (conversations.isEmpty()) {
             throw AppTextException(R.string.err_no_sessions)
         }
 
-        if (droppedImages > 0) {
-            warnings += AppText.of(R.string.warn_dropped_images, droppedImages)
-        }
-        if (conversations.any { it.messages.isEmpty() }) {
-            warnings += AppText.of(R.string.warn_no_messages)
-        }
         warnings += AppText.of(R.string.warn_single_branch)
 
         return Parsed(
@@ -393,6 +437,9 @@ object ExternalBackup {
                 presets = parseCopilots(manifest),
             ),
             warnings = warnings,
+            expected = sessions.size,
+            failures = failures,
+            droppedImages = droppedImages,
         )
     }
 

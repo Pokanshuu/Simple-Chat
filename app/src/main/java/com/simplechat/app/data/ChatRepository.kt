@@ -855,7 +855,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
      * 预设**两种模式都不删本地已有项**，只按 id 覆盖 —— 预设是用户长期积累的资产，
      * 不该因为恢复一份旧备份就被清掉。
      */
-    suspend fun importBackup(text: String, mode: ImportMode): ImportResult =
+    suspend fun importBackup(text: String, mode: ImportMode): ImportReport =
         importParsed(backupJson.decodeFromString<BackupFile>(text).also {
             if (it.format != BackupFile.FORMAT) {
                 throw AppTextException(R.string.err_not_our_backup, it.format)
@@ -875,7 +875,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         bytes: ByteArray,
         scratchDir: File,
         mode: ImportMode,
-    ): Pair<ImportResult, String> = importExternal(ExternalBackup.parse(bytes, scratchDir), mode)
+    ): Pair<ImportReport, String> = importExternal(ExternalBackup.parse(bytes, scratchDir), mode)
 
     /**
      * 从**磁盘上的文件**导入 —— 大文件（几百 MB 的 DeepSeek 导出）必须走这条。
@@ -888,7 +888,24 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         scratchDir: File,
         mode: ImportMode,
         onProgress: (Float) -> Unit = {},
-    ): Pair<ImportResult, String> {
+    ): Pair<ImportReport, String> = try {
+        importExternalFile(file, scratchDir, mode, onProgress)
+    } catch (error: AppTextException) {
+        throw error
+    } catch (error: java.util.zip.ZipException) {
+        // 包体损坏（CRC / 结构错）。给用户一句能行动的话，而不是 `Invalid CEN header`
+        throw AppTextException(R.string.err_archive_damaged)
+    } catch (error: java.io.EOFException) {
+        // 典型是 `Unexpected end of ZLIB input stream`：文件被截断（下载中断/空间不足）
+        throw AppTextException(R.string.err_archive_damaged)
+    }
+
+    private suspend fun importExternalFile(
+        file: File,
+        scratchDir: File,
+        mode: ImportMode,
+        onProgress: (Float) -> Unit,
+    ): Pair<ImportReport, String> {
         /*
          * DeepSeek 导出先走**流式**导入：它的会话数量级最大（一份归档几千个会话、
          * 两万多条消息），整包建对象会 OOM。判定只看 `manifest.json` 一个字段，
@@ -898,22 +915,49 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             ZipFile(file).use { zip -> DeepSeekHistory.detect(zip) }
         }.getOrDefault(false)
         if (isDeepSeek) {
-            val result = ZipFile(file).use { zip ->
-                val stream = DeepSeekHistory.stream(zip, importNaming(), onProgress)
-                    ?: throw AppTextException(R.string.err_unrecognised_file)
+            val failures = mutableListOf<ImportFailure>()
+            var droppedImages = 0
+            val report = ZipFile(file).use { zip ->
+                val opened = DeepSeekHistory.open(
+                    zip = zip,
+                    naming = importNaming(),
+                    onProgress = onProgress,
+                    onFailure = { failure ->
+                        // 用户看不到日志，但出问题时要能查：谁被跳过、为什么
+                        failures += failure
+                        android.util.Log.w(ImportLogTag, "跳过会话 ${failure.reference}：${failure.reason}")
+                    },
+                    onImageDropped = { droppedImages++ },
+                ) ?: throw AppTextException(R.string.err_unrecognised_file)
                 // 序列必须在 ZIP 关掉之前消费完，所以写库也在 use 里执行
-                importStream(stream, emptyList(), mode)
+                importStream(
+                    conversationsSeq = opened,
+                    presetsToWrite = emptyList(),
+                    mode = mode,
+                    expected = opened.expected,
+                    failures = failures.toList(),
+                    droppedImages = droppedImages,
+                )
             }
-            if (result.conversations == 0 && result.skipped == 0) {
-                throw AppTextException(R.string.err_no_sessions)
+            if (report.conversations == 0 && report.alreadyPresent == 0) {
+                // 一条都没进来、但有会话被记了失败 → 不是"文件认不出来"，是"文件读不出来"
+                throw if (report.failed > 0) {
+                    AppTextException(R.string.err_archive_damaged)
+                } else {
+                    AppTextException(R.string.err_no_sessions)
+                }
             }
-            val note = Res.get(R.string.backup_source_deepseek) +
-                Res.get(R.string.import_note_separator) +
-                Res.get(R.string.warn_deepseek_limited)
-            return result to note
+            return report to importSummary(
+                sourceName = Res.get(R.string.backup_source_deepseek),
+                report = report,
+                warnings = listOf(AppText.of(R.string.warn_deepseek_limited)),
+            )
         }
 
-        return importExternal(ExternalBackup.parse(file, scratchDir, naming = importNaming(), onProgress = onProgress), mode)
+        return importExternal(
+            ExternalBackup.parse(file, scratchDir, naming = importNaming(), onProgress = onProgress),
+            mode,
+        )
     }
 
     /**
@@ -930,6 +974,42 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     internal suspend fun materialize(attachments: List<Attachment>): List<Attachment> =
         if (attachments.none { it.isStored }) attachments
         else withContext(Dispatchers.IO) { AttachmentFiles.materialize(context, attachments) }
+
+    /**
+     * 构造请求前整理附件：**字节读回内存 + 图片按真实内容校正**。
+     *
+     * 两件事合成一个入口，是因为它们在请求链路上本来就是同一步：
+     * 读字节 → 判格式 → 必要时转码 → 回 base64。为什么要按内容判断、为什么要转码，
+     * 见 [ApiImage]：历史里的图片可能是服务端不认的格式，而**每一轮都会重发**，
+     * 一张坏图能让整个会话永远发不出去。
+     *
+     * @return 可内联的附件 + 被丢掉的图片张数（损坏或解不开）。宁可少一张图，
+     *   也不能让整轮请求 400 —— 丢弃数量由调用方如实告诉用户。
+     */
+    internal suspend fun prepareRequestAttachments(
+        attachments: List<Attachment>,
+    ): Pair<List<Attachment>, Int> {
+        if (attachments.isEmpty()) return attachments to 0
+        return withContext(Dispatchers.IO) {
+            var dropped = 0
+            val prepared = attachments.mapNotNull { attachment ->
+                if (!attachment.isImage) return@mapNotNull attachment
+                val bytes = if (attachment.isStored) {
+                    AttachmentFiles.read(context, attachment.path)
+                } else {
+                    runCatching { Base64.decode(attachment.data, Base64.NO_WRAP) }.getOrNull()
+                }
+                val image = bytes?.let { ApiImage.prepare(it) }
+                if (image == null) {
+                    dropped++
+                    null
+                } else {
+                    attachment.copy(mime = image.mediaType, data = image.base64, path = null)
+                }
+            }
+            prepared to dropped
+        }
+    }
 
     /**
      * 导出的前置处理：把落盘附件的字节读回 base64。
@@ -953,29 +1033,33 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     private suspend fun importExternal(
         parsed: ExternalBackup.Parsed,
         mode: ImportMode,
-    ): Pair<ImportResult, String> {
-        val result = importParsed(parsed.file, mode)
-        val note = buildString {
-            append(Res.get(parsed.source.nameRes))
-            if (parsed.warnings.isNotEmpty()) {
-                append(Res.get(R.string.import_note_separator))
-                append(parsed.warnings.joinToString(Res.get(R.string.list_separator)) { it.resolve() })
-            }
-        }
-        return result to note
+    ): Pair<ImportReport, String> {
+        val report = importStream(
+            conversationsSeq = parsed.file.conversations.asSequence(),
+            presetsToWrite = parsed.file.presets,
+            mode = mode,
+            expected = parsed.expected,
+            failures = parsed.failures,
+            droppedImages = parsed.droppedImages,
+        )
+        return report to importSummary(
+            sourceName = Res.get(parsed.source.nameRes),
+            report = report,
+            warnings = parsed.warnings,
+        )
     }
 
     /**
      * 从解析好的备份模型落库。
      *
      * - [ImportMode.MERGE]：按 `id` 去重，已存在的一律跳过。多设备汇总时不会覆盖本地改动。
-     * - [ImportMode.OVERWRITE]：先清空本机会话再导入，等价于「换机恢复」。
+     * - [ImportMode.REPLACE_SAME]：同名先删再导。
      *
-     * 预设**两种模式都不删本地已有项**，只按 id 覆盖 —— 预设是用户长期积累的资产，
+     * 预设**各模式都不删本地已有项**，只按 id 覆盖 —— 预设是用户长期积累的资产，
      * 不该因为恢复一份旧备份就被清掉。
      */
-    suspend fun importParsed(file: BackupFile, mode: ImportMode): ImportResult =
-        importStream(file.conversations.asSequence(), file.presets, mode)
+    suspend fun importParsed(file: BackupFile, mode: ImportMode): ImportReport =
+        importStream(file.conversations.asSequence(), file.presets, mode, expected = file.conversations.size)
 
     /**
      * **流式**导入：逐批取会话、逐批写库。
@@ -986,17 +1070,25 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
      * `Failed to allocate a 893424 byte allocation with 424432 free bytes`。
      * 改成流式 + 分批事务之后，峰值只与"单条最大的会话"有关，与归档总量无关。
      *
-     * 批次大小的取舍：太小则事务开销高（每条会话一次 fsync），太大又回到占内存。
-     * 100 条会话一批，实测在几千条的归档上既快又不涨内存。
+     * ### 写库的底线：一条坏数据不许毁掉整次导入
+     *
+     * 一批 50 条共用**一个事务**（快）。但只要有一条写不进去，整个事务回滚 ——
+     * 前面的 49 条也跟着没了，而用户看到的只是"导入失败"。所以这里在整批失败时
+     * **退化成逐条重试**：坏的那条被隔离、记进 [ImportReport.failures]，其余照常入库。
+     * 正常路径没有额外开销（一次事务），只有真出问题时才多花一点时间。
      */
     private suspend fun importStream(
         conversationsSeq: Sequence<BackupConversation>,
         presetsToWrite: List<BackupPreset>,
         mode: ImportMode,
-    ): ImportResult {
-        var skipped = 0
+        expected: Int? = null,
+        failures: List<ImportFailure> = emptyList(),
+        droppedImages: Int = 0,
+    ): ImportReport {
+        var alreadyPresent = 0
         var importedMessages = 0
         var importedConversations = 0
+        val writeFailures = mutableListOf<ImportFailure>()
 
         /*
          * 同名判定要反复用（每个会话一次），先取一份标题快照。
@@ -1007,19 +1099,58 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         val titles = mutableSetOf<String>()
         db.withTransaction { titles += conversations.allTitles() }
 
+        fun count(outcome: Pair<Boolean, Int>) {
+            val (wasSkipped, messagesWritten) = outcome
+            if (wasSkipped) alreadyPresent++ else {
+                importedConversations++
+                importedMessages += messagesWritten
+            }
+        }
+
         val batch = ArrayList<BackupConversation>(ImportBatchSize)
         suspend fun flush() {
             if (batch.isEmpty()) return
-            db.withTransaction {
-                for (conversation in batch) {
-                    val (wasSkipped, messagesWritten) = writeConversation(conversation, mode, titles)
-                    if (wasSkipped) skipped++ else {
-                        importedConversations++
-                        importedMessages += messagesWritten
-                    }
+            val items = ArrayList(batch)
+            batch.clear()
+
+            // 先整批一个事务（快路径）；计数放在事务**提交之后**，回滚时不会多算
+            val titlesBeforeBatch = LinkedHashSet(titles)
+            val batchOutcome = runCatching {
+                db.withTransaction { items.map { item -> item to writeConversation(item, mode, titles) } }
+            }
+            val outcomes = batchOutcome.getOrNull()
+            if (outcomes != null) {
+                outcomes.forEach { (_, outcome) -> count(outcome) }
+                return
+            }
+
+            /*
+             * 整批回滚了：逐条重试，把坏的那条隔离出来。
+             *
+             * 必须先把 `titles` 恢复成整批之前的样子 —— 回滚的只是数据库，
+             * 内存里那个集合已经被改过了，留着会让后面的同名判定出错。
+             */
+            android.util.Log.w(ImportLogTag, "一批 ${items.size} 条写入失败，改为逐条重试", batchOutcome.exceptionOrNull())
+            titles.clear()
+            titles += titlesBeforeBatch
+            for (item in items) {
+                val before = LinkedHashSet(titles)
+                val outcome = runCatching {
+                    db.withTransaction { writeConversation(item, mode, titles) }
+                }
+                if (outcome.isSuccess) {
+                    count(outcome.getOrThrow())
+                } else {
+                    titles.clear()
+                    titles += before
+                    writeFailures += ImportFailure(
+                        title = item.title,
+                        reference = item.id,
+                        reason = ImportFailure.Reason.WRITE_FAILED,
+                    )
+                    android.util.Log.w(ImportLogTag, "会话写入失败，已隔离：${item.title}", outcome.exceptionOrNull())
                 }
             }
-            batch.clear()
         }
 
         for (conversation in conversationsSeq) {
@@ -1045,13 +1176,82 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             }
         }
 
-        return ImportResult(
+        return ImportReport(
             conversations = importedConversations,
             messages = importedMessages,
             presets = presetsToWrite.size,
-            skipped = skipped,
+            alreadyPresent = alreadyPresent,
+            expected = expected,
+            failures = failures + writeFailures,
+            droppedImages = droppedImages,
         )
     }
+
+    /**
+     * 把 [ImportReport] 拼成一句**能对账**的话。
+     *
+     * 结果页是用户判断"迁移成没成"的唯一依据，所以这里按"声明 → 结果 → 差额 → 原因"
+     * 的顺序说完整：会话 4 个（归档共 5 个）· 1 个未能导入：会话文件损坏 ×1。
+     * 宁可句子长一点，也不要一句"导入完成"然后少一条。
+     */
+    private fun importSummary(
+        sourceName: String,
+        report: ImportReport,
+        warnings: List<AppText>,
+    ): String = buildString {
+        append(Res.get(R.string.import_done, sourceName, report.conversations, report.messages))
+        report.expected?.let { expected ->
+            if (expected != report.conversations + report.alreadyPresent) {
+                append(Res.get(R.string.import_done_expected, expected))
+            }
+        }
+        if (report.alreadyPresent > 0) {
+            append(Res.get(R.string.import_done_duplicates, report.alreadyPresent))
+        }
+        if (report.failures.isNotEmpty()) {
+            append(
+                Res.get(
+                    R.string.import_done_failed,
+                    report.failures.size,
+                    failureReasons(report.failures),
+                ),
+            )
+            /*
+             * 能说出**是哪一条**就尽量说：DeepSeek 归档的索引里有标题，
+             * 用户看到"《夏萧因重逢对话》没能导入"才知道该重建哪一个，
+             * 一个光秃秃的"1 个未能导入"帮不上忙。最多列 3 个，再多就把提示撑成一段日志了。
+             */
+            val titles = report.failures
+                .mapNotNull { failure -> failure.title?.trim()?.takeIf { it.isNotEmpty() } }
+                .distinct()
+                .take(MaxFailedTitlesInSummary)
+            if (titles.isNotEmpty()) {
+                append(
+                    Res.get(
+                        R.string.import_failed_titles,
+                        titles.joinToString(Res.get(R.string.list_separator)),
+                    ),
+                )
+            }
+        }
+        if (report.droppedImages > 0) {
+            append(Res.get(R.string.import_note_separator))
+            append(Res.get(R.string.warn_dropped_images, report.droppedImages))
+        }
+        if (warnings.isNotEmpty()) {
+            append(Res.get(R.string.import_note_separator))
+            append(warnings.joinToString(Res.get(R.string.list_separator)) { it.resolve() })
+        }
+    }
+
+    /** 失败原因按"一句话 × 条数"归并：`会话文件损坏 ×3、会话文件过大 ×1`。 */
+    private fun failureReasons(failures: List<ImportFailure>): String =
+        failures.groupingBy { it.reason }.eachCount()
+            .entries
+            .sortedBy { it.key.ordinal }
+            .joinToString(Res.get(R.string.list_separator)) { (reason, count) ->
+                Res.get(R.string.import_fail_item, Res.get(reason.labelRes()), count)
+            }
 
     /**
      * 写**一条**会话（含它的消息与预设挂载）。返回 `(是否被跳过, 写入的消息数)`。
@@ -1201,6 +1401,17 @@ fun List<MessageEntity>.toUiMessages(): List<UiMessage> = map { it.toUi() }
  * 各会话的图片 base64，所以取 50 而不是 100。
  */
 private const val ImportBatchSize = 50
+
+/**
+ * 导入链路的日志 tag。
+ *
+ * 用户看不到日志，但"哪条会话被跳过 / 为什么"必须留痕 —— 否则用户说
+ * "少了两个对话"时，我们只能猜。
+ */
+private const val ImportLogTag = "SimpleChat/Import"
+
+/** 导入结果里最多列出几个失败会话的标题（再多就把提示撑成一段日志了）。 */
+private const val MaxFailedTitlesInSummary = 3
 
 /** 附件列的截断长度：40 万字符 ≈ 300KB 图，远小于 2MB 的 CursorWindow。 */
 private const val CappedAttachmentsChars = 400_000

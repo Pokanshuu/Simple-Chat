@@ -165,6 +165,15 @@ class ChatViewModel(
         private set
 
     /**
+     * 用户选择的朗读音色（空 = 系统默认）。
+     *
+     * 单独开一个状态而不是把整个 `StoredSettings` 暴露出去：界面只需要这一个值，
+     * 而 `stored` 里带着 API Key 等敏感字段。设置里换音色 → 流回来 → 朗读立即生效。
+     */
+    var ttsVoiceName by mutableStateOf("")
+        private set
+
+    /**
      * 实际生效的协议通道。
      *
      * 由「配置的档位 + 端点」共同决定（见 `ApiStyle.resolve`）：
@@ -288,6 +297,7 @@ class ChatViewModel(
         apiStyle = ApiStyle.resolve(kind, value.apiStyleId, value.baseUrl)
         webSearch = value.webSearch
         autoCollapseThinking = value.autoCollapseThinking
+        ttsVoiceName = value.ttsVoiceName
         settings = settings.copy(
             model = ModelCatalog.find(kind, value.modelId),
             reasoningLevel = runCatching { ReasoningLevel.valueOf(value.reasoningLevelId) }
@@ -1325,7 +1335,14 @@ class ChatViewModel(
                 serverTitleRequestedFor = conversationId
             }
 
-            if (failure != null) banner = failure
+            /*
+             * 失败**不再重复弹 banner**：
+             *
+             * 错误已经写在这条回复的 `errorMessage` 上（消息里那行红字 + 重试按钮），
+             * 再弹一条一模一样的 banner 只是噪声 —— v1.1.3 之前的截图里同一个
+             * `stream was reset` 就是上下各显示一次。banner 只留给"与某条消息无关"的
+             * 全局提示（未配置 Key、压缩失败等）。
+             */
             isStreaming = false
             streamJob = null
 
@@ -1368,11 +1385,17 @@ class ChatViewModel(
          */
         val path = orderedOutgoingMessages(messages, active)
             .filter { it.id != prefix?.id }
-            // 落盘的附件在这里读回内存：`toDataUrl()` 只认内联（见 AttachmentFiles）
+            /*
+             * 附件在这里整理：落盘字节读回内存（`toDataUrl()` / image block 只认内联），
+             * 图片再按真实内容校正（见 `ApiImage`）。
+             *
+             * ⚠️ 不能像以前那样"条数没变就复用原对象"：落盘附件的 `data` 是空的，
+             * 条数当然没变 —— 复用等于把**空图片**发出去，服务端只会回
+             * `unsupported image`，而且每一轮都复现（v1.1.2 的真实事故）。
+             */
             .map { message ->
-                val outgoing = outgoingAttachments(message.attachments)
-                if (outgoing.size == message.attachments.size) message
-                else message.copy(attachments = outgoing)
+                if (message.attachments.isEmpty()) message
+                else message.copy(attachments = outgoingAttachments(message.attachments))
             }
 
         return buildAnthropicRequest(
@@ -1546,7 +1569,10 @@ class ChatViewModel(
             val dropped = attachments.size - filtered.size
             if (dropped > 0) banner = Res.get(R.string.images_skipped_no_vision, dropped)
         }
-        return repository.materialize(filtered)
+        // 字节读回 + 图片按真实内容校正（格式不收的转码、坏图丢掉）。见 ApiImage
+        val (prepared, unreadable) = repository.prepareRequestAttachments(filtered)
+        if (unreadable > 0) banner = Res.get(R.string.images_skipped_unreadable, unreadable)
+        return prepared
     }
 
     private suspend fun buildRequestMessages(): List<OutMessageDto> {

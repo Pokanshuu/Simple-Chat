@@ -4,7 +4,7 @@
 
 **[中文](README.md) | English**
 
-[![Version](https://img.shields.io/badge/version-1.1.2-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
+[![Version](https://img.shields.io/badge/version-1.1.3-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## Introduction
@@ -43,12 +43,13 @@ Good for:
 - **Continue generating**: a reply you stopped, or one cut off by the output limit, can be continued in place (trailing-assistant prefix).
 - **Math**: `$…$` / `$$…$$` / `\[…\]` rendered natively by Compose (no WebView + KaTeX).
 - **Mermaid diagrams**: ```mermaid fences render as diagrams with a switch back to source; the script ships in the APK, so it works offline.
-- **Voice input and read-aloud**: the system recogniser and system TTS, no extra backend; code blocks and tables are stripped before reading.
+- **Read aloud**: replies are spoken by the system TTS engine — no backend, no permission. Pick a voice (with preview) in Settings; code blocks and tables are stripped before reading.
 - Message tree organised by `parentId`. Regenerating creates an in-conversation branch; switching versions carries the downstream along instead of deleting history; long-press forks into a new conversation.
 - Context management: CJK-weighted token estimate, usage ring on the input bar, incremental compaction (keeps the last 6 messages in full).
 - Attachments: camera / gallery / files, none of which need runtime permission; images, plain text, docx and PDF. Imported images are stored as files in app-private storage with only the file name kept in the database, so imports have no quota and a row can never grow too large to read. Tapping an image opens a full-screen viewer with swipe between images.
+- **Images are validated before sending**: the real format is detected from the file header, formats the server does not accept are transcoded to JPEG locally, and unreadable images are skipped with a notice instead of breaking the conversation forever.
 - Model capability aware: when the selected model does not accept images, they are skipped with a notice instead of being rejected by the server.
-- Data out: JSON backup, **ZIP archive** (backup plus a Markdown document per conversation) and Markdown export; imports this app's backups, ZIP archives, Chatbox backups and DeepSeek official exports (deepseek_data-*.zip), with three import modes: add new only, overwrite same name, or keep both.
+- Data out: JSON backup, **ZIP archive** (backup plus a Markdown document per conversation) and Markdown export; imports this app's backups, ZIP archives, Chatbox backups and DeepSeek official exports (deepseek_data-*.zip), with three import modes: add new only, overwrite same name, or keep both. Import results are reconciled item by item (how many in the archive, how many imported, which ones failed and why), so nothing disappears silently.
 - Search: full-text over titles and bodies, with hit snippets in the results.
 - Long messages: collapsed past 10 lines, whole message stays tappable once expanded.
 - Appearance: dark mode, accent colours, font scale, follow the system.
@@ -119,7 +120,7 @@ When the file is missing, `assembleRelease` falls back to the **debug signature*
 ## Development
 
 ```bash
-./gradlew testDebugUnitTest    # unit tests (443)
+./gradlew testDebugUnitTest    # unit tests (466)
 ./gradlew assembleDebug        # debug build, package suffix .debug
 ./gradlew assembleRelease      # release build, needs signing config
 ```

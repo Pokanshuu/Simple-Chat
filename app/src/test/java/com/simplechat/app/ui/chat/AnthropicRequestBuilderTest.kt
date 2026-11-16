@@ -335,6 +335,50 @@ class AnthropicRequestBuilderTest {
         assertEquals(1, request.messages.size)
     }
 
+    // ── 图片：底线是"不发出服务端一定拒的块" ─────────────────
+
+    private fun image(data: String, mime: String = "image/jpeg") = Attachment(
+        kind = Attachment.Kind.IMAGE,
+        name = "图",
+        mime = mime,
+        data = data,
+        width = 10,
+        height = 10,
+    )
+
+    @Test
+    fun `图片按服务端要求的 base64 块发出`() {
+        val request = build(listOf(user("看图", listOf(image("/9j/AAA")))))
+        val blocks = request.messages.single().content.jsonArray
+        assertEquals(2, blocks.size)
+        assertEquals("image", blocks[0].jsonObject["type"]!!.jsonPrimitive.content)
+        val source = blocks[0].jsonObject["source"]!!.jsonObject
+        assertEquals("base64", source["type"]!!.jsonPrimitive.content)
+        assertEquals("image/jpeg", source["media_type"]!!.jsonPrimitive.content)
+        assertEquals("/9j/AAA", source["data"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `media_type 只认协议允许的四个值`() {
+        // 历史数据里出现过 image/jpg、image/heic 之类：原样发出去就是 400
+        val request = build(listOf(user("看图", listOf(image("/9j/AAA", mime = "image/heic")))))
+        val source = request.messages.single().content.jsonArray[0]
+            .jsonObject["source"]!!.jsonObject
+        assertEquals("image/jpeg", source["media_type"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `没有字节的图片不发出空块`() {
+        /*
+         * 落盘附件的 data 是空的，要靠 prepareRequestAttachments 读回。
+         * 万一某条路径漏了那一步：宁可不发这张图，也不能发一个空 base64 ——
+         * 服务端会回 unsupported image，而且这个会话**每一轮都会失败**。
+         */
+        val request = build(listOf(user("看图", listOf(image("")))))
+        val content = request.messages.single().content
+        assertEquals("看图", (content as JsonPrimitive).content)
+    }
+
     /** 手上这份 JSON 是对象还是数组，读错了会静默空转，所以显式断言一次类型。 */
     private fun kotlinx.serialization.json.JsonElement.asObject(): JsonObject = jsonObject
 }

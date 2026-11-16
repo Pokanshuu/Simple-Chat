@@ -77,6 +77,17 @@ data class StoredSettings(
      * 而提醒里这一项本来就只是给模型一个「用户在哪儿」的粗略印象。
      */
     val locationRegion: String = "",
+    /**
+     * 朗读音色。
+     *
+     * - [ttsVoiceName]：系统 TTS 引擎里的 `Voice.name`（机器标识，用来精确选中）。
+     *   空串 = 跟随系统默认（按界面语言挑一个本地音色）。
+     * - [ttsVoiceLabel]：选中时给用户看的名字（地区 + 是否联网）。**单独存一份**，
+     *   因为音色名是 `zh-cn-x-ccc-local` 这种机器 ID，界面不可能现算，而每次进设置页
+     *   都去初始化一次 TTS 引擎只为显示一个名字也不划算。
+     */
+    val ttsVoiceName: String = "",
+    val ttsVoiceLabel: String = "",
 
 ) {
     val hasKey: Boolean get() = apiKey.isNotBlank()
@@ -132,6 +143,8 @@ class SettingsStore(private val context: Context) {
             apiStyleId = prefs[Keys.API_STYLE] ?: StoredSettings().apiStyleId,
             webSearch = prefs[Keys.WEB_SEARCH] ?: StoredSettings().webSearch,
             locationRegion = prefs[Keys.LOCATION] ?: StoredSettings().locationRegion,
+            ttsVoiceName = prefs[Keys.TTS_VOICE] ?: StoredSettings().ttsVoiceName,
+            ttsVoiceLabel = prefs[Keys.TTS_VOICE_LABEL] ?: StoredSettings().ttsVoiceLabel,
 
         )
     }
@@ -238,6 +251,19 @@ class SettingsStore(private val context: Context) {
         context.settingsDataStore.edit { it[Keys.LOCATION] = normalizeRegion(region) }
     }
 
+    /** 朗读音色：名字用来精确选中，标签用来在设置页显示（见 [StoredSettings.ttsVoiceName]）。 */
+    suspend fun setTtsVoice(name: String, label: String) {
+        context.settingsDataStore.edit { prefs ->
+            if (name.isBlank()) {
+                prefs.remove(Keys.TTS_VOICE)
+                prefs.remove(Keys.TTS_VOICE_LABEL)
+            } else {
+                prefs[Keys.TTS_VOICE] = name
+                prefs[Keys.TTS_VOICE_LABEL] = label
+            }
+        }
+    }
+
 
 
     /** 清空全部配置（「删除所有数据」时一并调用）。 */
@@ -274,6 +300,12 @@ class SettingsStore(private val context: Context) {
         val API_STYLE = stringPreferencesKey("api_style")
         val WEB_SEARCH = booleanPreferencesKey("web_search")
         val LOCATION = stringPreferencesKey("location_region")
+
+        /** 朗读音色：机器标识；空 = 系统默认。 */
+        val TTS_VOICE = stringPreferencesKey("tts_voice_name")
+
+        /** 朗读音色的人类可读名字（仅用于显示）。 */
+        val TTS_VOICE_LABEL = stringPreferencesKey("tts_voice_label")
 
     }
 }

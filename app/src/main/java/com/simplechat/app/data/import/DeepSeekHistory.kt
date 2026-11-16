@@ -2,10 +2,11 @@ package com.simplechat.app.data.import
 
 import com.simplechat.app.R
 import com.simplechat.app.data.AppTextException
+import com.simplechat.app.data.ApiImage
 import com.simplechat.app.data.Attachment
 import com.simplechat.app.data.BackupConversation
-import com.simplechat.app.data.BackupFile
 import com.simplechat.app.data.BackupMessage
+import com.simplechat.app.data.ImportFailure
 import java.time.Instant
 import java.util.Base64
 import java.util.zip.ZipFile
@@ -61,89 +62,296 @@ internal object DeepSeekHistory {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    /** 这份 ZIP 是不是 DeepSeek 导出（只看 `manifest.json` 的一个字段）。 */
+    /**
+     * 打开一份归档：会话是**懒**产出的，[expected] 是归档声明的会话数。
+     *
+     * 为什么把"声明数"带出来：导入结果要对账（见 `ImportReport`）。
+     * 归档里有几条、进来几条，用户一眼能看出有没有丢 —— 这是导入链路的底线。
+     */
+    internal class DeepSeekStream(
+        private val sessions: Sequence<BackupConversation>,
+        /** 归档声明的会话数：文件条目 + 索引里有但文件缺失的那些。 */
+        val expected: Int,
+    ) : Sequence<BackupConversation> by sessions
+
+    /** 这份 ZIP 是不是 DeepSeek 导出（看 `manifest.json`，读不出来时退一步看目录形状）。 */
     fun detect(zip: ZipFile): Boolean {
-        val manifest = readJson(zip, MANIFEST) ?: return false
-        return manifest["export_format_version"]?.jsonPrimitive?.intOrNull != null
+        val manifest = readJson(zip, MANIFEST)
+        if (manifest != null) return manifest["export_format_version"] != null
+        /*
+         * manifest 读不出来（包被截断 / 数据区损坏）时退一步看**目录形状**。
+         *
+         * 不退这一步的后果很糟：包走到 Chatbox 分支，最后抛一句英文的
+         * `Unexpected end of ZLIB input stream`（v1.1.3 之前多位用户的真实反馈），
+         * 用户既不知道发生了什么，也不知道该重下文件。
+         */
+        return hasSessionEntries(zip)
     }
 
+    /** 归档里有没有"会话 JSON"这种条目 —— 只用于判断形状，不读内容。 */
+    private fun hasSessionEntries(zip: ZipFile): Boolean = runCatching {
+        zip.entries().asSequence().any { entry ->
+            !entry.isDirectory && entry.name.startsWith(SESSIONS) && entry.name.endsWith(".json") &&
+                !entry.name.removePrefix(SESSIONS).contains('/')
+        }
+    }.getOrDefault(false)
+
+
     /**
-     * 认出来就翻译成我们的备份模型；`manifest.json` 里没有
-     * `export_format_version` 说明不是这份格式，返回 null（交给别的分支）。
+     * 打开归档，拿到**懒**产出的会话序列。
      *
-     * ⚠️ 大包**不要走这条**：它把所有会话连同图片 base64 一次性放进 `BackupFile`，
-     * 228MB 的归档解压后能有几百兆，必 OOM。导入路径用 [stream]（逐条产出、逐批写库）。
+     * 调用方必须在 `ZipFile` 关闭之前把序列消费完（写入也在同一段 `use` 里）。
+     *
+     * 为什么是"打开"而不是"解析成 BackupFile"：一份 2106 个会话、24535 条消息的
+     * 归档解压后是几百兆，整包建对象必然 OOM（实测 `Failed to allocate 893424 byte…`）。
+     * 逐条产出、逐批写库之后，峰值只与"最大的那条会话"有关，与归档总量无关。
+     *
+     * @param onFailure 单条会话没能导入时回调 —— 结果页据此对账（见 `ImportReport`）。
+     * @param onImageDropped 图片原件取不回来时回调（归档里缺条目 / 读取失败）。
      */
-    fun parse(
+    fun open(
         zip: ZipFile,
         naming: ExternalBackup.ImportNaming,
         onProgress: (Float) -> Unit = {},
-    ): BackupFile? {
-        val streamed = stream(zip, naming, onProgress) ?: return null
-        return BackupFile(
-            exportedAt = System.currentTimeMillis(),
-            conversations = streamed.toList(),
-        )
-    }
-
-    /**
-     * **流式**产出会话：每 `next()` 才读一条会话 JSON 与它用到的图片。
-     *
-     * 为什么必须这样：整包解析的峰值内存 = 全部会话 + 全部图片 base64 之和。
-     * 实测 2106 个会话 / 24535 条消息的归档，在解压之后是几百兆，堆里放不下
-     * （报错形如 `Failed to allocate a 893424 byte allocation with 424432 free bytes`）。
-     * 流式之后内存只与**单条最大的会话**有关，与归档总量无关。
-     *
-     * 调用方必须在 `ZipFile` 关闭之前把序列消费完。
-     */
-    fun stream(
-        zip: ZipFile,
-        naming: ExternalBackup.ImportNaming,
-        onProgress: (Float) -> Unit = {},
-    ): Sequence<BackupConversation>? {
-        val manifest = readJson(zip, MANIFEST) ?: return null
+        onFailure: (ImportFailure) -> Unit = {},
+        onImageDropped: () -> Unit = {},
+    ): DeepSeekStream? {
+        val manifest = readJson(zip, MANIFEST) ?: run {
+            /*
+             * manifest 读不出来但形状对得上 → 归档**不完整**。
+             *
+             * 不返回 null：那样会被当成"不是这份格式"，最后给用户一句英文的
+             * `Unexpected end of ZLIB input stream`。这里直接给一句人能看懂、
+             * 也知道下一步该干什么的话（v1.1.3 之前多位用户的真实反馈）。
+             */
+            if (hasSessionEntries(zip)) throw AppTextException(R.string.err_archive_damaged)
+            return null
+        }
         val version = manifest["export_format_version"]?.jsonPrimitive?.intOrNull ?: return null
         if (version != FORMAT_VERSION) {
             throw AppTextException(R.string.err_deepseek_version, version, FORMAT_VERSION)
         }
 
-        val indexOrder = readJson(zip, INDEX)
-            ?.let { it.arrOrEmpty("sessions").mapNotNull { entry -> entry.str("id") } }
-            .orEmpty()
+        /*
+         * 索引有两个用途：顺序（用户在 DeepSeek 里看到的顺序）与**标题**。
+         *
+         * 标题的用处不止排序：某条会话的文件缺失/损坏时，索引里还留着它的名字 ——
+         * 结果页就能说"少了《夏萧因重逢对话》"，而不是干巴巴一个"1 个未能导入"。
+         */
+        val indexEntries = readJson(zip, INDEX)?.arrOrEmpty("sessions").orEmpty()
+        val indexIds = indexEntries.mapNotNull { it.str("id") }.distinct()
+        val indexTitles = indexEntries
+            .mapNotNull { entry -> entry.str("id")?.let { id -> id to entry.str("title") } }
+            .toMap()
+        val rank = indexIds.withIndex().associate { (position, id) -> id to position }
 
-        // 索引里的顺序就是用户在 DeepSeek 里看到的顺序；没有索引就按文件名（≈ 会话 id）
-        val rank = indexOrder.withIndex().associate { (i, id) -> "$ID_PREFIX$id" to i }
         val sessionEntries = zip.entries().asSequence()
             .filter { !it.isDirectory && it.name.startsWith(SESSIONS) && it.name.endsWith(".json") }
             // 图片目录 `chat_sessions/{id}_files/` 里的东西不在这里（它们不叫 .json）
             .filter { !it.name.removePrefix(SESSIONS).contains('/') }
             .toList()
-            .sortedBy { entry ->
-                val id = entry.name.removePrefix(SESSIONS).removeSuffix(".json")
-                rank["$ID_PREFIX$id"] ?: Int.MAX_VALUE
-            }
+            .sortedBy { entry -> rank[sessionIdOf(entry.name)] ?: Int.MAX_VALUE }
+
+        /*
+         * 对账的第一半：索引里有、文件却没有的会话。
+         *
+         * 这不是"猜"——索引是归档自己写的清单，清单上有而磁盘上没有，就是丢了。
+         * 报出来，用户才知道该重新导出，而不是以为我们的导入漏了。
+         */
+        val presentIds = sessionEntries.map { sessionIdOf(it.name) }.toHashSet()
+        val missingIds = indexIds.filterNot { it in presentIds }
+        missingIds.forEach { id ->
+            onFailure(ImportFailure(title = indexTitles[id], reference = id, reason = ImportFailure.Reason.MISSING_ENTRY))
+        }
+        // 声明数 = 归档里的文件 + 清单上有但文件缺失的（文件多于索引时以文件为准）
+        val expected = presentIds.size + missingIds.size
 
         val total = sessionEntries.size.coerceAtLeast(1)
         var done = 0
-        // 图片字节落盘（见 AttachmentFiles），所以**不再有总量 / 单条配额**：
-        // 行里只留文件名，数据库不会被图片撑大，也没有 CursorWindow 的问题
 
-        return sessionEntries.asSequence().mapNotNull { entry ->
+        val sessions = sessionEntries.asSequence().mapNotNull { entry ->
             // 进度按"解析完多少条会话"报，含图片读取 —— 大包主要时间都在这
             onProgress((done.toFloat() / total).coerceIn(0f, 1f))
             done++
-            // 单个会话 JSON 也有上限：异常大的会话宁可跳过，也不要把整个导入拖垮
+            val sessionId = sessionIdOf(entry.name)
+            fun failed(reason: ImportFailure.Reason): BackupConversation? {
+                onFailure(ImportFailure(title = indexTitles[sessionId], reference = sessionId, reason = reason))
+                return null
+            }
+
             val raw = runCatching { zip.readBounded(entry, MaxSessionJsonBytes)?.decodeToString() }
-                .getOrNull() ?: return@mapNotNull null
-            val obj = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull()
-                ?: return@mapNotNull null
-            // 先把这一条会话用到的图片读出来，再解析 —— 图片按 `export_path` 直接定位条目
-            val images = imagePathsOf(obj).mapNotNull { path ->
-                readImage(zip, path, naming)?.let { image -> path to image }
-            }.toMap()
-            mapSession(obj, naming) { images[it] }
+                .getOrNull()
+                ?: return@mapNotNull failed(
+                    if (entry.size > MaxSessionJsonBytes) ImportFailure.Reason.TOO_LARGE
+                    else ImportFailure.Reason.UNREADABLE,
+                )
+
+            /*
+             * 单条会话 JSON 也有上限，但**不用整棵树**来解析：
+             *
+             * 归档里的会话 JSON 是"标题 + 一个消息数组"。整棵建树（`JsonObject`）时，
+             * 每条消息的字段名、片段、类型都要各占一个对象，实测比原文膨胀 2~3 倍 ——
+             * 8MB 的会话能吃掉一百多兆堆，于是早先把上限压到 8MB，超了就整条跳过。
+             * 代价是**长会话（尤其带分支的）直接丢**，结果页只看到"少了一个会话"。
+             *
+             * 现在按字段切片：会话说到底只有几个标量 + 一个数组，数组里**一次只解析一条消息**，
+             * 解析完立刻压成 [ParsedMessage]（只有正文与几个数字）。峰值只与"最大的那条消息"
+             * 有关，于是上限可以放宽到 [MaxSessionJsonBytes]。
+             */
+            val parsed = runCatching { parseSession(raw) }.getOrNull()
+                ?: return@mapNotNull failed(ImportFailure.Reason.UNREADABLE)
+
+            /*
+             * 图片按 `export_path` **用到才读**，并且同一张图只读一次：
+             * 一条消息里引用两次同一张图（或两个分支引用同一张）时，既不该读两遍，
+             * 也不该把"没取回"算两次 —— 那会让结果页的图片数虚高。
+             */
+            val images = HashMap<String, Attachment?>()
+            fun imageOf(path: String): Attachment? {
+                if (images.containsKey(path)) return images[path]
+                val image = readImage(zip, path, naming)
+                if (image == null) onImageDropped()
+                images[path] = image
+                return image
+            }
+
+            val conversation = mapSession(parsed, naming, ::imageOf)
+                ?: return@mapNotNull failed(
+                    if (parsed.messages.isEmpty()) ImportFailure.Reason.EMPTY
+                    else ImportFailure.Reason.BROKEN_TREE,
+                )
+            conversation
         }
+
+        return DeepSeekStream(sessions, expected)
     }
+
+    private fun sessionIdOf(entryName: String): String =
+        entryName.removePrefix(SESSIONS).removeSuffix(".json")
+
+    // ══════════════════════════════════════════════════════
+    //  解析：把一份会话 JSON 切成"标量 + 消息列表"
+    // ══════════════════════════════════════════════════════
+
+    /** 一条会话的**紧凑**形式：没有 JsonObject 树，只有取值后的正文与数字。 */
+    internal data class ParsedSession(
+        val id: String?,
+        val title: String?,
+        val pinned: Boolean,
+        val currentMessageId: Long?,
+        val insertedAt: String?,
+        val updatedAt: String?,
+        val messages: List<ParsedMessage>,
+    )
+
+    /**
+     * 一条消息的紧凑形式。
+     *
+     * 字段刻意只留"进数据库/进界面"需要的那几样：多余的字段留在原文里不发散，
+     * 这样几百条消息的会话也不会因为解析而膨胀。
+     */
+    internal data class ParsedMessage(
+        val number: Long,
+        val parentNumber: Long?,
+        val role: String?,
+        val status: String?,
+        val insertedAt: String?,
+        /** `REQUEST` 片段拼接（用户提问）。 */
+        val request: String,
+        /** `RESPONSE` 片段拼接（模型正文）。 */
+        val response: String,
+        /** `TEMPLATE_RESPONSE` 片段拼接（超时 / 内容过滤那类服务端模板）。 */
+        val template: String,
+        /** 思考片段：正文 + 耗时（秒，可能缺省）。 */
+        val thinks: List<Pair<String, Long>>,
+        /** 图片原件的 ZIP 条目名（`export_path`），按出现顺序。 */
+        val imagePaths: List<String>,
+    )
+
+    /**
+     * 按字段切片解析一条会话。
+     *
+     * 只做两件事：标量字段原样切片（最后拼成一个小对象交给 kotlinx 解析，省得自己写反序列化），
+     * 消息数组**逐条**切片 → 解析 → 压成 [ParsedMessage] → 丢掉原树。
+     */
+    internal fun parseSession(raw: String): ParsedSession? {
+        val cursor = JsonCursor(raw)
+        val scalars = LinkedHashMap<String, String>()
+        var messagesRange: IntRange? = null
+        cursor.forEachField { name, value ->
+            when (name) {
+                "messages" -> messagesRange = value
+                "id", "title", "pinned", "current_message_id", "inserted_at", "updated_at" ->
+                    scalars[name] = raw.substring(value.first, value.last + 1)
+                else -> Unit
+            }
+        }
+
+        // 标量拼成一个小 JSON 再交给 kotlinx：类型容错（数字 / null / 字符串）全由它兜住
+        val headText = scalars.entries.joinToString(separator = ",", prefix = "{", postfix = "}") {
+            "\"${it.key}\":${it.value}"
+        }
+        val head = runCatching { json.parseToJsonElement(headText).jsonObject }.getOrNull() ?: return null
+
+        val messages = ArrayList<ParsedMessage>()
+        val range = messagesRange
+        if (range != null) {
+            JsonCursor(raw).at(range.first).forEachElement { element ->
+                // 一次只建一条消息的树：这是整个导入链路里唯一还"整条"解析的对象
+                val obj = runCatching {
+                    json.parseToJsonElement(raw.substring(element.first, element.last + 1)).jsonObject
+                }.getOrNull() ?: return@forEachElement
+                parsedMessage(obj)?.let { messages += it }
+            }
+        }
+
+        return ParsedSession(
+            id = head.str("id"),
+            title = head.str("title"),
+            pinned = head.str("pinned") == "true",
+            currentMessageId = head.long("current_message_id"),
+            insertedAt = head.str("inserted_at"),
+            updatedAt = head.str("updated_at"),
+            messages = messages,
+        )
+    }
+
+    private fun parsedMessage(message: JsonObject): ParsedMessage? {
+        val number = message.long("id") ?: return null
+        val request = StringBuilder()
+        val response = StringBuilder()
+        val template = StringBuilder()
+        val thinks = ArrayList<Pair<String, Long>>()
+        val images = ArrayList<String>()
+        for (fragment in message.arrOrEmpty("fragments")) {
+            when (fragment.str("type")) {
+                "REQUEST" -> request.append(fragment.str("content").orEmpty())
+                "RESPONSE" -> response.append(fragment.str("content").orEmpty())
+                "TEMPLATE_RESPONSE" -> template.append(fragment.str("content").orEmpty())
+                "THINK" -> thinks += fragment.str("content").orEmpty() to fragment.longOrZero("elapsed_secs")
+                "FILE" -> fragment.arrOrEmpty("files").forEach { entry ->
+                    if (entry.str("is_image") != "true") return@forEach
+                    entry.str("export_path")?.let { images += it }
+                }
+            }
+        }
+        return ParsedMessage(
+            number = number,
+            parentNumber = message.long("parent_id"),
+            role = message.str("role"),
+            status = message.str("status"),
+            insertedAt = message.str("inserted_at"),
+            request = request.toString(),
+            response = response.toString(),
+            template = template.toString(),
+            thinks = thinks,
+            imagePaths = images,
+        )
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  映射：会话 → 我们的备份模型
+    // ══════════════════════════════════════════════════════
 
     /**
      * 一条会话 → [BackupConversation]。纯函数（图片由 [imageOf] 提供），有单测。
@@ -152,12 +360,12 @@ internal object DeepSeekHistory {
      *   该图片会记进 `droppedImages`。
      */
     internal fun mapSession(
-        session: JsonObject,
+        session: ParsedSession,
         naming: ExternalBackup.ImportNaming,
         imageOf: (String) -> Attachment?,
     ): BackupConversation? {
-        val sessionId = session.str("id") ?: return null
-        val raw = session.arrOrEmpty("messages")
+        val sessionId = session.id ?: return null
+        val raw = session.messages
         if (raw.isEmpty()) return null
 
         /*
@@ -169,16 +377,16 @@ internal object DeepSeekHistory {
          * 同父下按 id 升序编 `variantIndex`，当前正看着的那条标 `active`；
          * 不在当前路径上的分支，按官方规则"默认选中 id 最大的子消息"。
          */
-        val byNumber = LinkedHashMap<Long, JsonObject>()
+        val byNumber = LinkedHashMap<Long, ParsedMessage>()
         for (message in raw) {
-            message.long("id")?.let { id -> if (id !in byNumber) byNumber[id] = message }
+            if (message.number !in byNumber) byNumber[message.number] = message
         }
         if (byNumber.isEmpty()) return null
 
         // 当前分支：既用来判定"哪一条是选中的版本"，也用来取首条提问当标题
-        val branch = linearize(raw, session.long("current_message_id"))
+        val branch = linearize(raw, session.currentMessageId)
         if (branch.isEmpty()) return null
-        val branchIds = branch.mapNotNull { it.long("id") }.toHashSet()
+        val branchIds = branch.map { it.number }.toHashSet()
 
         /*
          * 按父节点分组，顺带把"断链"的行筛掉：`parent_id` 指向不存在的消息时，
@@ -186,7 +394,7 @@ internal object DeepSeekHistory {
          */
         val childrenOf = LinkedHashMap<Long?, MutableList<Long>>()
         for ((id, message) in byNumber) {
-            val rawParent = message.long("parent_id")
+            val rawParent = message.parentNumber
             val parent = when {
                 rawParent == null -> null                       // 根
                 byNumber.containsKey(rawParent) -> rawParent     // 正常父子
@@ -217,38 +425,32 @@ internal object DeepSeekHistory {
             selectedNumbers += siblings.firstOrNull { it in branchIds } ?: siblings.last()
         }
 
-        val title = session.str("title")?.takeIf { it.isNotBlank() }
-            ?: branch.firstOrNull { it.str("role") == "USER" }
-                ?.textOf("REQUEST")
+        val title = session.title?.takeIf { it.isNotBlank() }
+            ?: branch.firstOrNull { it.role == "USER" }
+                ?.request
                 ?.take(FallbackTitleChars)
                 ?.takeIf { it.isNotBlank() }
             ?: naming.conversationFallbackTitle()
 
-        val insertedAt = parseIso(session.str("inserted_at")) ?: System.currentTimeMillis()
-        val updatedAt = parseIso(session.str("updated_at")) ?: insertedAt
+        val insertedAt = parseIso(session.insertedAt) ?: System.currentTimeMillis()
+        val updatedAt = parseIso(session.updatedAt) ?: insertedAt
 
         val mapped = ordered.map { number ->
             val message = byNumber.getValue(number)
-            val role = if (message.str("role") == "USER") "user" else "assistant"
+            val role = if (message.role == "USER") "user" else "assistant"
             val content = if (role == "user") {
-                message.textOf("REQUEST")
+                message.request
             } else {
                 // 模板正文（超时 / 内容过滤那类）也是正文：我们只透传，不做取舍
-                message.textOf("RESPONSE") + message.textOf("TEMPLATE_RESPONSE")
+                message.response + message.template
             }
-            val think = message.fragmentsOf("THINK")
-            val elapsedSecs = think.sumOf { it.longOrZero("elapsed_secs") }
+            val elapsedSecs = message.thinks.sumOf { it.second }
             // 字节落盘，单条消息的附件也不再需要配额（行里只有文件名）
-            val images = message.fragmentsOf("FILE").flatMap { file ->
-                file.arrOrEmpty("files").mapNotNull { entry ->
-                    if (entry.str("is_image") != "true") return@mapNotNull null
-                    imageOf(entry.str("export_path") ?: return@mapNotNull null)
-                }
-            }
+            val images = message.imagePaths.mapNotNull(imageOf)
 
             BackupMessage(
                 id = "$ID_PREFIX$sessionId-$number",
-                parentId = message.long("parent_id")
+                parentId = message.parentNumber
                     ?.takeIf { byNumber.containsKey(it) }
                     ?.let { "$ID_PREFIX$sessionId-$it" }
                     ?: "",
@@ -257,13 +459,13 @@ internal object DeepSeekHistory {
                 role = role,
                 content = content,
                 attachments = images,
-                reasoning = think.joinToString("\n") { it.str("content").orEmpty() }.takeIf { it.isNotBlank() },
-                status = statusOf(message.str("status")),
+                reasoning = message.thinks.joinToString("\n") { it.first }.takeIf { it.isNotBlank() },
+                status = statusOf(message.status),
                 model = null,
                 thinkingMs = elapsedSecs.takeIf { it > 0L }?.times(1000L),
                 // 导出的历史不参与续写：没有服务端需要的签名与工具块
                 stopReason = null,
-                createdAt = parseIso(message.str("inserted_at")) ?: insertedAt,
+                createdAt = parseIso(message.insertedAt) ?: insertedAt,
             )
         }
 
@@ -273,7 +475,14 @@ internal object DeepSeekHistory {
             mode = "CREATIVE",
             provider = "DEEPSEEK",
             model = "",
-            pinned = session.str("pinned") == "true",
+            pinned = session.pinned,
+            /*
+             * 归档里只有"是否置顶"，没有置顶时间。我们的列表按 `pinnedAt` 排序，
+             * 留 null 会让导入的置顶会话排到所有置顶项的**最后** ——
+             * 用户看到的就是"置顶那一组里少了一个、顺序也乱了"。
+             * 拿更新时间顶上：至少与 DeepSeek 里"最近聊的在前"的观感一致。
+             */
+            pinnedAt = if (session.pinned) updatedAt else null,
             createdAt = insertedAt,
             updatedAt = updatedAt,
             messages = mapped,
@@ -290,22 +499,20 @@ internal object DeepSeekHistory {
      * `current_message_id` 缺失或不认识时退回"id 最大的那条"（导出工具都会写它，
      * 这里只是不让数据异常导致整条会话丢失）。
      */
-    internal fun linearize(messages: List<JsonObject>, currentId: Long?): List<JsonObject> {
-        val byId = HashMap<Long, JsonObject>()
-        for (message in messages) {
-            message.long("id")?.let { byId[it] = message }
-        }
+    internal fun linearize(messages: List<ParsedMessage>, currentId: Long?): List<ParsedMessage> {
+        val byId = HashMap<Long, ParsedMessage>()
+        for (message in messages) byId[message.number] = message
         if (byId.isEmpty()) return emptyList()
 
         var cursor = currentId?.takeIf { byId.containsKey(it) } ?: byId.keys.maxOrNull()
-        val chain = mutableListOf<JsonObject>()
+        val chain = mutableListOf<ParsedMessage>()
         val guard = HashSet<Long>()
         while (cursor != null) {
             val message = byId[cursor] ?: break
             // 环保护：坏数据不该把导入卡死
             if (!guard.add(cursor)) break
             chain += message
-            cursor = message.long("parent_id")
+            cursor = message.parentNumber
         }
         chain.reverse()
         return chain
@@ -326,26 +533,13 @@ internal object DeepSeekHistory {
     private fun parseIso(text: String?): Long? =
         text?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
 
-    /** 一条会话里所有"有原件"的图片条目名。 */
-    private fun imagePathsOf(session: JsonObject): Set<String> {
-        val paths = mutableSetOf<String>()
-        for (message in session.arrOrEmpty("messages")) {
-            for (file in message.fragmentsOf("FILE")) {
-                for (entry in file.arrOrEmpty("files")) {
-                    if (entry.str("is_image") != "true") continue
-                    entry.str("export_path")?.let { paths += it }
-                }
-            }
-        }
-        return paths
-    }
-
     /**
      * 读一张图片并转成我们的附件。
      *
      * 宽高从字节里现算（[imageSizeOf]），不信任导出的元数据：归档里 `width` / `height`
      * 允许为 null，而且同一个文件在不同版本里写没写也不一定。
-     * 认不出格式时仍按图片留下（mime 退回 `image/jpeg`），总比丢一张图好。
+     * MIME 按**真实内容**取（[ApiImage]）：服务端只看内容，写错了不会报错，
+     * 只会在发送时被拒。
      */
     private fun readImage(
         zip: ZipFile,
@@ -365,11 +559,7 @@ internal object DeepSeekHistory {
             ?: return null
         if (bytes.isEmpty()) return null
         val size = imageSizeOf(bytes)
-        val mime = when {
-            bytes.size >= 8 && bytes[0] == 0x89.toByte() -> "image/png"
-            bytes.size >= 3 && bytes[0] == 0xFF.toByte() -> "image/jpeg"
-            else -> "image/jpeg"
-        }
+        val mime = ApiImage.mediaTypeOf(bytes, declared = null)
         // 落盘：字节进 filesDir，行里只留文件名（见 AttachmentFiles）
         val stored = naming.storeImage?.invoke(bytes, mime)
         return Attachment(
@@ -422,9 +612,6 @@ internal object DeepSeekHistory {
     private fun JsonObject.fragmentsOf(type: String): List<JsonObject> =
         arrOrEmpty("fragments").filter { it.str("type") == type }
 
-    private fun JsonObject.textOf(type: String): String =
-        fragmentsOf(type).joinToString("") { it.str("content").orEmpty() }
-
     private fun JsonObject.arrOrEmpty(key: String): List<JsonObject> =
         (this[key] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
 
@@ -440,13 +627,175 @@ internal object DeepSeekHistory {
     private const val MaxSingleImageBytes = 64 * 1024 * 1024
 
     /**
-     * 单个会话 JSON 的上限（8 MB）。超过就跳过这一条会话。
+     * 单个会话 JSON 的上限（24 MB）。超过就跳过这一条会话，并在导入结果里说清楚。
      *
-     * 不设 24MB 的原因：JSON 解析成 JsonObject 之后会膨胀好几倍，
-     * 20MB 的文本能吃掉上百兆堆 —— 一条异常大的会话不该把整次导入拖垮。
+     * 为什么可以从 8MB 放宽回 24MB：解析方式换成了"逐条消息切片"（见 [parseSession]），
+     * 峰值只与最大的单条消息有关，不再随会话条数成倍膨胀。
+     *
+     * 为什么还要有上限：归档是用户从别处拿来的文件，一个坏条目就能是几百兆。
      */
-    private const val MaxSessionJsonBytes = 8 * 1024 * 1024
+    private const val MaxSessionJsonBytes = 24 * 1024 * 1024
 
     /** 没有标题的会话用首条提问的前若干字当标题。 */
     private const val FallbackTitleChars = 24
+}
+
+/**
+ * 极简 JSON 切片器：**只切原文，不建树**。
+ *
+ * 与 kotlinx 的分工很清楚：
+ * - 这里负责"跳过 / 切出一段原文"（对象字段、数组元素），代价是零对象分配；
+ * - 真正解析仍交给 kotlinx —— 只交给它**一条消息**或**几个标量**那么大的一块。
+ *
+ * 为什么需要它见 [DeepSeekHistory.parseSession]：整棵树建出来的内存是原文的 2~3 倍，
+ * 长会话因此没法导入。这个类只认 JSON 文法的骨架（字符串、括号、逗号），
+ * 足够切分，不会误解内容。
+ */
+internal class JsonCursor(private val text: String) {
+
+    private var index = 0
+
+    fun at(position: Int): JsonCursor {
+        index = position
+        return this
+    }
+
+    /** 遍历一个对象的字段，回调拿到字段名与值的原文切片（`[first, last]` 闭区间）。 */
+    fun forEachField(block: (name: String, value: IntRange) -> Unit) {
+        expect('{')
+        skipWhitespace()
+        if (text.getOrNull(index) == '}') {
+            index++
+            return
+        }
+        while (true) {
+            val name = rawString()
+            expect(':')
+            val value = sliceValue()
+            block(name, value)
+            skipWhitespace()
+            when (text.getOrNull(index)) {
+                ',' -> index++
+                '}' -> {
+                    index++
+                    return
+                }
+
+                else -> fail("对象字段之间缺少逗号")
+            }
+        }
+    }
+
+    /** 遍历一个数组的元素，回调拿到每个元素的原文切片（闭区间）。 */
+    fun forEachElement(block: (IntRange) -> Unit) {
+        expect('[')
+        skipWhitespace()
+        if (text.getOrNull(index) == ']') {
+            index++
+            return
+        }
+        while (true) {
+            block(sliceValue())
+            skipWhitespace()
+            when (text.getOrNull(index)) {
+                ',' -> index++
+                ']' -> {
+                    index++
+                    return
+                }
+
+                else -> fail("数组元素之间缺少逗号")
+            }
+        }
+    }
+
+    private fun expect(expected: Char) {
+        skipWhitespace()
+        if (text.getOrNull(index) != expected) fail("期望 '$expected'")
+        index++
+    }
+
+    /** 读一个 JSON 字符串，返回**未转义**之前的原文（不含引号）。字段名都是 ASCII，够用。 */
+    private fun rawString(): String {
+        skipWhitespace()
+        if (text.getOrNull(index) != '"') fail("期望字符串")
+        val start = ++index
+        var escaped = false
+        while (index < text.length) {
+            val char = text[index]
+            when {
+                escaped -> escaped = false
+                char == '\\' -> escaped = true
+                char == '"' -> {
+                    val raw = text.substring(start, index)
+                    index++
+                    return raw
+                }
+            }
+            index++
+        }
+        fail("字符串没有闭合")
+    }
+
+    private fun sliceValue(): IntRange {
+        skipWhitespace()
+        val start = index
+        when (text.getOrNull(index)) {
+            null -> fail("意外结束")
+            '"' -> rawString()
+            '{', '[' -> skipContainer()
+            else -> skipLiteral()
+        }
+        return start..(index - 1)
+    }
+
+    /** 跳过一个完整的对象/数组（含嵌套，字符串里的括号不算）。 */
+    private fun skipContainer() {
+        var depth = 0
+        var inString = false
+        var escaped = false
+        while (index < text.length) {
+            val char = text[index]
+            when {
+                inString -> when {
+                    escaped -> escaped = false
+                    char == '\\' -> escaped = true
+                    char == '"' -> inString = false
+                }
+
+                char == '"' -> inString = true
+                char == '{' || char == '[' -> depth++
+                char == '}' || char == ']' -> {
+                    depth--
+                    if (depth == 0) {
+                        index++
+                        return
+                    }
+                }
+            }
+            index++
+        }
+        fail("括号没有闭合")
+    }
+
+    /** 数字 / true / false / null：一直吃到分隔符为止。 */
+    private fun skipLiteral() {
+        while (index < text.length) {
+            when (text[index]) {
+                ',', '}', ']', ' ', '\n', '\r', '\t' -> return
+                else -> index++
+            }
+        }
+    }
+
+    private fun skipWhitespace() {
+        while (index < text.length) {
+            when (text[index]) {
+                ' ', '\n', '\r', '\t' -> index++
+                else -> return
+            }
+        }
+    }
+
+    private fun fail(message: String): Nothing = throw IllegalArgumentException("JSON 切片失败：$message（位置 $index）")
 }

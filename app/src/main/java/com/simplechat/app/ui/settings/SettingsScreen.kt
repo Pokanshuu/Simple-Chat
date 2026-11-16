@@ -75,6 +75,7 @@ import com.simplechat.app.data.AppLanguage
 import com.simplechat.app.data.ImportMode
 import com.simplechat.app.data.Res
 import com.simplechat.app.data.StoredSettings
+import com.simplechat.app.data.userMessage
 import com.simplechat.app.net.ModelCatalog
 import com.simplechat.app.net.ProviderKind
 import com.simplechat.app.ui.common.AppIcons
@@ -83,6 +84,9 @@ import com.simplechat.app.ui.common.AppMenu
 import com.simplechat.app.ui.common.AppMenuCheck
 import com.simplechat.app.ui.common.AppMenuItem
 import com.simplechat.app.ui.chat.Preset
+import com.simplechat.app.ui.chat.SpeechVoice
+import com.simplechat.app.ui.chat.loadSpeechVoices
+import com.simplechat.app.ui.chat.rememberSpeechOutput
 import com.simplechat.app.ui.common.AppSlider
 import com.simplechat.app.ui.common.AppSwitch
 import com.simplechat.app.ui.common.ContainerShape
@@ -101,6 +105,7 @@ import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * 设置页内的一级 / 二级页面。
@@ -113,6 +118,8 @@ private enum class SettingsPage(val depth: Int) {
     API(1),
     PRESETS(1),
     FONT(1),
+    /** 朗读音色（系统 TTS）。 */
+    VOICE(1),
     ABOUT(1),
 }
 
@@ -196,6 +203,37 @@ fun SettingsScreen(
     var importReading by remember { mutableStateOf(false) }
     var presets by remember { mutableStateOf<List<Preset>>(emptyList()) }
 
+    /*
+     * 朗读音色。
+     *
+     * - 清单要**临时起一个 TTS 引擎**才拿得到（见 loadSpeechVoices），所以只在
+     *   进二级页时读一次，读到就缓存到页面关闭；
+     * - [speaker] 只用于「试听」与选完顺手念一句，不参与对话页的朗读。
+     */
+    var speechVoices by remember { mutableStateOf<List<SpeechVoice>?>(null) }
+    val speaker = rememberSpeechOutput(stored.ttsVoiceName)
+    /** 朗读相关的报错（引擎缺失 / 合成失败），显示在音色页的说明位置。 */
+    var speechError by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(speaker.error) {
+        speaker.error?.let {
+            speechError = it
+            speaker.consumeError()
+        }
+    }
+    LaunchedEffect(page) {
+        if (page == SettingsPage.VOICE && speechVoices == null) {
+            speechError = null
+            /*
+             * 加超时兜底：个别设备的 TTS 引擎初始化回调可能**永远不来**
+             * （引擎被禁用 / 服务被冻结）。不设限的话这一页会永远停在「正在读取…」，
+             * 而用户完全不知道该怎么办。超时按"没有可用引擎"处理，至少给一句提示。
+             */
+            speechVoices = withTimeoutOrNull(TtsVoiceLoadTimeoutMs) {
+                loadSpeechVoices(context)
+            } ?: emptyList()
+        }
+    }
+
     LaunchedEffect(Unit) { store.flow.collect { stored = it } }
     LaunchedEffect(Unit) { repository.observePresets().collect { presets = it } }
 
@@ -228,7 +266,7 @@ fun SettingsScreen(
             }
             dataMessage = outcome.fold(
                 onSuccess = { Res.get(R.string.export_done) },
-                onFailure = { Res.get(R.string.export_failed, it.message.toString()) },
+                onFailure = { Res.get(R.string.export_failed, it.userMessage()) },
             )
         }
     }
@@ -296,7 +334,7 @@ fun SettingsScreen(
             }
             dataMessage = outcome.fold(
                 onSuccess = { Res.get(R.string.export_done) },
-                onFailure = { Res.get(R.string.export_failed, it.message.toString()) },
+                onFailure = { Res.get(R.string.export_failed, it.userMessage()) },
             )
         }
     }
@@ -321,6 +359,7 @@ fun SettingsScreen(
                 SettingsPage.API -> stringResource(R.string.settings_api)
                 SettingsPage.PRESETS -> stringResource(R.string.settings_presets)
                 SettingsPage.FONT -> stringResource(R.string.settings_font_size)
+                SettingsPage.VOICE -> stringResource(R.string.tts_voice)
                 SettingsPage.ABOUT -> stringResource(R.string.settings_about)
             },
             onBack = { if (page == SettingsPage.ROOT) onBack() else page = SettingsPage.ROOT },
@@ -404,7 +443,7 @@ fun SettingsScreen(
                                     )
                                     testResult = result.fold(
                                         onSuccess = { Res.get(R.string.api_test_ok, it.size) },
-                                        onFailure = { Res.get(R.string.api_test_failed, it.message.toString()) },
+                                        onFailure = { Res.get(R.string.api_test_failed, it.userMessage()) },
                                     )
                                     testing = false
                                 }
@@ -424,6 +463,21 @@ fun SettingsScreen(
                         )
 
                         SettingsPage.ABOUT -> AboutPage()
+
+                        SettingsPage.VOICE -> VoicePage(
+                            selectedName = stored.ttsVoiceName,
+                            voices = speechVoices,
+                            previewing = speaker.previewing,
+                            error = speechError,
+                            onSelect = { voice ->
+                                scope.launch { store.setTtsVoice(voice?.name.orEmpty(), voice?.label.orEmpty()) }
+                                // 选完顺手念一句：省得用户"选了但不知道变了没有"
+                                speaker.preview(Res.get(R.string.tts_voice_preview_text), voice?.name.orEmpty())
+                            },
+                            onPreview = { voice ->
+                                speaker.preview(Res.get(R.string.tts_voice_preview_text), voice?.name.orEmpty())
+                            },
+                        )
                     }
 
                     Spacer(Modifier.size(32.dp))
@@ -524,7 +578,7 @@ fun SettingsScreen(
                     val outcome = runCatching { repository.deleteAllConversations() }
                     dataMessage = outcome.fold(
                         onSuccess = { Res.get(R.string.settings_delete_all_done) },
-                        onFailure = { Res.get(R.string.error_delete_failed, it.message.toString()) },
+                        onFailure = { Res.get(R.string.error_delete_failed, it.userMessage()) },
                     )
                 }
             },
@@ -564,11 +618,10 @@ fun SettingsScreen(
                     // 大文件的临时副本用过就删，别占着缓存
                     withContext(Dispatchers.IO) { file.delete() }
                     dataMessage = outcome.fold(
-                        onSuccess = { (result, source) ->
-                            Res.get(R.string.import_done, source, result.conversations, result.messages) +
-                                if (result.skipped > 0) Res.get(R.string.import_done_skipped, result.skipped) else ""
-                        },
-                        onFailure = { Res.get(R.string.error_import_failed, it.message.toString()) },
+                        // 结果文案由仓库层统一按"对账"口径生成（会话 4 个 · 归档共 5 个 · …），
+                        // 界面只负责显示，不再自己拼数字
+                        onSuccess = { (_, summary) -> summary },
+                        onFailure = { Res.get(R.string.error_import_failed, it.userMessage()) },
                     )
                 }
             },
@@ -789,6 +842,16 @@ private fun RootPage(
             checked = stored.autoCollapseThinking,
             onCheckedChange = onToggleAutoCollapse,
         )
+
+        RowDivider()
+
+        // 朗读音色：系统 TTS 引擎提供，进二级页挑选（见 VoicePage）
+        SettingsNavRow(
+            icon = AppIcons.Volume,
+            label = stringResource(R.string.tts_voice),
+            value = stored.ttsVoiceLabel.ifBlank { stringResource(R.string.tts_voice_default) },
+            onClick = { onOpen(SettingsPage.VOICE) },
+        )
     }
 
     SettingsSectionLabel(stringResource(R.string.settings_about))
@@ -800,6 +863,112 @@ private fun RootPage(
             value = null,
             onClick = { onOpen(SettingsPage.ABOUT) },
         )
+    }
+}
+
+// ══════════════════════════════════════════════════════════
+//  二级：朗读音色
+// ══════════════════════════════════════════════════════════
+
+/**
+ * 朗读音色选择。
+ *
+ * 为什么是"列表 + 试听"而不是下拉框：音色名是 `zh-cn-x-ccc-local` 这种机器标识，
+ * 光看名字根本分不出区别 —— 唯一的判断方式就是**听一句**。所以每一行都带试听，
+ * 选中后也顺手念一遍（见调用处）。
+ */
+@Composable
+private fun VoicePage(
+    selectedName: String,
+    voices: List<SpeechVoice>?,
+    previewing: Boolean,
+    error: String?,
+    onSelect: (SpeechVoice?) -> Unit,
+    onPreview: (SpeechVoice?) -> Unit,
+) {
+    SettingsSectionLabel(stringResource(R.string.tts_voice))
+
+    SettingsCard {
+        VoiceRow(
+            label = stringResource(R.string.tts_voice_default),
+            selected = selectedName.isBlank(),
+            onClick = { onSelect(null) },
+        )
+        voices?.forEach { voice ->
+            RowDivider()
+            VoiceRow(
+                label = voice.label,
+                selected = voice.name == selectedName,
+                onClick = { onSelect(voice) },
+                onPreview = { onPreview(voice) },
+            )
+        }
+    }
+
+    val colors = LocalChatColors.current
+    val hint = when {
+        // 报错优先：引擎缺失 / 合成失败时，"正在试听"之类的说明就是误导
+        error != null -> error
+        voices == null -> stringResource(R.string.tts_voice_loading)
+        voices.isEmpty() -> stringResource(R.string.tts_voice_empty)
+        previewing -> stringResource(R.string.tts_voice_preview_running)
+        else -> stringResource(R.string.tts_voice_hint)
+    }
+    Text(
+        text = hint,
+        style = MaterialTheme.typography.bodySmall,
+        color = colors.placeholder,
+        modifier = Modifier.padding(start = 4.dp, top = 12.dp),
+    )
+}
+
+/** 一行音色：名字 +（可选）试听 + 选中标记。 */
+@Composable
+private fun VoiceRow(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onPreview: (() -> Unit)? = null,
+) {
+    val colors = LocalChatColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        if (onPreview != null) {
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onPreview),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = AppIcons.Play,
+                    contentDescription = stringResource(R.string.tts_voice_preview),
+                    tint = colors.placeholder,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+        if (selected) {
+            Icon(
+                imageVector = AppIcons.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp),
+            )
+        }
     }
 }
 
@@ -1490,6 +1659,14 @@ private fun RowDivider(inset: androidx.compose.ui.unit.Dp = 52.dp) {
 
 /** 主题色菜单的宽度：七个 30dp 色块 + 间距，比默认菜单宽。 */
 private val AccentMenuWidth = 266.dp
+
+/**
+ * 读系统音色列表的超时。
+ *
+ * `TextToSpeech` 的初始化回调在个别设备上可能永远不来（引擎被禁用 / 服务被冻结）。
+ * 不设上限的话，音色页会永远停在「正在读取…」—— 用户既看不到音色、也不知道该怎么办。
+ */
+private const val TtsVoiceLoadTimeoutMs = 4_000L
 
 /**
  * 主题色菜单里的一个色块。

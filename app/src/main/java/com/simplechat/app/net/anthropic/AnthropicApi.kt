@@ -1,12 +1,16 @@
 package com.simplechat.app.net.anthropic
 
-import com.simplechat.app.R
-import com.simplechat.app.data.Res
+import com.simplechat.app.net.ChatStreamLogTag
 import com.simplechat.app.net.StreamEvent
+import com.simplechat.app.net.StreamMaxAttempts
+import com.simplechat.app.net.StreamRetryDelayMs
+import com.simplechat.app.net.httpErrorText
+import com.simplechat.app.net.networkText
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -56,49 +60,71 @@ class AnthropicApi(
         }
         extraHeaders.forEach { (name, value) -> builder.header(name, value) }
 
-        val call = client.newCall(builder.build())
-        val handle = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
+        val httpRequest = builder.build()
 
-        try {
-            call.execute().use { response ->
-                val source = response.body?.source()
-                if (!response.isSuccessful || source == null) {
-                    val raw = runCatching { response.body?.string() }.getOrNull()
-                    emit(
-                        StreamEvent.Error(
-                            message = parser.parseErrorMessage(raw) ?: "HTTP ${response.code}",
-                            code = response.code,
-                            retryable = response.code == 429 || response.code >= 500,
-                        ),
-                    )
-                    return@use
-                }
+        var attempt = 0
+        var emittedAny = false
+        while (true) {
+            attempt++
+            val call = client.newCall(httpRequest)
+            val handle = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
+            try {
+                call.execute().use { response ->
+                    val source = response.body?.source()
+                    if (!response.isSuccessful || source == null) {
+                        val raw = runCatching { response.body?.string() }.getOrNull()
+                        val serverMessage = parser.parseErrorMessage(raw)
+                        android.util.Log.w(ChatStreamLogTag, "HTTP ${response.code}: $raw")
+                        emit(
+                            StreamEvent.Error(
+                                message = httpErrorText(response.code, serverMessage),
+                                code = response.code,
+                                retryable = response.code == 429 || response.code >= 500,
+                            ),
+                        )
+                        return@use
+                    }
 
-                var finished = false
-                while (!finished) {
-                    currentCoroutineContext().ensureActive()
+                    var finished = false
+                    while (!finished) {
+                        currentCoroutineContext().ensureActive()
 
-                    val line = source.readUtf8Line()
-                    if (line == null) {
-                        finished = true
-                    } else {
-                        when (val result = parser.parse(line)) {
-                            is AnthropicStreamParser.Result.Events ->
-                                result.events.forEach { emit(it) }
-                            AnthropicStreamParser.Result.Done -> finished = true
-                            AnthropicStreamParser.Result.Ignore -> Unit
+                        val line = source.readUtf8Line()
+                        if (line == null) {
+                            finished = true
+                        } else {
+                            when (val result = parser.parse(line)) {
+                                is AnthropicStreamParser.Result.Events ->
+                                    result.events.forEach {
+                                        emit(it)
+                                        emittedAny = true
+                                    }
+
+                                AnthropicStreamParser.Result.Done -> finished = true
+                                AnthropicStreamParser.Result.Ignore -> Unit
+                            }
                         }
                     }
-                }
 
-                emit(StreamEvent.Done)
+                    emit(StreamEvent.Done)
+                    emittedAny = true
+                }
+                return@flow
+            } catch (e: IOException) {
+                // 用户主动取消造成的 IOException 不应报告为错误
+                if (!currentCoroutineContext().isActive) return@flow
+                // 一个字都还没发出去 → 重发是安全的（与 SseClient 同一条规则，见那里的说明）
+                if (!emittedAny && attempt < StreamMaxAttempts) {
+                    android.util.Log.w(ChatStreamLogTag, "stream reset before any event; retrying", e)
+                    delay(StreamRetryDelayMs)
+                    continue
+                }
+                android.util.Log.w(ChatStreamLogTag, "stream interrupted", e)
+                emit(StreamEvent.Error(e.networkText(), retryable = true))
+                return@flow
+            } finally {
+                handle?.dispose()
             }
-        } catch (e: IOException) {
-            if (currentCoroutineContext().isActive) {
-                emit(StreamEvent.Error(e.message ?: Res.get(R.string.error_network), retryable = true))
-            }
-        } finally {
-            handle?.dispose()
         }
     }.flowOn(Dispatchers.IO)
 

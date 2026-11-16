@@ -53,6 +53,18 @@
     <!-- ── 报错与提示（通用） ───────────────────────────── -->
     <string name="error_unknown">未知错误</string>
     <string name="error_network">网络连接失败</string>
+    <string name="error_network_offline">连不上网络，请检查网络或代理后重试</string>
+    <string name="error_network_timeout">连接超时，请稍后重试</string>
+    <string name="error_network_interrupted">连接被中断（服务端或网络波动），请重试</string>
+    <string name="error_network_insecure">安全连接失败，请检查网络环境或证书</string>
+    <string name="error_server_busy">服务端繁忙或临时故障，请稍后重试</string>
+    <string name="error_http_status">服务端返回 HTTP %1$d</string>
+    <string name="error_http_unauthorized">API Key 无效或已过期，请到设置里重新填写</string>
+    <string name="error_http_payment_required">账户余额不足，请充值后重试</string>
+    <string name="error_http_forbidden">当前 API Key 没有访问权限</string>
+    <string name="error_http_not_found">接口不存在，请检查 Base URL 与协议通道</string>
+    <string name="error_http_too_large">这次请求太大（图片或历史过长），请减少内容后重试</string>
+    <string name="error_http_rate_limited">请求太频繁，请稍等片刻再试</string>
     <string name="error_no_api_key">尚未配置 API Key。请在设置 → API 配置中填写后重试。</string>
     <string name="error_request_failed">请求失败</string>
     <string name="error_no_content">模型没有返回内容</string>
@@ -112,7 +124,18 @@
     <string name="import_mode_replace_same">覆盖同名（同名对话替换为本包内容）</string>
     <string name="import_mode_rename">同名新命名（两条都留，新的加「副本」后缀）</string>
     <string name="import_done">导入完成（%1$s）：会话 %2$d 个 · 消息 %3$d 条</string>
-    <string name="import_done_skipped"> · 跳过重复 %1$d 个</string>
+    <string name="import_done_expected"> · 归档共 %1$d 个会话</string>
+    <string name="import_done_duplicates"> · 已有 %1$d 个</string>
+    <string name="import_done_failed"> · %1$d 个未能导入：%2$s</string>
+    <string name="import_fail_item">%1$s ×%2$d</string>
+    <string name="import_failed_titles">（%1$s）</string>
+    <string name="import_fail_too_large">会话文件过大</string>
+    <string name="import_fail_unreadable">会话文件损坏</string>
+    <string name="import_fail_empty">没有可导入的消息</string>
+    <string name="import_fail_broken_tree">消息结构异常</string>
+    <string name="import_fail_missing_entry">归档缺少会话文件</string>
+    <string name="import_fail_write_failed">写入失败</string>
+    <string name="err_archive_damaged">压缩包不完整或已损坏（可能下载中断），请重新导出后再试</string>
 
     <!-- ── 设置：预设 ───────────────────────────────────── -->
     <string name="preset_count_empty">空</string>
@@ -240,6 +263,7 @@
     <string name="backup_source_deepseek">DeepSeek 导出</string>
     <string name="err_deepseek_version">这个 DeepSeek 归档是第 %1$d 版，本应用只认第 %2$d 版</string>
     <string name="images_skipped_no_vision">当前模型不支持图片，已忽略 %1$d 张</string>
+    <string name="images_skipped_unreadable">有 %1$d 张图片格式无法识别或文件已损坏，本轮未发送</string>
     <string name="warn_deepseek_limited">搜索与读链步骤、非图片附件未导入</string>
     <string name="err_unrecognised_file">认不出这份文件：既不是压缩包，也不是 JSON</string>
     <string name="err_unrecognised_format">认不出这份文件（format=%1$s）</string>
@@ -249,8 +273,7 @@
     <string name="err_not_chatbox">不是 Chatbox 的备份（format=%1$s）</string>
     <string name="err_no_sessions">这份备份里没有可导入的会话</string>
     <string name="err_not_our_backup">不是本应用的备份文件（format=%1$s）</string>
-    <string name="warn_dropped_images">有 %1$d 张图片没能取回（备份里没有对应资源）</string>
-    <string name="warn_no_messages">部分会话没有可导入的消息</string>
+    <string name="warn_dropped_images">有 %1$d 张图片没能取回（归档里没有原件）</string>
     <string name="warn_single_branch">Chatbox 只导入了当时正在看的那条分支（它的分支语义与本地不同，未展开）</string>
     <string name="import_image_name">图片 %1$d×%2$d</string>
     <string name="import_image_default_name">导入的图片</string>
@@ -474,6 +497,17 @@
     <string name="tts_stop">停止朗读</string>
     <string name="tts_failed">朗读失败，请稍后再试</string>
     <string name="tts_empty">这条没有可朗读的正文</string>
+    <string name="tts_unavailable">这台设备没有可用的语音合成引擎，请在系统设置里安装 TTS 引擎</string>
+    <!-- 朗读音色（设置） -->
+    <string name="tts_voice">朗读音色</string>
+    <string name="tts_voice_default">系统默认</string>
+    <string name="tts_voice_online">需联网</string>
+    <string name="tts_voice_loading">正在读取系统音色…</string>
+    <string name="tts_voice_empty">这台设备上没有可用的语音合成引擎。安装一个系统 TTS 引擎（如「Google 语音服务」）后回到这里即可。</string>
+    <string name="tts_voice_hint">音色由系统语音合成引擎提供。「需联网」的音色在离线时可能读不出声。</string>
+    <string name="tts_voice_preview">试听</string>
+    <string name="tts_voice_preview_running">正在试听…再点一次可停止</string>
+    <string name="tts_voice_preview_text">你好，这是一段试听，用来挑选朗读音色。</string>
 
     <!-- ── Mermaid 图表 ──────────────────────────────────── -->
     <string name="mermaid_label">图表</string>

@@ -4,7 +4,7 @@
 
 **中文 | [English](README.en.md)**
 
-[![Version](https://img.shields.io/badge/version-1.1.2-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
+[![Version](https://img.shields.io/badge/version-1.1.3-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## 简介
@@ -45,16 +45,17 @@
 - **继续生成**：被用户停止、或被输出上限截断的回复可以接着写（末尾 assistant 前缀续写）。
 - **数学公式**：`$…$` / `$$…$$` / `\[…\]` 由 Compose 原生渲染（不引 WebView + KaTeX）。
 - **Mermaid 图表**：` ```mermaid ` 渲染成图，可切回源码；脚本随包发布，离线可用。
-- **语音输入 + 朗读**：系统识别服务与系统 TTS，无需额外服务端；朗读前会剥掉代码块与表格。
+- **朗读**：系统 TTS 逐条朗读回复，无需服务端与权限；设置里可切换音色（含试听），朗读前会剥掉代码块与表格。
 - 消息树：以 `parentId` 组织。重新生成为会话内分支，切换版本时下游整段跟随，不删除历史；长按支持会话间分叉。
 - 上下文管理：CJK 加权 token 估算、输入栏占用圆环、增量滚动压缩（保留最近 6 条完整消息）。
 - 附件：拍照 / 相册 / 文件三个入口，均无需申请权限；支持图片、纯文本、docx、PDF。
   导入的图片字节落在应用私有目录，数据库只存文件名 —— 零配额导入，也不会有
   「一行太大读不出来」的问题；点图进入整屏查看，多图左右翻。
+- **图片发送前校验**：按文件头判断真实格式，服务端不认的格式本地转码为 JPEG；坏图跳过并提示，不会让整个会话永远发不出去。
 - 模型能力适配：所选模型不支持图片时，发请求会跳过图片并提示，而不是被服务端拒绝。
 - 数据出口：JSON 备份、**ZIP 归档**（备份 + 每个会话的 Markdown 文稿）与 Markdown 文稿导出；
   支持导入本应用备份、ZIP 归档、Chatbox 备份与 DeepSeek 官方导出
-（`deepseek_data-*.zip`）；导入方式可选增量 / 覆盖同名 / 同名新命名。
+（`deepseek_data-*.zip`）；导入方式可选增量 / 覆盖同名 / 同名新命名。导入结果**逐项对账**（归档几条 / 进来几条 / 哪条因为什么没进来），失败条目不会静默消失。
 - 搜索：标题与正文全文搜索，结果行显示命中片段。
 - 长消息：超 10 行自动收起，展开后整条可点。
 - 外观：深色模式、主题色、字号倍率、跟随系统。
@@ -125,7 +126,7 @@ keyPassword=...
 ## 开发
 
 ```bash
-./gradlew testDebugUnitTest    # 单元测试（443 项）
+./gradlew testDebugUnitTest    # 单元测试（466 项）
 ./gradlew assembleDebug        # debug 包，包名后缀 .debug
 ./gradlew assembleRelease      # release 包，需签名配置
 ```

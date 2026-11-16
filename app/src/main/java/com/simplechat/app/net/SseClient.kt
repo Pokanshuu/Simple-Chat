@@ -1,11 +1,10 @@
 package com.simplechat.app.net
 
-import com.simplechat.app.R
-import com.simplechat.app.data.Res
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -26,6 +25,15 @@ import okhttp3.RequestBody.Companion.toRequestBody
  *   取消时立刻断开 socket，阻塞中的 `readUtf8Line()` 会抛 IOException 而退出。
  *   这是「点停止立刻停」的关键（见设计文档 §5.5）。
  * - **解析逻辑外置**：行解析在 [SseLineParser] 里，纯函数、可单测。
+ *
+ * ### 断流自动重试（只在"一个字都没收到"时）
+ *
+ * 服务端偶尔会把流掐断（HTTP/2 `stream was reset: INTERNAL_ERROR`）。这种失败
+ * 发生在**任何内容下发之前**时，重发一次是安全的：用户看到的是回答正常出现，
+ * 而不是一条英文报错。
+ *
+ * 反过来，只要已经收到过任何事件就**绝不重发** —— 重发会让同一段回答出现两遍，
+ * 那比让用户点一次「重试」更糟。
  */
 class SseClient(
     private val client: OkHttpClient,
@@ -52,50 +60,72 @@ class SseClient(
             builder.header("Authorization", "Bearer $apiKey")
         }
         extraHeaders.forEach { (name, value) -> builder.header(name, value) }
+        val httpRequest = builder.build()
 
-        val call = client.newCall(builder.build())
-        val handle = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
+        var attempt = 0
+        var emittedAny = false
+        while (true) {
+            attempt++
+            val call = client.newCall(httpRequest)
+            val handle = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
+            try {
+                call.execute().use { response ->
+                    val source = response.body?.source()
+                    if (!response.isSuccessful || source == null) {
+                        val raw = runCatching { response.body?.string() }.getOrNull()
+                        // 已知状态码 → 一句人话；否则用服务端自己给的文案；再否则带状态码兜底
+                        val serverMessage = parser.parseErrorMessage(raw)
+                        android.util.Log.w(ChatStreamLogTag, "HTTP ${response.code}: $raw")
+                        emit(
+                            StreamEvent.Error(
+                                message = httpErrorText(response.code, serverMessage),
+                                code = response.code,
+                                retryable = response.code == 429 || response.code >= 500,
+                            ),
+                        )
+                        return@use
+                    }
 
-        try {
-            call.execute().use { response ->
-                val source = response.body?.source()
-                if (!response.isSuccessful || source == null) {
-                    val raw = runCatching { response.body?.string() }.getOrNull()
-                    emit(
-                        StreamEvent.Error(
-                            message = parser.parseErrorMessage(raw) ?: "HTTP ${response.code}",
-                            code = response.code,
-                            retryable = response.code == 429 || response.code >= 500,
-                        ),
-                    )
-                    return@use
-                }
+                    var finished = false
+                    while (!finished) {
+                        currentCoroutineContext().ensureActive()
 
-                var finished = false
-                while (!finished) {
-                    currentCoroutineContext().ensureActive()
+                        val line = source.readUtf8Line()
+                        if (line == null) {
+                            finished = true
+                        } else {
+                            when (val result = parser.parse(line)) {
+                                is SseLineParser.Result.Events -> result.events.forEach {
+                                    emit(it)
+                                    emittedAny = true
+                                }
 
-                    val line = source.readUtf8Line()
-                    if (line == null) {
-                        finished = true
-                    } else {
-                        when (val result = parser.parse(line)) {
-                            is SseLineParser.Result.Events -> result.events.forEach { emit(it) }
-                            SseLineParser.Result.Done -> finished = true
-                            SseLineParser.Result.Ignore -> Unit
+                                SseLineParser.Result.Done -> finished = true
+                                SseLineParser.Result.Ignore -> Unit
+                            }
                         }
                     }
-                }
 
-                emit(StreamEvent.Done)
+                    emit(StreamEvent.Done)
+                    emittedAny = true
+                }
+                return@flow
+            } catch (e: IOException) {
+                // 用户主动取消造成的 IOException 不应报告为错误
+                if (!currentCoroutineContext().isActive) return@flow
+                if (!emittedAny && attempt < StreamMaxAttempts) {
+                    // 一个字都还没发出去 → 重发是安全的（不会出现两份内容）
+                    android.util.Log.w(ChatStreamLogTag, "stream reset before any event; retrying", e)
+                    delay(StreamRetryDelayMs)
+                    continue
+                }
+                // 原始异常进日志（排查要用），界面拿到的是"连接被中断、请重试"这类人话
+                android.util.Log.w(ChatStreamLogTag, "stream interrupted", e)
+                emit(StreamEvent.Error(e.networkText(), retryable = true))
+                return@flow
+            } finally {
+                handle?.dispose()
             }
-        } catch (e: IOException) {
-            // 用户主动取消造成的 IOException 不应报告为错误
-            if (currentCoroutineContext().isActive) {
-                emit(StreamEvent.Error(e.message ?: Res.get(R.string.error_network), retryable = true))
-            }
-        } finally {
-            handle?.dispose()
         }
     }.flowOn(Dispatchers.IO)
 
@@ -103,3 +133,12 @@ class SseClient(
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }
+
+/** 流式客户端的日志 tag：原始异常与服务端报文都记在这里，界面上只给人话。 */
+internal const val ChatStreamLogTag = "SimpleChat/Stream"
+
+/** 断流重试次数上限（含首次请求）。 */
+internal const val StreamMaxAttempts = 2
+
+/** 断流重试前的等待：给上游一点恢复时间，又不至于让用户觉得卡住。 */
+internal const val StreamRetryDelayMs = 600L

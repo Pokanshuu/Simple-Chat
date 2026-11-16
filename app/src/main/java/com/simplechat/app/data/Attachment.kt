@@ -58,8 +58,11 @@ data class Attachment(
      * ⚠️ 只对**内联**的附件成立。落盘的附件要先用
      * `AttachmentFiles.materialize(...)` 把字节读回 [data]，再调这里 ——
      * 请求与导出都在边界处统一做这一步，渲染层不直接碰文件。
+     *
+     * `media_type` 走 [ApiImage.legalMediaType]：协议只认四个值，
+     * 数据库里那些历史遗留的 `image/jpg` / `image/heic` 不能原样发出去。
      */
-    fun toDataUrl(): String = "data:${mime.ifBlank { "image/jpeg" }};base64,$data"
+    fun toDataUrl(): String = "data:${ApiImage.legalMediaType(mime)};base64,$data"
 
     /**
      * 拼进**请求文本**的形式（仅文本附件用）。

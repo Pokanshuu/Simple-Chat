@@ -81,6 +81,7 @@ import com.simplechat.app.R
 import com.simplechat.app.data.Attachment
 import com.simplechat.app.data.AttachmentImport
 import com.simplechat.app.data.Res
+import com.simplechat.app.data.userMessage
 import com.simplechat.app.net.ApiStyle
 import com.simplechat.app.ui.common.ReadAloudEnabled
 import com.simplechat.app.ui.common.SoftShape
@@ -201,7 +202,8 @@ fun ChatScreen(
     var voiceBase by remember { mutableStateOf("") }
     var speechError by remember { mutableStateOf<String?>(null) }
     val voice = rememberVoiceInput(onText = { text -> input = voiceBase + text })
-    val speaker = rememberSpeechOutput()
+    // 音色来自设置：设置里换一个，回到对话页立即生效（见 SpeechOutput 的 applyVoice）
+    val speaker = rememberSpeechOutput(vm.ttsVoiceName)
 
     /*
      * 麦克风权限的当前状态。
@@ -474,7 +476,7 @@ fun ChatScreen(
         scope.launch {
             AttachmentImport.image(context, uri)
                 .onSuccess { pending = pending + it }
-                .onFailure { onImportFailed(it.message) }
+                .onFailure { onImportFailed(it.userMessage()) }
             AttachmentImport.discardCapture(context, uri)
         }
     }
@@ -496,7 +498,7 @@ fun ChatScreen(
         scope.launch {
             AttachmentImport.image(context, uri)
                 .onSuccess { pending = pending + it }
-                .onFailure { onImportFailed(it.message) }
+                .onFailure { onImportFailed(it.userMessage()) }
         }
     }
 
@@ -515,7 +517,7 @@ fun ChatScreen(
                     // 有损的地方要说出来（比如 PDF 只带了前 12 页）
                     result.note?.let { attachError = it }
                 }
-                .onFailure { onImportFailed(it.message) }
+                .onFailure { onImportFailed(it.userMessage()) }
         }
     }
 

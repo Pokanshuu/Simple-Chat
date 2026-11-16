@@ -1,5 +1,6 @@
 package com.simplechat.app.ui.chat
 
+import com.simplechat.app.data.ApiImage
 import com.simplechat.app.data.Attachment
 import com.simplechat.app.net.ReplyBlock
 import com.simplechat.app.net.anthropic.AnthropicMessageParam
@@ -118,7 +119,15 @@ internal const val DefaultSystemPrompt = "该助手为DeepSeek，由深度求索
  */
 private fun userParam(message: UiMessage): AnthropicMessageParam {
     val text = bodyText(message)
-    val images = message.attachments.filter { it.isImage }
+    /*
+     * 只发**有内容**的图片。
+     *
+     * 落盘附件的 `data` 默认是空的，要靠 `prepareRequestAttachments` 读回；
+     * 万一某条路径漏了这一步，这里必须把空图挡掉 —— 空 base64 发上去，
+     * 服务端只会回 `unsupported image`，而且整个会话每轮都会失败。
+     * 少一张图 < 整个会话发不出去。
+     */
+    val images = message.attachments.filter { it.isImage && it.data.isNotBlank() }
     if (images.isEmpty()) {
         return AnthropicMessageParam(
             role = AnthropicMessageParam.RoleUser,
@@ -136,7 +145,8 @@ private fun userParam(message: UiMessage): AnthropicMessageParam {
                         "source",
                         buildJsonObject {
                             put("type", "base64")
-                            put("media_type", image.mime.ifBlank { "image/jpeg" })
+                            // 协议 enum 只认四个值（见 ApiImage.legalMediaType）
+                            put("media_type", ApiImage.legalMediaType(image.mime))
                             put("data", image.data)
                         },
                     )

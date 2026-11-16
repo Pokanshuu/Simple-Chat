@@ -34,7 +34,9 @@ fun userContent(text: String, attachments: List<Attachment>): JsonElement {
     if (attachments.isEmpty()) return MessageContent.text(text)
 
     val textFiles = attachments.filter { it.kind == Attachment.Kind.TEXT }
-    val images = attachments.filter { it.isImage }
+    // 只发有内容的图片：落盘附件的 data 要靠 `prepareRequestAttachments` 读回，
+    // 万一漏了那一步，空 base64 发上去只会 400（见 AnthropicRequestBuilder 的同一条注释）
+    val images = attachments.filter { it.isImage && it.data.isNotBlank() }
 
     val body = buildString {
         append(text)
