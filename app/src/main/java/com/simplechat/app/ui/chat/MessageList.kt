@@ -99,8 +99,15 @@ fun MessageList(
     onRegenerate: (UiMessage) -> Unit = {},
     /** 继续生成：接着这条回复往下写（只有扩展通道能续，见 `ContinuePolicy`）。 */
     onContinue: (UiMessage) -> Unit = {},
-    /** 朗读这条回复（系统 TTS）。 */
+    /** 朗读这条回复（系统 / DeepSeek 官方 TTS）。 */
     onSpeak: (UiMessage) -> Unit = {},
+    /**
+     * 当前音色**能不能出声**。
+     *
+     * 官方音色只在「服务商 = DeepSeek 官方 + Key 已填」时可用；不可用时
+     * 整颗朗读按钮不显示 —— 点下去再弹一句"不支持"是最差的两种体验的组合。
+     */
+    readAloudAvailable: Boolean = true,
     /** 正在朗读的那条消息 id。 */
     speakingId: String? = null,
     onEdit: (UiMessage) -> Unit = {},
@@ -186,6 +193,7 @@ fun MessageList(
                  */
                 canContinue = canContinueReply(message, isLastOnPath = index == messages.lastIndex),
                 speakingId = speakingId,
+                readAloudAvailable = readAloudAvailable,
                 autoCollapseThinking = autoCollapseThinking,
                 /*
                  * 折叠/展开**不需要任何视口补偿**（顶部为原点）。
@@ -230,6 +238,7 @@ private fun MessageRow(
     peeked: Boolean,
     canContinue: Boolean,
     speakingId: String?,
+    readAloudAvailable: Boolean,
     autoCollapseThinking: Boolean,
     onTogglePeek: () -> Unit,
     onCopy: () -> Unit,
@@ -351,6 +360,7 @@ private fun MessageRow(
                 peeked = peeked,
                 canContinue = canContinue,
                 speaking = speakingId == message.id,
+                readAloudAvailable = readAloudAvailable,
                 onCopy = onCopy,
                 onRegenerate = onRegenerate,
                 onContinue = onContinue,
@@ -792,6 +802,7 @@ private fun MessageActions(
     peeked: Boolean,
     canContinue: Boolean,
     speaking: Boolean,
+    readAloudAvailable: Boolean,
     onCopy: () -> Unit,
     onRegenerate: () -> Unit,
     onContinue: () -> Unit,
@@ -831,8 +842,9 @@ private fun MessageActions(
                 ActionIcon(AppIcons.Play, stringResource(R.string.msg_continue), onContinue, colors)
             }
             // 朗读：进行中换成停止图标，按同一下即停。
-            // 暂时下线时整颗按钮不出现（见 ReadAloudEnabled）—— 留着但点了没反应更糟。
-            if (ReadAloudEnabled) {
+            // 不可用时整颗按钮不出现（见 ReadAloudEnabled / readAloudAvailable）——
+            // 留着但点了没反应更糟；弹一句"不支持"也一样糟。
+            if (ReadAloudEnabled && readAloudAvailable) {
                 ActionIcon(
                     if (speaking) AppIcons.Stop else AppIcons.Volume,
                     stringResource(if (speaking) R.string.tts_stop else R.string.tts_speak),

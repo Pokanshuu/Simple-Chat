@@ -212,3 +212,12 @@ fun modelsUrl(baseUrl: String): String {
     val base = baseUrl.trim().trimEnd('/')
     return if (base.endsWith("/models")) base else "$base/models"
 }
+/**
+ * Base URL 是否指向 **DeepSeek 官方域**。
+ *
+ * 官方扩展能力（Anthropic 扩展字段、服务端标题、`/v1/tools/tts` 语音）只在
+ * `api.deepseek.com` 上提供；用户把 Base URL 改成自建网关后，这些字段/端点
+ * 发出去只会 400 或 404。所有"要不要发官方专有东西"的判断都走这一个函数。
+ */
+fun isOfficialDeepSeekEndpoint(baseUrl: String): Boolean =
+    baseUrl.trim().trimEnd('/').contains("api.deepseek.com")

@@ -508,6 +508,14 @@
     <string name="tts_voice_preview">试听</string>
     <string name="tts_voice_preview_running">正在试听…再点一次可停止</string>
     <string name="tts_voice_preview_text">你好，这是一段试听，用来挑选朗读音色。</string>
+    <!-- DeepSeek 官方 TTS（/v1/tools/tts，音色 stella / tide） -->
+    <string name="tts_voice_stella">Stella（女声 · DeepSeek 官方）</string>
+    <string name="tts_voice_tide">Tide（男声 · DeepSeek 官方）</string>
+    <string name="tts_voice_official_section">DeepSeek 官方音色</string>
+    <string name="tts_voice_official_hint">官方音色需要：「服务商」为 DeepSeek 官方、Base URL 指向 api.deepseek.com，并已填写 API Key。其余服务商请用上方系统音色。</string>
+    <string name="tts_official_unavailable">当前服务商不支持 DeepSeek 官方朗读，请到设置里换回系统音色</string>
+    <string name="tts_official_failed">官方朗读失败：%1$s</string>
+    <string name="tts_official_empty">这段内容没有可朗读的正文（代码块与表格会被跳过）</string>
 
     <!-- ── Mermaid 图表 ──────────────────────────────────── -->
     <string name="mermaid_label">图表</string>
@@ -518,4 +526,5 @@
     <string name="settings_export_archive">导出全部对话（ZIP 归档）</string>
     <string name="settings_export_archive_summary">包含所有对话与附件的完整备份，另附每个对话的 Markdown 文稿；可直接用于导入恢复。</string>
 </resources>
+
 

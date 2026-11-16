@@ -89,13 +89,13 @@ class AnthropicRequestBuilderTest {
 
     @Test
     fun `思考开关映射到 thinking 字段`() {
-        assertEquals("disabled", build(listOf(user("你好"))).thinking.type)
-        assertEquals("enabled", build(listOf(user("你好")), thinking = true).thinking.type)
+        assertEquals("disabled", build(listOf(user("你好"))).thinking!!.type)
+        assertEquals("enabled", build(listOf(user("你好")), thinking = true).thinking!!.type)
     }
 
     @Test
     fun `安全审核档位始终为 high（扩展模式的开关）`() {
-        assertEquals("high", build(listOf(user("你好"))).safetyCheck.level)
+        assertEquals("high", build(listOf(user("你好"))).safetyCheck!!.level)
     }
 
     @Test
@@ -381,4 +381,129 @@ class AnthropicRequestBuilderTest {
 
     /** 手上这份 JSON 是对象还是数组，读错了会静默空转，所以显式断言一次类型。 */
     private fun kotlinx.serialization.json.JsonElement.asObject(): JsonObject = jsonObject
+    // ══════════════════════════════════════════════════════
+    //  原版 Anthropic / 第三方兼容网关（deepSeekExtensions = false）
+    // ══════════════════════════════════════════════════════
+
+    private fun buildVanilla(
+        path: List<UiMessage>,
+        thinking: Boolean = false,
+        temperature: Double? = null,
+        maxTokens: Int? = null,
+        reminder: String? = null,
+        search: Boolean = true,
+        title: Boolean = true,
+    ) = buildAnthropicRequest(
+        model = "claude-sonnet-4-5",
+        systemPrompt = "",
+        path = path,
+        searchEnabled = search,
+        thinkingEnabled = thinking,
+        requestTitle = title,
+        latestReminder = reminder,
+        maxTokens = maxTokens,
+        deepSeekExtensions = false,
+        temperature = temperature,
+        topP = 0.9,
+    )
+
+    @Test
+    fun `原版目标不带 DeepSeek 专有字段`() {
+        val request = buildVanilla(listOf(user("你好")))
+        // 这些字段原版不认识，带上就是 400
+        assertNull(request.safetyCheck)
+        assertNull(request.title)
+        assertTrue(request.tools.isEmpty())
+        // 空系统提示词不再塞 DeepSeek 身份说明
+        assertEquals("", request.system)
+    }
+
+    @Test
+    fun `原版目标关闭思考时省略 thinking 字段`() {
+        assertNull(buildVanilla(listOf(user("你好"))).thinking)
+    }
+
+    @Test
+    fun `原版目标开启思考时带 budget_tokens 且 max_tokens 大于预算`() {
+        val request = buildVanilla(listOf(user("你好")), thinking = true)
+        val thinking = request.thinking!!
+        assertEquals("enabled", thinking.type)
+        assertEquals(4096, thinking.budgetTokens)
+        val maxTokens = request.maxTokens!!
+        assertTrue("max_tokens 必须大于 budget_tokens", maxTokens > thinking.budgetTokens!!)
+    }
+
+    @Test
+    fun `原版目标 max_tokens 必填`() {
+        assertEquals(8192, buildVanilla(listOf(user("你好"))).maxTokens)
+        // 用户自己填的值优先
+        assertEquals(2048, buildVanilla(listOf(user("你好")), maxTokens = 2048).maxTokens)
+    }
+
+    @Test
+    fun `原版目标不把 DeepSeek 的提醒角色发出去`() {
+        val request = buildVanilla(listOf(user("问")), reminder = "2026-11-14,星期六,杭州")
+        assertEquals(1, request.messages.size)
+        assertEquals(AnthropicMessageParam.RoleUser, request.messages.single().role)
+    }
+
+    @Test
+    fun `原版目标开启思考时不发温度`() {
+        assertNull(buildVanilla(listOf(user("你好")), thinking = true, temperature = 0.5).temperature)
+    }
+
+    @Test
+    fun `原版目标关闭思考时发温度`() {
+        assertEquals(0.5, buildVanilla(listOf(user("你好")), temperature = 0.5).temperature)
+        // 没填就用协议默认值，不把 top_p 也塞进去
+        assertEquals(1.0, buildVanilla(listOf(user("你好"))).temperature)
+        assertNull(buildVanilla(listOf(user("你好"))).topP)
+    }
+
+    @Test
+    fun `原版目标把 DeepSeek 工具块退化成纯正文`() {
+        val reply = assistant(
+            "正文",
+            timeline = listOf(
+                ReplyBlock.ToolUse("t1", "deepseek_read_url", "read_link", "read_link", emptyList(), url = "https://a.b"),
+                ReplyBlock.FetchResult("t1", "read_link", url = "https://a.b", signature = "sig"),
+                ReplyBlock.Text("正文"),
+            ),
+        )
+        val blocks = buildVanilla(listOf(user("问"), reply)).messages[1].content.jsonArray
+        assertEquals(1, blocks.size)
+        assertEquals("正文", blocks[0].jsonObject["text"]!!.jsonPrimitive.content)
+    }
+
+    // ── 历史序列整理（换端点后继续聊） ─────────────────────
+
+    @Test
+    fun `相邻同角色消息合并`() {
+        val request = buildVanilla(listOf(user("第一句"), user("第二句")))
+        assertEquals(1, request.messages.size)
+        assertEquals("第一句\n\n第二句", request.messages.single().content.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `以 assistant 开头的历史被截掉`() {
+        // 导入 / 删消息后可能出现"开头是 AI 回复"，原版 Anthropic 要求第一条是 user
+        val request = buildVanilla(listOf(assistant("旧的回答"), user("新问题")))
+        assertEquals(1, request.messages.size)
+        assertEquals(AnthropicMessageParam.RoleUser, request.messages.single().role)
+    }
+
+    @Test
+    fun `空消息不会发出去`() {
+        val request = buildVanilla(listOf(user("有内容"), assistant("")))
+        assertEquals(1, request.messages.size)
+    }
+
+    @Test
+    fun `同角色合并后仍然 user-assistant 交替`() {
+        val request = buildVanilla(
+            listOf(user("问一"), assistant("答一"), user("问二"), user("问三"), assistant("答二"), user("问四")),
+        )
+        val roles = request.messages.map { it.role }
+        assertEquals(listOf("user", "assistant", "user", "assistant", "user"), roles)
+    }
 }

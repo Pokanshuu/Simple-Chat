@@ -1,6 +1,9 @@
 package com.simplechat.app.ui.chat
 
 import android.content.Context
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
@@ -15,24 +18,39 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.simplechat.app.R
 import com.simplechat.app.data.Res
+import com.simplechat.app.data.userMessage
+import com.simplechat.app.net.DeepSeekTts
+import com.simplechat.app.net.httpErrorText
+import java.io.IOException
 import java.util.Locale
 import java.util.UUID
 import kotlin.coroutines.resume
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 
 /**
- * 朗读（TTS）。
+ * 朗读（TTS）。两条通道：
  *
- * 用**系统** TTS 引擎：不需要权限、不需要额外网络请求，也不额外计费。
- * 官方 demo 走服务端 `/v1/tools/tts`（音色更好），但那个端点只在官方域上提供，
- * 而"把整段回复念出来"这件事系统引擎已经够用 —— 代价是音色取决于用户装的引擎，
- * 所以设置里提供了音色选择（[loadSpeechVoices]）。
+ * 1. **系统 TTS 引擎**：不需要权限、不额外计费，音色取决于设备装了哪个引擎；
+ * 2. **DeepSeek 官方 TTS**（`POST /v1/tools/tts`，音色 `stella` / `tide`）：
+ *    音色明显更好，但只在官方服务商（`api.deepseek.com` + 已填 Key）上可用。
+ *    官方返回的是**裸 PCM**（16 bit / 单声道 / 24 kHz），这里用 `AudioTrack`
+ *    边收边播 —— 几千字的回复不需要先攒成一个 `ByteArray`。
+ *
+ * 选哪条由**音色名**决定：`deepseek:` 前缀走官方，其余走系统（见 [speak]）。
  *
  * ### 只念正文，不念代码块与表格
+ *
  * 与官方一致：代码块逐字符念出来毫无意义。这里在 [prepareForSpeech] 里剥掉
  * 围栏代码块、行内代码、表格行与链接语法 —— **纯文本替换，不改动消息本身**。
+ * 官方通道把这份纯文本发过去，同时再带 `filter_markdown = true`（双保险）。
  */
 class SpeechOutputController(private val context: Context) {
 
@@ -52,6 +70,23 @@ class SpeechOutputController(private val context: Context) {
 
     private var engine: TextToSpeech? = null
     private var pending: Pair<String, String>? = null
+
+    /** 官方 TTS 的接入参数；null = 当前服务商不支持（界面会隐藏朗读键）。 */
+    private var officialConfig: DeepSeekTts.Config? = null
+
+    /** 官方朗读任务与它自己的作用域（控制器不是 ViewModel，自己管生命周期）。 */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var officialJob: Job? = null
+    private var audioTrack: AudioTrack? = null
+
+    /**
+     * 用户点了停止。
+     *
+     * 用标记而不是只 `cancel()` 协程：`AudioTrack.write` 与 `InputStream.read`
+     * 都是**阻塞调用**，取消协程不会立刻打断它们；下一次回调检查这个标记就能退出。
+     */
+    @Volatile
+    private var stopRequested = false
 
     /**
      * 引擎**起不来**（设备没装 TTS / 引擎被禁用）。
@@ -119,7 +154,7 @@ class SpeechOutputController(private val context: Context) {
         val tts = engine ?: return
         if (!ready) return
         val voice = preferredVoice
-            .takeIf { it.isNotBlank() }
+            .takeIf { it.isNotBlank() && !DeepSeekTts.isOfficialVoice(it) }
             ?.let { wanted -> tts.voices?.firstOrNull { it.name == wanted } }
         if (voice != null) {
             tts.voice = voice
@@ -127,6 +162,16 @@ class SpeechOutputController(private val context: Context) {
             tts.voice = null
             tts.language = preferredLocale()
         }
+    }
+
+    /**
+     * 应用官方 TTS 的接入参数（null = 当前服务商不支持官方朗读）。
+     *
+     * 只有"服务商 = DeepSeek 官方 + Key 已填"时界面才会列官方音色；这里再兜一层：
+     * 配置为空时，即便音色名还是 `deepseek:*` 也不会去发请求（界面会隐藏朗读键）。
+     */
+    fun applyOfficialConfig(config: DeepSeekTts.Config?) {
+        officialConfig = config
     }
 
     /** 念 / 停止念同一条消息。 */
@@ -154,6 +199,13 @@ class SpeechOutputController(private val context: Context) {
             error = Res.get(R.string.tts_empty)
             return
         }
+        // 官方音色：只有当配置在的时候才走官方通道；不在时界面根本不该显示朗读键
+        // （见 `showReadAloud`），真走到了这里也只是给一句提示，不发请求。
+        val voiceId = DeepSeekTts.voiceIdOf(preferredVoice)
+        if (voiceId != null) {
+            speakOfficial(id, text, voiceId)
+            return
+        }
         val tts = engine
         if (tts == null || !ready) {
             if (initFailed) {
@@ -176,7 +228,116 @@ class SpeechOutputController(private val context: Context) {
         }
     }
 
+    // ── DeepSeek 官方 TTS ─────────────────────────────────
+
+    /**
+     * 官方通道：逐块合成、边下边播。
+     *
+     * 主要逻辑在 IO 线程（网络读取 + `AudioTrack.write` 都是阻塞调用），
+     * 状态切回主线程 —— Compose 的状态读写在后台线程虽然也能工作，
+     * 但"在哪个线程改的"这种事不要靠运气。
+     */
+    private fun speakOfficial(id: String, text: String, voiceId: String) {
+        val config = officialConfig
+        if (config == null) {
+            error = Res.get(R.string.tts_official_unavailable)
+            return
+        }
+        val chunks = DeepSeekTts.splitForSpeech(text)
+        if (chunks.isEmpty()) {
+            error = Res.get(R.string.tts_empty)
+            return
+        }
+        error = null
+        stopRequested = false
+        officialJob?.cancel()
+        speakingId = id
+        officialJob = scope.launch {
+            var failure: String? = null
+            withContext(Dispatchers.IO) {
+                var track: AudioTrack? = null
+                try {
+                    // 用 val 接住再给 var：`track.write` 在 lambda 里，对捕获的可变局部变量
+                    // 无法智能转换（编译期拿不到非空证明）
+                    val created = createAudioTrack()
+                    track = created
+                    audioTrack = created
+                    created.play()
+                    for (chunk in chunks) {
+                        if (stopRequested) break
+                        DeepSeekTts.streamPcm(config, chunk, voiceId) { bytes, length ->
+                            // 回调在 IO 线程、且是阻塞写的：这里检查停止标记，
+                            // 用户点「停止」后下一次回调就会抛出去，不会把整段读完
+                            if (stopRequested) throw CancellationException("tts stopped")
+                            created.write(bytes, 0, length)
+                        }
+                    }
+                } catch (cancelled: CancellationException) {
+                    // 用户停止 / 被新的朗读顶掉：不是错误
+                } catch (t: Throwable) {
+                    failure = officialErrorText(t)
+                    android.util.Log.w(TtsLogTag, "官方朗读失败", t)
+                } finally {
+                    if (audioTrack === track) audioTrack = null
+                    runCatching { track?.pause() }
+                    runCatching { track?.flush() }
+                    runCatching { track?.release() }
+                }
+            }
+            if (speakingId == id) speakingId = null
+            failure?.let { error = it }
+        }
+    }
+
+    /** 24 kHz / 单声道 / 16 bit 的流式播放器。 */
+    private fun createAudioTrack(): AudioTrack {
+        val minBuffer = AudioTrack.getMinBufferSize(
+            DeepSeekTts.SAMPLE_RATE,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+        )
+        // 至少 0.5 秒的缓冲：网络抖动时不会出现"每块之间咔一下"
+        val wanted = DeepSeekTts.SAMPLE_RATE * DeepSeekTts.BYTES_PER_FRAME / 2
+        val bufferSize = maxOf(if (minBuffer > 0) minBuffer else 0, wanted)
+        return AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build(),
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(DeepSeekTts.SAMPLE_RATE)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build(),
+            )
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .setBufferSizeInBytes(bufferSize)
+            .build()
+    }
+
+    /** 官方通道的失败原因 → 人话（带状态码与原文，便于排查）。 */
+    private fun officialErrorText(error: Throwable): String = when (error) {
+        is DeepSeekTts.TtsException ->
+            // 400 通常是"没有可朗读的文本"（代码/表格被过滤空）或参数问题
+            if (error.code == 400) {
+                Res.get(R.string.tts_official_empty)
+            } else {
+                Res.get(R.string.tts_official_failed, httpErrorText(error.code, error.detail))
+            }
+
+        is IOException -> Res.get(R.string.tts_official_failed, error.userMessage())
+        else -> Res.get(R.string.tts_official_failed, error.message.orEmpty())
+    }
+
     fun stop() {
+        stopRequested = true
+        officialJob?.cancel()
+        officialJob = null
+        runCatching { audioTrack?.pause() }
+        runCatching { audioTrack?.flush() }
         runCatching { engine?.stop() }
         speakingId = null
     }
@@ -185,7 +346,21 @@ class SpeechOutputController(private val context: Context) {
         error = null
     }
 
+    /**
+     * 当前音色**能不能出声**。
+     *
+     * 界面据此决定要不要显示"朗读"按钮（用户要求：不支持的 API 直接隐藏，而不是
+     * 点下去再弹错误）。官方音色只有拿到配置才算可用；系统音色恒为 true ——
+     * 引擎缺失那种情况在真的点了之后才提示（不该因为设备没装引擎就藏掉所有入口）。
+     */
+    fun isReadAloudSupported(voiceName: String): Boolean =
+        !DeepSeekTts.isOfficialVoice(voiceName) || officialConfig != null
+
     fun release() {
+        runCatching { audioTrack?.stop() }
+        runCatching { audioTrack?.release() }
+        audioTrack = null
+        scope.cancel()
         runCatching { engine?.stop() }
         runCatching { engine?.shutdown() }
         engine = null
@@ -199,6 +374,9 @@ class SpeechOutputController(private val context: Context) {
 
     private companion object {
         const val PreviewUtteranceId = "__preview__"
+
+        /** 官方朗读的诊断日志 tag（用户看不到，真机排查时要它）。 */
+        const val TtsLogTag = "SimpleChat/Tts"
     }
 }
 
@@ -327,11 +505,18 @@ private fun flattenInline(line: String): String {
 }
 
 /**
- * @param voiceName 用户选的音色（空 = 系统默认）。设置里换音色后立即生效，
- *   正在念的那一句不会被打断 —— 换音色不该像"点了停止"一样。
+ * 朗读控制器。
+ *
+ * @param voiceName 用户选的音色（空 = 系统默认）。
+ * @param officialConfig 官方 TTS 的接入参数；null = 当前服务商不支持官方朗读。
+ *
+ * 换音色/换服务商后立即生效，正在念的那一句不会被打断 —— 换音色不该像"点了停止"。
  */
 @Composable
-fun rememberSpeechOutput(voiceName: String = ""): SpeechOutputController {
+fun rememberSpeechOutput(
+    voiceName: String = "",
+    officialConfig: DeepSeekTts.Config? = null,
+): SpeechOutputController {
     val context = LocalContext.current
     // 与语音输入同一个道理：TTS 引擎会持有 Context，别把 Activity 留在地基里
     val appContext = remember(context) { context.applicationContext }
@@ -341,5 +526,6 @@ fun rememberSpeechOutput(voiceName: String = ""): SpeechOutputController {
         onDispose { controller.release() }
     }
     LaunchedEffect(controller, voiceName) { controller.applyVoice(voiceName) }
+    LaunchedEffect(controller, officialConfig) { controller.applyOfficialConfig(officialConfig) }
     return controller
 }

@@ -77,6 +77,7 @@ import com.simplechat.app.data.Res
 import com.simplechat.app.data.StoredSettings
 import com.simplechat.app.data.userMessage
 import com.simplechat.app.net.ModelCatalog
+import com.simplechat.app.net.DeepSeekTts
 import com.simplechat.app.net.ProviderKind
 import com.simplechat.app.ui.common.AppIcons
 import com.simplechat.app.ui.common.AppConfirmDialog
@@ -211,7 +212,37 @@ fun SettingsScreen(
      * - [speaker] 只用于「试听」与选完顺手念一句，不参与对话页的朗读。
      */
     var speechVoices by remember { mutableStateOf<List<SpeechVoice>?>(null) }
-    val speaker = rememberSpeechOutput(stored.ttsVoiceName)
+
+    /*
+     * DeepSeek 官方 TTS（/v1/tools/tts，音色 stella / tide）。
+     *
+     * 只在「服务商 = DeepSeek 官方 + Base URL 指向官方域 + Key 已填」时可用 ——
+     * 那个端点是官方域专有的。可用时列在音色页最前面；不可用时整块不出现，
+     * 只留一句说明（不支持的 API 不做入口，也不在点了之后才报错）。
+     */
+    val officialTtsConfig = remember(stored.providerId, stored.apiKey) {
+        if (DeepSeekTts.isOfficialTtsVoiceAvailable(stored.providerId, stored.apiKey)) {
+            DeepSeekTts.Config(stored.apiKey)
+        } else {
+            null
+        }
+    }
+    val officialVoices = remember(officialTtsConfig) {
+        if (officialTtsConfig == null) {
+            emptyList()
+        } else {
+            DeepSeekTts.Voice.entries.map { voice ->
+                SpeechVoice(
+                    name = DeepSeekTts.storageNameOf(voice.id),
+                    label = Res.get(voice.labelRes),
+                    // 官方合成走网络（不是设备引擎），标"需联网"符合用户预期
+                    needsNetwork = true,
+                )
+            }
+        }
+    }
+
+    val speaker = rememberSpeechOutput(stored.ttsVoiceName, officialTtsConfig)
     /** 朗读相关的报错（引擎缺失 / 合成失败），显示在音色页的说明位置。 */
     var speechError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(speaker.error) {
@@ -467,6 +498,8 @@ fun SettingsScreen(
                         SettingsPage.VOICE -> VoicePage(
                             selectedName = stored.ttsVoiceName,
                             voices = speechVoices,
+                            officialVoices = officialVoices,
+                            officialAvailable = officialTtsConfig != null,
                             previewing = speaker.previewing,
                             error = speechError,
                             onSelect = { voice ->
@@ -881,6 +914,9 @@ private fun RootPage(
 private fun VoicePage(
     selectedName: String,
     voices: List<SpeechVoice>?,
+    /** DeepSeek 官方音色；空 = 当前服务商不支持官方朗读（整块不显示）。 */
+    officialVoices: List<SpeechVoice>,
+    officialAvailable: Boolean,
     previewing: Boolean,
     error: String?,
     onSelect: (SpeechVoice?) -> Unit,
@@ -905,12 +941,33 @@ private fun VoicePage(
         }
     }
 
+    /*
+     * 官方音色单独一组、排在系统音色**后面**：系统音色是"一定可用"的兜底，
+     * 官方的音质更好但依赖服务商与网络。不支持时不显示这一组 —— 连入口都没有，
+     * 用户就不会点了才发现不行。
+     */
+    if (officialVoices.isNotEmpty()) {
+        Spacer(Modifier.size(24.dp))
+        SettingsSectionLabel(stringResource(R.string.tts_voice_official_section))
+        SettingsCard {
+            officialVoices.forEachIndexed { index, voice ->
+                if (index > 0) RowDivider()
+                VoiceRow(
+                    label = voice.label,
+                    selected = voice.name == selectedName,
+                    onClick = { onSelect(voice) },
+                    onPreview = { onPreview(voice) },
+                )
+            }
+        }
+    }
+
     val colors = LocalChatColors.current
     val hint = when {
         // 报错优先：引擎缺失 / 合成失败时，"正在试听"之类的说明就是误导
         error != null -> error
         voices == null -> stringResource(R.string.tts_voice_loading)
-        voices.isEmpty() -> stringResource(R.string.tts_voice_empty)
+        voices.isEmpty() && officialVoices.isEmpty() -> stringResource(R.string.tts_voice_empty)
         previewing -> stringResource(R.string.tts_voice_preview_running)
         else -> stringResource(R.string.tts_voice_hint)
     }
@@ -920,6 +977,15 @@ private fun VoicePage(
         color = colors.placeholder,
         modifier = Modifier.padding(start = 4.dp, top = 12.dp),
     )
+    // 官方音色没出现时说明原因与条件，而不是让用户以为"这个 App 只有系统音色"
+    if (!officialAvailable) {
+        Text(
+            text = stringResource(R.string.tts_voice_official_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.placeholder,
+            modifier = Modifier.padding(start = 4.dp, top = 8.dp),
+        )
+    }
 }
 
 /** 一行音色：名字 +（可选）试听 + 选中标记。 */
@@ -2082,3 +2148,6 @@ private fun maskKey(key: String): String {
     if (key.length <= 8) return "••••"
     return key.take(4) + "••••" + key.takeLast(4)
 }
+
+
+

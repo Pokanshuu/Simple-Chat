@@ -341,6 +341,8 @@ class DeepSeekHistoryTest {
         sessions: List<Pair<String, String>>,
         index: List<Pair<String, String?>> = sessions.map { it.first to null },
         manifest: String = """{"export_format_version":3}""",
+        /** 真实导出里索引是**数组**；早期样本是 `{"sessions":[…]}`。两种都要能读。 */
+        indexAsArray: Boolean = false,
     ): File {
         val file = File.createTempFile("deepseek-test-", ".zip")
         ZipOutputStream(file.outputStream()).use { zip ->
@@ -357,7 +359,8 @@ class DeepSeekHistoryTest {
                 val titleJson = if (title == null) "null" else "\"$title\""
                 """{"id":"$id","title":$titleJson,"pinned":false}"""
             }
-            zip.write("""{"sessions":[$entries]}""".toByteArray())
+            val indexJson = if (indexAsArray) "[$entries]" else """{"sessions":[$entries]}"""
+            zip.write(indexJson.toByteArray())
             zip.closeEntry()
         }
         return file
@@ -496,6 +499,38 @@ class DeepSeekHistoryTest {
             assertNull(DeepSeekHistory.open(zip, naming))
         }
         file.delete()
+    }
+    // ── 索引形状：真实导出是数组 ─────────────────────────────
+
+    @Test
+    fun `索引是数组时按索引顺序导入并给出标题`() {
+        // 真实导出 chat_session_index.json 是 [{id,title,…}, …]（不是 {"sessions":[…]}）
+        val file = archive(
+            sessions = listOf("b" to smallSession("b", "乙"), "a" to smallSession("a", "甲")),
+            index = listOf("a" to "甲", "b" to "乙"),
+            indexAsArray = true,
+        )
+        val (headers, _) = consume(file)
+        file.delete()
+        // 按索引顺序（a 在 b 前），而不是 ZIP 条目顺序
+        assertEquals(listOf("deepseek-a", "deepseek-b"), headers.map { it.id })
+        assertEquals(listOf("甲", "乙"), headers.map { it.title })
+    }
+
+    @Test
+    fun `索引是数组时也能对账出缺失条目`() {
+        val file = archive(
+            sessions = listOf("a" to smallSession("a")),
+            index = listOf("a" to "甲", "b" to "乙（缺文件）"),
+            indexAsArray = true,
+        )
+        val failures = mutableListOf<ImportFailure>()
+        val (headers, _) = consume(file, failures)
+        file.delete()
+        assertEquals(1, headers.size)
+        assertEquals(1, failures.size)
+        assertEquals(ImportFailure.Reason.MISSING_ENTRY, failures.single().reason)
+        assertEquals("乙（缺文件）", failures.single().title)
     }
 }
 

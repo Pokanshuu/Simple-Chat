@@ -50,16 +50,8 @@ class AnthropicApi(
         val payload = json.encodeToString(AnthropicRequest.serializer(), request)
         val body = payload.toRequestBody(JSON_MEDIA_TYPE)
 
-        val builder = Request.Builder()
-            .url(url)
-            .post(body)
-            .header("Content-Type", "application/json")
-            .header("Accept", "text/event-stream")
-        if (apiKey.isNotBlank()) {
-            builder.header("Authorization", "Bearer $apiKey")
-        }
-        extraHeaders.forEach { (name, value) -> builder.header(name, value) }
-
+        val builder = Request.Builder().url(url).post(body)
+        anthropicHeaders(apiKey, extraHeaders).forEach { (name, value) -> builder.header(name, value) }
         val httpRequest = builder.build()
 
         var attempt = 0
@@ -68,6 +60,7 @@ class AnthropicApi(
             attempt++
             val call = client.newCall(httpRequest)
             val handle = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
+            var retryHttp = false
             try {
                 call.execute().use { response ->
                     val source = response.body?.source()
@@ -75,11 +68,20 @@ class AnthropicApi(
                         val raw = runCatching { response.body?.string() }.getOrNull()
                         val serverMessage = parser.parseErrorMessage(raw)
                         android.util.Log.w(ChatStreamLogTag, "HTTP ${response.code}: $raw")
+                        /*
+                         * 429 / 5xx 且**一个字都还没发出去** → 重发一次。
+                         * 与 OpenAI 通道同一条规则：已经收到内容再重发会出现两份回答。
+                         */
+                        if (!emittedAny && attempt < StreamMaxAttempts && isRetryableStatus(response.code)) {
+                            android.util.Log.w(ChatStreamLogTag, "HTTP ${response.code}; retrying")
+                            retryHttp = true
+                            return@use
+                        }
                         emit(
                             StreamEvent.Error(
                                 message = httpErrorText(response.code, serverMessage),
                                 code = response.code,
-                                retryable = response.code == 429 || response.code >= 500,
+                                retryable = isRetryableStatus(response.code),
                             ),
                         )
                         return@use
@@ -109,6 +111,10 @@ class AnthropicApi(
                     emit(StreamEvent.Done)
                     emittedAny = true
                 }
+                if (retryHttp) {
+                    delay(StreamRetryDelayMs)
+                    continue
+                }
                 return@flow
             } catch (e: IOException) {
                 // 用户主动取消造成的 IOException 不应报告为错误
@@ -133,26 +139,76 @@ class AnthropicApi(
     }
 }
 
+/** Anthropic 协议版本。原版会校验这个头；DeepSeek 的兼容端点也收。 */
+internal const val AnthropicVersion = "2023-06-01"
+
+/**
+ * 请求头。
+ *
+ * ### 为什么两种鉴权都发
+ *
+ * - 原版 Anthropic（以及多数 Claude 兼容网关）只认 **`x-api-key`**；
+ * - DeepSeek 的 `/anthropic` 兼容端点两种都收（官方 demo 用的是 `x-api-key`），
+ *   而部分第三方中转只认 `Authorization: Bearer`。
+ *
+ * 两个都带上是最省事的兼容做法：两边都不会因为"少一个头"而 401。
+ *
+ * `anthropic-version` 是原版**强制**要求的（缺了直接 400），DeepSeek 也会忽略它。
+ *
+ * 纯函数，有单测（`AnthropicApiTest`）。
+ */
+internal fun anthropicHeaders(
+    apiKey: String,
+    extraHeaders: Map<String, String> = emptyMap(),
+): Map<String, String> = buildMap {
+    put("Content-Type", "application/json")
+    put("Accept", "text/event-stream")
+    put("anthropic-version", AnthropicVersion)
+    if (apiKey.isNotBlank()) {
+        put("Authorization", "Bearer $apiKey")
+        put("x-api-key", apiKey)
+    }
+    putAll(extraHeaders)
+}
+
+/**
+ * 哪些 HTTP 状态值得**原样重发一次**（只在"一个字都还没收到"时）。
+ *
+ * 429 = 限流；5xx 里 500/502/503/504 是网关/上游暂时不可用；
+ * 529 是 Anthropic 特有的 `overloaded_error`。
+ */
+internal fun isRetryableStatus(code: Int): Boolean =
+    code == 429 || code == 500 || code == 502 || code == 503 || code == 504 || code == 529
+
 /**
  * 拼装 `/messages` 地址。
  *
- * 用户填的 Base URL 什么形态都有，这里按"最具体的先试"逐级退化：
+ * 用户填的 Base URL 什么形态都有，而且**两种目标的路径不同**：
  *
- * | 用户填的 | 实际请求 |
- * |---|---|
- * | `https://api.deepseek.com` | `https://api.deepseek.com/anthropic/v1/messages` |
- * | `https://api.deepseek.com/anthropic` | `.../anthropic/v1/messages` |
- * | `https://api.deepseek.com/anthropic/v1` | `.../anthropic/v1/messages` |
- * | `https://gw.example.com/messages` | 原样（已经是最具体的） |
+ * | 目标 | 用户填的 | 实际请求 |
+ * |---|---|---|
+ * | DeepSeek 官方 | `https://api.deepseek.com` | `…/anthropic/v1/messages` |
+ * | DeepSeek 官方 | `https://api.deepseek.com/anthropic` | `…/anthropic/v1/messages` |
+ * | DeepSeek 官方 | `https://api.deepseek.com/anthropic/v1` | `…/anthropic/v1/messages` |
+ * | 原版 / 兼容网关 | `https://gw.example.com` | `https://gw.example.com/v1/messages` |
+ * | 原版 / 兼容网关 | `https://gw.example.com/v1` | `…/v1/messages` |
+ * | 任意 | `https://gw.example.com/v1/messages` | 原样 |
  *
- * 纯函数，有单测：这一层错了只会表现为 404，从界面上看不出是哪一环。
+ * 判据是 **Base URL 里有没有 `api.deepseek.com`**：只有官方域把扩展协议挂在
+ * `/anthropic` 前缀下；其余 Anthropic 兼容端点走标准 `/v1/messages`。
+ * 纯函数，有单测：这一层错了只表现为 404，从界面上看不出是哪一环。
  */
 fun anthropicMessagesUrl(baseUrl: String): String {
     val base = baseUrl.trim().trimEnd('/')
+    if (base.isEmpty()) return base
     return when {
         base.endsWith("/messages") -> base
         base.endsWith("/anthropic/v1") -> "$base/messages"
         base.endsWith("/anthropic") -> "$base/v1/messages"
-        else -> "$base/anthropic/v1/messages"
+        // DeepSeek 官方：扩展协议挂在 /anthropic 前缀下
+        base.contains("api.deepseek.com") -> "$base/anthropic/v1/messages"
+        // 其余 Anthropic 兼容端点（自建网关 / Claude 中转）：标准路径
+        base.endsWith("/v1") -> "$base/messages"
+        else -> "$base/v1/messages"
     }
 }

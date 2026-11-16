@@ -31,6 +31,7 @@ import com.simplechat.app.data.userMessage
 import com.simplechat.app.db.CompactionEntity
 import com.simplechat.app.db.DraftEntity
 import com.simplechat.app.net.ChatApi
+import com.simplechat.app.net.DeepSeekTts
 import com.simplechat.app.net.ApiStyle
 import com.simplechat.app.net.MessageContent
 import com.simplechat.app.net.ModelCatalog
@@ -41,6 +42,7 @@ import com.simplechat.app.net.ReplyBlock
 import com.simplechat.app.net.StreamEvent
 import com.simplechat.app.net.anthropic.AnthropicRequest
 import com.simplechat.app.net.headersFor
+import com.simplechat.app.net.isOfficialDeepSeekEndpoint
 import com.simplechat.app.net.serverErrorText
 import java.util.UUID
 import kotlinx.coroutines.Job
@@ -182,6 +184,17 @@ class ChatViewModel(
      * 而 `stored` 里带着 API Key 等敏感字段。设置里换音色 → 流回来 → 朗读立即生效。
      */
     var ttsVoiceName by mutableStateOf("")
+        private set
+
+    /**
+     * DeepSeek **官方** TTS 的接入参数；null = 当前服务商不支持官方朗读。
+     *
+     * 只有「服务商 = DeepSeek 官方 + Base URL 指向官方域 + Key 已填」才非空 ——
+     * 官方 `/v1/tools/tts` 只在官方域提供。界面据此：
+     * - 设置页列不列 `Stella` / `Tide` 两个官方音色；
+     * - 对话页显不显示朗读按钮（用户要求：不支持的 API 直接隐藏入口）。
+     */
+    var officialTts by mutableStateOf<DeepSeekTts.Config?>(null)
         private set
 
     /**
@@ -329,6 +342,11 @@ class ChatViewModel(
         webSearch = value.webSearch
         autoCollapseThinking = value.autoCollapseThinking
         ttsVoiceName = value.ttsVoiceName
+        officialTts = if (DeepSeekTts.isOfficialTtsVoiceAvailable(value.providerId, value.apiKey)) {
+            DeepSeekTts.Config(value.apiKey)
+        } else {
+            null
+        }
         settings = settings.copy(
             model = ModelCatalog.find(kind, value.modelId),
             reasoningLevel = runCatching { ReasoningLevel.valueOf(value.reasoningLevelId) }
@@ -410,10 +428,12 @@ class ChatViewModel(
         currentConversationTitle = null
 
         switchJob = viewModelScope.launch {
+
             // 先清扫上次被中断的流式消息，否则它会以 STREAMING 状态卡在界面上
             repository.resolveDanglingStreams(id)
 
             val loaded = repository.loadActivePath(id)
+
             val loadedCompaction = repository.getCompactions(id).lastOrNull()
             val conversation = repository.findConversation(id)
 
@@ -439,6 +459,7 @@ class ChatViewModel(
                     .forEach { message -> warmMarkdownCache(message.content) }
             }
 
+
             if (generation != switchGeneration) return@launch
 
             /*
@@ -454,6 +475,7 @@ class ChatViewModel(
              */
             messages.clear()
             messages.addAll(loaded)
+
             compaction = loadedCompaction
             if (conversation != null) {
                 // 顺手填一次，避免标题晚一帧才出来；**真相仍是 observeTitle 那条流**
@@ -1476,6 +1498,14 @@ class ChatViewModel(
                 else message.copy(attachments = outgoingAttachments(message.attachments))
             }
 
+        /*
+         * 官方域才发 DeepSeek 扩展字段（safety_check / 搜索工具 / 服务端标题 /
+         * latest_reminder 角色 / thinking.type=disabled）。自建网关或 Claude 兼容中转
+         * 遇到这些会 400，而不是"忽略" —— 见 `buildAnthropicRequest` 的说明。
+         */
+        val officialDeepSeek = isOfficialDeepSeekEndpoint(
+            stored.baseUrl.ifBlank { providerKind.defaultBaseUrl },
+        )
         return buildAnthropicRequest(
             model = settings.model.id,
             systemPrompt = system,
@@ -1486,6 +1516,9 @@ class ChatViewModel(
             latestReminder = latestReminder(),
             maxTokens = settings.maxTokens,
             prefix = prefix,
+            deepSeekExtensions = officialDeepSeek,
+            temperature = settings.temperature.toDouble(),
+            topP = settings.topP.toDouble(),
         )
     }
 
@@ -1677,13 +1710,22 @@ class ChatViewModel(
 
         // 顺序规则见 `orderedOutgoingMessages`（纯函数，有单测钉死）
         orderedOutgoingMessages(messages, active).forEach { message ->
+            /*
+             * 空消息不发：历史里出错/被中断的 assistant、既没正文也没附件的 user
+             * 是可能存在的，而部分兼容网关对空 `content` 直接 400 ——
+             * 一条空消息不值得让整段历史发不出去（见 `isSendableOutgoing`）。
+             */
+            if (!isSendableOutgoing(message)) return@forEach
             request += OutMessageDto(
                 role = if (message.role == MessageRole.USER) "user" else "assistant",
                 /*
                  * 只有 user 消息可能带图；组装规则见 `userContent`
                  * （无附件 → 纯字符串；只有文本附件 → 纯字符串；有图 → content 数组）。
+                 *
+                 * assistant 消息即使历史里挂着附件也只发正文：图片放进 assistant
+                 * 在协议里是不合法的（会 400），而 AI 回复本来也不该带图。
                  */
-                content = if (message.attachments.isEmpty()) {
+                content = if (message.role != MessageRole.USER || message.attachments.isEmpty()) {
                     MessageContent.text(message.content)
                 } else {
                     userContent(message.content, outgoingAttachments(message.attachments))
@@ -1780,6 +1822,11 @@ private fun String.toConversationModeSafe(): ConversationMode =
  * `internal` 是为了能单测 —— 取整边界是最容易写错、又最不容易被发现的地方。
  */
 internal fun thinkingSeconds(ms: Long): Long = ((ms + 500) / 1000).coerceAtLeast(1)
+
+
+
+
+
 
 
 

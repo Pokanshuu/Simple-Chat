@@ -212,7 +212,13 @@ fun ChatScreen(
     var speechError by remember { mutableStateOf<String?>(null) }
     val voice = rememberVoiceInput(onText = { text -> input = voiceBase + text })
     // 音色来自设置：设置里换一个，回到对话页立即生效（见 SpeechOutput 的 applyVoice）
-    val speaker = rememberSpeechOutput(vm.ttsVoiceName)
+    val speaker = rememberSpeechOutput(vm.ttsVoiceName, vm.officialTts)
+    /*
+     * 朗读入口是否显示：官方音色只在拿到官方配置时可用（官方 /v1/tools/tts 只在
+     * 官方域提供）。不可用时**整颗按钮不出现** —— 用户要求：不支持的 API 直接隐藏。
+     */
+    val readAloudAvailable =
+        !com.simplechat.app.net.DeepSeekTts.isOfficialVoice(vm.ttsVoiceName) || vm.officialTts != null
 
     /*
      * 麦克风权限的当前状态。
@@ -1154,7 +1160,8 @@ fun ChatScreen(
                         },
                         // 朗读暂时下线（见 ReadAloudEnabled）：开关关着时按钮不出现、
                         // TTS 引擎也不会被初始化
-                        speakingId = if (ReadAloudEnabled) speaker.speakingId else null,
+                        speakingId = if (ReadAloudEnabled && readAloudAvailable) speaker.speakingId else null,
+                        readAloudAvailable = ReadAloudEnabled && readAloudAvailable,
                         autoCollapseThinking = vm.autoCollapseThinking,
                         onSpeak = { message ->
                             // 朗读正文（不是时间线里的过程文字）：用户要听的是回答本身
@@ -1775,4 +1782,6 @@ private fun BannerBar(message: String, onDismiss: () -> Unit) {
         )
     }
 }
+
+
 

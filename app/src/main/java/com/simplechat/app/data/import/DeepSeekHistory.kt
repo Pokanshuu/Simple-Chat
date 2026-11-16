@@ -337,8 +337,14 @@ internal object DeepSeekHistory {
          *
          * 标题的用处不止排序：某条会话的文件缺失/损坏时，索引里还留着它的名字 ——
          * 结果页就能说"少了《夏萧因重逢对话》"，而不是干巴巴一个"1 个未能导入"。
+         *
+         * ⚠️ 索引文件在**真实导出**里是一个 JSON **数组**（`[{id,title,pinned,
+         * message_count,inserted_at,updated_at}, …]`），而我们最早的测试样本
+         * 用的是 `{"sessions":[…]}`。只认后者时，真实归档的索引从来没被读到：
+         * 顺序退化成 ZIP 条目顺序、缺失条目的对账也整个失效（两件事都不报错，
+         * 只是"看起来没问题"）。两种形状都认。
          */
-        val indexEntries = readJson(zip, INDEX)?.arrOrEmpty("sessions").orEmpty()
+        val indexEntries = readIndex(zip)
         val indexIds = indexEntries.mapNotNull { it.str("id") }.distinct()
         val indexTitles = indexEntries
             .mapNotNull { entry -> entry.str("id")?.let { id -> id to entry.str("title") } }
@@ -786,6 +792,23 @@ internal object DeepSeekHistory {
         val text = runCatching { zip.getInputStream(entry).readBytes().decodeToString() }.getOrNull()
             ?: return null
         return runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()
+    }
+
+    /**
+     * 读会话索引。**数组**（真实导出）与 `{"sessions":[…]}`（早期样本）两种形状都认。
+     *
+     * 读不出来就返回空表：索引只用于"顺序 + 对账"，缺了不影响导入本身 ——
+     * 不能因为一个可选文件把整份归档判死。
+     */
+    private fun readIndex(zip: ZipFile): List<JsonObject> {
+        val entry = zip.getEntry(INDEX) ?: return emptyList()
+        val text = runCatching { zip.getInputStream(entry).readBytes().decodeToString() }.getOrNull()
+            ?: return emptyList()
+        return when (val element = runCatching { json.parseToJsonElement(text) }.getOrNull()) {
+            is JsonArray -> element.mapNotNull { it as? JsonObject }
+            is JsonObject -> element.arrOrEmpty("sessions")
+            else -> emptyList()
+        }
     }
 
     private fun headerOf(raw: Map<String, String>): JsonObject? {

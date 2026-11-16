@@ -82,5 +82,25 @@ fun attachmentTokenEstimate(attachments: List<Attachment>): Int {
     }
 }
 
+/**
+ * 这条历史消息值不值得发出去（OpenAI 兼容通道）。
+ *
+ * 历史里确实可能出现"什么都没有"的消息：回复出错 / 被中断后正文与思考都为空、
+ * 或者一条既没正文也没附件的空 user。DeepSeek 官方对 `content: ""` 比较宽松，
+ * 但不少兼容网关会直接 400（`content must not be empty`）——
+ * 一条空消息让整段历史发不出去，代价远大于少发一条。
+ *
+ * 纯函数，有单测（`RequestContentTest`）。
+ */
+internal fun isSendableOutgoing(message: UiMessage): Boolean =
+    message.content.isNotBlank() ||
+        message.attachments.any { attachment ->
+            when {
+                attachment.kind == Attachment.Kind.TEXT -> attachment.data.isNotBlank()
+                attachment.isImage -> attachment.data.isNotBlank()
+                else -> false
+            }
+        }
+
 /** 官方 Vision 指南给出的单图 token 上限。 */
 const val ImageTokenUpperBound = 1024

@@ -34,7 +34,7 @@ android {
         minSdk = 26
         targetSdk = 37
         versionCode = 13
-        versionName = "1.1.4-rc1"
+        versionName = "1.1.3"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -134,4 +134,5 @@ dependencies {
 
     testImplementation(libs.junit)
 }
+
 

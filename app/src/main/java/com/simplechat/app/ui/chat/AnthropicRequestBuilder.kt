@@ -4,11 +4,15 @@ import com.simplechat.app.data.ApiImage
 import com.simplechat.app.data.Attachment
 import com.simplechat.app.net.ReplyBlock
 import com.simplechat.app.net.anthropic.AnthropicMessageParam
+import com.simplechat.app.net.anthropic.AnthropicRequestDefaults
+import com.simplechat.app.net.anthropic.AnthropicSafetyCheck
 import com.simplechat.app.net.anthropic.AnthropicRequest
 import com.simplechat.app.net.anthropic.AnthropicThinking
 import com.simplechat.app.net.anthropic.AnthropicTitle
 import com.simplechat.app.net.anthropic.AnthropicTool
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.addJsonObject
@@ -47,12 +51,26 @@ internal fun buildAnthropicRequest(
     maxTokens: Int? = null,
     /** 续写：把这条 assistant 当作末尾前缀发出去，服务端据此接着写。 */
     prefix: UiMessage? = null,
+    /**
+     * 目标是不是 **DeepSeek 官方**的扩展协议。
+     *
+     * 同一条协议两边要求不同：`safety_check` / `title` / `deepseek_*` 工具 /
+     * `latest_reminder` 角色 / `thinking.type=disabled` 只有 DeepSeek 收；
+     * 原版 Anthropic（含 Claude 兼容网关）遇到这些是 **400**，而它又强制要求
+     * `max_tokens` 与（开启思考时）`budget_tokens`。详见 `AnthropicRequest` 的表格。
+     *
+     * 由装配层按「服务商 + Base URL」判定（见 `isOfficialDeepSeekEndpoint`）。
+     */
+    deepSeekExtensions: Boolean = true,
+    /** 采样参数。原版 Anthropic 在开启思考时不允许设置温度，装配层会置空。 */
+    temperature: Double? = null,
+    topP: Double? = null,
 ): AnthropicRequest {
     val messages = mutableListOf<AnthropicMessageParam>()
 
     path.forEachIndexed { index, message ->
-        // 提醒快照只挂在本轮提问之前：需要的是"现在几点、在哪儿"，历史时间点是噪音
-        if (index == path.lastIndex && latestReminder != null) {
+        // 提醒快照只挂在本轮提问之前，且**只有扩展协议有**这个角色
+        if (deepSeekExtensions && index == path.lastIndex && latestReminder != null) {
             messages += AnthropicMessageParam(
                 role = AnthropicMessageParam.RoleReminder,
                 content = JsonPrimitive(latestReminder),
@@ -61,7 +79,11 @@ internal fun buildAnthropicRequest(
         if (message.role == MessageRole.USER) {
             messages += userParam(message)
         } else {
-            val content = assistantContent(message)
+            val content = assistantContent(
+                message,
+                keepThinking = deepSeekExtensions && thinkingEnabled,
+                deepSeekBlocks = deepSeekExtensions,
+            )
             // 一条既没正文也没工具痕迹的 assistant 发出去就是空块，服务端会 400
             if (isSendable(content)) {
                 messages += AnthropicMessageParam(
@@ -73,7 +95,11 @@ internal fun buildAnthropicRequest(
     }
 
     prefix?.let { tail ->
-        val content = assistantContent(tail, keepThinking = thinkingEnabled)
+        val content = assistantContent(
+            tail,
+            keepThinking = deepSeekExtensions && thinkingEnabled,
+            deepSeekBlocks = deepSeekExtensions,
+        )
         if (isSendable(content)) {
             messages += AnthropicMessageParam(
                 role = AnthropicMessageParam.RoleAssistant,
@@ -82,18 +108,75 @@ internal fun buildAnthropicRequest(
         }
     }
 
+    /*
+     * 原版 Anthropic 的硬约束（DeepSeek 扩展不适用）：
+     * - `max_tokens` 必填；
+     * - 开启思考时 `thinking.budget_tokens` 必填（≥1024）且**必须小于** `max_tokens`；
+     * - 开启思考时 `temperature` 只能为 1（干脆不发）。
+     */
+    var effectiveMaxTokens = if (deepSeekExtensions) {
+        maxTokens?.takeIf { it > 0 }
+    } else {
+        maxTokens?.takeIf { it > 0 } ?: AnthropicRequestDefaults.MaxTokens
+    }
+    val vanillaThinking = !deepSeekExtensions && thinkingEnabled
+    if (vanillaThinking) {
+        val budget = AnthropicRequestDefaults.MaxThinkingBudgetTokens
+        // 给正文留出空间：max_tokens 至少要比预算多 1024
+        effectiveMaxTokens = maxOf(
+            effectiveMaxTokens ?: 0,
+            budget + AnthropicRequestDefaults.MinThinkingBudgetTokens,
+        )
+    }
+
+    /*
+     * ★ **历史对话的跨端点兼容**（换服务商 / 换端口后继续聊）。
+     *
+     * 同一条历史可能先在 DeepSeek 官方聊出来，之后用户换到 Claude 兼容网关继续。
+     * 原版 Anthropic 对消息序列有两条硬性要求，不满足直接 400：
+     *
+     * 1. 第一条必须是 `user`（导入的历史、删过消息的历史都可能以 assistant 开头）；
+     * 2. `user` / `assistant` 必须**交替**（`roles must alternate between …`）。
+     *    本地把两条用户消息叠在一起（删掉中间的回复）是很常见的，DeepSeek 官方
+     *    端点宽松、网关就未必。
+     *
+     * 所以发之前按严格规则整理一遍：同角色合并（正文用空行连接）、丢掉开头的
+     * assistant、丢掉空消息。**只改发给服务端的这一份，本地消息一条不动。**
+     */
+    val sanitizedMessages = sanitizeTurns(messages)
+
     return AnthropicRequest(
         model = model,
-        system = systemPrompt.trim().ifBlank { DefaultSystemPrompt },
-        messages = messages,
-        thinking = if (thinkingEnabled) AnthropicThinking.Enabled else AnthropicThinking.Disabled,
-        tools = buildList {
-            // 读链接始终开着（用户贴了 URL 就该被读），搜索才受开关控制
-            add(AnthropicTool.ReadUrl)
-            if (searchEnabled) add(AnthropicTool.WebSearch)
+        system = if (deepSeekExtensions) {
+            systemPrompt.trim().ifBlank { DefaultSystemPrompt }
+        } else {
+            systemPrompt.trim()
         },
-        title = if (requestTitle) AnthropicTitle() else null,
-        maxTokens = maxTokens?.takeIf { it > 0 },
+        messages = sanitizedMessages,
+        thinking = when {
+            deepSeekExtensions && thinkingEnabled -> AnthropicThinking.Enabled
+            deepSeekExtensions -> AnthropicThinking.Disabled
+            vanillaThinking -> AnthropicThinking.enabledWithBudget(
+                AnthropicRequestDefaults.MaxThinkingBudgetTokens,
+            )
+            // 原版：关闭思考 = **省略这个字段**（不接受 type=disabled）
+            else -> null
+        },
+        safetyCheck = if (deepSeekExtensions) AnthropicSafetyCheck() else null,
+        tools = if (deepSeekExtensions) {
+            buildList {
+                // 读链接始终开着（用户贴了 URL 就该被读），搜索才受开关控制
+                add(AnthropicTool.ReadUrl)
+                if (searchEnabled) add(AnthropicTool.WebSearch)
+            }
+        } else {
+            emptyList()
+        },
+        title = if (deepSeekExtensions && requestTitle) AnthropicTitle() else null,
+        maxTokens = effectiveMaxTokens,
+        // 原版 Anthropic 不允许同时改 temperature 与 top_p；这里只发 temperature
+        temperature = if (!deepSeekExtensions && !thinkingEnabled) temperature ?: 1.0 else null,
+        topP = if (deepSeekExtensions) topP else null,
     )
 }
 
@@ -189,9 +272,22 @@ private fun isSendable(blocks: List<JsonElement>): Boolean = blocks.isNotEmpty()
  * 文本块在遇到"要发出去的非文本块"时才切分 —— 被丢弃的搜索块不应该把
  * 两段连续正文切成两块。
  */
-private fun assistantContent(message: UiMessage, keepThinking: Boolean = false): List<JsonElement> {
+private fun assistantContent(
+    message: UiMessage,
+    keepThinking: Boolean = false,
+    /**
+     * 是否允许回传 DeepSeek 扩展块（思考签名 / server_tool_use / web_fetch_tool_result）。
+     *
+     * 原版 Anthropic 不认识这些块（签名也不是它签的），回传只会 400；
+     * 对原版目标一律退化成"一段正文"。
+     */
+    deepSeekBlocks: Boolean = true,
+): List<JsonElement> {
     // 没有时间线（OpenAI 通道写的、或升级前的老消息）→ 就一段正文
     if (message.timeline.isEmpty()) {
+        return listOfNotNull(textBlock(message.content))
+    }
+    if (!deepSeekBlocks) {
         return listOfNotNull(textBlock(message.content))
     }
 
@@ -301,3 +397,79 @@ private fun textBlock(text: String): JsonElement? {
 
 /** 读链接的 kind 字面值。集中一处，免得散落各处的字符串拼错还查不出来。 */
 internal const val ReadLinkKind = "read_link"
+
+// ══════════════════════════════════════════════════════════
+//  消息序列整理（跨端点兼容）
+// ══════════════════════════════════════════════════════════
+
+/**
+ * 把消息序列整理成原版 Anthropic 接受的形状：
+ *
+ * - 空消息丢掉（空白正文 / 空块数组都会 400）；
+ * - **同角色相邻两条合并**（正文用空行连接，块数组则拼起来）；
+ * - 开头的 `assistant` 丢掉（第一条必须是 user）；
+ * - `latest_reminder` 是扩展角色，原样保留（只有官方目标会走这里）。
+ *
+ * 纯函数，有单测。只影响请求，不碰本地数据。
+ */
+internal fun sanitizeTurns(messages: List<AnthropicMessageParam>): List<AnthropicMessageParam> {
+    val out = ArrayList<AnthropicMessageParam>(messages.size)
+    for (message in messages) {
+        if (message.role == AnthropicMessageParam.RoleReminder) {
+            out += message
+            continue
+        }
+        if (isBlankContent(message.content)) continue
+        val last = out.lastOrNull()
+        if (last != null && last.role == message.role && last.role != AnthropicMessageParam.RoleReminder) {
+            out[out.lastIndex] = AnthropicMessageParam(
+                role = message.role,
+                content = mergeContent(last.content, message.content),
+            )
+        } else {
+            out += message
+        }
+    }
+    // 第一条必须是 user：导入数据 / 删过消息的历史可能以 assistant 开头
+    while (out.isNotEmpty() && out.first().role == AnthropicMessageParam.RoleAssistant) {
+        out.removeAt(0)
+    }
+    return out
+}
+
+/** 这条消息有没有可发的内容（空字符串 / 空白文本块 / 空数组都算没有）。 */
+private fun isBlankContent(content: JsonElement): Boolean = when (content) {
+    is JsonArray -> content.isEmpty() || content.all { block ->
+        val obj = block as? JsonObject ?: return@all false
+        val type = (obj["type"] as? JsonPrimitive)?.contentOrNull
+        type == "text" && (obj["text"] as? JsonPrimitive)?.contentOrNull.isNullOrBlank()
+    }
+
+    is JsonPrimitive -> !content.isString || content.content.isBlank()
+    else -> true
+}
+
+/** 合并两条同角色消息的 content。 */
+private fun mergeContent(first: JsonElement, second: JsonElement): JsonElement {
+    fun JsonElement.asBlocks(): JsonArray = when (this) {
+        is JsonArray -> this
+        else -> buildJsonArray {
+            addJsonObject {
+                put("type", "text")
+                put("text", (this@asBlocks as? JsonPrimitive)?.contentOrNull.orEmpty())
+            }
+        }
+    }
+
+    if (first is JsonPrimitive && first.isString && second is JsonPrimitive && second.isString) {
+        // 两条纯文本消息：空行连接，模型能看出这是两次输入
+        val text = listOf(first.content, second.content)
+            .filter { it.isNotBlank() }
+            .joinToString("\n\n")
+        return JsonPrimitive(text)
+    }
+    return JsonArray(first.asBlocks() + second.asBlocks())
+}
+
+
+

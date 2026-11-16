@@ -139,6 +139,43 @@ class RequestContentTest {
     fun `no attachments cost nothing`() {
         assertEquals(0, attachmentTokenEstimate(emptyList()))
     }
+
+    // ── 空消息过滤（历史兼容） ────────────────────────────
+
+    @Test
+    fun `空的 assistant 消息不发`() {
+        // 出错 / 被中断的回复：正文与思考都为空，历史里真实存在
+        val empty = UiMessage(id = "a", role = MessageRole.ASSISTANT, content = "")
+        assertTrue(!isSendableOutgoing(empty))
+    }
+
+    @Test
+    fun `只有图片的 user 消息仍然要发`() {
+        val imageOnly = UiMessage(
+            id = "u",
+            role = MessageRole.USER,
+            content = "",
+            attachments = listOf(image()),
+        )
+        assertTrue(isSendableOutgoing(imageOnly))
+    }
+
+    @Test
+    fun `只有文本附件的 user 消息仍然要发`() {
+        val fileOnly = UiMessage(
+            id = "u",
+            role = MessageRole.USER,
+            content = "",
+            attachments = listOf(textFile("a.md", "内容")),
+        )
+        assertTrue(isSendableOutgoing(fileOnly))
+    }
+
+    @Test
+    fun `既没正文也没附件的 user 消息不发`() {
+        val blank = UiMessage(id = "u", role = MessageRole.USER, content = "   ")
+        assertTrue(!isSendableOutgoing(blank))
+    }
 }
 
 /** 附件列的 JSON 编解码。坏数据不能让整条消息打不开。 */
@@ -179,3 +216,4 @@ class AttachmentsCodecTest {
         assertTrue(block.contains("内容"))
     }
 }
+

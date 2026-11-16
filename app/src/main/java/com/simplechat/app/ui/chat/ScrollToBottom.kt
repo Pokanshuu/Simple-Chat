@@ -44,9 +44,36 @@ import kotlinx.coroutines.delay
  * 首帧就在底部，不需要重试、不需要等高度量出来。
  */
 
-/** 回到底部。给一个超大 delta，`ScrollableState` 会自动夹到内容末尾。 */
+/**
+ * 回到底部。
+ *
+ * ### ⚠️ 这里**不能**用 `scrollBy(超大 delta)`（这是"第二次打开卡死"的根因）
+ *
+ * `scrollBy(1e9)` 的写法看起来"丢一个无穷大的 delta，LazyList 自己夹到末尾"，
+ * 但 LazyList 的条目高度是**按需测量**的：它不知道后面还有多高，只能
+ * **一条一条往下量着吃**这个 delta。于是"从第 279 条滚到第 545 条"变成
+ * 逐条组合 + 排版 266 条消息 —— 每条都要完整跑一遍 Markdown 渲染
+ * （实测单条约 20–80ms），几百条就是十几秒，主线程直接 ANR。
+ *
+ * 为什么平时看不出来：**第一次**打开会话时列表里还是空内容，
+ * `LazyListState(firstVisibleItemIndex = Int.MAX_VALUE)` 那个"末尾之外"的
+ * 请求还没被消费，等新内容到达时自动夹到最后一条 —— 根本不需要滚。
+ * 而**第二次**打开时列表里还是上一个会话的内容，那个请求当场被消费掉；
+ * 新内容一换，视口停在"旧下标"上（比如 279/546），于是这一步就必须真的滚 266 条，
+ * 把整段会话全部渲染一遍。真机现象就是"第一次顺畅、第二次卡死"。
+ *
+ * 正确做法：**先 O(1) 跳到目标下标**（`scrollToItem` 不测量中间条目），
+ * 再只补"最后一条比视口高出来的那一点"（只需量最后一条）。
+ */
 suspend fun LazyListState.scrollToBottom() {
-    scrollBy(1_000_000_000f)
+    val lastIndex = layoutInfo.totalItemsCount - 1
+    if (lastIndex < 0) return
+    // 已经停在最后一条上：只补它下缘与视口底之间的差
+    if (layoutInfo.visibleItemsInfo.lastOrNull()?.index != lastIndex) {
+        scrollToItem(lastIndex)
+    }
+    val remaining = distanceToBottom()
+    if (remaining > 0f) scrollBy(remaining)
 }
 
 /**

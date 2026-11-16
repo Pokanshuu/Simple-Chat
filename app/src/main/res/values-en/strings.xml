@@ -508,6 +508,14 @@
     <string name="tts_voice_preview">Preview</string>
     <string name="tts_voice_preview_running">Previewing… tap again to stop</string>
     <string name="tts_voice_preview_text">Hello, this is a short preview so you can pick a reading voice.</string>
+    <!-- DeepSeek official TTS (/v1/tools/tts, voices stella / tide) -->
+    <string name="tts_voice_stella">Stella (female · DeepSeek official)</string>
+    <string name="tts_voice_tide">Tide (male · DeepSeek official)</string>
+    <string name="tts_voice_official_section">DeepSeek official voices</string>
+    <string name="tts_voice_official_hint">Official voices need the DeepSeek provider selected, a Base URL pointing at api.deepseek.com, and an API key. With other providers, use the system voices above.</string>
+    <string name="tts_official_unavailable">This provider does not support DeepSeek official read-aloud. Pick a system voice in settings.</string>
+    <string name="tts_official_failed">Official read-aloud failed: %1$s</string>
+    <string name="tts_official_empty">Nothing to read aloud here (code blocks and tables are skipped)</string>
 
     <!-- ── Mermaid diagrams ─────────────────────────────── -->
     <string name="mermaid_label">Diagram</string>
@@ -518,4 +526,5 @@
     <string name="settings_export_archive">Export all chats (ZIP archive)</string>
     <string name="settings_export_archive_summary">A complete backup of every chat and attachment, plus a Markdown document per chat. Can be imported back directly.</string>
 </resources>
+
 

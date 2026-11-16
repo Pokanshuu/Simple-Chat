@@ -132,6 +132,7 @@ fun MarkdownText(
      * 顺序不能反：归一化只做一次才便宜；先归一化再截断，等于每个字符都要重跑一遍整篇。
      */
     val revealed = rememberSmoothReveal(streaming = streaming, value = content)
+
     val text = remember(revealed) { normalizeSoftBreaks(normalizeHtml(revealed)) }
 
     MarkdownTextBlocks(
@@ -948,3 +949,4 @@ private fun copyToClipboard(context: Context, text: String) {
     val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
     manager.setPrimaryClip(ClipData.newPlainText("code", text))
 }
+
