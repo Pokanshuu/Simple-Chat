@@ -202,7 +202,7 @@ object DeepSeekTts {
                 }
                 val body = response.body ?: throw IOException("empty TTS response")
                 body.byteStream().use { stream ->
-                    val buffer = ByteArray(BufferChunk)
+                    val buffer = ByteArray(STREAM_CHUNK_BYTES)
                     while (true) {
                         ensureActive()
                         val read = stream.read(buffer)
@@ -227,8 +227,13 @@ object DeepSeekTts {
     /** 错误原因在界面上的保留上限。 */
     private const val MaxErrorMessageChars = 200
 
-    /** 读网络响应的块大小。 */
-    private const val BufferChunk = 8 * 1024
+    /**
+     * 一次网络读最多拿回多少字节。
+     *
+     * 播放器要用它来算"预滚阶段最多能往缓冲里塞多少"：预滚时轨道还没开始放，
+     * 数据不会被消费，塞超缓冲就会阻塞（见 `SpeechOutput.preRollBytesFor`）。
+     */
+    const val STREAM_CHUNK_BYTES = 8 * 1024
 }
 
 

@@ -5,9 +5,11 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
 import android.os.Bundle
+import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
+import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -117,7 +119,16 @@ class SpeechOutputController(private val context: Context) {
                 return@TextToSpeech
             }
             initFailed = false
-            engine?.voice = null // 先回到系统默认，再按偏好挑
+            /*
+             * ⚠️ **绝不能 `engine.voice = null`。**
+             *
+             * Android 15 的 `TextToSpeech.setVoice(Voice)` 实现里没有空值检查
+             * （`lambda$setVoice$13` 直接 `voice.getName()`），传 null 会在引擎
+             * 初始化回调里抛 NPE —— 而这条回调在主线程上，进程当场崩溃。
+             * 真机崩溃栈：`TextToSpeech.setVoice` → `pu2.onInit`。
+             *
+             * "回到系统默认音色"的唯一正确做法是设 `language`，让引擎自己挑默认。
+             */
             engine?.language = preferredLocale()
             applyVoice(preferredVoice)
             engine?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -153,14 +164,21 @@ class SpeechOutputController(private val context: Context) {
         preferredVoice = name
         val tts = engine ?: return
         if (!ready) return
-        val voice = preferredVoice
-            .takeIf { it.isNotBlank() && !DeepSeekTts.isOfficialVoice(it) }
-            ?.let { wanted -> tts.voices?.firstOrNull { it.name == wanted } }
+        val wanted = name.takeIf { it.isNotBlank() && !DeepSeekTts.isOfficialVoice(it) }
+        val voice = wanted?.let { name ->
+            // 引擎换过 / 音色被删了：`voices` 里找不到就是"回默认"，不抛
+            runCatching { tts.voices?.firstOrNull { it.name == name } }.getOrNull()
+        }
         if (voice != null) {
-            tts.voice = voice
+            /*
+             * setVoice 在个别引擎 / 系统版本上会抛（数据被删、引擎自相矛盾）；
+             * 一个坏音色不值得让整个 App 崩掉 —— 退回默认语言继续念。
+             */
+            runCatching { tts.voice = voice }
+                .onFailure { runCatching { tts.language = preferredLocale() } }
         } else {
-            tts.voice = null
-            tts.language = preferredLocale()
+            // 回默认：**只能设 language**，不能设 voice = null（见 initialize 的说明）
+            runCatching { tts.language = preferredLocale() }
         }
     }
 
@@ -199,6 +217,19 @@ class SpeechOutputController(private val context: Context) {
             error = Res.get(R.string.tts_empty)
             return
         }
+        /*
+         * ★ **每次开口之前，先停掉所有正在播的东西。**
+         *
+         * 两个 `AudioTrack` 同时播同一段 PCM 会混成"炸麦雪花音"——
+         * 真机反馈过"试听还好好的，一读正文就炸麦"。触发路径有两条：
+         * 1. 设置页的试听还没播完就回到对话页点朗读（两个控制器、两条轨道）；
+         * 2. 正在念 A 时点了 B 的朗读（同一个控制器里，`toggle` 只在**同一条**上
+         *    才会先停，换了目标就直接 `speak`）。
+         * 所以这里统一收口：先停旧，再开新。
+         */
+        stopPlayback(clearSpeaking = true)
+        ActiveController?.takeIf { it !== this }?.stop()
+        ActiveController = this
         // 官方音色：只有当配置在的时候才走官方通道；不在时界面根本不该显示朗读键
         // （见 `showReadAloud`），真走到了这里也只是给一句提示，不发请求。
         val voiceId = DeepSeekTts.voiceIdOf(preferredVoice)
@@ -262,21 +293,50 @@ class SpeechOutputController(private val context: Context) {
                     val created = createAudioTrack()
                     track = created
                     audioTrack = created
-                    created.play()
+                    /*
+                     * ★ **先攒够一段，再 `play()`。**
+                     *
+                     * 以前是建完轨道**立刻** `play()`，然后才去发请求。第一次朗读时
+                     * 这条请求要走 TLS 握手 + 服务端起合成，头一块音频往往 1 秒以上才到
+                     * （真机 logcat：`start()` 之后 1.2 秒才出现
+                     * `restartIfDisabled(2225): releaseBuffer() track ... disabled due to
+                     * previous underrun, restarting`）。空轨道在 `play()` 里等数据就是
+                     * **欠载**；这次真机（HyperOS / 高通）在欠载恢复的那一刻把数据通路
+                     * 重新拉起来，用户听到的就是"炸麦雪花杂音"。
+                     *
+                     * 第二次朗读之所以正常，是因为连接已经热了、头一块音频在几百毫秒内
+                     * 就到了，赶在缓冲耗尽之前 —— 这也解释了"只有第一次放会炸"。
+                     *
+                     * 所以改成：先往轨道里写够 [PreRollBytes]，再 `play()`。
+                     * `AudioTrack` 的文档也建议 MODE_STREAM 先 prime 再 play。
+                     */
+                    val gate = PcmPlaybackGate(
+                        preRollBytes = preRollBytesFor(bufferBytesOf(created)),
+                        start = { created.play() },
+                        writeAll = { buffer, offset, length -> writeFully(created, buffer, offset, length) },
+                    )
+                    val writer = PcmWriter { buffer, offset, length -> gate.write(buffer, offset, length) }
+                    val createdAt = SystemClock.elapsedRealtime()
+                    var firstPcmAt = 0L
                     for (chunk in chunks) {
                         if (stopRequested) break
                         DeepSeekTts.streamPcm(config, chunk, voiceId) { bytes, length ->
                             // 回调在 IO 线程、且是阻塞写的：这里检查停止标记，
                             // 用户点「停止」后下一次回调就会抛出去，不会把整段读完
                             if (stopRequested) throw CancellationException("tts stopped")
-                            created.write(bytes, 0, length)
+                            if (firstPcmAt == 0L) firstPcmAt = SystemClock.elapsedRealtime()
+                            writer.write(bytes, length)
                         }
                     }
+                    // 短句可能连预滚量都凑不满：流结束时把剩下的放出来，别憋着不响。
+                    // 用户按了停止就不该再开嗓（否则停了还会冒出一截声音）。
+                    if (!stopRequested) gate.finish()
+                    logPlayback(created, createdAt, firstPcmAt)
                 } catch (cancelled: CancellationException) {
                     // 用户停止 / 被新的朗读顶掉：不是错误
                 } catch (t: Throwable) {
                     failure = officialErrorText(t)
-                    android.util.Log.w(TtsLogTag, "官方朗读失败", t)
+                    Log.w(TtsLogTag, "官方朗读失败", t)
                 } finally {
                     if (audioTrack === track) audioTrack = null
                     runCatching { track?.pause() }
@@ -289,6 +349,35 @@ class SpeechOutputController(private val context: Context) {
         }
     }
 
+    /**
+     * 把 PCM **完整**写进轨道（阻塞写）。
+     *
+     * 阻塞模式下正常应当一次写满；写不动（轨道被 release / 参数非法）就报错 ——
+     * 静默丢字节同样会变成杂音。
+     */
+    private fun writeFully(track: AudioTrack, buffer: ByteArray, offset: Int, length: Int) {
+        var done = 0
+        while (done < length) {
+            val written = track.write(buffer, offset + done, length - done)
+            if (written <= 0) throw IOException("AudioTrack.write returned $written")
+            done += written
+        }
+    }
+
+    /**
+     * 一次朗读的播放诊断（真机排查用，用户看不到）。
+     *
+     * `AudioTrack.underrunCount` 是判断"炸麦"的硬证据：只要它不是 0，说明数据没跟上播放，
+     * 设备端就可能吐出杂音。正常应当是 0 —— 留一行日志，下次真机反馈时不用再猜。
+     */
+    private fun logPlayback(track: AudioTrack, createdAt: Long, firstPcmAt: Long) {
+        val underruns = runCatching { track.underrunCount }.getOrDefault(0)
+        val total = SystemClock.elapsedRealtime() - createdAt
+        val firstData = if (firstPcmAt == 0L) -1 else firstPcmAt - createdAt
+        val detail = "首块 ${firstData}ms / 共 ${total}ms / 缓冲 ${bufferBytesOf(track)}B / 欠载 $underruns 次"
+        if (underruns > 0) Log.w(TtsLogTag, "官方朗读播放欠载：$detail") else Log.d(TtsLogTag, "官方朗读播放正常：$detail")
+    }
+
     /** 24 kHz / 单声道 / 16 bit 的流式播放器。 */
     private fun createAudioTrack(): AudioTrack {
         val minBuffer = AudioTrack.getMinBufferSize(
@@ -296,8 +385,11 @@ class SpeechOutputController(private val context: Context) {
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
         )
-        // 至少 0.5 秒的缓冲：网络抖动时不会出现"每块之间咔一下"
-        val wanted = DeepSeekTts.SAMPLE_RATE * DeepSeekTts.BYTES_PER_FRAME / 2
+        /*
+         * 缓冲 1 秒（48000 字节）：跨分块请求的空档（重新建连 + 服务端重新起合成）
+         * 也吃得下，不至于每换一块就欠载一次。
+         */
+        val wanted = DeepSeekTts.SAMPLE_RATE * DeepSeekTts.BYTES_PER_FRAME
         val bufferSize = maxOf(if (minBuffer > 0) minBuffer else 0, wanted)
         return AudioTrack.Builder()
             .setAudioAttributes(
@@ -318,6 +410,26 @@ class SpeechOutputController(private val context: Context) {
             .build()
     }
 
+    /**
+     * 预滚字节数：攒够这么多才 `play()`（见 [speakOfficial] 的"先攒够再放"）。
+     *
+     * 必须给缓冲留出**至少一个网络读块**的空余：预滚阶段轨道还没 `play()`，写进去的
+     * 数据不会被消费，写超缓冲会直接阻塞到死（`AudioTrack.write` 在阻塞模式下等空间）。
+     */
+    private fun preRollBytesFor(trackBufferSize: Int): Int =
+        minOf(PreRollBytes, trackBufferSize - DeepSeekTts.STREAM_CHUNK_BYTES).coerceAtLeast(0)
+
+    /**
+     * 轨道缓冲的字节数。
+     *
+     * compileSdk 37 里 `getBufferSizeInBytes()` 已经没了，只剩帧数版本 —— 单声道
+     * 16 bit 每帧 [DeepSeekTts.BYTES_PER_FRAME] 字节，换算回来即可。
+     */
+    private fun bufferBytesOf(track: AudioTrack): Int =
+        runCatching { track.bufferSizeInFrames * DeepSeekTts.BYTES_PER_FRAME }
+            .getOrDefault(0)
+            .coerceAtLeast(0)
+
     /** 官方通道的失败原因 → 人话（带状态码与原文，便于排查）。 */
     private fun officialErrorText(error: Throwable): String = when (error) {
         is DeepSeekTts.TtsException ->
@@ -333,13 +445,23 @@ class SpeechOutputController(private val context: Context) {
     }
 
     fun stop() {
+        stopPlayback(clearSpeaking = true)
+        if (ActiveController === this) ActiveController = null
+    }
+
+    /**
+     * 停掉当前播放（官方 PCM 与系统 TTS 都停）。
+     *
+     * 不碰 [error]：调用方可能正要写新的错误。
+     */
+    private fun stopPlayback(clearSpeaking: Boolean) {
         stopRequested = true
         officialJob?.cancel()
         officialJob = null
         runCatching { audioTrack?.pause() }
         runCatching { audioTrack?.flush() }
         runCatching { engine?.stop() }
-        speakingId = null
+        if (clearSpeaking) speakingId = null
     }
 
     fun consumeError() {
@@ -357,6 +479,7 @@ class SpeechOutputController(private val context: Context) {
         !DeepSeekTts.isOfficialVoice(voiceName) || officialConfig != null
 
     fun release() {
+        if (ActiveController === this) ActiveController = null
         runCatching { audioTrack?.stop() }
         runCatching { audioTrack?.release() }
         audioTrack = null
@@ -377,6 +500,158 @@ class SpeechOutputController(private val context: Context) {
 
         /** 官方朗读的诊断日志 tag（用户看不到，真机排查时要它）。 */
         const val TtsLogTag = "SimpleChat/Tts"
+
+        /**
+         * 当前正在出声的控制器。
+         *
+         * 设置页的试听与对话页的朗读是**两个控制器**，各自有自己的 `AudioTrack`。
+         * 两条轨道同时播同一段语音会混成"炸麦雪花音"；真机反馈过"试听还好好的、
+         * 一读正文就炸麦"。开新播放前先停掉这个，跨页面的并发就没了。
+         */
+        @Volatile
+        var ActiveController: SpeechOutputController? = null
+
+        /**
+         * 开嗓前先攒多少字节 = 0.5 秒（24 kHz × 2 B × 0.5）。
+         *
+         * 真机 logcat 实测：建轨道后立刻 `play()`，第一次朗读要等 1.2 秒才等到头一块
+         * 音频（TLS 握手 + 服务端起合成），空轨道欠载，恢复时数据通路被重新拉起，
+         * 出来就是"炸麦雪花杂音"。攒够半秒再 `play()`，轨道一开声就有数据。
+         */
+        const val PreRollBytes = 24_000
+    }
+}
+
+/**
+ * PCM 写入器：保证写进 `AudioTrack` 的永远是**完整的 16 bit 帧**。
+ *
+ * 网络 `InputStream.read` 返回的字节数不保证是偶数。直接把奇数字节写进 PCM16
+ * 轨道，从那一刻起采样就错位了（每两字节被拆成"上一帧的高字节 + 下一帧的低字节"），
+ * 听起来正是**炸麦雪花音**。真机反馈的"试听正常、读正文突然炸麦，过一会儿又正常"
+ * 就是这个：每个分块是一条独立 HTTP 流，错位只发生在同一个分块内，下一块重新对齐。
+ *
+ * 顺手兼容"服务端返回 WAV"（协议参数被网关忽略时）：首个数据块带 `RIFF` 头就跳过。
+ */
+internal class PcmWriter(
+    /** 实际写入：返回写进去的字节数（`AudioTrack.write` 的语义）。 */
+    private val write: (buffer: ByteArray, offset: Int, length: Int) -> Int,
+) {
+
+    /** 上一次剩下的半个采样（高字节）。-1 = 没有。 */
+    private var carry: Int = -1
+
+    private var headerChecked = false
+
+    fun write(buffer: ByteArray, length: Int) {
+        var offset = 0
+        var remaining = length
+        if (!headerChecked) {
+            headerChecked = true
+            // 网关忽略 format=pcm、回了 wav 时，前 44 字节是头，直接播会"啪"一声
+            if (remaining >= WavHeaderSize && isRiffWave(buffer)) offset = WavHeaderSize
+        }
+        remaining -= offset
+        if (remaining <= 0) return
+        if (carry >= 0) {
+            writeAll(byteArrayOf(carry.toByte(), buffer[offset]))
+            carry = -1
+            offset += 1
+            remaining -= 1
+            if (remaining <= 0) return
+        }
+        val even = remaining and 1.inv()
+        if (even > 0) writeAll(buffer, offset, even)
+        if (remaining and 1 == 1) carry = buffer[offset + remaining - 1].toInt() and 0xFF
+    }
+
+    private fun writeAll(buffer: ByteArray, offset: Int = 0, length: Int = buffer.size) {
+        var done = 0
+        while (done < length) {
+            val written = write(buffer, offset + done, length - done)
+            // 阻塞模式下正常应当写满；写不动（轨道被 release / 参数非法）就报错，
+            // 否则会静默丢字节 → 同样会变成杂音
+            if (written <= 0) throw IOException("AudioTrack.write returned $written")
+            done += written
+        }
+    }
+
+    private fun isRiffWave(buffer: ByteArray): Boolean =
+        buffer.size >= 12 &&
+            buffer[0] == 'R'.code.toByte() && buffer[1] == 'I'.code.toByte() &&
+            buffer[2] == 'F'.code.toByte() && buffer[3] == 'F'.code.toByte() &&
+            buffer[8] == 'W'.code.toByte() && buffer[9] == 'A'.code.toByte() &&
+            buffer[10] == 'V'.code.toByte() && buffer[11] == 'E'.code.toByte()
+
+    private companion object {
+        const val WavHeaderSize = 44
+    }
+}
+
+/**
+ * "先攒够，再开嗓"。
+ *
+ * `AudioTrack` 一 `play()` 就开始**按实时速率消费缓冲**。轨道还没数据就 `play()`，
+ * 它立刻进入欠载（underrun）；恢复那一刻设备端会把数据通路重新拉起来 —— 真机
+ * （HyperOS / 高通）实测这时会放出"炸麦雪花杂音"。第一次朗读必然踩到：头发一条
+ * TTS 请求要走 TLS 握手 + 服务端起合成，1 秒以上才吐第一块音频；第二次连接热了，
+ * 数据赶在缓冲耗尽前到，就不炸了 —— 这正是"只有第一次放会炸"的原因。
+ *
+ * 所以在 `write` 里先按 [preRollBytes] 攒着，攒够了再一次性写进去并 [start]。
+ * 攒的字节数必须小于轨道缓冲（见 `preRollBytesFor`），否则写超会阻塞到死。
+ *
+ * 上游 [DeepSeekTts.streamPcm] 会复用同一个 `ByteArray`，所以攒的时候必须拷贝。
+ * 纯逻辑，有单测（`PcmPlaybackGateTest`）。
+ */
+internal class PcmPlaybackGate(
+    /** 攒到多少字节才开嗓。0 = 一有数据就放（缓冲太小、留不出预滚空间的兜底）。 */
+    private val preRollBytes: Int,
+    /** 开嗓：`AudioTrack.play()`。 */
+    private val start: () -> Unit,
+    /** 写满：把 `length` 字节**全部**写进轨道（阻塞写）。 */
+    private val writeAll: (buffer: ByteArray, offset: Int, length: Int) -> Unit,
+) {
+
+    /** 预滚阶段攒下的块（已拷贝，顺序即播放顺序）。 */
+    private val pending = ArrayList<ByteArray>()
+
+    private var pendingBytes = 0
+
+    private var started = false
+
+    /** 供界面/日志用：是否已经开嗓。 */
+    val isStarted: Boolean get() = started
+
+    /** 收下一个（已对齐的）PCM 块；返回收到的字节数，语义同 `AudioTrack.write`。 */
+    fun write(buffer: ByteArray, offset: Int, length: Int): Int {
+        if (length <= 0) return 0
+        if (started) {
+            writeAll(buffer, offset, length)
+            return length
+        }
+        pending += buffer.copyOfRange(offset, offset + length)
+        pendingBytes += length
+        if (pendingBytes >= preRollBytes) drain()
+        return length
+    }
+
+    /**
+     * 流结束：不足预滚量也要把剩下的放出来。
+     *
+     * 一个短句（"好的。"）可能只有几百毫秒，凑不满 0.5 秒的预滚 —— 不调这个就永远
+     * 不 `play()`，用户点了朗读却一点声都没有。没有任何数据时不 `play()`：
+     * 空轨道开声又是欠载。
+     */
+    fun finish() {
+        if (started || pendingBytes == 0) return
+        drain()
+    }
+
+    private fun drain() {
+        started = true
+        pending.forEach { writeAll(it, 0, it.size) }
+        pending.clear()
+        pendingBytes = 0
+        start()
     }
 }
 
@@ -529,3 +804,7 @@ fun rememberSpeechOutput(
     LaunchedEffect(controller, officialConfig) { controller.applyOfficialConfig(officialConfig) }
     return controller
 }
+
+
+
+
