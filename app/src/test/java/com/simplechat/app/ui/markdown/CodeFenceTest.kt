@@ -97,4 +97,47 @@ class CodeFenceTest {
             assertEquals(1f, it.alpha, 0.0001f)
         }
     }
+
+    /**
+     * 未闭合的块注释会让 snipme 给出 `end < start` 的区间（真实数据里命中的最小复现）。
+     *
+     * 这类区间直接喂给 `AnnotatedString.addStyle` 就是
+     * `IllegalArgumentException: Reversed range is not supported` ——
+     * 真机表现是"打开带这段代码的会话即闪退"。这里钉住两件事：
+     * 1. 不崩；2. 所有生效区间都合法（正文一个字不少）。
+     */
+    @Test
+    fun `未闭合的块注释不会产生反转区间`() {
+        val code = """
+               rules: {
+                 'no-restricted-imports': ['error', {
+                   patterns: ['features/*/*/internal', '**/dist/*']
+                 }],
+                 'import/no-cycle': 'error',
+               }
+               
+        """.trimIndent()
+
+        val annotated = IncrementalHighlight().of(code, "js", light)
+        assertEquals(code, annotated.text)
+        annotated.spanStyles.forEach {
+            assertTrue("区间必须非空且有序：${it.start}..${it.end}", it.start < it.end)
+            assertTrue("区间不得越界：${it.end}", it.end <= code.length)
+        }
+    }
+
+    @Test
+    fun `未闭合块注释流式追加同样安全`() {
+        // 流式出字是"不断追加前缀"，增量路径也要走一遍，不能只有静态渲染安全
+        val code = "rules: {\n  patterns: ['features/*/*/internal', '**/dist/*']\n}\n"
+        val incremental = IncrementalHighlight()
+        for (end in 8..code.length step 8) {
+            val prefix = code.substring(0, minOf(end, code.length))
+            val annotated = incremental.of(prefix, "js", light)
+            assertEquals(prefix, annotated.text)
+            annotated.spanStyles.forEach {
+                assertTrue("区间必须非空且有序：${it.start}..${it.end}", it.start < it.end)
+            }
+        }
+    }
 }

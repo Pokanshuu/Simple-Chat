@@ -244,7 +244,19 @@ internal class IncrementalHighlight {
         val spans = spansFor(code, language, dark)
         return buildAnnotatedString {
             append(code)
-            spans.forEach { addStyle(it.style, it.start, it.end) }
+            spans.forEach { span ->
+                /*
+                 * 边界再钳一次（纵深防御）。
+                 *
+                 * `AnnotatedString.Builder.addStyle` 在 `start > end` 或越界时直接抛
+                 * `IllegalArgumentException`，而这批区间来自第三方分词器（见
+                 * [toSpanOrNull] 的说明）—— 真机上已经因为一条区间崩过一次，
+                 * 这里保证"最坏情况下只是少一段配色"，不会把整条消息渲染打断。
+                 */
+                val start = span.start.coerceIn(0, code.length)
+                val end = span.end.coerceIn(start, code.length)
+                if (end > start) addStyle(span.style, start, end)
+            }
         }
     }
 
@@ -287,7 +299,7 @@ internal class IncrementalHighlight {
             .let { if (syntaxLanguage != null) it.language(syntaxLanguage) else it }
             .build()
             .getHighlights()
-        return raw.map { it.toSpan(from) }
+        return raw.mapNotNull { it.toSpanOrNull(from) }
     }
 
     /** 主题与语言只影响配色/分词，按需重建一次并缓存。 */
@@ -303,19 +315,39 @@ internal class IncrementalHighlight {
             }
     }
 
-    private fun CodeHighlight.toSpan(offset: Int) = HighlightSpan(
-        start = location.start + offset,
-        end = location.end + offset,
-        style = when (this) {
-            /*
-             * ⚠️ **必须补 alpha。**
-             *
-             * 库给的 `rgb` 高位是 0，`Color(rgb)` 解出来是**全透明**的 ——
-             * 高亮的字符会直接看不见。实测：CSS 块里 `{` `:` `;` `}` 整批消失，
-             * 只剩下没被高亮的标识符（库自己写的是 `Color(it.rgb).copy(alpha = 1f)`）。
-             */
-            is ColorHighlight -> SpanStyle(color = Color(rgb).copy(alpha = 1f))
-            is BoldHighlight -> SpanStyle(fontWeight = FontWeight.Bold)
-        },
-    )
+    /**
+     * 把分词器给出的一条高亮换算成"相对整段代码"的区间。
+     *
+     * ### 为什么要做合法性判断
+     *
+     * snipme 的 `Highlights` 在**块注释没有闭合**时会给出 `end < start` 的区间。
+     * 最小复现来自真实数据的一段 JavaScript：字符串里出现了 C 风格注释的起始
+     * 标记，但它后面再没有对应的结束标记，库把区间算成 `105..101`。这个区间
+     * 直接喂给 `AnnotatedString.Builder.addStyle` 就是
+     * `IllegalArgumentException: Reversed range is not supported`，
+     * 真机表现是"打开带这段代码的会话即闪退"。
+     *
+     * 这类区间没有任何视觉意义（未闭合的注释不成立），丢弃即可：
+     * 最坏情况只是这一小段没有配色，正文与滚动都不受影响。
+     */
+    private fun CodeHighlight.toSpanOrNull(offset: Int): HighlightSpan? {
+        val start = location.start + offset
+        val end = location.end + offset
+        if (start < 0 || end <= start) return null
+        return HighlightSpan(
+            start = start,
+            end = end,
+            style = when (this) {
+                /*
+                 * ⚠️ **必须补 alpha。**
+                 *
+                 * 库给的 `rgb` 高位是 0，`Color(rgb)` 解出来是**全透明**的 ——
+                 * 高亮的字符会直接看不见。实测：CSS 块里 `{` `:` `;` `}` 整批消失，
+                 * 只剩下没被高亮的标识符（库自己写的是 `Color(it.rgb).copy(alpha = 1f)`）。
+                 */
+                is ColorHighlight -> SpanStyle(color = Color(rgb).copy(alpha = 1f))
+                is BoldHighlight -> SpanStyle(fontWeight = FontWeight.Bold)
+            },
+        )
+    }
 }
