@@ -280,6 +280,12 @@ class ChatViewModel(
     private var stored: StoredSettings = StoredSettings()
     private var previousProviderKind: ProviderKind? = null
 
+    /** 上一次见到的端点，用来判断"模型列表该不该作废 / 换一份"。 */
+    private var previousBaseUrl: String? = null
+
+    /** 上一次见到的远端模型列表（落库的那份），同理只用来比较。 */
+    private var previousModelIds: List<String> = emptyList()
+
     /** 流式 checkpoint 的节流计时。 */
     private var lastCheckpointAt = 0L
 
@@ -333,10 +339,22 @@ class ChatViewModel(
     private fun applyStored(value: StoredSettings) {
         val kind = runCatching { ProviderKind.valueOf(value.providerId) }
             .getOrDefault(ProviderKind.DEEPSEEK)
-        if (kind != previousProviderKind) {
+        /*
+         * 模型列表有两个来源，都要跟：**端点换了**（服务商 / Base URL）要换一份，
+         * **拉取结果变了**（设置页测试连接、或本页刷新）要跟着更新。
+         *
+         * 用 [ModelCatalog.pickerModels] 而不是 `knownModels`：自定义端点的内置
+         * 目录是空的，早先它会把拉到的模型列表整个抹掉 —— 于是"拉取成功"之后
+         * 一进设置、或重启一次，列表就空了。
+         */
+        val endpointChanged = kind != previousProviderKind || value.baseUrl != previousBaseUrl
+        if (endpointChanged || value.modelIds != previousModelIds) {
             previousProviderKind = kind
-            models = ModelCatalog.knownModels(kind)
-            modelHint = null
+            previousBaseUrl = value.baseUrl
+            previousModelIds = value.modelIds
+            models = ModelCatalog.pickerModels(kind, value.modelIds)
+            // 端点换了，上一轮的"已拉取 N 个"不再成立；只是列表更新则保留提示
+            if (endpointChanged) modelHint = null
         }
         apiStyle = ApiStyle.resolve(kind, value.apiStyleId, value.baseUrl)
         webSearch = value.webSearch
@@ -560,18 +578,20 @@ class ChatViewModel(
         refreshingModels = true
         modelHint = null
         viewModelScope.launch {
-            chatApi.fetchModels(
+            val result = chatApi.fetchModels(
                 baseUrl = stored.baseUrl.ifBlank { providerKind.defaultBaseUrl },
                 apiKey = stored.apiKey,
             )
-                .onSuccess { ids ->
-                    models = ModelCatalog.merge(providerKind, ids)
-                    modelHint = Res.get(R.string.models_fetched, ids.size)
-                }
-                .onFailure { error ->
-                    modelHint = Res.get(R.string.models_fetch_failed, error.userMessage()) +
-                        if (!stored.hasKey) Res.get(R.string.models_fetch_needs_key) else ""
-                }
+            result.onSuccess { ids ->
+                models = ModelCatalog.pickerModels(providerKind, ids)
+                modelHint = Res.get(R.string.models_fetched, ids.size)
+            }
+            result.onFailure { error ->
+                modelHint = Res.get(R.string.models_fetch_failed, error.userMessage()) +
+                    if (!stored.hasKey) Res.get(R.string.models_fetch_needs_key) else ""
+            }
+            // 落库：设置页的「模型」选择器读的是这份，重启后也还在
+            result.getOrNull()?.let { settingsStore.setModelIds(it) }
             refreshingModels = false
         }
     }
@@ -585,6 +605,16 @@ class ChatViewModel(
 
         if (!stored.hasKey && providerKind != ProviderKind.OPENCODE_GO) {
             banner = Res.get(R.string.error_no_api_key)
+            return
+        }
+
+        /*
+         * 还没选模型就发：自定义服务商的 `defaultModel` 是空串，而请求里的
+         * `model` 字段一旦为空，服务端只会回一句看不懂的 400。在这里拦下来
+         * 并直接说"去哪儿选"。
+         */
+        if (stored.modelId.isBlank()) {
+            banner = Res.get(R.string.error_no_model)
             return
         }
 

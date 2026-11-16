@@ -126,7 +126,7 @@ keyPassword=...
 ## 开发
 
 ```bash
-./gradlew testDebugUnitTest    # 单元测试（527 项）
+./gradlew testDebugUnitTest    # 单元测试（570 项）
 ./gradlew assembleDebug        # debug 包，包名后缀 .debug
 ./gradlew assembleRelease      # release 包，需签名配置
 ```

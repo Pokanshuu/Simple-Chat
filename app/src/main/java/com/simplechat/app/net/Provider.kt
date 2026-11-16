@@ -121,17 +121,75 @@ object ModelCatalog {
         ProviderKind.CUSTOM -> emptyList()
     }
 
+    /**
+     * 全部内置能力表按 id 索引（[deepSeek] 在前，同一 id 以先出现的为准）。
+     *
+     * 第三方端点（自建网关 / 中转站）常常原样代理官方模型，id 和官方**一模一样**：
+     * `deepseek-flash`、`glm-5.2`、`qwen3.8-max`… 这时能力表当然该照样生效。
+     * 早先只查「当前服务商」那张表，自定义服务商那张是空的 —— 于是一个明明是
+     * 1M 上下文、带识图与思考的 `deepseek-flash`，被当成 128K 的未知模型：
+     * 上下文占用条按 128K 算（显示 80% 实际才 10%）、压缩阈值提前触发、
+     * 图片被当成"模型不支持"直接摘掉。
+     *
+     * ⚠️ 不能直接 `associateBy`：同一个 id 两张表都收（`deepseek-flash` 在
+     * DeepSeek 官方表里带识图、在 OpenCode Go 表里不带），而 `associateBy`
+     * 是**后写覆盖前写**。这里显式「先到先得」，语义才和"官方表优先"一致。
+     */
+    private val allKnown: Map<String, ModelInfo> by lazy {
+        buildMap {
+            deepSeek.forEach { putIfAbsent(it.id, it) }
+            openCodeGo.forEach { putIfAbsent(it.id, it) }
+        }
+    }
+
+    /**
+     * 按 id 找能力：**先看当前服务商的那张表，再看全局表**，都没有就用保守默认值。
+     *
+     * 顺序不能反：同一个 id 在不同表里的能力可以不同（`deepseek-flash` 在
+     * OpenCode Go 那张里明确标了不支持识图 —— 那是上游实测的路由结果），
+     * 当前服务商的记录更可信。
+     *
+     * 全局表都没有的 id 一律回落到 [ModelInfo] 默认值（128K / 不支持识图与思考）。
+     * **刻意不按 id 的字面去猜**：把上下文窗口猜大，压缩就不会及时触发，最后是
+     * 服务端 400（`maximum context length`）；猜小只是早点压缩。识图/思考同理 ——
+     * 猜错会直接发出模型不接受的参数。这三样都必须靠"确知"或用户手动填。
+     */
     fun find(kind: ProviderKind, modelId: String): ModelInfo =
-        knownModels(kind).firstOrNull { it.id == modelId } ?: ModelInfo(id = modelId)
+        knownModels(kind).firstOrNull { it.id == modelId }
+            ?: allKnown[modelId]
+            ?: ModelInfo(id = modelId)
 
     /**
      * 把运行时拉取到的模型 id 与已知能力表合并。
-     * 已知的保留能力，未知的用保守默认值补进来。
+     * 已知的保留能力（含别的服务商表里认得的），未知的用保守默认值补进来。
      */
     fun merge(kind: ProviderKind, remoteIds: List<String>): List<ModelInfo> {
         if (remoteIds.isEmpty()) return knownModels(kind)
-        val known = knownModels(kind).associateBy { it.id }
-        return remoteIds.map { id -> known[id] ?: ModelInfo(id = id) }
+        return remoteIds.map { find(kind, it) }
+    }
+
+    /**
+     * 设置页「模型」选择器要列出的模型。
+     *
+     * 与 [merge] 的差别是**不丢任何一边**：
+     *
+     * - 远端拉到的 id 排在最前 —— 它们是这个端点**真实可用**的模型，用户换端点
+     *   之后找的就是这些；顺序按服务端给的来（中转站常把主力模型放前面）。
+     * - 已知能力表里没被远端覆盖的条目补在后面。有些网关的 `/models` 只回一部分、
+     *   或者干脆不实现这个端点（返回 404），不能让用户因此一个都选不到。
+     *
+     * `CUSTOM` 没有内置目录，于是「远端列表为空」时这里就是空 —— 界面必须给出
+     * 空态提示和一个手动填写的入口，而不是弹一个只有标题的白框。
+     */
+    fun pickerModels(kind: ProviderKind, remoteIds: List<String>): List<ModelInfo> {
+        val ids = remoteIds
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+        if (ids.isEmpty()) return knownModels(kind)
+        val merged = merge(kind, ids)
+        val seen = merged.mapTo(HashSet()) { it.id }
+        return merged + knownModels(kind).filter { it.id !in seen }
     }
 }
 

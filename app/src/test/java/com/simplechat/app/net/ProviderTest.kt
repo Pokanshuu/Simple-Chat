@@ -113,4 +113,63 @@ class ProviderTest {
         val merged = ModelCatalog.merge(ProviderKind.DEEPSEEK, emptyList())
         assertEquals(2, merged.size)
     }
+
+    // ── 设置页「模型」选择器 ──────────────────────────────
+
+    @Test
+    fun `自定义端点拉到的模型按服务端顺序全部进选择器`() {
+        val models = ModelCatalog.pickerModels(
+            ProviderKind.CUSTOM,
+            listOf("gpt-5-mini", "gpt-5", "gpt-5-mini"),
+        )
+        assertEquals(listOf("gpt-5-mini", "gpt-5"), models.map { it.id })
+    }
+
+    @Test
+    fun `远端列表后面补上内置目录且不重复`() {
+        val models = ModelCatalog.pickerModels(
+            ProviderKind.DEEPSEEK,
+            listOf("deepseek-v4-pro"),
+        )
+        // 远端在前，内置表里没被覆盖的补在后面
+        assertEquals(listOf("deepseek-v4-pro", "deepseek-flash"), models.map { it.id })
+    }
+
+    @Test
+    fun `没有远端列表时选择器就是内置目录`() {
+        assertEquals(2, ModelCatalog.pickerModels(ProviderKind.DEEPSEEK, emptyList()).size)
+        assertTrue(ModelCatalog.pickerModels(ProviderKind.CUSTOM, emptyList()).isEmpty())
+    }
+
+    // ── 第三方端点上的能力表 ──────────────────────────────
+
+    @Test
+    fun `第三方端点上的已知模型仍然带上能力`() {
+        // 中转站原样代理官方模型（截图里的 totokens.cc 就是），id 一模一样
+        val info = ModelCatalog.find(ProviderKind.CUSTOM, "deepseek-flash")
+        assertEquals(1_000_000, info.contextWindow)
+        assertTrue(info.supportsVision)
+        assertTrue(info.supportsThinking)
+    }
+
+    @Test
+    fun `当前服务商自己的能力记录优先于别的表`() {
+        // OpenCode Go 那张表实测 deepseek-flash 不支持识图，不能被 DeepSeek 官方那条盖掉
+        assertTrue(!ModelCatalog.find(ProviderKind.OPENCODE_GO, "deepseek-flash").supportsVision)
+        assertTrue(ModelCatalog.find(ProviderKind.CUSTOM, "deepseek-flash").supportsVision)
+    }
+
+    @Test
+    fun `完全未知的模型仍用保守默认值`() {
+        val info = ModelCatalog.find(ProviderKind.CUSTOM, "totally-unknown-model")
+        assertEquals(ModelInfo.DEFAULT_CONTEXT_WINDOW, info.contextWindow)
+        assertTrue(!info.supportsVision)
+        assertTrue(!info.supportsThinking)
+    }
+
+    @Test
+    fun `选择器里的第三方模型也带上全局能力`() {
+        val model = ModelCatalog.pickerModels(ProviderKind.CUSTOM, listOf("glm-5.2")).single()
+        assertEquals(1_000_000, model.contextWindow)
+    }
 }

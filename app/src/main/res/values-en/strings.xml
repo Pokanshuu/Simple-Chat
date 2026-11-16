@@ -64,6 +64,7 @@
     <string name="error_http_too_large">The request is too large (images or history). Reduce it and retry</string>
     <string name="error_http_rate_limited">Too many requests. Wait a moment and retry</string>
     <string name="error_no_api_key">No API key yet. Fill it in under Settings → API, then retry.</string>
+    <string name="error_no_model">No model selected yet. Pick one under Settings → API (tap “Test connection” to fetch a custom endpoint’s models, or enter the model id manually).</string>
     <string name="error_request_failed">Request failed</string>
     <string name="error_no_content">The model returned no content</string>
     <string name="error_write_failed">Could not write to the chosen location</string>
@@ -112,6 +113,9 @@
     <string name="api_key_unset">Not set</string>
     <string name="api_test_ok">Connected, %1$d models available</string>
     <string name="api_test_failed">Connection failed: %1$s</string>
+    <string name="api_model_unset">Not set</string>
+    <string name="api_model_empty_hint">No models yet. Tap “Test connection” to fetch this endpoint’s models, or enter one manually.</string>
+    <string name="api_model_manual">Enter model manually</string>
 
     <!-- ── Settings: import & export ────────────────────── -->
     <string name="import_reading">Reading… (large files take a while)</string>

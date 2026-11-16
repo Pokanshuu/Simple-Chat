@@ -24,6 +24,38 @@ private val Context.settingsDataStore: DataStore<Preferences> by preferencesData
 private val LANGUAGE_KEY = stringPreferencesKey("language_id")
 
 /**
+ * 「这个端点有哪些模型」的持久化格式（换行分隔）。
+ *
+ * 为什么不存 JSON：这里只有一串 id，没有结构；换行在模型 id 里不可能出现
+ * （OpenAI 兼容端点用 `[a-zA-Z0-9._:/-]`），于是编解码就是两行 `map`，
+ * 而 JSON 要引解析器、还要处理坏数据。读取侧对任何异常输入都只说"没有列表"。
+ */
+internal object ModelIdList {
+
+    /**
+     * 上限。正常端点几十个，这里只为拦住"网关把整张目录表倒出来"的极端情况 ——
+     * 几千个 id 会撑大 DataStore，而选择器里也没人翻得到底。
+     */
+    const val MAX_IDS = 500
+
+    fun encode(ids: List<String>): String = ids
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .distinct()
+        .take(MAX_IDS)
+        .joinToString("\n")
+
+    fun decode(raw: String?): List<String> = raw
+        ?.lineSequence()
+        ?.map { it.trim() }
+        ?.filter { it.isNotEmpty() }
+        ?.distinct()
+        ?.take(MAX_IDS)
+        ?.toList()
+        .orEmpty()
+}
+
+/**
  * 同步读语言档位 —— 只为 `attachBaseContext`：那时一切异步入口都还没起来。
  * 值就一行，阻塞读在毫秒级；读不出来（IO 异常）按 [AppLanguage.SYSTEM] 处理，不拦启动。
  */
@@ -89,6 +121,16 @@ data class StoredSettings(
     val ttsVoiceName: String = "",
     val ttsVoiceLabel: String = "",
 
+    /**
+     * 当前端点 `/models` 拉回来的模型 id（[ModelIdList] 编解码）。
+     *
+     * 存下来而不是只放内存：拉取动作发生在「测试连接」或对话面板的刷新里，
+     * 而用户随后进设置页选模型可能已经过了一次重启 —— 列表一丢，选择器就只剩
+     * 内置能力表（自定义端点干脆是空的），于是"能拉到模型，却选不到模型"。
+     * 端点（服务商 / Base URL）一换就清空，见 [SettingsStore.setProvider]。
+     */
+    val modelIds: List<String> = emptyList(),
+
 ) {
     val hasKey: Boolean get() = apiKey.isNotBlank()
 
@@ -145,24 +187,46 @@ class SettingsStore(private val context: Context) {
             locationRegion = prefs[Keys.LOCATION] ?: StoredSettings().locationRegion,
             ttsVoiceName = prefs[Keys.TTS_VOICE] ?: StoredSettings().ttsVoiceName,
             ttsVoiceLabel = prefs[Keys.TTS_VOICE_LABEL] ?: StoredSettings().ttsVoiceLabel,
+            modelIds = ModelIdList.decode(prefs[Keys.MODEL_IDS]),
 
         )
     }
 
     suspend fun setProvider(providerId: String, baseUrl: String, modelId: String) {
         context.settingsDataStore.edit { prefs ->
+            // 换了端点，旧端点拉到的模型列表就不再成立
+            val endpointChanged = prefs[Keys.PROVIDER] != providerId ||
+                prefs[Keys.BASE_URL] != baseUrl.trim()
+            if (endpointChanged) prefs.remove(Keys.MODEL_IDS)
             prefs[Keys.PROVIDER] = providerId
-            prefs[Keys.BASE_URL] = baseUrl
+            prefs[Keys.BASE_URL] = baseUrl.trim()
             prefs[Keys.MODEL] = modelId
         }
     }
 
     suspend fun setBaseUrl(baseUrl: String) {
-        context.settingsDataStore.edit { it[Keys.BASE_URL] = baseUrl.trim() }
+        val trimmed = baseUrl.trim()
+        context.settingsDataStore.edit { prefs ->
+            // 只改大小写 / 前后空格不算换端点；真的改了才丢掉旧列表
+            if (prefs[Keys.BASE_URL].orEmpty().trim() != trimmed) prefs.remove(Keys.MODEL_IDS)
+            prefs[Keys.BASE_URL] = trimmed
+        }
     }
 
     suspend fun setModel(modelId: String) {
         context.settingsDataStore.edit { it[Keys.MODEL] = modelId }
+    }
+
+    /** 记下这个端点 `GET /models` 返回的 id（测试连接 / 对话面板刷新时调用）。 */
+    suspend fun setModelIds(ids: List<String>) {
+        context.settingsDataStore.edit { prefs ->
+            val encoded = ModelIdList.encode(ids)
+            if (encoded.isEmpty()) {
+                prefs.remove(Keys.MODEL_IDS)
+            } else {
+                prefs[Keys.MODEL_IDS] = encoded
+            }
+        }
     }
 
     suspend fun setApiKey(apiKey: String) {
@@ -306,6 +370,9 @@ class SettingsStore(private val context: Context) {
 
         /** 朗读音色的人类可读名字（仅用于显示）。 */
         val TTS_VOICE_LABEL = stringPreferencesKey("tts_voice_label")
+
+        /** 当前端点 `/models` 拉回来的 id，换行分隔（[ModelIdList]）。 */
+        val MODEL_IDS = stringPreferencesKey("model_ids")
 
     }
 }

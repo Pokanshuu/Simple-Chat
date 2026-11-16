@@ -120,7 +120,7 @@ When the file is missing, `assembleRelease` falls back to the **debug signature*
 ## Development
 
 ```bash
-./gradlew testDebugUnitTest    # unit tests (527)
+./gradlew testDebugUnitTest    # unit tests (570)
 ./gradlew assembleDebug        # debug build, package suffix .debug
 ./gradlew assembleRelease      # release build, needs signing config
 ```

@@ -66,6 +66,7 @@
     <string name="error_http_too_large">这次请求太大（图片或历史过长），请减少内容后重试</string>
     <string name="error_http_rate_limited">请求太频繁，请稍等片刻再试</string>
     <string name="error_no_api_key">尚未配置 API Key。请在设置 → API 配置中填写后重试。</string>
+    <string name="error_no_model">还没有选择模型。请在设置 → API 配置里选一个（自定义端点先「测试连接」拉取，或手动填写模型 id）。</string>
     <string name="error_request_failed">请求失败</string>
     <string name="error_no_content">模型没有返回内容</string>
     <string name="error_write_failed">无法写入所选位置</string>
@@ -114,6 +115,9 @@
     <string name="api_key_unset">未配置</string>
     <string name="api_test_ok">连接成功，可用模型 %1$d 个</string>
     <string name="api_test_failed">连接失败：%1$s</string>
+    <string name="api_model_unset">未选择</string>
+    <string name="api_model_empty_hint">还没有模型列表。先点「测试连接」拉取这个端点的模型，也可以手动填写。</string>
+    <string name="api_model_manual">手动填写模型</string>
 
     <!-- ── 设置：导入导出 ───────────────────────────────── -->
     <string name="import_reading">读取中…（大文件需要一会儿）</string>

@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -128,6 +129,8 @@ private sealed interface SettingsDialog {
     data object Provider : SettingsDialog
     data object BaseUrl : SettingsDialog
     data object Model : SettingsDialog
+    /** 手动填写模型 id：端点没实现 `/models`、或列表里没有目标模型时的出口。 */
+    data object ModelManual : SettingsDialog
     data object ApiKey : SettingsDialog
     data object DeleteAll : SettingsDialog
     data object ImportMode : SettingsDialog
@@ -472,6 +475,10 @@ fun SettingsScreen(
                                         baseUrl = stored.baseUrl.ifBlank { provider.defaultBaseUrl },
                                         apiKey = stored.apiKey,
                                     )
+                                    // 拉到的列表**必须落库**：它就是「模型」选择器的数据源，
+                                    // 早先只报了个条数、列表丢掉，于是自定义端点明明"连接成功"，
+                                    // 点开「模型」却是一个只有标题的白框。
+                                    result.onSuccess { ids -> store.setModelIds(ids) }
                                     testResult = result.fold(
                                         onSuccess = { Res.get(R.string.api_test_ok, it.size) },
                                         onFailure = { Res.get(R.string.api_test_failed, it.userMessage()) },
@@ -553,14 +560,42 @@ fun SettingsScreen(
             },
         )
 
-        SettingsDialog.Model -> ChoiceDialog(
-            title = stringResource(R.string.label_model),
-            options = ModelCatalog.knownModels(provider).map { it to it.displayName },
-            selected = ModelCatalog.knownModels(provider).firstOrNull { it.id == stored.modelId },
+        SettingsDialog.Model -> {
+            /*
+             * 选项 = **这个端点拉到的模型**（落库的那份）在前，内置能力表补在后。
+             *
+             * 早先只读 `knownModels(provider)`：自定义服务商的内置目录是空的，
+             * 于是「测试连接」显示"可用模型 45 个"、点开「模型」却什么都没有 ——
+             * 拉取结果根本没进界面。
+             */
+            val models = ModelCatalog.pickerModels(provider, stored.modelIds)
+            ChoiceDialog(
+                title = stringResource(R.string.label_model),
+                options = models.map { it to it.displayName },
+                selected = models.firstOrNull { it.id == stored.modelId },
+                emptyHint = stringResource(R.string.api_model_empty_hint),
+                extraAction = stringResource(R.string.api_model_manual) to {
+                    dialog = SettingsDialog.ModelManual
+                },
+                onDismiss = { dialog = null },
+                onSelect = { picked ->
+                    dialog = null
+                    scope.launch { store.setModel(picked.id) }
+                },
+            )
+        }
+
+        SettingsDialog.ModelManual -> TextInputDialog(
+            title = stringResource(R.string.api_model_manual),
+            initial = stored.modelId,
+            // 例子用**当前服务商的默认模型**：用户照抄一个多半就是能用的
+            placeholder = provider.defaultModel.ifBlank { ProviderKind.DEEPSEEK.defaultModel },
             onDismiss = { dialog = null },
-            onSelect = { picked ->
+            onConfirm = { value ->
                 dialog = null
-                scope.launch { store.setModel(picked.id) }
+                val id = value.trim()
+                // 空值等于"没选"，不要拿它覆盖已选模型
+                if (id.isNotEmpty()) scope.launch { store.setModel(id) }
             },
         )
 
@@ -1175,7 +1210,8 @@ private fun ApiPage(
         SettingsNavRow(
             icon = null,
             label = stringResource(R.string.label_model),
-            value = stored.modelId,
+            // 自定义服务商初始没有模型，空串不该显示成一行空白
+            value = stored.modelId.ifBlank { stringResource(R.string.api_model_unset) },
             onClick = { onPick(SettingsDialog.Model) },
         )
     }
@@ -1997,6 +2033,10 @@ private fun <T> ChoiceDialog(
     selected: T?,
     onDismiss: () -> Unit,
     onSelect: (T) -> Unit,
+    /** 一个选项都没有时显示的话。给 null 就是只留标题（其余调用方没有空列表）。 */
+    emptyHint: String? = null,
+    /** 列表下面多出来的那一条动作（例如「手动填写模型」），与选中状态无关。 */
+    extraAction: Pair<String, () -> Unit>? = null,
 ) {
     val colors = LocalChatColors.current
     Dialog(onDismissRequest = onDismiss) {
@@ -2013,25 +2053,62 @@ private fun <T> ChoiceDialog(
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
             )
-            options.forEach { (item, label) ->
+
+            if (options.isEmpty()) {
+                emptyHint?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.placeholder,
+                        modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 12.dp),
+                    )
+                }
+            } else {
+                /*
+                 * 用 LazyColumn 而不是 Column：自定义端点的 `/models` 动辄四五十个
+                 * （用户那台中转站是 45 个），一次性铺开会把弹窗顶穿屏幕、底部
+                 * 超出窗口的部分**点不到也看不见** —— 看起来又像"列表没显示"。
+                 */
+                LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                    items(options.size) { index ->
+                        val (item, label) = options[index]
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSelect(item) }
+                                .padding(horizontal = 20.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = if (item == selected) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                            AppMenuCheck(selected = item == selected)
+                        }
+                    }
+                }
+            }
+
+            extraAction?.let { (label, onClick) ->
+                if (options.isNotEmpty()) RowDivider(inset = 16.dp)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onSelect(item) }
+                        .clickable(onClick = onClick)
                         .padding(horizontal = 20.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
                         text = label,
                         style = MaterialTheme.typography.bodyLarge,
-                        color = if (item == selected) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        },
-                        modifier = Modifier.weight(1f),
+                        color = MaterialTheme.colorScheme.primary,
                     )
-                    AppMenuCheck(selected = item == selected)
                 }
             }
         }

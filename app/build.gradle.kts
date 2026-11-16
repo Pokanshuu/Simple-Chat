@@ -33,7 +33,7 @@ android {
         applicationId = "com.simplechat.app"
         minSdk = 26
         targetSdk = 37
-        versionCode = 13
+        versionCode = 16
         versionName = "1.1.3"
         vectorDrawables { useSupportLibrary = true }
     }
@@ -134,5 +134,7 @@ dependencies {
 
     testImplementation(libs.junit)
 }
+
+
 
 
