@@ -1,6 +1,6 @@
 # SimpleChat
 
-> 轻量、原生性能的 Android AI 对话客户端。Jetpack Compose 实现，release 经 R8 压缩后约 3.7 MB。
+> 轻量、原生性能的 Android AI 对话客户端。Jetpack Compose 实现，release 经 R8 压缩后约 3.8 MB。
 
 **中文 | [English](README.en.md)**
 
@@ -126,7 +126,7 @@ keyPassword=...
 ## 开发
 
 ```bash
-./gradlew testDebugUnitTest    # 单元测试（570 项）
+./gradlew testDebugUnitTest    # 单元测试（572 项）
 ./gradlew assembleDebug        # debug 包，包名后缀 .debug
 ./gradlew assembleRelease      # release 包，需签名配置
 ```
