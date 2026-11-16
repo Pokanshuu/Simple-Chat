@@ -183,4 +183,21 @@ class MarkdownBlockSplitterTest {
         val blocks = split("甲\n\n乙\n\n丙\n\n丁")
         assertEquals(blocks.size, blocks.map { it.key }.toSet().size)
     }
+    @Test
+    fun `松列表项的缩进正文块并回列表`() {
+        // 模型常见写法：有序项标题 + 空行 + 缩进的续段落（或嵌套列表）
+        val src = "1. **标题**\n\n   - 续写正文第一段\n\n2. **第二个**\n\n   - 续写正文第二段"
+        val blocks = split(src)
+        assertEquals("整个列表应当只切出一块", 1, blocks.size)
+        assertEquals(src, blocks.single().text)
+        assertSubstrings(src, blocks)
+    }
+
+    @Test
+    fun `列表后跟未缩进的普通段落仍然分开`() {
+        val src = "1. 列表项\n\n普通段落"
+        val blocks = split(src)
+        assertEquals(2, blocks.size)
+        assertEquals(listOf("1. 列表项", "普通段落"), blocks.map { it.text })
+    }
 }

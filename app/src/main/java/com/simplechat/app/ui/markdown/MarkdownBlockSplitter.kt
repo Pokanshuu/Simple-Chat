@@ -127,8 +127,34 @@ private fun mergeSameFamily(blocks: List<MarkdownBlock>, source: String): List<M
 private fun sameFamily(a: String, b: String): Boolean {
     val fa = firstMeaningfulLine(a)
     val fb = firstMeaningfulLine(b)
-    return (isListMarker(fa) && isListMarker(fb)) || (isTableRow(fa) && isTableRow(fb))
+    if (isListMarker(fa) && isListMarker(fb)) return true
+    /*
+     * ★ **列表 + 紧随其后的"缩进正文块" = 同一个松列表项。**
+     *
+     * 模型很爱这么写：
+     *
+     * ```text
+     * 1. **小标题**
+     *
+     *    这是正文……
+     * ```
+     *
+     * 中间那个空行会让我们把"   这是正文"切成**独立的块**，而独立块是按普通段落
+     * 渲染的 —— 列表项的缩进、与上一行的间距全没了，正文直接跑回最左边（真机截图里
+     * 就是这样，看着像排版坏了）。所以只要后一块的**原始首行是缩进的**，就并回列表块。
+     *
+     * 要求缩进 ≥2 格：1 格缩进更可能是"作者手滑"，不值得冒把普通段落吸进列表的风险。
+     */
+    if (isListMarker(fa)) {
+        val rawIndent = firstRawMeaningfulLine(b).takeWhile { it.isWhitespace() }.length
+        if (rawIndent in 1..8) return true
+    }
+    return isTableRow(fa) && isTableRow(fb)
 }
+
+/** 首行原文（**不 trim**）—— 判断"这一块是否缩进"用。 */
+private fun firstRawMeaningfulLine(text: String): String =
+    text.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty()
 
 private fun firstMeaningfulLine(text: String): String =
     text.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().trimStart()
@@ -143,3 +169,4 @@ private fun isListMarker(trimmedLine: String): Boolean {
 }
 
 private fun isTableRow(trimmedLine: String): Boolean = trimmedLine.startsWith("|")
+

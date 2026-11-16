@@ -10,14 +10,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -41,7 +39,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -57,15 +54,11 @@ import com.mikepenz.markdown.compose.elements.MarkdownTableBasicText
 import com.mikepenz.markdown.compose.elements.highlightedCodeBlock
 import com.mikepenz.markdown.compose.elements.highlightedCodeFence
 import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
-import com.mikepenz.markdown.compose.elements.MarkdownBulletList
-import com.mikepenz.markdown.compose.elements.MarkdownOrderedList
-import com.mikepenz.markdown.compose.elements.listDepth
 import com.mikepenz.markdown.compose.extendedspans.ExtendedSpans
 import com.mikepenz.markdown.compose.extendedspans.RoundedCornerSpanPainter
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
-import com.mikepenz.markdown.model.BulletHandler
 import com.mikepenz.markdown.model.State
 import com.mikepenz.markdown.model.markdownDimens
 import com.mikepenz.markdown.model.markdownExtendedSpans
@@ -80,7 +73,6 @@ import com.simplechat.app.ui.theme.LocalChatColors
 import com.simplechat.app.ui.theme.markdownBodyStyle
 import com.simplechat.app.ui.theme.MarkdownHeadingStyles
 import com.simplechat.app.ui.theme.MarkdownInlineCodeStyle
-import com.simplechat.app.ui.theme.MarkdownMarkerStyle
 import com.simplechat.app.ui.theme.MarkdownTableStyle
 import com.simplechat.app.ui.theme.SimpleChatTypography
 import kotlin.math.ceil
@@ -240,7 +232,7 @@ private fun markdownStateOf(text: String): State {
  */
 internal fun warmMarkdownCache(content: String) {
     if (content.isEmpty()) return
-    val normalized = normalizeSoftBreaks(normalizeHtml(content))
+    val normalized = normalizeListIndent(normalizeSoftBreaks(normalizeHtml(content)))
     splitMarkdownBlocks(normalized).forEach { markdownStateOf(it.text) }
 }
 
@@ -276,13 +268,11 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
 
     /*
      * 符号与引用条的颜色跟主题走，**字号/行高必须与正文一致**：
-     * 库把符号与正文并排放在 Row 顶部，字号不同基线就错开
+     * 符号与正文并排放在 Row 顶部，字号不同基线就错开
      * （真机反馈：无序符号和正文不对齐、数字大一圈）。
+     * 符号列的具体排版在 [MarkdownListLayout] 里，这里只提供样式。
      */
-    val markerStyle = MarkdownMarkerStyle.copy(
-        color = colors.processText,
-        textAlign = TextAlign.End,
-    )
+    val markerStyle = markdownMarkerStyle()
     // 引用条的颜色取自 `quote` 的 color，正文仍走 paragraph（官方就是灰竖线 + 正常正文色）
     val quoteStyle = bodyStyle.copy(color = colors.markdownQuoteBar)
 
@@ -294,10 +284,17 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
         remember {
             ExtendedSpans(
                 RoundedCornerSpanPainter(
-                    cornerRadius = 6.sp,
-                    padding = RoundedCornerSpanPainter.TextPaddingValues(horizontal = 4.sp, vertical = 1.sp),
-                    topMargin = 0.sp,
-                    bottomMargin = 0.sp,
+                    cornerRadius = 3.sp,
+                    /*
+                     * ⚠️ 上下各留 5sp 的"负空间"（margin）把胶囊**收进文字行内**。
+                     *
+                     * 库给的 `box` 是**整行行框**（行高 30sp），而行内代码只有 15sp：
+                     * margin 给 0 时画出来是一个比字高一倍的灰色大块（真机截图里
+                     * "1.0.0" 那个方块），比没画还难看。官方 Web 的胶囊只包住字身。
+                     */
+                    padding = RoundedCornerSpanPainter.TextPaddingValues(horizontal = 2.sp, vertical = 0.sp),
+                    topMargin = 5.sp,
+                    bottomMargin = 5.sp,
                 ),
             )
         }
@@ -324,11 +321,15 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
          */
         padding = markdownPadding(
             block = 0.dp,
-            // 列表：官方 ul/ol 上下 16px（外层 Column 已给）、项距 6px、缩进 18px/层
+            /*
+             * 列表：块级上下留白由外层 Column 统一给（官方 ul/ol 上下 16px）；
+             * 项距、符号列宽、嵌套缩进全部由自绘列表 [MarkdownListLayout] 控制，
+             * 库这几个参数因此都置 0（留着会与自绘那份叠加）。
+             */
             list = 0.dp,
             listItemTop = 0.dp,
-            listItemBottom = 6.dp,
-            listIndent = 18.dp,
+            listItemBottom = 0.dp,
+            listIndent = 0.dp,
             codeBlock = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             // 引用：官方 border-left 2px + padding-left 14px，没有额外上下内边距
             blockQuote = PaddingValues(start = 16.dp),
@@ -372,8 +373,8 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
             codeFence = collapsibleCodeFence,
             codeBlock = highlightedCodeBlock,
             table = adaptiveTable,
-            unorderedList = bulletList,
-            orderedList = orderedList,
+            unorderedList = markdownBulletList,
+            orderedList = markdownOrderedList,
             checkbox = taskCheckbox,
             horizontalRule = spacedHorizontalRule,
         ),
@@ -661,75 +662,12 @@ private fun cellTextLength(content: String, cell: ASTNode): Int {
 }
 
 /**
- * 列表符号列宽与内边距。
- *
- * 官方（浏览器 `::marker`）的形态是：正文缩进 18px，符号**右对齐**贴在这 18px 的
- * 右缘，与正文之间只留几个像素。早先我们让符号**左对齐**、列宽还比正文字距宽，
- * 于是 `•` 孤零零挂在最左边、离正文很远 —— 看着就是"没对齐、不自然"。
- *
- * 无序与有序**共用同一个列宽**：两段列表挨在一起时，正文左边界才是同一条竖线
- * （先前 `•` 18dp、`1.` 26dp，两组列表的正文错开 8dp）。
- * 序号最多两位数（`10.`），22dp 够放。
- */
-private val MarkerColumnWidth = 22.dp
-
-/** 符号与正文之间的空隙（右对齐后留在列尾）。 */
-private val MarkerGap = 5.dp
-
-/**
- * 列表符号按层轮换（官方浏览器默认样式）：实心圆 → 空心圆 → 方块。
- *
- * 库默认**每一层都是 `•`**，缩进之后看不出层级；官方是 disc / circle / square。
- */
-private val BulletMarkers = BulletHandler { _, _, _, _, depth ->
-    when (depth % 3) {
-        0 -> "•"
-        1 -> "◦"
-        else -> "▪"
-    }
-}
-
-/** 符号列：右对齐 + 列尾空隙（见 [MarkerColumnWidth]）。 */
-private fun RowScope.markerColumn(): Modifier =
-    Modifier.width(MarkerColumnWidth).padding(end = MarkerGap)
-
-/** 符号样式：与正文同字号行高，颜色为次级文字色，右对齐。 */
-@Composable
-private fun markerStyle(): TextStyle =
-    MarkdownMarkerStyle.copy(
-        color = LocalChatColors.current.processText,
-        textAlign = TextAlign.End,
-    )
-
-private val bulletList: MarkdownComponent = { model ->
-    MarkdownBulletList(
-        content = model.content,
-        node = model.node,
-        style = markerStyle(),
-        depth = model.listDepth,
-        markerModifier = { markerColumn() },
-        listModifier = { Modifier },
-    )
-}
-
-private val orderedList: MarkdownComponent = { model ->
-    MarkdownOrderedList(
-        content = model.content,
-        node = model.node,
-        style = markerStyle(),
-        depth = model.listDepth,
-        markerModifier = { markerColumn() },
-        listModifier = { Modifier },
-    )
-}
-
-/**
  * 任务列表的复选框：自绘方框。
  *
  * 库的默认指示器是**等宽字体的文字** `[ ]` / `[x]` —— 与正文混排时像代码、不像勾选。
  * 这里画一个真正的方框：未勾选只有描边，勾选填主色并打勾。
  *
- * 宽度与垂直位置由上面的 `markerModifier` 统一给定，这里只画方框本身。
+ * 横向位置与对齐由自绘列表的符号列给定（见 [MarkdownListLayout]），这里只画方框本身。
  */
 private val taskCheckbox: MarkdownComponent = { model ->
     TaskCheckBox(checked = fenceTextOf(model).trim().contains('x', ignoreCase = true))
@@ -949,4 +887,5 @@ private fun copyToClipboard(context: Context, text: String) {
     val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
     manager.setPrimaryClip(ClipData.newPlainText("code", text))
 }
+
 
