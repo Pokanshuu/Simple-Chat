@@ -19,16 +19,23 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.style.TextOverflow
 import com.simplechat.app.R
 import com.simplechat.app.ui.common.AppIcons
 
-/** 顶栏：`☰` 标题 ｜ 右侧新建对话。设置入口在抽屉底部。 */
+/** 顶栏：`☰` 标题 ｜ 自动朗读 · 新建对话。设置入口在抽屉底部。 */
 @Composable
 fun ChatTopBar(
     title: String,
     onMenu: () -> Unit,
     onNewChat: () -> Unit,
     modifier: Modifier = Modifier,
+    autoReadAloud: Boolean = false,
+    readAloudAvailable: Boolean = true,
+    onToggleAutoReadAloud: () -> Unit = {},
 ) {
     Row(
         modifier = modifier
@@ -47,7 +54,17 @@ fun ChatTopBar(
                 .weight(1f)
                 .padding(start = 8.dp),
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
+        if (readAloudAvailable) {
+            val label = stringResource(if (autoReadAloud) R.string.auto_read_aloud_on else R.string.auto_read_aloud_off)
+            TopBarAction(
+                if (autoReadAloud) AppIcons.Volume else AppIcons.VolumeOff,
+                label, onToggleAutoReadAloud,
+                tint = if (autoReadAloud) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
+                state = label,
+            )
+        }
         // 与长按菜单的「从这里新建对话」同一个图标 —— 同一个动作，同一个符号。
         // 圆圈加号留给输入栏的附件按钮（⊕ 加图片/文件），两者别混用。
         TopBarAction(AppIcons.MessageSquarePlus, stringResource(R.string.topbar_new_chat), onNewChat)
@@ -60,18 +77,21 @@ private fun TopBarAction(
     icon: ImageVector,
     contentDescription: String,
     onClick: () -> Unit,
+    tint: Color = MaterialTheme.colorScheme.onBackground,
+    state: String? = null,
 ) {
     Box(
         modifier = Modifier
             .size(48.dp)
             .clip(CircleShape)
+            .semantics { if (state != null) stateDescription = state }
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = MaterialTheme.colorScheme.onBackground,
+            tint = tint,
             modifier = Modifier.size(24.dp),
         )
     }

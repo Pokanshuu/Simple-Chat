@@ -4,7 +4,7 @@
 
 **中文 | [English](README.en.md)**
 
-[![Version](https://img.shields.io/badge/version-1.1.3-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
+[![Version](https://img.shields.io/badge/version-1.1.4-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## 简介
@@ -46,11 +46,13 @@
 - **数学公式**：`$…$` / `$$…$$` / `\[…\]` 由 Compose 原生渲染（不引 WebView + KaTeX）。
 - **Mermaid 图表**：` ```mermaid ` 渲染成图，可切回源码；脚本随包发布，离线可用。
 - **朗读**：系统 TTS 逐条朗读回复，无需服务端与权限；设置里可切换音色（含试听），朗读前会剥掉代码块与表格。
+- **自动朗读**：顶栏新建对话左侧的喇叭开关，开启后朗读新完成的回复，关闭即停止；使用已选朗读音色。
+- **API 配置管理**：独立保存多组地址、模型、协议与加密 Key，支持新建、复制、重命名、删除和一键切换；修改自动保存，现有配置自动保留。
 - 消息树：以 `parentId` 组织。重新生成为会话内分支，切换版本时下游整段跟随，不删除历史；长按支持会话间分叉。
 - 上下文管理：CJK 加权 token 估算、输入栏占用圆环、增量滚动压缩（保留最近 6 条完整消息）。
 - 附件：拍照 / 相册 / 文件三个入口，均无需申请权限；支持图片、纯文本、docx、PDF。
-  导入的图片字节落在应用私有目录，数据库只存文件名 —— 零配额导入，也不会有
-  「一行太大读不出来」的问题；点图进入整屏查看，多图左右翻。
+  导入的图片字节落在应用私有目录，数据库只存文件名，超大消息采用分块读取；
+  实际容量受设备可用存储与内存影响。点图进入整屏查看，多图左右翻。
 - **图片发送前校验**：按文件头判断真实格式，服务端不认的格式本地转码为 JPEG；坏图跳过并提示，不会让整个会话永远发不出去。
 - 模型能力适配：所选模型不支持图片时，发请求会跳过图片并提示，而不是被服务端拒绝。
 - 数据出口：JSON 备份、**ZIP 归档**（备份 + 每个会话的 Markdown 文稿）与 Markdown 文稿导出；
@@ -126,7 +128,7 @@ keyPassword=...
 ## 开发
 
 ```bash
-./gradlew testDebugUnitTest    # 单元测试（572 项）
+./gradlew testDebugUnitTest    # 单元测试
 ./gradlew assembleDebug        # debug 包，包名后缀 .debug
 ./gradlew assembleRelease      # release 包，需签名配置
 ```
@@ -177,8 +179,9 @@ app/src/main/java/com/simplechat/app/
 
 ## 文档
 
-设计文档、实现记录与变更记录是**内部资料，不随仓库公开**（代码注释里的 `§` 编号指的就是它们）。
-仓库内公开的只有：
+设计文档、实现记录与变更记录见 [`docs/README.md`](docs/README.md)，代码注释中的 `§` 编号对应这些文档。历史记录保留当时的版本与验证边界；当前发布说明见 [`RELEASE_NOTES_v1.1.4.md`](RELEASE_NOTES_v1.1.4.md)。
+
+相关入口：
 
 - [`TODO.md`](TODO.md)：当前状态与待办。
 

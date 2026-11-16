@@ -91,6 +91,9 @@ object ExternalBackup {
          * `CursorWindow` 的 2MB，整条会话再也读不出来。单测里给 null，保持纯函数。
          */
         val storeImage: ((bytes: ByteArray, mime: String) -> String?)? = null,
+        /** Production ZIP imports copy image streams to disk without a full image byte array. */
+        val storeImageStream: ((source: java.io.InputStream, mime: String) -> String)? = null,
+        val discardImage: ((path: String) -> Unit)? = null,
     )
 
     data class Parsed(

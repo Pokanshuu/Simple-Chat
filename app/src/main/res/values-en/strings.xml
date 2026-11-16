@@ -9,6 +9,26 @@
   - 「…」 quotes become “…”.
 -->
 <resources>
+    <string name="latex_compatible_source">Compatible layout · View source</string>
+    <string name="latex_show_rendered">Back to compatible layout</string>
+    <string name="latex_source_fallback">This layout is not supported yet. The complete source is shown below.</string>
+    <string name="auto_read_aloud_on">Auto read aloud is on. Tap to turn off and stop playback.</string>
+    <string name="auto_read_aloud_off">Auto read aloud is off. Tap to turn on.</string>
+    <string name="api_profiles_title">API profiles</string>
+    <string name="api_profile_current">Current profile</string>
+    <string name="api_profiles_hint">Each profile keeps its own URL, model, protocol and encrypted key. Changes save automatically; tap a profile to switch. Profiles and keys stay on this device and are excluded from chat backups.</string>
+    <string name="api_profile_selected">In use</string>
+    <string name="api_profile_key_saved">Key saved securely</string>
+    <string name="api_profile_new">New profile</string>
+    <string name="api_profile_new_hint">Start with a blank custom API profile</string>
+    <string name="api_profile_copy">Copy current profile</string>
+    <string name="api_profile_copy_hint">Keep the URL, model and key in a separate editable profile</string>
+    <string name="api_profile_rename">Rename profile</string>
+    <string name="api_profile_delete">Delete profile</string>
+    <string name="api_profile_delete_body">Delete “%1$s” and its saved key? Chats will remain. Deleting the active profile switches to another profile.</string>
+    <string name="api_profile_name_hint">For example: Everyday DeepSeek, Home server</string>
+    <string name="api_profile_save_failed">The API key could not be saved securely. Your previous settings were kept. Try again.</string>
+    <string name="reply_save_failed">The reply could not be saved. Copy its text and check available storage.</string>
     <string name="app_name">Simple Chat</string>
 
     <!-- ── Actions ──────────────────────────────────────── -->
@@ -67,10 +87,16 @@
     <string name="error_no_model">No model selected yet. Pick one under Settings → API (tap “Test connection” to fetch a custom endpoint’s models, or enter the model id manually).</string>
     <string name="error_request_failed">Request failed</string>
     <string name="error_no_content">The model returned no content</string>
+    <string name="error_send_failed">Send failed: %1$s</string>
+    <string name="error_no_sendable_messages">There is no user message to send. Enter a new message or clear the outdated context summary and try again.</string>
+    <string name="conversation_load_failed">Could not open conversation: %1$s</string>
     <string name="error_write_failed">Could not write to the chosen location</string>
     <string name="error_delete_failed">Delete failed: %1$s</string>
     <string name="error_import_failed">Import failed: %1$s</string>
     <string name="export_done">Exported to the chosen location</string>
+    <string name="export_preparing_progress">Preparing backup: %1$d%%</string>
+    <string name="export_saving_progress">Saving file: %1$d%%</string>
+    <string name="error_export_attachment_missing">Some original images could not be read. Check the attachments and try again.</string>
     <string name="export_failed">Export failed: %1$s</string>
     <string name="export_failed_short">Export failed</string>
     <string name="import_read_failed">Could not read the file</string>
@@ -126,6 +152,19 @@
     <string name="import_mode_replace_same">Overwrite same name (replace them with the file)</string>
     <string name="import_mode_rename">Keep both (imported one gets a copy suffix)</string>
     <string name="import_done">Imported from %1$s: %2$d conversations · %3$d messages</string>
+    <string name="import_partial">Import incomplete (%1$s): %2$d conversations · %3$d messages saved. Check the import report.</string>
+    <string name="import_index_unverified"> · Archive index could not be verified; the session list may be incomplete</string>
+    <string name="import_repaired_messages"> · Preserved and repaired %1$d orphaned or cyclic messages</string>
+    <string name="import_report_export">Export latest import report</string>
+    <string name="import_report_hint">Review each conversation’s import status and any failure reasons</string>
+    <string name="crash_report_export">Export latest crash diagnostics</string>
+    <string name="crash_report_hint">Device, version and stack frames only; no chat content or API keys</string>
+    <string name="crash_report_missing">No crash diagnostic record is available</string>
+    <string name="import_report_missing">No import report is available. Import a backup first.</string>
+    <string name="large_message_paged">Long message shown in pages. Full text is saved.</string>
+    <string name="large_message_reasoning">Reasoning</string>
+    <string name="page_previous">Previous</string>
+    <string name="page_next">Next</string>
     <string name="import_done_expected"> · %1$d conversations in the archive</string>
     <string name="import_done_duplicates"> · %1$d already present</string>
     <string name="import_done_failed"> · %1$d could not be imported: %2$s</string>
@@ -529,6 +568,9 @@
     <string name="mermaid_loading">Rendering diagram…</string>
     <string name="settings_export_archive">Export all chats (ZIP archive)</string>
     <string name="settings_export_archive_summary">A complete backup of every chat and attachment, plus a Markdown document per chat. Can be imported back directly.</string>
+    <string name="import_fail_space">Not enough storage. Free space and retry incremental import.</string>
+    <string name="import_fail_memory">Not enough available memory. Close other apps and retry.</string>
+    <string name="import_report_not_saved">The detailed import report could not be saved. Check available storage; the counts above are still valid.</string>
 </resources>
 
 

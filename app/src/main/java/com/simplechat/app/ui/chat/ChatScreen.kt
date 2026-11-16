@@ -73,7 +73,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
@@ -213,12 +213,15 @@ fun ChatScreen(
     val voice = rememberVoiceInput(onText = { text -> input = voiceBase + text })
     // 音色来自设置：设置里换一个，回到对话页立即生效（见 SpeechOutput 的 applyVoice）
     val speaker = rememberSpeechOutput(vm.ttsVoiceName, vm.officialTts)
+    val lifecycleOwner = LocalLifecycleOwner.current
     /*
      * 朗读入口是否显示：官方音色只在拿到官方配置时可用（官方 /v1/tools/tts 只在
      * 官方域提供）。不可用时**整颗按钮不出现** —— 用户要求：不支持的 API 直接隐藏。
      */
     val readAloudAvailable =
         !com.simplechat.app.net.DeepSeekTts.isOfficialVoice(vm.ttsVoiceName) || vm.officialTts != null
+
+    AutoReadAloudEffect(vm, ReadAloudEnabled && readAloudAvailable, speaker::read, speaker::stop)
 
     /*
      * 麦克风权限的当前状态。
@@ -366,7 +369,6 @@ fun ChatScreen(
      * 这一下是真正兜底的那次。
      */
     val draftScope = rememberCoroutineScope()
-    val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         fun flush() {
             draftScope.launch { composerOwner?.let { vm.saveDraft(it, draftToPersist()) } }
@@ -413,23 +415,31 @@ fun ChatScreen(
 
     /** 两个导出口共用：拿到目标位置后写文件。 */
     suspend fun exportTo(uri: Uri, markdown: Boolean) {
-        val text = if (markdown) {
-            vm.exportCurrentConversationMarkdown()
-        } else {
-            vm.exportCurrentConversation()
+        val id = vm.currentConversationId
+        var saved = false
+        var staged: java.io.File? = null
+        try {
+            if (id == null) { exportHint = Res.get(R.string.chat_export_empty); return }
+            val file = java.io.File.createTempFile("chat-export-", ".tmp", context.cacheDir)
+            staged = file
+            withContext(Dispatchers.IO) {
+                vm.exportConversationFile(file, id, markdown)
+                com.simplechat.app.data.copyExportFile(file, {
+                    context.contentResolver.openOutputStream(uri, "wt") ?: error(Res.get(R.string.error_write_failed))
+                })
+            }
+            saved = true
+            exportHint = Res.get(R.string.export_done)
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            exportHint = Res.get(R.string.export_failed, error.userMessage())
+        } finally {
+            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                staged?.delete()
+                if (!saved) runCatching { android.provider.DocumentsContract.deleteDocument(context.contentResolver, uri) }
+            }
         }
-        if (text == null) {
-            exportHint = Res.get(R.string.chat_export_empty)
-            return
-        }
-        val ok = withContext(Dispatchers.IO) {
-            runCatching {
-                context.contentResolver.openOutputStream(uri)?.use {
-                    it.write(text.toByteArray())
-                } ?: error(Res.get(R.string.error_write_failed))
-            }.isSuccess
-        }
-        exportHint = if (ok) Res.get(R.string.export_done) else Res.get(R.string.export_failed_short)
     }
 
     /** 导出文件名：会话标题去掉文件系统不认的字符。 */
@@ -592,7 +602,7 @@ fun ChatScreen(
         vm.currentConversationId,
         vm.messages.size,
     ) {
-        value = withContext(Dispatchers.Default) { buildMessageIndexEntries(vm.messages) }
+        value = buildMessageIndexSnapshot(vm.messages)
     }
 
     val density = LocalDensity.current
@@ -768,6 +778,7 @@ fun ChatScreen(
 
     /** 追加新消息后跟到底部（用户没离开时）。 */
     LaunchedEffect(vm.messages.size) {
+        if (vm.searchTarget != null) return@LaunchedEffect
         if (switchingConversation) return@LaunchedEffect
         if (detached) return@LaunchedEffect
         /*
@@ -955,6 +966,10 @@ fun ChatScreen(
              */
             dissolve.snapTo(0f)
             awaitLoaded()
+            if (vm.searchTarget != null) {
+                dissolve.snapTo(1f)
+                return@LaunchedEffect
+            }
 
 
             /*
@@ -979,6 +994,19 @@ fun ChatScreen(
         } finally {
             switchingConversation = false
             loadingConversation = false
+        }
+    }
+
+    /** 收起键盘与焦点。 */
+    LaunchedEffect(vm.searchTarget?.request, vm.switching) {
+        val target = vm.searchTarget ?: return@LaunchedEffect
+        if (vm.switching || target.ready) return@LaunchedEffect
+        detached = true
+        val index = vm.messages.indexOfFirst { it.id == target.messageId }
+        if (index >= 0) {
+            listState.scrollToItem(index)
+            withFrameNanos { }
+            vm.markSearchReady(target.request)
         }
     }
 
@@ -1044,10 +1072,10 @@ fun ChatScreen(
      * **不需要二次确认**：树模型下旧的那条（连同它整棵子树）原样留在旧分支里，
      * 一条都不会丢。想回到旧分支，切一下版本就行。
      */
-    fun requestResend(target: UiMessage, text: String, attachments: List<Attachment>) {
+    fun requestResend(target: UiMessage, text: String, attachments: List<Attachment>, onPersisted: () -> Unit = {}) {
         // 编辑并重发 = 从这条起重建路径，下游换成一条空的流式回复 → 同「重新生成」，不锚
         detached = false
-        vm.editMessage(target, text, resend = true, attachments = attachments)
+        vm.editMessage(target, text, resend = true, attachments = attachments, onPersisted = onPersisted)
     }
 
     /** 展开面板时收起键盘 —— 键盘与面板同时占屏会让输入区几乎没有空间。 */
@@ -1063,6 +1091,12 @@ fun ChatScreen(
     ) {
         ChatTopBar(
             title = vm.conversationTitle(),
+            autoReadAloud = vm.autoReadAloud,
+            readAloudAvailable = ReadAloudEnabled && readAloudAvailable,
+            onToggleAutoReadAloud = {
+                if (vm.autoReadAloud) speaker.stop()
+                vm.toggleAutoReadAloud()
+            },
             onMenu = {
                 dismissInput()
                 onOpenDrawer()
@@ -1109,6 +1143,8 @@ fun ChatScreen(
                 } else {
                     MessageList(
                         messages = vm.messages,
+                        searchTarget = vm.searchTarget,
+                        onDismissSearch = vm::dismissSearch,
                         listState = listState,
                         /*
                          * 展开 / 收起**任何**折叠块（思考面板、超长用户气泡）时，
@@ -1389,6 +1425,18 @@ fun ChatScreen(
                     onSend = {
                         val target = editingMessage
                         val attached = pending
+                        val submitted = input
+                        val draftKey = composerOwner
+                        val clearPersistedInput = {
+                            // Clear only the submitted draft, after the message transaction committed.
+                            if (input == submitted && pending == attached) {
+                                input = ""
+                                pending = emptyList()
+                                editingMessage = null
+                                draftScope.launch { draftKey?.let { vm.clearDraft(it) } }
+                                dismissInput()
+                            }
+                        }
 
                         /*
                          * 模型不支持识图时**在这里拦住**，而不是让请求打到服务端换回 400。
@@ -1410,18 +1458,10 @@ fun ChatScreen(
                             detached = false
                             if (target != null) {
                                 // 输入栏的发送键就是「保存并发送」，不再让用户做二次选择
-                                editingMessage = null
-                                requestResend(target, input, attached)
+                                requestResend(target, submitted, attached, clearPersistedInput)
                             } else {
-                                vm.send(input, attached)
+                                vm.send(submitted, attached, clearPersistedInput)
                             }
-                            input = ""
-                            pending = emptyList()
-                            // 发出去的就不再是草稿 —— 立刻删行，不等防抖
-                            draftScope.launch { composerOwner?.let { vm.clearDraft(it) } }
-                            // 发完就收键盘：接下来是看回复，不是继续打字。
-                            // 键盘占着屏幕会把刚发出的那条和开头几行回复一起顶掉。
-                            dismissInput()
                         }
                     },
                     onStop = { vm.stop() },

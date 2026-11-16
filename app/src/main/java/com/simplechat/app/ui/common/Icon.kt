@@ -1190,6 +1190,17 @@ object AppIcons {
         }
     }
 
+    val VolumeOff: ImageVector by lazy {
+        vector("VolumeOff") {
+            stroke {
+                moveTo(11f, 5f); lineTo(6f, 9f); horizontalLineTo(2f)
+                verticalLineTo(15f); horizontalLineTo(6f); lineTo(11f, 19f); close()
+                moveTo(16f, 9f); lineTo(22f, 15f)
+                moveTo(22f, 9f); lineTo(16f, 15f)
+            }
+        }
+    }
+
     /** 语音输入（Lucide: mic） */
     val Mic: ImageVector by lazy {
         vector("Mic") {

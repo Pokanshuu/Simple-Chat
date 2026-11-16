@@ -2,6 +2,7 @@ package com.simplechat.app.data.archive
 
 import com.simplechat.app.data.BackupFile
 import java.io.ByteArrayOutputStream
+import java.io.OutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlinx.serialization.json.Json
@@ -53,6 +54,42 @@ object ChatArchive {
 
     /** 一个会话的 Markdown 文稿，按 id 对应。 */
     data class Document(val fileName: String, val markdown: String)
+
+    internal class StreamDocument(val fileName: String, val write: suspend (OutputStream) -> Unit)
+
+    /** Writes directly to disk; neither the full backup nor the ZIP is held in a byte array. */
+    internal suspend fun writeTo(
+        output: OutputStream,
+        exportedAt: Long,
+        conversationCount: Int,
+        messageCount: Int,
+        presetCount: Int,
+        documents: List<StreamDocument>,
+        writeBackup: suspend (OutputStream) -> Unit,
+    ) {
+        ZipOutputStream(output).use { zip ->
+            zip.putNextEntry(ZipEntry(MANIFEST))
+            zip.write(buildJsonObject {
+                put("format", FORMAT)
+                put("version", VERSION)
+                put("exportedAt", exportedAt)
+                put("conversations", conversationCount)
+                put("messages", messageCount)
+                put("presets", presetCount)
+                put("documents", documents.size)
+                put("app", "SimpleChat")
+            }.toString().toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
+            zip.putNextEntry(ZipEntry(BACKUP))
+            writeBackup(zip)
+            zip.closeEntry()
+            for (document in documents) {
+                zip.putNextEntry(ZipEntry("$MARKDOWN_DIR/${document.fileName}"))
+                document.write(zip)
+                zip.closeEntry()
+            }
+        }
+    }
 
     /**
      * 打包。

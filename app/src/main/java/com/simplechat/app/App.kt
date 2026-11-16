@@ -29,13 +29,17 @@ class App : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        com.simplechat.app.data.CrashDiagnostics.install(this)
         Res.init(this)
         container = AppContainer(this)
 
         // 把 v1.7 之前留在 DataStore 里的**明文** API Key 就地加密。
         // 一次性动作，放在进程启动时做，不与任何界面竞争。
         CoroutineScope(Dispatchers.IO).launch {
-            container.settingsStore.migrateLegacyApiKey()
+            runCatching {
+                container.settingsStore.migrateLegacyApiKey()
+                container.settingsStore.migrateApiProfiles()
+            }.onFailure { android.util.Log.w("SimpleChat/Settings", "Configuration migration failed: ${it.javaClass.simpleName}") }
         }
     }
 }

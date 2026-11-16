@@ -3,6 +3,8 @@ package com.simplechat.app.data
 import android.content.Context
 import android.util.Base64
 import java.io.File
+import java.io.InputStream
+import java.io.IOException
 import java.util.UUID
 
 /**
@@ -41,26 +43,41 @@ object AttachmentFiles {
      * 用 UUID 命名而不是原始文件名：同一张图可能被多条消息引用，
      * 也可能有重名文件；UUID 让"文件名"变成纯标识，不承担语义。
      */
-    fun save(context: Context, bytes: ByteArray, mime: String): String? = runCatching {
+    fun save(context: Context, bytes: ByteArray, mime: String): String? =
+        try { save(context, bytes.inputStream(), mime) } catch (_: IOException) { null }
+
+    /** Throws on disk failure; falling back to inline base64 would turn that failure into an OOM. */
+    fun save(context: Context, source: InputStream, mime: String): String {
         val dir = dirOf(context)
-        if (!dir.exists() && !dir.mkdirs()) return null
-        val name = UUID.randomUUID().toString() + extensionOf(mime)
-        File(dir, name).outputStream().use { out -> out.write(bytes) }
-        name
-    }.getOrNull()
+        if (!dir.exists() && !dir.mkdirs()) throw IOException("Cannot create attachment directory")
+        val file = File(dir, UUID.randomUUID().toString() + extensionOf(mime))
+        try {
+            file.outputStream().buffered(Chunk).use { source.copyTo(it, Chunk) }
+            if (file.length() == 0L) throw IOException("Empty image attachment")
+            return file.name
+        } catch (error: Throwable) {
+            file.delete()
+            throw error
+        }
+    }
 
     /** 读回落盘的字节；文件不在返回 null。 */
     fun read(context: Context, name: String?): ByteArray? {
-        if (name.isNullOrBlank()) return null
-        val file = File(dirOf(context), name)
+        val file = attachmentFile(dirOf(context), name) ?: return null
         if (!file.isFile) return null
         return runCatching { file.readBytes() }.getOrNull()
     }
 
+    fun open(context: Context, attachment: Attachment): InputStream {
+        val file = attachmentFile(dirOf(context), attachment.path) ?: throw IOException("Invalid attachment path")
+        if (!file.isFile || file.length() == 0L) throw IOException("Original image is missing")
+        return file.inputStream().buffered(Chunk)
+    }
+
     /** 删除落盘文件（消息 / 会话被删时调用）。 */
     fun delete(context: Context, name: String?) {
-        if (name.isNullOrBlank()) return
-        runCatching { File(dirOf(context), name).delete() }
+        val file = attachmentFile(dirOf(context), name) ?: return
+        runCatching { file.delete() }
     }
 
     /**
@@ -93,7 +110,7 @@ object AttachmentFiles {
      */
     fun sizeOf(context: Context, attachment: Attachment): Int {
         if (!attachment.isStored) return attachment.sizeBytes
-        val size = File(dirOf(context), attachment.path.orEmpty()).length()
+        val size = attachmentFile(dirOf(context), attachment.path)?.length() ?: 0L
         return size.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     }
 
@@ -106,4 +123,14 @@ object AttachmentFiles {
         "image/gif" -> ".gif"
         else -> ".jpg"
     }
+}
+
+/** Backup paths are untrusted filenames, never relative/absolute paths into app storage. */
+internal fun attachmentFile(directory: File, name: String?): File? {
+    if (name.isNullOrBlank() || name == "." || name == ".." ||
+        name.any { it == '/' || it == '\\' || it == ':' || it == '\u0000' }) return null
+    return try {
+        val root = directory.canonicalFile
+        File(root, name).canonicalFile.takeIf { it.parentFile == root }
+    } catch (_: IOException) { null }
 }

@@ -105,7 +105,8 @@ fun rememberAttachmentImage(attachment: Attachment, targetPx: Int): ImageBitmap?
         value = withContext(Dispatchers.IO) {
             // 落盘的从文件读，内联的走 base64 —— 渲染层只认字节，不关心存哪
             val stored = if (attachment.isStored) AttachmentFiles.read(context, attachment.path) else null
-            decodeSampled(stored ?: Base64.decode(attachment.data, Base64.NO_WRAP), targetPx)
+            val bytes = stored ?: runCatching { Base64.decode(attachment.data, Base64.NO_WRAP) }.getOrNull()
+            bytes?.let { decodeSampled(it, targetPx.coerceAtLeast(1)) }
         }
     }
     return state

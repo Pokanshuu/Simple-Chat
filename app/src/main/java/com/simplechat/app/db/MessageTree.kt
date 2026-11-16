@@ -9,6 +9,22 @@ package com.simplechat.app.db
  */
 object MessageTree {
 
+    /** Root-to-target ancestry, including inactive branches. Invalid chains cannot be activated. */
+    fun ancestry(all: List<MessageLight>, targetId: String): List<MessageLight> {
+        val byId = all.associateBy { it.id }
+        val path = ArrayList<MessageLight>()
+        val seen = HashSet<String>()
+        var id = targetId
+        while (id != MessageEntity.ROOT_PARENT) {
+            val node = byId[id] ?: return emptyList()
+            if (!seen.add(id)) return emptyList()
+            path += node
+            id = node.parentId
+        }
+        path.reverse()
+        return path
+    }
+
     /**
      * 当前对话 = 从根沿 `active` 一路走到底的那条路径。
      *

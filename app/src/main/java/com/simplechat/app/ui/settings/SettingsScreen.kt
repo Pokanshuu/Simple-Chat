@@ -3,6 +3,7 @@ package com.simplechat.app.ui.settings
 import android.content.Intent
 import java.io.File
 import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -39,6 +40,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -76,7 +78,10 @@ import com.simplechat.app.data.AppLanguage
 import com.simplechat.app.data.ImportMode
 import com.simplechat.app.data.Res
 import com.simplechat.app.data.StoredSettings
+import com.simplechat.app.data.ApiProfile
 import com.simplechat.app.data.userMessage
+import com.simplechat.app.data.copyExportFile
+import com.simplechat.app.data.stageArchive
 import com.simplechat.app.net.ModelCatalog
 import com.simplechat.app.net.DeepSeekTts
 import com.simplechat.app.net.ProviderKind
@@ -105,7 +110,10 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -118,6 +126,7 @@ private enum class SettingsPage(val depth: Int) {
     ROOT(0),
     DATA(1),
     API(1),
+    API_PROFILES(2),
     PRESETS(1),
     FONT(1),
     /** 朗读音色（系统 TTS）。 */
@@ -132,6 +141,8 @@ private sealed interface SettingsDialog {
     /** 手动填写模型 id：端点没实现 `/models`、或列表里没有目标模型时的出口。 */
     data object ModelManual : SettingsDialog
     data object ApiKey : SettingsDialog
+    data class ApiProfileName(val profile: ApiProfile? = null, val copyCurrent: Boolean = false) : SettingsDialog
+    data class DeleteApiProfile(val profile: ApiProfile) : SettingsDialog
     data object DeleteAll : SettingsDialog
     data object ImportMode : SettingsDialog
     /** 协议通道（自动 / OpenAI 兼容 / Anthropic 兼容）。 */
@@ -198,6 +209,14 @@ fun SettingsScreen(
     var dialog by remember { mutableStateOf<SettingsDialog?>(null) }
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }
+    var profileError by remember { mutableStateOf<String?>(null) }
+    fun updateProfile(action: suspend () -> Unit) {
+        scope.launch {
+            try { action(); profileError = null }
+            catch (error: CancellationException) { throw error }
+            catch (error: Exception) { profileError = error.userMessage() }
+        }
+    }
     var dataMessage by remember { mutableStateOf<String?>(null) }
     var pendingImport by remember { mutableStateOf<File?>(null) }
     // 导入进度：null = 没在导入；0..1 = 解析进度（拷贝阶段是 indeterminate）
@@ -205,6 +224,13 @@ fun SettingsScreen(
     val importPercent by importProgress.collectAsState()
     // 读文件 / 开包阶段：没有可用进度，界面给循环进度条 + 「读取中」
     var importReading by remember { mutableStateOf(false) }
+    val archiveProgress = remember { MutableStateFlow<Float?>(null) }
+    val archivePercent by archiveProgress.collectAsState()
+    var archiveSaving by remember { mutableStateOf(false) }
+    var pendingArchive by remember { mutableStateOf<File?>(null) }
+    DisposableEffect(Unit) {
+        onDispose { pendingArchive?.delete(); pendingImport?.delete() }
+    }
     var presets by remember { mutableStateOf<List<Preset>>(emptyList()) }
 
     /*
@@ -272,7 +298,9 @@ fun SettingsScreen(
     LaunchedEffect(Unit) { repository.observePresets().collect { presets = it } }
 
     // 二级页面按返回键先回一级，而不是直接退出设置
-    BackHandler(enabled = page != SettingsPage.ROOT) { page = SettingsPage.ROOT }
+    fun previousPage() { page = if (page == SettingsPage.API_PROFILES) SettingsPage.API else SettingsPage.ROOT }
+    BackHandler(enabled = page != SettingsPage.ROOT) { previousPage() }
+    LaunchedEffect(stored.activeApiProfileId, stored.baseUrl) { testResult = null }
 
     val provider = runCatching { ProviderKind.valueOf(stored.providerId) }
         .getOrDefault(ProviderKind.DEEPSEEK)
@@ -285,26 +313,76 @@ fun SettingsScreen(
 
     // ── 文件读写：导出 / 导入 ─────────────────────────────
 
-    val exportLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/json"),
-    ) { uri: Uri? ->
-        if (uri == null) return@rememberLauncherForActivityResult
+    fun savePreparedExport(uri: Uri?) {
+        val staged = pendingArchive
+        pendingArchive = null
+        if (uri == null) {
+            staged?.delete()
+            archiveProgress.value = null
+            dataMessage = null
+            return
+        }
         scope.launch {
-            val outcome = withContext(Dispatchers.IO) {
-                runCatching {
-                    val text = repository.exportBackup()
-                    context.contentResolver.openOutputStream(uri)?.use {
-                        it.write(text.toByteArray())
-                    } ?: error(Res.get(R.string.error_write_failed))
+            archiveSaving = true
+            archiveProgress.value = 0f
+            var saved = false
+            try {
+                checkNotNull(staged) { Res.get(R.string.export_failed_short) }
+                withContext(Dispatchers.IO) {
+                    copyExportFile(staged, openDestination = {
+                        context.contentResolver.openOutputStream(uri, "wt")
+                            ?: error(Res.get(R.string.error_write_failed))
+                    }, onProgress = { archiveProgress.value = it })
                 }
+                saved = true
+                dataMessage = Res.get(R.string.export_done)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                dataMessage = Res.get(R.string.export_failed, error.userMessage())
+            } finally {
+                withContext(NonCancellable + Dispatchers.IO) {
+                    staged?.delete()
+                    if (!saved) runCatching { DocumentsContract.deleteDocument(context.contentResolver, uri) }
+                }
+                archiveSaving = false
+                archiveProgress.value = null
             }
-            dataMessage = outcome.fold(
-                onSuccess = { Res.get(R.string.export_done) },
-                onFailure = { Res.get(R.string.export_failed, it.userMessage()) },
-            )
         }
     }
 
+    fun prepareExport(extension: String, launch: (String) -> Unit, generate: suspend (File) -> Unit) {
+        if (archiveProgress.value != null || importProgress.value != null || importReading) return
+        archiveSaving = false
+        archiveProgress.value = 0f
+        dataMessage = null
+        scope.launch {
+            var staged: File? = null
+            try {
+                val target = File.createTempFile("prepared-export-", ".$extension", context.cacheDir)
+                staged = target
+                withContext(Dispatchers.IO) {
+                    generate(target)
+                    check(target.length() > 0) { Res.get(R.string.export_failed_short) }
+                }
+                pendingArchive = target
+                val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
+                launch("simplechat-$stamp.$extension")
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                pendingArchive = null
+                archiveProgress.value = null
+                dataMessage = Res.get(R.string.export_failed, error.userMessage())
+            } finally {
+                if (pendingArchive !== staged) withContext(NonCancellable + Dispatchers.IO) { staged?.delete() }
+            }
+        }
+    }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri: Uri? -> savePreparedExport(uri) }
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri: Uri? ->
@@ -319,66 +397,66 @@ fun SettingsScreen(
              */
             importReading = true
             dataMessage = null
-            val file = withContext(Dispatchers.IO) {
-                runCatching {
-                    val target = File(context.cacheDir, "import-${System.currentTimeMillis()}.bak")
+            var staged: File? = null
+            try {
+                val file = withContext(Dispatchers.IO) {
+                    val target = File.createTempFile("import-", ".bak", context.cacheDir)
+                    staged = target
                     context.contentResolver.openInputStream(uri)?.use { input ->
-                        target.outputStream().use { output -> input.copyTo(output, DEFAULT_BUFFER_SIZE * 8) }
+                        target.outputStream().use { output ->
+                            val buffer = ByteArray(64 * 1024)
+                            while (true) {
+                                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                output.write(buffer, 0, count)
+                            }
+                        }
                     } ?: error(Res.get(R.string.import_read_failed))
+                    check(target.length() > 0L) { Res.get(R.string.import_read_failed) }
                     target
-                }.getOrNull()
-            }
-            if (file == null || file.length() == 0L) {
-                file?.delete()
-                importReading = false
-                dataMessage = Res.get(R.string.import_read_failed)
-            } else {
-                dataMessage = null
-                importProgress.value = null
-                importReading = false
+                }
                 pendingImport = file
                 dialog = SettingsDialog.ImportMode
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                dataMessage = Res.get(R.string.error_import_failed, error.userMessage())
+            } finally {
+                if (pendingImport !== staged) withContext(NonCancellable + Dispatchers.IO) { staged?.delete() }
+                importReading = false
             }
         }
     }
 
-    fun startExport() {
-        val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
-        dataMessage = null
-        exportLauncher.launch("simplechat-$stamp.json")
+    fun startExport() = prepareExport("json", { exportLauncher.launch(it) }) { file ->
+        repository.exportBackup(file, onProgress = { archiveProgress.value = it })
     }
 
-    /*
-     * ZIP 归档：同一份备份 + 每个会话一份 Markdown 文稿。
-     *
-     * 与 JSON 导出并列而不是替换：JSON 好读好 diff，ZIP 好传好归档
-     * （一个大文件里既有可导入的数据，也有能直接看的文稿）。
-     */
+    fun startReportExport() = prepareExport("json", { exportLauncher.launch(it) }) { file ->
+        val report = repository.lastImportReportFile()
+            ?: error(Res.get(R.string.import_report_missing))
+        report.inputStream().use { input -> file.outputStream().use { input.copyTo(it) } }
+        archiveProgress.value = 1f
+    }
+
+    val crashLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) {
+        uri: Uri? -> savePreparedExport(uri)
+    }
+    fun startCrashExport() = prepareExport("txt", { crashLauncher.launch(it) }) { file ->
+        val report = com.simplechat.app.data.CrashDiagnostics.file(context)
+            ?: error(Res.get(R.string.crash_report_missing))
+        report.inputStream().use { input -> file.outputStream().use { input.copyTo(it) } }
+        archiveProgress.value = 1f
+    }
+
     val archiveLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip"),
-    ) { uri: Uri? ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            val outcome = withContext(Dispatchers.IO) {
-                runCatching {
-                    val bytes = repository.exportArchive()
-                    context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
-                        ?: error(Res.get(R.string.error_write_failed))
-                }
-            }
-            dataMessage = outcome.fold(
-                onSuccess = { Res.get(R.string.export_done) },
-                onFailure = { Res.get(R.string.export_failed, it.userMessage()) },
-            )
-        }
-    }
+    ) { uri: Uri? -> savePreparedExport(uri) }
 
-    fun startArchiveExport() {
-        val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
-        dataMessage = null
-        archiveLauncher.launch("simplechat-$stamp.zip")
+    fun startArchiveExport() = prepareExport("zip", { archiveLauncher.launch(it) }) { file ->
+        stageArchive(file) { repository.exportArchive(it) { p -> archiveProgress.value = p } }
     }
-
     // ── 页面 ──────────────────────────────────────────────
 
     Column(
@@ -391,13 +469,19 @@ fun SettingsScreen(
                 SettingsPage.ROOT -> stringResource(R.string.settings_title)
                 SettingsPage.DATA -> stringResource(R.string.settings_data)
                 SettingsPage.API -> stringResource(R.string.settings_api)
+                SettingsPage.API_PROFILES -> stringResource(R.string.api_profiles_title)
                 SettingsPage.PRESETS -> stringResource(R.string.settings_presets)
                 SettingsPage.FONT -> stringResource(R.string.settings_font_size)
                 SettingsPage.VOICE -> stringResource(R.string.tts_voice)
                 SettingsPage.ABOUT -> stringResource(R.string.settings_about)
             },
-            onBack = { if (page == SettingsPage.ROOT) onBack() else page = SettingsPage.ROOT },
+            onBack = {
+                if (archiveProgress.value == null && importProgress.value == null && !importReading) {
+                    if (page == SettingsPage.ROOT) onBack() else previousPage()
+                }
+            },
         )
+        BackHandler(enabled = archivePercent != null || importPercent != null || importReading) { }
 
         /*
          * 二级页面从右侧滑入、返回原路退回（见 ui/common/Motion.kt）。
@@ -447,8 +531,12 @@ fun SettingsScreen(
                             message = dataMessage,
                             progress = importPercent,
                             reading = importReading,
+                            exportProgress = archivePercent,
+                            exportSaving = archiveSaving,
                             onExport = { startExport() },
                             onExportArchive = { startArchiveExport() },
+                            onExportReport = { startReportExport() },
+                            onExportCrash = { startCrashExport() },
                             onImport = {
                                 // 全放行：Chatbox 的备份是 .zip，有的设备报的 MIME 还很不标准。
                                 // 真正的判定放在解析那一步，认不出来会给出明确原因。
@@ -463,6 +551,8 @@ fun SettingsScreen(
                             testing = testing,
                             testResult = testResult,
                             onPick = { dialog = it },
+                            onProfiles = { page = SettingsPage.API_PROFILES },
+                            profileError = profileError,
                             onWebSearch = { enabled ->
                                 scope.launch { store.setWebSearch(enabled) }
                             },
@@ -470,22 +560,35 @@ fun SettingsScreen(
                                 if (testing) return@ApiPage
                                 testing = true
                                 testResult = null
+                                val source = stored
                                 scope.launch {
+                                    try {
                                     val result = container.chatApi.fetchModels(
-                                        baseUrl = stored.baseUrl.ifBlank { provider.defaultBaseUrl },
-                                        apiKey = stored.apiKey,
+                                        baseUrl = source.baseUrl.ifBlank { provider.defaultBaseUrl },
+                                        apiKey = source.apiKey,
                                     )
                                     // 拉到的列表**必须落库**：它就是「模型」选择器的数据源，
                                     // 早先只报了个条数、列表丢掉，于是自定义端点明明"连接成功"，
                                     // 点开「模型」却是一个只有标题的白框。
-                                    result.onSuccess { ids -> store.setModelIds(ids) }
-                                    testResult = result.fold(
+                                    result.onSuccess { ids -> store.setModelIds(ids, source.activeApiProfileId, source.baseUrl) }
+                                    if (stored.activeApiProfileId == source.activeApiProfileId && stored.baseUrl == source.baseUrl) testResult = result.fold(
                                         onSuccess = { Res.get(R.string.api_test_ok, it.size) },
                                         onFailure = { Res.get(R.string.api_test_failed, it.userMessage()) },
                                     )
-                                    testing = false
+                                    } catch (error: CancellationException) { throw error }
+                                    catch (error: Exception) { profileError = error.userMessage() }
+                                    finally { testing = false }
                                 }
                             },
+                        )
+
+                        SettingsPage.API_PROFILES -> ApiProfilesPage(
+                            stored = stored, error = profileError,
+                            onSelect = { profile -> updateProfile { store.selectApiProfile(profile.id); page = SettingsPage.API } },
+                            onNew = { dialog = SettingsDialog.ApiProfileName() },
+                            onCopy = { dialog = SettingsDialog.ApiProfileName(copyCurrent = true) },
+                            onRename = { dialog = SettingsDialog.ApiProfileName(profile = it) },
+                            onDelete = { dialog = SettingsDialog.DeleteApiProfile(it) },
                         )
 
                         SettingsPage.PRESETS -> PresetsPage(
@@ -539,14 +642,36 @@ fun SettingsScreen(
             onDismiss = { dialog = null },
             onSelect = { picked ->
                 dialog = null
-                scope.launch {
-                    store.setProvider(
-                        providerId = picked.name,
-                        baseUrl = picked.defaultBaseUrl,
-                        modelId = picked.defaultModel.ifBlank { stored.modelId },
-                    )
+                updateProfile { store.selectProvider(picked) }
+            },
+        )
+
+        is SettingsDialog.ApiProfileName -> TextInputDialog(
+            title = stringResource(if (activeDialog.profile != null) R.string.api_profile_rename
+                else if (activeDialog.copyCurrent) R.string.api_profile_copy else R.string.api_profile_new),
+            initial = activeDialog.profile?.name ?: if (activeDialog.copyCurrent)
+                stored.apiProfiles.firstOrNull { it.id == stored.activeApiProfileId }?.name.orEmpty() +
+                    stringResource(R.string.conversation_fork_suffix) else "",
+            placeholder = stringResource(R.string.api_profile_name_hint),
+            onDismiss = { dialog = null },
+            onConfirm = { value ->
+                if (value.isNotBlank()) {
+                    dialog = null
+                    updateProfile {
+                        if (activeDialog.profile != null) store.renameApiProfile(activeDialog.profile.id, value)
+                        else { store.createApiProfile(value, activeDialog.copyCurrent); page = SettingsPage.API }
+                    }
                 }
             },
+        )
+
+        is SettingsDialog.DeleteApiProfile -> AppConfirmDialog(
+            title = stringResource(R.string.api_profile_delete),
+            message = stringResource(R.string.api_profile_delete_body, activeDialog.profile.name),
+            confirmText = stringResource(R.string.action_delete),
+            destructive = true,
+            onDismiss = { dialog = null },
+            onConfirm = { dialog = null; updateProfile { store.deleteApiProfile(activeDialog.profile.id) } },
         )
 
         SettingsDialog.BaseUrl -> TextInputDialog(
@@ -556,7 +681,7 @@ fun SettingsScreen(
             onDismiss = { dialog = null },
             onConfirm = { value ->
                 dialog = null
-                scope.launch { store.setBaseUrl(value) }
+                updateProfile { store.setBaseUrl(value) }
             },
         )
 
@@ -607,7 +732,7 @@ fun SettingsScreen(
             onDismiss = { dialog = null },
             onConfirm = { value ->
                 dialog = null
-                scope.launch { store.setApiKey(value) }
+                updateProfile { store.setApiKey(value) }
             },
         )
 
@@ -662,6 +787,7 @@ fun SettingsScreen(
             selected = null,
             onDismiss = {
                 dialog = null
+                pendingImport?.delete()
                 pendingImport = null
             },
             onSelect = { mode ->
@@ -671,26 +797,23 @@ fun SettingsScreen(
                 if (file == null) return@ChoiceDialog
                 scope.launch {
                     dataMessage = Res.get(R.string.import_working)
-                    importPercent
+                    importProgress.value = 0f
                     // 认得三种备份：本应用的 JSON / ZIP、Chatbox 的 ZIP / JSON、DeepSeek 导出
-                    val outcome = runCatching {
+                    try {
                         withContext(Dispatchers.IO) {
-                            repository.importExternal(file, context.cacheDir, mode) { p ->
+                            val (_, summary) = repository.importExternal(file, context.cacheDir, mode) { p ->
                                 // 回调来自 IO 线程：StateFlow 是线程安全的，界面侧 collectAsState 收。
                                 // 0 就先不给 —— 停在 0% 看着像卡死，等真有进展再显示百分比
-                                if (p > 0f) importProgress.value = p.coerceIn(0f, 1f)
+                                importProgress.value = p.coerceIn(0f, 1f)
                             }
+                            dataMessage = summary
                         }
+                    } catch (error: CancellationException) { throw error }
+                    catch (error: Exception) { dataMessage = Res.get(R.string.error_import_failed, error.userMessage()) }
+                    finally {
+                        importProgress.value = null
+                        withContext(NonCancellable + Dispatchers.IO) { file.delete() }
                     }
-                    importProgress.value = null
-                    // 大文件的临时副本用过就删，别占着缓存
-                    withContext(Dispatchers.IO) { file.delete() }
-                    dataMessage = outcome.fold(
-                        // 结果文案由仓库层统一按"对账"口径生成（会话 4 个 · 归档共 5 个 · …），
-                        // 界面只负责显示，不再自己拼数字
-                        onSuccess = { (_, summary) -> summary },
-                        onFailure = { Res.get(R.string.error_import_failed, it.userMessage()) },
-                    )
                 }
             },
         )
@@ -1084,8 +1207,12 @@ private fun DataPage(
     progress: Float? = null,
     /** 无进度阶段（读文件、开包）—— 给循环进度条，别让界面看着像卡死。 */
     reading: Boolean = false,
+    exportProgress: Float? = null,
+    exportSaving: Boolean = false,
     onExport: () -> Unit,
     onExportArchive: () -> Unit,
+    onExportReport: () -> Unit,
+    onExportCrash: () -> Unit,
     onImport: () -> Unit,
     onDeleteAll: () -> Unit,
 ) {
@@ -1096,12 +1223,14 @@ private fun DataPage(
             label = stringResource(R.string.settings_export_all),
             hint = stringResource(R.string.settings_export_all_summary),
             onClick = onExport,
+            enabled = !reading && progress == null && exportProgress == null,
         )
         RowDivider()
         SettingsActionRow(
             label = stringResource(R.string.settings_export_archive),
             hint = stringResource(R.string.settings_export_archive_summary),
             onClick = onExportArchive,
+            enabled = !reading && progress == null && exportProgress == null,
         )
         RowDivider()
         SettingsActionRow(
@@ -1109,7 +1238,21 @@ private fun DataPage(
             hint = stringResource(R.string.settings_import_all_summary),
             onClick = onImport,
             // 导入期间不能重复点：同一份包并发解析会把内存和数据库都顶爆
-            enabled = !reading && progress == null,
+            enabled = !reading && progress == null && exportProgress == null,
+        )
+        RowDivider()
+        SettingsActionRow(
+            label = stringResource(R.string.import_report_export),
+            hint = stringResource(R.string.import_report_hint),
+            onClick = onExportReport,
+            enabled = !reading && progress == null && exportProgress == null,
+        )
+        RowDivider()
+        SettingsActionRow(
+            label = stringResource(R.string.crash_report_export),
+            hint = stringResource(R.string.crash_report_hint),
+            onClick = onExportCrash,
+            enabled = !reading && progress == null && exportProgress == null,
         )
     }
 
@@ -1119,6 +1262,21 @@ private fun DataPage(
      *
      * 解析阶段按"已处理多少条会话"给确定进度；拷贝与收尾阶段只有 indeterminate。
      */
+    if (exportProgress != null) {
+        Spacer(Modifier.size(12.dp))
+        Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), progress = { exportProgress })
+            Spacer(Modifier.size(6.dp))
+            Text(
+                text = stringResource(
+                    if (exportSaving) R.string.export_saving_progress else R.string.export_preparing_progress,
+                    (exportProgress * 100).toInt(),
+                ),
+                style = MaterialTheme.typography.labelMedium,
+                color = LocalChatColors.current.placeholder,
+            )
+        }
+    }
     if (reading || progress != null) {
         Spacer(Modifier.size(12.dp))
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
@@ -1160,6 +1318,7 @@ private fun DataPage(
             hint = stringResource(R.string.settings_destructive_hint),
             destructive = true,
             onClick = onDeleteAll,
+            enabled = !reading && progress == null && exportProgress == null,
         )
     }
 
@@ -1185,10 +1344,21 @@ private fun ApiPage(
     testing: Boolean,
     testResult: String?,
     onPick: (SettingsDialog) -> Unit,
+    onProfiles: () -> Unit,
+    profileError: String?,
     onTest: () -> Unit,
     onWebSearch: (Boolean) -> Unit,
 ) {
     val colors = LocalChatColors.current
+
+    SettingsSectionLabel(stringResource(R.string.api_profiles_title))
+    SettingsCard {
+        SettingsNavRow(null, stringResource(R.string.api_profile_current),
+            stored.apiProfiles.firstOrNull { it.id == stored.activeApiProfileId }?.name, onProfiles)
+    }
+    Text(stringResource(R.string.api_profiles_hint), style = MaterialTheme.typography.labelSmall,
+        color = colors.placeholder, modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp))
+    profileError?.let { Text(it, color = colors.danger, style = MaterialTheme.typography.labelMedium) }
 
     SettingsSectionLabel(stringResource(R.string.settings_group_service))
 
@@ -1282,6 +1452,48 @@ private fun ApiPage(
             },
             onClick = { onPick(SettingsDialog.Location) },
         )
+    }
+}
+
+@Composable
+internal fun ApiProfilesPage(
+    stored: StoredSettings, error: String?, onSelect: (ApiProfile) -> Unit,
+    onNew: () -> Unit, onCopy: () -> Unit, onRename: (ApiProfile) -> Unit, onDelete: (ApiProfile) -> Unit,
+) {
+    val colors = LocalChatColors.current
+    SettingsSectionLabel(stringResource(R.string.api_profiles_title))
+    Text(stringResource(R.string.api_profiles_hint), style = MaterialTheme.typography.bodySmall,
+        color = colors.placeholder, modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp))
+    error?.let { Text(it, color = colors.danger) }
+    SettingsCard {
+        stored.apiProfiles.forEachIndexed { index, profile ->
+            if (index > 0) RowDivider(inset = 16.dp)
+            Row(Modifier.fillMaxWidth().padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).clickable { onSelect(profile) }.padding(16.dp)) {
+                    Text(profile.name, style = MaterialTheme.typography.titleSmall,
+                        color = if (profile.id == stored.activeApiProfileId) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                    val provider = ProviderKind.entries.firstOrNull { it.name == profile.providerId }
+                    Text(listOfNotNull(provider?.displayName, profile.modelId.takeIf { it.isNotBlank() }).joinToString(" · "),
+                        style = MaterialTheme.typography.labelSmall, color = colors.placeholder,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (profile.baseUrl.isNotBlank()) Text(profile.baseUrl,
+                        style = MaterialTheme.typography.labelSmall, color = colors.placeholder,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(stringResource(if (profile.id == stored.activeApiProfileId) R.string.api_profile_selected
+                        else if (profile.apiKeyEncrypted.isNotBlank()) R.string.api_profile_key_saved else R.string.api_key_unset),
+                        style = MaterialTheme.typography.labelSmall, color = colors.placeholder)
+                }
+                IconCircleButton(AppIcons.Edit, stringResource(R.string.api_profile_rename), { onRename(profile) }, size = 36.dp, iconSize = 18.dp)
+                if (stored.apiProfiles.size > 1) IconCircleButton(AppIcons.Trash,
+                    stringResource(R.string.api_profile_delete), { onDelete(profile) }, size = 36.dp, iconSize = 18.dp)
+            }
+        }
+    }
+    Spacer(Modifier.size(16.dp))
+    SettingsCard {
+        SettingsActionRow(stringResource(R.string.api_profile_new), stringResource(R.string.api_profile_new_hint), onNew)
+        RowDivider(inset = 16.dp)
+        SettingsActionRow(stringResource(R.string.api_profile_copy), stringResource(R.string.api_profile_copy_hint), onCopy)
     }
 }
 

@@ -7,6 +7,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
+import com.simplechat.app.R
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -75,21 +86,34 @@ fun MarkdownWithMath(
                     streaming = streaming,
                 )
 
-                is ContentSegment.Formula -> Latex(
-                    latex = segment.tex,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        // 行间公式上下多给一点空：它是一整块内容，不是一句话里的符号
-                        .padding(vertical = if (segment.display) 4.dp else 0.dp),
-                    config = LatexConfig(
-                        fontSize = fontSize,
-                        theme = latexTheme,
-                    ),
-                    /*
-                     * 居中交给排版下方（`fillMaxWidth` + 组件自身居中），
-                     * 这里只把行内公式按左对齐处理 —— 行内公式独占一行时左对齐更自然。
-                     */
-                )
+                is ContentSegment.Formula -> CompatibleFormula(segment, LatexConfig(fontSize = fontSize, theme = latexTheme))
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompatibleFormula(segment: ContentSegment.Formula, config: LatexConfig) {
+    val prepared by produceState<LatexPresentation?>(null, segment.tex) {
+        value = withContext(Dispatchers.Default) { prepareLatexPresentation(segment.tex) }
+    }
+    var sourceVisible by remember(segment.tex) { mutableStateOf(false) }
+    val presentation = prepared
+    Column(Modifier.fillMaxWidth().padding(vertical = if (segment.display) 4.dp else 0.dp)) {
+        if (presentation?.simplified == true) TextButton(onClick = { sourceVisible = !sourceVisible }) {
+            Text(stringResource(if (sourceVisible) R.string.latex_show_rendered else R.string.latex_compatible_source))
+        }
+        if (presentation?.nativeTex != null && !sourceVisible) {
+            // Horizontal scrolling keeps wide formulas accessible instead of clipping content.
+            Latex(latex = presentation.nativeTex, config = config,
+                modifier = Modifier.horizontalScroll(rememberScrollState()))
+        } else {
+            if (presentation != null && presentation.nativeTex == null) {
+                Text(stringResource(R.string.latex_source_fallback), style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            SelectionContainer {
+                Text(segment.tex, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace))
             }
         }
     }

@@ -35,13 +35,16 @@ interface ConversationDao {
     @Query(
         """
         SELECT c.*,
-            (SELECT m.content FROM messages m
-             WHERE m.conversationId = c.id AND m.content LIKE '%' || :query || '%'
-             ORDER BY m.createdAt ASC LIMIT 1) AS snippet
+            (SELECT substr(m.content, max(1, instr(lower(m.content), lower(:query)) - 60), 180) FROM messages m
+             WHERE m.conversationId = c.id AND instr(lower(m.content), lower(:query)) > 0
+             ORDER BY m.createdAt ASC, m.id ASC LIMIT 1) AS snippet,
+            (SELECT m.id FROM messages m
+             WHERE m.conversationId = c.id AND instr(lower(m.content), lower(:query)) > 0
+             ORDER BY m.createdAt ASC, m.id ASC LIMIT 1) AS messageId
         FROM conversations c
-        WHERE c.title LIKE '%' || :query || '%'
+        WHERE instr(lower(c.title), lower(:query)) > 0
            OR EXISTS (SELECT 1 FROM messages m
-                      WHERE m.conversationId = c.id AND m.content LIKE '%' || :query || '%')
+                      WHERE m.conversationId = c.id AND instr(lower(m.content), lower(:query)) > 0)
         ORDER BY c.pinned DESC,
                  CASE WHEN c.pinned THEN c.pinnedAt ELSE c.updatedAt END DESC
         """,
@@ -127,6 +130,20 @@ data class MessageLight(
 data class ConversationSearchHit(
     @Embedded val conversation: ConversationEntity,
     val snippet: String?,
+    val messageId: String? = null,
+)
+
+/** Bounded fields for lossless export of messages larger than CursorWindow. */
+data class MessageTextChunk(
+    val content: ByteArray?,
+    val attachments: ByteArray?,
+    val reasoning: ByteArray?,
+    val timeline: ByteArray?,
+    val errorMessage: ByteArray?,
+    val attachmentsPresent: Boolean = false,
+    val reasoningPresent: Boolean = false,
+    val timelinePresent: Boolean = false,
+    val errorPresent: Boolean = false,
 )
 
 @Dao
@@ -171,6 +188,34 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages WHERE id = :id")
     suspend fun findById(id: String): MessageEntity?
+
+    @Query(
+        """
+        SELECT id, conversationId, parentId, variantIndex, active, role,
+               '' AS content, NULL AS attachments, NULL AS reasoning,
+               status, NULL AS errorMessage,
+               model, excluded, thinkingMs, ttftMs, tps, tokens_in, tokens_out,
+               NULL AS timeline, stopReason, createdAt
+        FROM messages WHERE id = :id
+        """,
+    )
+    suspend fun exportHeader(id: String): MessageEntity?
+
+    @Query(
+        """
+        SELECT substr(CAST(content AS BLOB), :start, :chunkBytes) AS content,
+               substr(CAST(attachments AS BLOB), :start, :chunkBytes) AS attachments,
+               substr(CAST(reasoning AS BLOB), :start, :chunkBytes) AS reasoning,
+               substr(CAST(timeline AS BLOB), :start, :chunkBytes) AS timeline,
+               substr(CAST(errorMessage AS BLOB), :start, :chunkBytes) AS errorMessage,
+               attachments IS NOT NULL AS attachmentsPresent,
+               reasoning IS NOT NULL AS reasoningPresent,
+               timeline IS NOT NULL AS timelinePresent,
+               errorMessage IS NOT NULL AS errorPresent
+        FROM messages WHERE id = :id
+        """,
+    )
+    suspend fun exportTextChunk(id: String, start: Int, chunkBytes: Int): MessageTextChunk?
 
     /**
      * 一个会话里所有消息的**骨架**：只读判活路径需要的几列。
@@ -231,6 +276,10 @@ interface MessageDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(messages: List<MessageEntity>)
+
+    /** An import must never replace a message owned by another conversation. */
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertImported(messages: List<MessageEntity>)
 
     /** 流式期间的 checkpoint 写入（§4.4）。 */
     @Query(
@@ -350,6 +399,10 @@ interface MessageDao {
      */
     @Query("SELECT id FROM messages WHERE conversationId = :conversationId")
     suspend fun idsFor(conversationId: String): List<String>
+
+    /** Also protects older forks whose shared-file references were never registered. */
+    @Query("SELECT EXISTS(SELECT 1 FROM messages WHERE instr(attachments, '\"' || :path || '\"') > 0)")
+    suspend fun referencesAttachment(path: String): Boolean
 }
 
 @Dao
@@ -447,8 +500,11 @@ interface AttachmentRefDao {
     @Query("SELECT path FROM attachment_refs WHERE conversationId = :conversationId")
     suspend fun pathsOf(conversationId: String): List<String>
 
-    @Query("SELECT path FROM attachment_refs")
+    @Query("SELECT DISTINCT path FROM attachment_refs")
     suspend fun allPaths(): List<String>
+
+    @Query("SELECT EXISTS(SELECT 1 FROM attachment_refs WHERE path = :path)")
+    suspend fun containsPath(path: String): Boolean
 
     @Query("DELETE FROM attachment_refs WHERE conversationId = :conversationId")
     suspend fun clear(conversationId: String)

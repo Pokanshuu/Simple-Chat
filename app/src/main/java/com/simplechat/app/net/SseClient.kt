@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.encodeToStream
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -21,8 +22,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
  *
  * 设计要点：
  * - **不用 Retrofit**：直接 OkHttp + 手写行解析，少一层抽象、少一份反射。
- * - **取消瞬时生效**：在协程 Job 上挂 `invokeOnCompletion { call.cancel() }`，
- *   取消时立刻断开 socket，阻塞中的 `readUtf8Line()` 会抛 IOException 而退出。
+ * - **取消瞬时生效**：独立的子协程在取消开始时关闭 socket，
+ *   阻塞中的 `execute()` / `readUtf8Line()` 因而能退出。
  *   这是「点停止立刻停」的关键（见设计文档 §5.5）。
  * - **解析逻辑外置**：行解析在 [SseLineParser] 里，纯函数、可单测。
  *
@@ -48,8 +49,7 @@ class SseClient(
         request: ChatRequestDto,
         extraHeaders: Map<String, String> = emptyMap(),
     ): Flow<StreamEvent> = flow {
-        val payload = json.encodeToString(ChatRequestDto.serializer(), request)
-        val body = payload.toRequestBody(JSON_MEDIA_TYPE)
+        val body = StreamingJsonRequestBody(json, request)
 
         val builder = Request.Builder()
             .url(url)
@@ -67,15 +67,15 @@ class SseClient(
         while (true) {
             attempt++
             val call = client.newCall(httpRequest)
-            val handle = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
+            val handle = call.cancelWithCoroutine()
             try {
                 call.execute().use { response ->
                     val source = response.body?.source()
                     if (!response.isSuccessful || source == null) {
-                        val raw = runCatching { response.body?.string() }.getOrNull()
+                        val raw = runCatching { response.body.readErrorText() }.getOrNull()
                         // 已知状态码 → 一句人话；否则用服务端自己给的文案；再否则带状态码兜底
                         val serverMessage = parser.parseErrorMessage(raw)
-                        android.util.Log.w(ChatStreamLogTag, "HTTP ${response.code}: $raw")
+                        android.util.Log.w(ChatStreamLogTag, "HTTP ${response.code}")
                         emit(
                             StreamEvent.Error(
                                 message = httpErrorText(response.code, serverMessage),
@@ -124,7 +124,7 @@ class SseClient(
                 emit(StreamEvent.Error(e.networkText(), retryable = true))
                 return@flow
             } finally {
-                handle?.dispose()
+                handle.cancel()
             }
         }
     }.flowOn(Dispatchers.IO)
@@ -142,3 +142,16 @@ internal const val StreamMaxAttempts = 2
 
 /** 断流重试前的等待：给上游一点恢复时间，又不至于让用户觉得卡住。 */
 internal const val StreamRetryDelayMs = 600L
+
+/** Serializes directly to Okio instead of duplicating the full request in a UTF-16 String. */
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+internal class StreamingJsonRequestBody(
+    private val json: Json,
+    private val request: ChatRequestDto,
+) : okhttp3.RequestBody() {
+    override fun contentType() = "application/json; charset=utf-8".toMediaType()
+    override fun isOneShot() = true
+    override fun writeTo(sink: okio.BufferedSink) {
+        json.encodeToStream(ChatRequestDto.serializer(), request, sink.outputStream())
+    }
+}

@@ -2,6 +2,8 @@ package com.simplechat.app.ui.chat
 
 import com.simplechat.app.R
 import com.simplechat.app.data.Res
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * 消息索引（§34）的一条。
@@ -27,6 +29,15 @@ class MessageIndexLabels(
     val image: () -> String = { Res.get(R.string.msg_index_image) },
     val file: (String) -> String = { name -> Res.get(R.string.msg_index_file, name) },
 )
+
+/** Capture on the caller's UI thread before the index traverses messages in the background. */
+internal suspend fun buildMessageIndexSnapshot(
+    messages: List<UiMessage>,
+    labels: MessageIndexLabels = MessageIndexLabels(),
+): List<MessageIndexEntry> {
+    val snapshot = messages.toList()
+    return withContext(Dispatchers.Default) { buildMessageIndexEntries(snapshot, labels) }
+}
 
 /**
  * 建索引：**只列用户消息**（§34.3）。

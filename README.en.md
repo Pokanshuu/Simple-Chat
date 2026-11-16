@@ -4,7 +4,7 @@
 
 **[中文](README.md) | English**
 
-[![Version](https://img.shields.io/badge/version-1.1.3-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
+[![Version](https://img.shields.io/badge/version-1.1.4-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## Introduction
@@ -44,9 +44,11 @@ Good for:
 - **Math**: `$…$` / `$$…$$` / `\[…\]` rendered natively by Compose (no WebView + KaTeX).
 - **Mermaid diagrams**: ```mermaid fences render as diagrams with a switch back to source; the script ships in the APK, so it works offline.
 - **Read aloud**: replies are spoken by the system TTS engine — no backend, no permission. Pick a voice (with preview) in Settings; code blocks and tables are stripped before reading.
+- **Automatic reading**: the speaker switch next to New chat reads newly completed replies using the selected voice. Turning it off stops playback immediately.
+- **API profiles**: save independent URLs, models, protocols and encrypted keys; create, copy, rename, delete or switch profiles. Changes save automatically and existing settings are preserved.
 - Message tree organised by `parentId`. Regenerating creates an in-conversation branch; switching versions carries the downstream along instead of deleting history; long-press forks into a new conversation.
 - Context management: CJK-weighted token estimate, usage ring on the input bar, incremental compaction (keeps the last 6 messages in full).
-- Attachments: camera / gallery / files, none of which need runtime permission; images, plain text, docx and PDF. Imported images are stored as files in app-private storage with only the file name kept in the database, so imports have no quota and a row can never grow too large to read. Tapping an image opens a full-screen viewer with swipe between images.
+- Attachments: camera / gallery / files, none of which need runtime permission; images, plain text, docx and PDF. Imported images are stored as files in app-private storage, with only the file name kept in the database. Oversized messages use chunked reads; capacity depends on available device storage and memory. Tapping an image opens a full-screen viewer with swipe between images.
 - **Images are validated before sending**: the real format is detected from the file header, formats the server does not accept are transcoded to JPEG locally, and unreadable images are skipped with a notice instead of breaking the conversation forever.
 - Model capability aware: when the selected model does not accept images, they are skipped with a notice instead of being rejected by the server.
 - Data out: JSON backup, **ZIP archive** (backup plus a Markdown document per conversation) and Markdown export; imports this app's backups, ZIP archives, Chatbox backups and DeepSeek official exports (deepseek_data-*.zip), with three import modes: add new only, overwrite same name, or keep both. Import results are reconciled item by item (how many in the archive, how many imported, which ones failed and why), so nothing disappears silently.
@@ -120,7 +122,7 @@ When the file is missing, `assembleRelease` falls back to the **debug signature*
 ## Development
 
 ```bash
-./gradlew testDebugUnitTest    # unit tests (572)
+./gradlew testDebugUnitTest    # unit tests
 ./gradlew assembleDebug        # debug build, package suffix .debug
 ./gradlew assembleRelease      # release build, needs signing config
 ```
@@ -171,7 +173,7 @@ app/src/main/java/com/simplechat/app/
 
 ## Documentation
 
-The design documents, implementation records and changelog are **internal and not part of this repository** (the `§` references in code comments point at them). What is public lives in the repo:
+Design documents, implementation records and the changelog are indexed in [`docs/README.md`](docs/README.md). The `§` references in code comments point to these documents. Historical records describe the version and verification scope at the time; current release notes are in [`RELEASE_NOTES_v1.1.4.md`](RELEASE_NOTES_v1.1.4.md).
 
 - [`TODO.md`](TODO.md): current status and to-dos.
 

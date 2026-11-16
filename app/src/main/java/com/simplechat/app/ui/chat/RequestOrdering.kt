@@ -2,6 +2,9 @@ package com.simplechat.app.ui.chat
 
 import com.simplechat.app.db.CompactionEntity
 
+internal fun validCompaction(path: List<UiMessage>, compaction: CompactionEntity?): CompactionEntity? =
+    compaction?.takeIf { summary -> path.any { it.id == summary.throughMessageId } }
+
 /**
  * 从**活跃路径**与压缩状态算出实际发出去的消息序列。
  *
@@ -23,6 +26,7 @@ internal fun orderedOutgoingMessages(
         ?: -1
 
     val filtered = path
+        .filterIndexed { index, _ -> coveredIndex < 0 || index > coveredIndex }
         .filter { it.status != MessageStatus.STREAMING }
         /*
          * ⚠️ 判据是"有没有东西可发"，不是"正文是否非空"。
@@ -32,7 +36,6 @@ internal fun orderedOutgoingMessages(
          * 服务端直接回 `Empty input messages`。
          */
         .filter { it.content.isNotBlank() || it.attachments.isNotEmpty() }
-        .filterIndexed { index, _ -> coveredIndex < 0 || index > coveredIndex }
 
     val firstUser = filtered.indexOfFirst { it.role == MessageRole.USER }
     return when {

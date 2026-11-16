@@ -281,9 +281,9 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
     // 全局共用一个实例时，A 块的指令会被画到 B 块上 —— 表现就是"公式/标题后面
     // 莫名多出灰色方块"（真机反馈的浅灰 / 深灰色块）。
     val extendedSpans = markdownExtendedSpans {
-        remember {
-            ExtendedSpans(
-                RoundedCornerSpanPainter(
+        val searchPainter = rememberSearchSpanPainter()
+        remember(searchPainter) {
+                val backgroundPainter = RoundedCornerSpanPainter(
                     cornerRadius = 3.sp,
                     /*
                      * ⚠️ 上下各留 5sp 的"负空间"（margin）把胶囊**收进文字行内**。
@@ -295,8 +295,8 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
                     padding = RoundedCornerSpanPainter.TextPaddingValues(horizontal = 2.sp, vertical = 0.sp),
                     topMargin = 5.sp,
                     bottomMargin = 5.sp,
-                ),
-            )
+                )
+            ExtendedSpans(*listOfNotNull(backgroundPainter, searchPainter).toTypedArray())
         }
     }
 
@@ -369,7 +369,7 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
             // 下划线常驻会让中文正文里到处是"着重线"，很吵。
             textLink = TextLinkStyles(style = SpanStyle(color = scheme.primary)),
         ),
-        components = markdownComponents(
+        components = rememberSearchableMarkdownComponents(markdownComponents(
             codeFence = collapsibleCodeFence,
             codeBlock = highlightedCodeBlock,
             table = adaptiveTable,
@@ -377,7 +377,7 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
             orderedList = markdownOrderedList,
             checkbox = taskCheckbox,
             horizontalRule = spacedHorizontalRule,
-        ),
+        )),
     )
     }
 }
@@ -618,6 +618,7 @@ private val adaptiveTable: MarkdownComponent = { model ->
                             .weight(weightOf(index))
                             .padding(cellPadding(index, cells.size)),
                     ) {
+                        SearchMarkdownAnchor(MarkdownComponentModel(model.content, cell, model.typography)) {
                         MarkdownTableBasicText(
                             content = model.content,
                             cell = cell,
@@ -625,6 +626,7 @@ private val adaptiveTable: MarkdownComponent = { model ->
                             maxLines = Int.MAX_VALUE,
                             overflow = TextOverflow.Clip,
                         )
+                        }
                     }
                 }
             }
@@ -639,6 +641,7 @@ private val adaptiveTable: MarkdownComponent = { model ->
                             .weight(weightOf(index))
                             .padding(cellPadding(index, cells.size)),
                     ) {
+                        SearchMarkdownAnchor(MarkdownComponentModel(model.content, cell, model.typography)) {
                         MarkdownTableBasicText(
                             content = model.content,
                             cell = cell,
@@ -646,6 +649,7 @@ private val adaptiveTable: MarkdownComponent = { model ->
                             maxLines = Int.MAX_VALUE,
                             overflow = TextOverflow.Clip,
                         )
+                        }
                     }
                 }
             }
@@ -728,6 +732,10 @@ private fun CodeFenceCard(
 ) {
     // 内容一变（换版本 / 重新生成）就重新收起，免得上一条的展开状态串到这一条
     var expanded by remember(model.content) { mutableStateOf(false) }
+    val search = LocalSearchHighlight.current
+    LaunchedEffect(search?.request) {
+        if (search != null && code.contains(search.query, ignoreCase = true)) expanded = true
+    }
 
     Column(
         modifier = Modifier

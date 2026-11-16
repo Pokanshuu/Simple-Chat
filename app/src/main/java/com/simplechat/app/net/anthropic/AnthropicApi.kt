@@ -1,5 +1,8 @@
 package com.simplechat.app.net.anthropic
 
+import com.simplechat.app.net.cancelWithCoroutine
+import com.simplechat.app.net.readErrorText
+
 import com.simplechat.app.net.ChatStreamLogTag
 import com.simplechat.app.net.StreamEvent
 import com.simplechat.app.net.StreamMaxAttempts
@@ -17,6 +20,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.encodeToStream
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -47,8 +51,7 @@ class AnthropicApi(
         request: AnthropicRequest,
         extraHeaders: Map<String, String> = emptyMap(),
     ): Flow<StreamEvent> = flow {
-        val payload = json.encodeToString(AnthropicRequest.serializer(), request)
-        val body = payload.toRequestBody(JSON_MEDIA_TYPE)
+        val body = StreamingAnthropicRequestBody(json, request)
 
         val builder = Request.Builder().url(url).post(body)
         anthropicHeaders(apiKey, extraHeaders).forEach { (name, value) -> builder.header(name, value) }
@@ -59,15 +62,15 @@ class AnthropicApi(
         while (true) {
             attempt++
             val call = client.newCall(httpRequest)
-            val handle = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
+            val handle = call.cancelWithCoroutine()
             var retryHttp = false
             try {
                 call.execute().use { response ->
                     val source = response.body?.source()
                     if (!response.isSuccessful || source == null) {
-                        val raw = runCatching { response.body?.string() }.getOrNull()
+                        val raw = runCatching { response.body.readErrorText() }.getOrNull()
                         val serverMessage = parser.parseErrorMessage(raw)
-                        android.util.Log.w(ChatStreamLogTag, "HTTP ${response.code}: $raw")
+                        android.util.Log.w(ChatStreamLogTag, "HTTP ${response.code}")
                         /*
                          * 429 / 5xx 且**一个字都还没发出去** → 重发一次。
                          * 与 OpenAI 通道同一条规则：已经收到内容再重发会出现两份回答。
@@ -129,7 +132,7 @@ class AnthropicApi(
                 emit(StreamEvent.Error(e.networkText(), retryable = true))
                 return@flow
             } finally {
-                handle?.dispose()
+                handle.cancel()
             }
         }
     }.flowOn(Dispatchers.IO)
@@ -141,6 +144,18 @@ class AnthropicApi(
 
 /** Anthropic 协议版本。原版会校验这个头；DeepSeek 的兼容端点也收。 */
 internal const val AnthropicVersion = "2023-06-01"
+
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+internal class StreamingAnthropicRequestBody(
+    private val json: Json,
+    private val request: AnthropicRequest,
+) : okhttp3.RequestBody() {
+    override fun contentType() = "application/json; charset=utf-8".toMediaType()
+    override fun isOneShot() = true
+    override fun writeTo(sink: okio.BufferedSink) {
+        json.encodeToStream(AnthropicRequest.serializer(), request, sink.outputStream())
+    }
+}
 
 /**
  * 请求头。

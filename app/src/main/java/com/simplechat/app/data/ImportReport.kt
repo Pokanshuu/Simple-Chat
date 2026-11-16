@@ -2,6 +2,7 @@ package com.simplechat.app.data
 
 import androidx.annotation.StringRes
 import com.simplechat.app.R
+import kotlinx.serialization.Serializable
 
 /**
  * 一次导入的**对账结果**。
@@ -23,6 +24,7 @@ import com.simplechat.app.R
  * 这是导入链路的**底线**：宁可如实说"5 个里进来了 4 个，那 1 个文件损坏"，
  * 也不能说"导入完成"然后少一条。
  */
+@Serializable
 data class ImportReport(
     /** 真正写进库的会话数。 */
     val conversations: Int,
@@ -41,18 +43,35 @@ data class ImportReport(
     val failures: List<ImportFailure> = emptyList(),
     /** 取不回来的图片张数（归档里没有原件 / 读取失败）。 */
     val droppedImages: Int = 0,
+    val repairedMessages: Int = 0,
+    val indexVerified: Boolean? = null,
+    val sessions: List<ImportedSessionAudit> = emptyList(),
 ) {
     /** 因为"读不下来 / 写不进去"而丢掉的会话数。 */
     val failed: Int get() = failures.size
+    val complete: Boolean get() = failed == 0 && droppedImages == 0 && indexVerified != false &&
+        (expected == null || expected == conversations + alreadyPresent)
 }
 
+@Serializable
+data class ImportedSessionAudit(
+    val sourceId: String,
+    val targetId: String?,
+    val expectedMessages: Int?,
+    val writtenMessages: Int,
+    val status: String,
+)
+
 /** 一条没能导入的会话（或图片所属的会话）。[reference] 是归档里的会话 id，用于排查。 */
+@Serializable
 data class ImportFailure(
     /** 归档索引里写着的标题，读不到会话文件时也能告诉用户"少了哪个"。 */
     val title: String?,
     val reference: String?,
     val reason: Reason,
+    val detail: String? = null,
 ) {
+    @Serializable
     enum class Reason {
         /** 会话 JSON 超过上限。 */
         TOO_LARGE,
@@ -71,6 +90,8 @@ data class ImportFailure(
 
         /** 解析成功、写库失败（单条坏数据被隔离出来，不连累其它会话）。 */
         WRITE_FAILED,
+        INSUFFICIENT_SPACE,
+        INSUFFICIENT_MEMORY,
     }
 }
 
@@ -83,4 +104,6 @@ internal fun ImportFailure.Reason.labelRes(): Int = when (this) {
     ImportFailure.Reason.BROKEN_TREE -> R.string.import_fail_broken_tree
     ImportFailure.Reason.MISSING_ENTRY -> R.string.import_fail_missing_entry
     ImportFailure.Reason.WRITE_FAILED -> R.string.import_fail_write_failed
+    ImportFailure.Reason.INSUFFICIENT_SPACE -> R.string.import_fail_space
+    ImportFailure.Reason.INSUFFICIENT_MEMORY -> R.string.import_fail_memory
 }

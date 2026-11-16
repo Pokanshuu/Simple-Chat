@@ -46,7 +46,12 @@ internal class JsonStream(private val source: Reader) {
     private val firstInContainer = ArrayDeque<Boolean>()
 
     /** 捕获当前值用的复用缓冲。**不要**跨调用持有它的内容。 */
-    private val capture = StringBuilder()
+    private var capture = StringBuilder()
+
+    fun valueKind(): Char? {
+        skipWhitespace()
+        return peek().takeIf { it >= 0 }?.toChar()
+    }
 
     // ── 容器 ──────────────────────────────────────────────
 
@@ -104,7 +109,8 @@ internal class JsonStream(private val source: Reader) {
      * 所以这里**不能**把 `\n` 反转义成换行 —— 那会变成非法 JSON。
      */
     fun captureValue(): String {
-        capture.setLength(0)
+        // A previous large value must not pin its backing array for the entire session.
+        if (capture.capacity() > 64 * 1024) capture = StringBuilder() else capture.setLength(0)
         scanValue(capture)
         return capture.toString()
     }
@@ -113,6 +119,8 @@ internal class JsonStream(private val source: Reader) {
     fun skipValue() {
         scanValue(null)
     }
+
+    fun copyValueTo(output: Appendable) { scanValue(output) }
 
     /**
      * 读一个标量：字符串 → 反转义后的内容；`null` → null；数字/布尔 → 原文。
@@ -127,7 +135,10 @@ internal class JsonStream(private val source: Reader) {
         return if (raw == "null") null else raw
     }
 
-    private fun scanValue(out: StringBuilder?) {
+    /** Decode one JSON string directly to a file/writer, without building its full value. */
+    fun copyStringTo(output: Appendable) { readDecodedString(0, output) }
+
+    private fun scanValue(out: Appendable?) {
         skipWhitespace()
         when (peek()) {
             -1 -> fail("文档意外结束")
@@ -138,7 +149,7 @@ internal class JsonStream(private val source: Reader) {
     }
 
     /** 原样抄一个字符串（转义序列一起抄），只负责找对结尾引号。 */
-    private fun scanStringRaw(out: StringBuilder?) {
+    private fun scanStringRaw(out: Appendable?) {
         out?.append('"')
         next()
         while (true) {
@@ -157,7 +168,7 @@ internal class JsonStream(private val source: Reader) {
     }
 
     /** 跳过/抄下一个完整的对象或数组；字符串里的括号不算结构。 */
-    private fun scanContainer(out: StringBuilder?) {
+    private fun scanContainer(out: Appendable?) {
         var depth = 0
         var inString = false
         var escaped = false
@@ -185,7 +196,7 @@ internal class JsonStream(private val source: Reader) {
     }
 
     /** 数字 / true / false / null：一直读到分隔符为止。 */
-    private fun scanLiteral(out: StringBuilder?) {
+    private fun scanLiteral(out: Appendable?) {
         while (true) {
             val char = peek()
             if (char < 0) return
@@ -202,15 +213,15 @@ internal class JsonStream(private val source: Reader) {
      *
      * @param maxChars 超过这个长度的字符照读不误、但不再保留 —— 用于"只要开头一段"的场景。
      */
-    private fun readDecodedString(maxChars: Int): String {
+    private fun readDecodedString(maxChars: Int, destination: Appendable? = null): String {
         skipWhitespace()
         if (next() != '"'.code) fail("期望字符串")
-        val out = StringBuilder()
+        val out = if (destination == null) StringBuilder() else null
         while (true) {
             val char = next()
             if (char < 0) fail("字符串没有闭合")
             when (char) {
-                '"'.code -> return out.toString()
+                '"'.code -> return out?.toString().orEmpty()
                 '\\'.code -> {
                     val escaped = next()
                     if (escaped < 0) fail("转义没有闭合")
@@ -222,7 +233,8 @@ internal class JsonStream(private val source: Reader) {
                                 if (digit < 0) fail("\\u 转义没有闭合")
                                 code = (code shl 4) or hexValue(digit)
                             }
-                            if (out.length < maxChars) out.append(code.toChar())
+                            if (destination != null) destination.append(code.toChar())
+                            else if (out != null && out.length < maxChars) out.append(code.toChar())
                         }
 
                         else -> {
@@ -237,12 +249,14 @@ internal class JsonStream(private val source: Reader) {
                                 't' -> '\t'
                                 else -> fail("不认识的转义 \\${escaped.toChar()}")
                             }
-                            if (out.length < maxChars) out.append(decoded)
+                            if (destination != null) destination.append(decoded)
+                            else if (out != null && out.length < maxChars) out.append(decoded)
                         }
                     }
                 }
 
-                else -> if (out.length < maxChars) out.append(char.toChar())
+                else -> if (destination != null) destination.append(char.toChar())
+                    else if (out != null && out.length < maxChars) out.append(char.toChar())
             }
         }
     }

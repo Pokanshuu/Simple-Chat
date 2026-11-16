@@ -2,7 +2,6 @@ package com.simplechat.app.ui.markdown
 
 import androidx.compose.foundation.horizontalScroll
 import com.simplechat.app.ui.chat.preferHorizontalScroll
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -95,9 +94,10 @@ internal fun CodeFenceText(
      * 增量高亮。缓存对象活在 `remember` 里、只在主线程（组合期）改 ——
      * 与组合同线程，不需要任何同步。
      */
-    val dark = isSystemInDarkTheme()
+    val dark = com.simplechat.app.ui.theme.LocalIsDarkTheme.current
     val highlighter = remember { IncrementalHighlight() }
     val highlighted = remember(shown, language, dark) { highlighter.of(shown, language, dark) }
+    val (searchModifier, onSearchLayout) = rememberSearchTextDecoration(shown)
 
     /*
      * 代码的**自然宽度**（最长一行）—— 横滚的可滚距离全靠它。
@@ -170,7 +170,8 @@ internal fun CodeFenceText(
                 MarkdownBasicText(
                     text = highlighted,
                     style = style,
-                    modifier = Modifier.requiredWidth(codeWidth),
+                    modifier = Modifier.requiredWidth(codeWidth).then(searchModifier),
+                    onTextLayout = onSearchLayout,
                 )
             }
         }

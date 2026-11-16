@@ -72,6 +72,8 @@ class SpeechOutputController(private val context: Context) {
 
     private var engine: TextToSpeech? = null
     private var pending: Pair<String, String>? = null
+    private var utteranceId: String? = null
+    @Volatile private var playbackGeneration = 0L
 
     /** 官方 TTS 的接入参数；null = 当前服务商不支持（界面会隐藏朗读键）。 */
     private var officialConfig: DeepSeekTts.Config? = null
@@ -114,6 +116,7 @@ class SpeechOutputController(private val context: Context) {
                 initFailed = true
                 if (pending != null) {
                     pending = null
+                    speakingId = null
                     error = Res.get(R.string.tts_unavailable)
                 }
                 return@TextToSpeech
@@ -135,20 +138,26 @@ class SpeechOutputController(private val context: Context) {
                 override fun onStart(utteranceId: String?) = Unit
 
                 override fun onDone(utteranceId: String?) {
-                    // 回调在 TTS 线程：只改状态，Compose 会自己切回来
-                    if (utteranceId == speakingId) speakingId = null
+                    scope.launch {
+                        if (utteranceId == this@SpeechOutputController.utteranceId) speakingId = null
+                    }
                 }
 
                 @Deprecated("旧接口，仍需实现")
                 override fun onError(utteranceId: String?) {
-                    if (utteranceId == speakingId) speakingId = null
+                    scope.launch {
+                        if (isCurrentUtterance(utteranceId)) {
+                            speakingId = null
+                            error = Res.get(R.string.tts_failed)
+                        }
+                    }
                 }
 
                 override fun onError(utteranceId: String?, errorCode: Int) {
-                    if (utteranceId == speakingId) {
+                    scope.launch { if (isCurrentUtterance(utteranceId)) {
                         speakingId = null
                         error = Res.get(R.string.tts_failed)
-                    }
+                    } }
                 }
             })
             pending?.let { (id, text) -> pending = null; speak(id, text) }
@@ -201,6 +210,12 @@ class SpeechOutputController(private val context: Context) {
         speak(id, raw)
     }
 
+    /** Start reading a completed reply without toggle semantics. */
+    fun read(id: String, raw: String) { speak(id, raw) }
+
+    private fun isCurrentUtterance(id: String?): Boolean =
+        utteranceId?.let { id == it || id?.startsWith("$it-") == true } == true
+
     /**
      * 试听（设置页用）：临时切换到 [voiceName] 念一段样例。
      *
@@ -247,13 +262,23 @@ class SpeechOutputController(private val context: Context) {
             }
             // 引擎还在初始化：先记下来，就绪后自动开口，不让用户再点一次
             pending = id to raw
+            speakingId = id
             initialize()
             return
         }
         error = null
         speakingId = id
-        val result = tts.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle(), UUID.randomUUID().toString())
-        if (result != TextToSpeech.SUCCESS) {
+        val token = UUID.randomUUID().toString()
+        utteranceId = token
+        val chunks = speechChunks(text, TextToSpeech.getMaxSpeechInputLength())
+        val failed = try {
+            chunks.withIndex().any { (index, chunk) ->
+                val chunkId = if (index == chunks.lastIndex) token else "$token-$index"
+                tts.speak(chunk, if (index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, Bundle(), chunkId) != TextToSpeech.SUCCESS
+            }
+        } catch (_: Exception) { true }
+        if (failed) {
+            runCatching { tts.stop() }
             speakingId = null
             error = Res.get(R.string.tts_failed)
         }
@@ -269,6 +294,7 @@ class SpeechOutputController(private val context: Context) {
      * 但"在哪个线程改的"这种事不要靠运气。
      */
     private fun speakOfficial(id: String, text: String, voiceId: String) {
+        val generation = playbackGeneration
         val config = officialConfig
         if (config == null) {
             error = Res.get(R.string.tts_official_unavailable)
@@ -292,6 +318,7 @@ class SpeechOutputController(private val context: Context) {
                     // 无法智能转换（编译期拿不到非空证明）
                     val created = createAudioTrack()
                     track = created
+                    if (generation != playbackGeneration || stopRequested) throw CancellationException("tts stopped")
                     audioTrack = created
                     /*
                      * ★ **先攒够一段，再 `play()`。**
@@ -312,25 +339,31 @@ class SpeechOutputController(private val context: Context) {
                      */
                     val gate = PcmPlaybackGate(
                         preRollBytes = preRollBytesFor(bufferBytesOf(created)),
-                        start = { created.play() },
-                        writeAll = { buffer, offset, length -> writeFully(created, buffer, offset, length) },
+                        start = {
+                            if (generation != playbackGeneration || stopRequested) throw CancellationException("tts stopped")
+                            created.play()
+                        },
+                        writeAll = { buffer, offset, length ->
+                            if (generation != playbackGeneration || stopRequested) throw CancellationException("tts stopped")
+                            writeFully(created, buffer, offset, length)
+                        },
                     )
                     val writer = PcmWriter { buffer, offset, length -> gate.write(buffer, offset, length) }
                     val createdAt = SystemClock.elapsedRealtime()
                     var firstPcmAt = 0L
                     for (chunk in chunks) {
-                        if (stopRequested) break
+                        if (generation != playbackGeneration || stopRequested) break
                         DeepSeekTts.streamPcm(config, chunk, voiceId) { bytes, length ->
                             // 回调在 IO 线程、且是阻塞写的：这里检查停止标记，
                             // 用户点「停止」后下一次回调就会抛出去，不会把整段读完
-                            if (stopRequested) throw CancellationException("tts stopped")
+                            if (generation != playbackGeneration || stopRequested) throw CancellationException("tts stopped")
                             if (firstPcmAt == 0L) firstPcmAt = SystemClock.elapsedRealtime()
                             writer.write(bytes, length)
                         }
                     }
                     // 短句可能连预滚量都凑不满：流结束时把剩下的放出来，别憋着不响。
                     // 用户按了停止就不该再开嗓（否则停了还会冒出一截声音）。
-                    if (!stopRequested) gate.finish()
+                    if (generation == playbackGeneration && !stopRequested) gate.finish()
                     logPlayback(created, createdAt, firstPcmAt)
                 } catch (cancelled: CancellationException) {
                     // 用户停止 / 被新的朗读顶掉：不是错误
@@ -344,8 +377,10 @@ class SpeechOutputController(private val context: Context) {
                     runCatching { track?.release() }
                 }
             }
-            if (speakingId == id) speakingId = null
-            failure?.let { error = it }
+            if (generation == playbackGeneration) {
+                if (speakingId == id) speakingId = null
+                failure?.let { error = it }
+            }
         }
     }
 
@@ -455,6 +490,9 @@ class SpeechOutputController(private val context: Context) {
      * 不碰 [error]：调用方可能正要写新的错误。
      */
     private fun stopPlayback(clearSpeaking: Boolean) {
+        ++playbackGeneration
+        pending = null
+        utteranceId = null
         stopRequested = true
         officialJob?.cancel()
         officialJob = null
@@ -479,6 +517,7 @@ class SpeechOutputController(private val context: Context) {
         !DeepSeekTts.isOfficialVoice(voiceName) || officialConfig != null
 
     fun release() {
+        stopPlayback(clearSpeaking = true)
         if (ActiveController === this) ActiveController = null
         runCatching { audioTrack?.stop() }
         runCatching { audioTrack?.release() }

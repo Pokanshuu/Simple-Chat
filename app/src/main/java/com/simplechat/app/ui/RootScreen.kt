@@ -230,11 +230,12 @@ fun RootScreen() {
                                 historyViewModel.updateQuery("")
                                 searchMode = false
                             },
-                            onClick = { conversation ->
+                            onClick = { hit ->
+                                val keyword = historyViewModel.query.trim()
                                 historyViewModel.updateQuery("")
                                 searchMode = false
                                 closeDrawer()
-                                chatViewModel.openConversation(conversation.id)
+                                chatViewModel.openConversation(hit.conversation.id, hit.messageId, keyword)
                             },
                             onRename = { renameTarget = it },
                             onTogglePin = { historyViewModel.togglePin(it) },

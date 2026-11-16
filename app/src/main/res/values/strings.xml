@@ -11,6 +11,26 @@
   - 语言档位与切换见 data/LocaleHelper.kt。
 -->
 <resources>
+    <string name="latex_compatible_source">兼容排版 · 查看原文</string>
+    <string name="latex_show_rendered">返回兼容排版</string>
+    <string name="latex_source_fallback">此排版暂不支持，已完整保留原文</string>
+    <string name="auto_read_aloud_on">自动朗读已开启，点按关闭并停止朗读</string>
+    <string name="auto_read_aloud_off">自动朗读已关闭，点按开启</string>
+    <string name="api_profiles_title">API 配置管理</string>
+    <string name="api_profile_current">当前配置</string>
+    <string name="api_profiles_hint">每份配置独立保存地址、模型、协议与加密 Key，修改后自动保存，点按配置即可切换。配置和 Key 仅保存在本机，不包含在对话备份中。</string>
+    <string name="api_profile_selected">正在使用</string>
+    <string name="api_profile_key_saved">Key 已加密保存</string>
+    <string name="api_profile_new">新建配置</string>
+    <string name="api_profile_new_hint">创建一份空白的自定义 API 配置</string>
+    <string name="api_profile_copy">复制当前配置</string>
+    <string name="api_profile_copy_hint">另存一份，地址、模型和 Key 一并保留，后续独立修改</string>
+    <string name="api_profile_rename">重命名配置</string>
+    <string name="api_profile_delete">删除配置</string>
+    <string name="api_profile_delete_body">删除“%1$s”及其中保存的 Key？对话记录会保留。删除当前配置后将切换到另一份配置。</string>
+    <string name="api_profile_name_hint">例如：DeepSeek 日常、自建服务器</string>
+    <string name="api_profile_save_failed">无法安全保存 API Key，原配置已保留，请重试。</string>
+    <string name="reply_save_failed">回复未能保存到本机，请先复制内容并检查可用存储空间。</string>
     <string name="app_name">Simple Chat</string>
 
     <!-- ── 通用动作 ─────────────────────────────────────── -->
@@ -68,11 +88,17 @@
     <string name="error_no_api_key">尚未配置 API Key。请在设置 → API 配置中填写后重试。</string>
     <string name="error_no_model">还没有选择模型。请在设置 → API 配置里选一个（自定义端点先「测试连接」拉取，或手动填写模型 id）。</string>
     <string name="error_request_failed">请求失败</string>
+    <string name="error_send_failed">发送失败：%1$s</string>
+    <string name="error_no_sendable_messages">当前没有可发送的用户消息，请重新输入消息，或清除已失效的上下文摘要后重试</string>
+    <string name="conversation_load_failed">打开对话失败：%1$s</string>
     <string name="error_no_content">模型没有返回内容</string>
     <string name="error_write_failed">无法写入所选位置</string>
     <string name="error_delete_failed">删除失败：%1$s</string>
     <string name="error_import_failed">导入失败：%1$s</string>
     <string name="export_done">已导出到所选位置</string>
+    <string name="export_preparing_progress">正在生成备份：%1$d%%</string>
+    <string name="export_saving_progress">正在保存文件：%1$d%%</string>
+    <string name="error_export_attachment_missing">部分图片原件无法读取，请检查附件后重试</string>
     <string name="export_failed">导出失败：%1$s</string>
     <string name="export_failed_short">导出失败</string>
     <string name="import_read_failed">读取文件失败</string>
@@ -128,6 +154,19 @@
     <string name="import_mode_replace_same">覆盖同名（同名对话替换为本包内容）</string>
     <string name="import_mode_rename">同名新命名（两条都留，新的加「副本」后缀）</string>
     <string name="import_done">导入完成（%1$s）：会话 %2$d 个 · 消息 %3$d 条</string>
+    <string name="import_partial">导入未完整完成（%1$s）：成功 %2$d 个会话 · %3$d 条消息，请查看导入报告</string>
+    <string name="import_index_unverified"> · 无法核验归档索引，不能确认会话清单完整</string>
+    <string name="import_repaired_messages"> · 已保留并修复 %1$d 条断链或循环消息</string>
+    <string name="import_report_export">导出最近一次导入报告</string>
+    <string name="import_report_hint">查看各会话的导入状态与失败原因</string>
+    <string name="crash_report_export">导出最近一次崩溃诊断</string>
+    <string name="crash_report_hint">仅包含设备、版本和异常堆栈，不含聊天正文或密钥</string>
+    <string name="crash_report_missing">暂无崩溃诊断记录</string>
+    <string name="import_report_missing">暂无导入报告，请先执行一次导入</string>
+    <string name="large_message_paged">长消息分页显示，全文已完整保存</string>
+    <string name="large_message_reasoning">思考内容</string>
+    <string name="page_previous">上一页</string>
+    <string name="page_next">下一页</string>
     <string name="import_done_expected"> · 归档共 %1$d 个会话</string>
     <string name="import_done_duplicates"> · 已有 %1$d 个</string>
     <string name="import_done_failed"> · %1$d 个未能导入：%2$s</string>
@@ -139,6 +178,9 @@
     <string name="import_fail_broken_tree">消息结构异常</string>
     <string name="import_fail_missing_entry">归档缺少会话文件</string>
     <string name="import_fail_write_failed">写入失败</string>
+    <string name="import_fail_space">设备存储空间不足，请释放空间后重新增量导入</string>
+    <string name="import_fail_memory">设备可用内存不足，请关闭其他应用后重试</string>
+    <string name="import_report_not_saved">详细对账文件未能保存，请检查可用存储空间；以上统计仍有效</string>
     <string name="err_archive_damaged">压缩包不完整或已损坏（可能下载中断），请重新导出后再试</string>
 
     <!-- ── 设置：预设 ───────────────────────────────────── -->

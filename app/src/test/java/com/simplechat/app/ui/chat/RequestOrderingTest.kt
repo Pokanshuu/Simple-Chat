@@ -16,6 +16,27 @@ import org.junit.Test
  */
 class RequestOrderingTest {
 
+    @Test
+    fun `compaction with blank historical replies must retain the newly sent user message`() {
+        val path = listOf(
+            msg("u1", "", MessageRole.USER, "old question"),
+            msg("a1", "u1", MessageRole.ASSISTANT, ""),
+            msg("u2", "a1", MessageRole.USER, "old followup"),
+            msg("a2", "u2", MessageRole.ASSISTANT, "old response"),
+            msg("u3", "a2", MessageRole.USER, "1"),
+            msg("a3", "u3", MessageRole.ASSISTANT, "", MessageStatus.STREAMING),
+        )
+        val outgoing = orderedOutgoingMessages(path, compaction("a2"))
+        assertEquals(listOf("u3"), outgoing.map { it.id })
+        val request = buildAnthropicRequest("model", "summary", outgoing, false, false, false, null)
+        assertTrue(request.messages.any { it.role == "user" })
+    }
+
+    @Test
+    fun `summary from another branch is not included in request context`() {
+        assertEquals(null, validCompaction(chain(4), compaction("other-branch")))
+    }
+
     private fun msg(
         id: String,
         parentId: String,

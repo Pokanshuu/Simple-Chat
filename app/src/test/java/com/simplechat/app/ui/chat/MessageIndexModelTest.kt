@@ -3,6 +3,12 @@ package com.simplechat.app.ui.chat
 import com.simplechat.app.data.Attachment
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import androidx.compose.runtime.mutableStateListOf
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
 
 class MessageIndexModelTest {
 
@@ -110,5 +116,26 @@ class MessageIndexModelTest {
     @Test
     fun `an assistant-only conversation has no index`() {
         assertEquals(emptyList<MessageIndexEntry>(), buildMessageIndexEntries(listOf(assistant(), assistant("a2"))))
+    }
+
+    @Test
+    fun `background index keeps a stable snapshot while sending appends and updates messages`() = runBlocking {
+        val messages = mutableStateListOf(user("u1"), assistant("a1", "Before"))
+        val reading = CountDownLatch(1)
+        val proceed = CountDownLatch(1)
+        val labels = MessageIndexLabels(empty = {
+            reading.countDown()
+            check(proceed.await(5, TimeUnit.SECONDS))
+            "Empty"
+        })
+        val task = async(start = CoroutineStart.UNDISPATCHED) { buildMessageIndexSnapshot(messages, labels) }
+        try {
+            check(reading.await(5, TimeUnit.SECONDS))
+            messages += user("u2", "Next prompt")
+            messages[1] = assistant("a1", "Updated response")
+        } finally {
+            proceed.countDown()
+        }
+        assertEquals(listOf("u1"), task.await().map { it.id })
     }
 }

@@ -2,6 +2,14 @@ package com.simplechat.app.data.import
 
 import com.simplechat.app.data.BackupConversation
 import com.simplechat.app.data.BackupMessage
+import com.simplechat.app.data.BackupPreset
+
+internal interface ImportSessionSource {
+    val expected: Int?
+    val indexVerified: Boolean?
+    val presets: List<BackupPreset> get() = emptyList()
+    suspend fun forEachSession(block: suspend (ImportSession) -> Unit)
+}
 
 /**
  * 一条**边读边写**的会话：头部（会话本身）+ 一个"逐条产出消息"的入口。
@@ -19,6 +27,9 @@ import com.simplechat.app.data.BackupMessage
 internal class ImportSession(
     /** 会话本身（`messages` 恒为空 —— 消息不在这里）。 */
     val header: BackupConversation,
+    val expectedMessages: Int? = null,
+    val repairedMessages: Int = 0,
+    val discard: () -> Unit = {},
     private val emitMessages: suspend (sink: suspend (BackupMessage) -> Unit) -> Unit,
 ) {
     /**

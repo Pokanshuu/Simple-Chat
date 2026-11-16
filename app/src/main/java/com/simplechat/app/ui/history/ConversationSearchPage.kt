@@ -60,7 +60,7 @@ fun ConversationSearchPage(
     query: String,
     onQueryChange: (String) -> Unit,
     onBack: () -> Unit,
-    onClick: (ConversationEntity) -> Unit,
+    onClick: (ConversationSearchHit) -> Unit,
     onRename: (ConversationEntity) -> Unit,
     onTogglePin: (ConversationEntity) -> Unit,
     onDelete: (ConversationEntity) -> Unit,
@@ -194,7 +194,7 @@ fun ConversationSearchPage(
                         selected = false,
                         onClick = {
                             keyboard?.hide()
-                            onClick(conversation)
+                            onClick(hit)
                         },
                         onEnterSelection = {},
                         onRename = { onRename(conversation) },

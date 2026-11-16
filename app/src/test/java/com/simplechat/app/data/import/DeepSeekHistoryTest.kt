@@ -128,7 +128,7 @@ class DeepSeekHistoryTest {
     }
 
     @Test
-    fun `断链的消息不导入`() {
+    fun `断链的消息保留为独立根并记录修复`() {
         val plan = planned(
             """
             {"id": "s10", "title": "断链", "current_message_id": 1,
@@ -140,12 +140,16 @@ class DeepSeekHistoryTest {
              ]}
             """.trimIndent(),
         )!!
-        assertEquals(listOf(1L), plan.kept.keys.toList())
+        assertEquals(listOf(1L, 7L), plan.kept.keys.toList())
+        assertNull(plan.kept[7L])
+        assertEquals(1, plan.repairs)
     }
 
     @Test
-    fun `没有消息的会话返回空`() {
-        assertNull(planned("""{"id": "s", "messages": []}"""))
+    fun `没有消息的会话保留窗口`() {
+        val plan = planned("""{"id": "s", "messages": []}""")!!
+        assertEquals("deepseek-s1", plan.header.id)
+        assertTrue(plan.kept.isEmpty())
     }
 
     @Test

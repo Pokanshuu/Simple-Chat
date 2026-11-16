@@ -46,10 +46,7 @@ internal object SecretBox {
      * 比纯内存读贵几个数量级。密文没变就没必要再解一次。
      */
     @Volatile
-    private var cachedCipherText: String? = null
-
-    @Volatile
-    private var cachedPlainText: String = ""
+    private var cachedValue: Pair<String, String>? = null
 
     /** 加密。失败返回 null（此时调用方**不应**回落成明文存储）。 */
     fun encrypt(plainText: String): String? = runCatching {
@@ -62,7 +59,7 @@ internal object SecretBox {
 
     /** 解密。解不开（密钥失效 / 数据损坏）返回空串，绝不抛。 */
     fun decrypt(cipherText: String): String {
-        if (cipherText == cachedCipherText) return cachedPlainText
+        cachedValue?.let { (encrypted, plain) -> if (cipherText == encrypted) return plain }
 
         val plain = runCatching {
             val raw = Base64.decode(cipherText, Base64.NO_WRAP)
@@ -77,12 +74,12 @@ internal object SecretBox {
             String(cipher.doFinal(raw, IV_BYTES, raw.size - IV_BYTES), Charsets.UTF_8)
         }.getOrDefault("")
 
-        cachedCipherText = cipherText
-        cachedPlainText = plain
+        cachedValue = cipherText to plain
         return plain
     }
 
     /** Keystore 里的密钥，没有就现生成一个。 */
+    @Synchronized
     private fun secretKey(): SecretKey {
         val keyStore = KeyStore.getInstance(KEYSTORE).apply { load(null) }
         (keyStore.getEntry(ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }

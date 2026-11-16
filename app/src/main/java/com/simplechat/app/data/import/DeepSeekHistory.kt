@@ -9,11 +9,17 @@ import com.simplechat.app.data.BackupMessage
 import com.simplechat.app.data.ImportFailure
 import java.io.Reader
 import java.io.StringReader
+import java.io.ByteArrayInputStream
+import java.io.SequenceInputStream
+import java.io.FilterReader
+import java.io.FilterInputStream
 import java.time.Instant
 import java.util.Base64
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -104,23 +110,25 @@ internal object DeepSeekHistory {
         private val indexTitles: Map<String, String?>,
         private val naming: ExternalBackup.ImportNaming,
         /** 归档声明的会话数：文件条目 + 索引里有但文件缺失的那些。 */
-        val expected: Int,
+        override val expected: Int,
+        override val indexVerified: Boolean,
         /** 所有会话条目的（未压缩）字节总数，只用来算进度。 */
         private val totalBytes: Long,
         private val onProgress: (Float) -> Unit,
         private val onFailure: (ImportFailure) -> Unit,
         private val onImageDropped: () -> Unit,
-    ) {
+    ) : ImportSessionSource {
         /**
          * 逐条消费会话。**必须在 `ZipFile` 关掉之前跑完**（正文是第二遍现读的）。
          *
          * 每条会话的 [ImportSession.forEachMessage] 也要在 [block] 返回前消费完 ——
          * 同一个 ZIP 条目只在这一小段时间里被读第二遍。
          */
-        suspend fun forEachSession(block: suspend (ImportSession) -> Unit) {
+        override suspend fun forEachSession(block: suspend (ImportSession) -> Unit) {
             var doneBytes = 0L
             entries.forEach { entry ->
                 val size = entry.size.coerceAtLeast(1L)
+                var lastFraction = 0f
                 /*
                  * 进度按**字节**算，而不是按"第几个会话"。
                  *
@@ -129,7 +137,8 @@ internal object DeepSeekHistory {
                  * 按字节算，第一个会话期间进度也在爬，只是慢。
                  */
                 fun report(fractionInSession: Float) {
-                    val done = doneBytes + (size * fractionInSession.coerceIn(0f, 1f)).toLong()
+                    lastFraction = maxOf(lastFraction, fractionInSession.coerceIn(0f, 1f))
+                    val done = doneBytes + (size * lastFraction).toLong()
                     onProgress((done.toFloat() / totalBytes).coerceIn(0f, 1f))
                 }
                 report(0f)
@@ -140,7 +149,7 @@ internal object DeepSeekHistory {
                     throw error
                 } catch (error: Throwable) {
                     android.util.Log.w(ImportLogTag, "会话 $sessionId 读取失败", error)
-                    SessionOutcome.Failed(ImportFailure.Reason.UNREADABLE)
+                    SessionOutcome.Failed(if (error is OutOfMemoryError) ImportFailure.Reason.INSUFFICIENT_MEMORY else ImportFailure.Reason.UNREADABLE)
                 }
                 when (outcome) {
                     is SessionOutcome.Ready -> block(outcome.session)
@@ -152,8 +161,8 @@ internal object DeepSeekHistory {
                         ),
                     )
                 }
-                doneBytes += size
                 report(1f)
+                doneBytes += size
             }
         }
 
@@ -162,21 +171,23 @@ internal object DeepSeekHistory {
             class Failed(val reason: ImportFailure.Reason) : SessionOutcome
         }
 
-        private fun openSession(
+        private suspend fun openSession(
             entry: ZipEntry,
             sessionId: String,
             onFraction: (Float) -> Unit,
         ): SessionOutcome {
             // 第一遍：只建树，不留正文。两遍里它大约占前 1/4 的工作量
-            val scan = entry.reader(zip).use { reader -> scanSession(reader) }
+            val scan = entry.reader(zip) { bytes -> onFraction(Pass1Share * bytes / entry.size.coerceAtLeast(1).toFloat()) }
+                .use { reader -> scanSession(reader) }
             onFraction(Pass1Share)
-            if (scan.messages.isEmpty()) return SessionOutcome.Failed(ImportFailure.Reason.EMPTY)
             val planned = planSession(scan, sessionId, naming)
                 ?: return SessionOutcome.Failed(ImportFailure.Reason.BROKEN_TREE)
+            val createdImages = linkedSetOf<String>()
             return SessionOutcome.Ready(
-                ImportSession(header = planned.header) { sink ->
+                ImportSession(header = planned.header, expectedMessages = planned.kept.size, repairedMessages = planned.repairs,
+                    discard = { createdImages.forEach { naming.discardImage?.invoke(it) } }) { sink ->
                     // 第二遍：读一条、写一条（sink 里是带事务的数据库写入）
-                    emitMessages(entry, planned, sink, onFraction)
+                    emitMessages(entry, planned, sink, onFraction, createdImages)
                 },
             )
         }
@@ -190,6 +201,7 @@ internal object DeepSeekHistory {
             planned: SessionPlan,
             sink: suspend (BackupMessage) -> Unit,
             onFraction: (Float) -> Unit,
+            createdImages: MutableSet<String>,
         ) {
             val sessionId = planned.header.id.removePrefix(ID_PREFIX)
             val emitted = HashSet<Long>()
@@ -204,12 +216,13 @@ internal object DeepSeekHistory {
             suspend fun imageOf(path: String): Attachment? {
                 if (images.containsKey(path)) return images[path]
                 val image = readImage(path)
+                image?.path?.let { createdImages += it }
                 if (image == null) onImageDropped()
                 images[path] = image
                 return image
             }
 
-            entry.reader(zip).use { reader ->
+            entry.reader(zip) { bytes -> onFraction(Pass1Share + (1 - Pass1Share) * bytes / entry.size.coerceAtLeast(1).toFloat()) }.use { reader ->
                 val stream = JsonStream(reader)
                 stream.beginObject()
                 while (stream.hasNextField()) {
@@ -217,18 +230,16 @@ internal object DeepSeekHistory {
                         stream.skipValue()
                         continue
                     }
+                    if (stream.valueKind() == 'n') { stream.skipValue(); continue }
                     stream.beginArray()
                     while (stream.hasNextArrayElement()) {
-                        val raw = stream.captureValue()
-                        val parsed = runCatching {
-                            parsedMessage(json.parseToJsonElement(raw).jsonObject)
-                        }.getOrNull() ?: continue
-                        if (parsed.number !in planned.kept) continue
-                        if (!emitted.add(parsed.number)) continue
+                        val parsed = readDeepSeekMessage(stream)
+                        check(parsed.number in planned.kept) { "Unplanned message ${parsed.number}" }
+                        check(emitted.add(parsed.number)) { "Duplicate message ${parsed.number}" }
                         // 图片在这里**先读完**：toBackupMessage 保持纯函数，
                         // 读 ZIP 条目（阻塞 IO）只发生在这个挂起上下文里
                         val attachments = parsed.imagePaths.mapNotNull { imageOf(it) }
-                        val message = toBackupMessage(parsed, planned, sessionId, attachments) ?: continue
+                        val message = checkNotNull(toBackupMessage(parsed, planned, sessionId, attachments))
                         sink(message)
                         if (emitted.size % ProgressEveryMessages == 0) {
                             onFraction(Pass1Share + (1f - Pass1Share) * emitted.size / total)
@@ -236,6 +247,7 @@ internal object DeepSeekHistory {
                     }
                 }
             }
+            check(emitted.size == planned.kept.size) { "Message reconciliation failed: ${emitted.size}/${planned.kept.size}" }
             onFraction(1f)
         }
 
@@ -247,8 +259,38 @@ internal object DeepSeekHistory {
          * MIME 按**真实内容**取（[ApiImage]）：服务端只看内容，写错了不会报错，
          * 只会在发送时被拒。
          */
-        private fun readImage(path: String): Attachment? {
+        private suspend fun readImage(path: String): Attachment? {
             val entry = zip.getEntry(path) ?: return null
+            naming.storeImageStream?.let { store ->
+                val activeContext = currentCoroutineContext()
+                zip.getInputStream(entry).buffered(BufferChunk).use { input ->
+                    val prefixBuffer = ByteArray(BufferChunk)
+                    var used = 0
+                    while (used < prefixBuffer.size) {
+                        activeContext.ensureActive()
+                        val count = input.read(prefixBuffer, used, prefixBuffer.size - used)
+                        if (count < 0) break
+                        used += count
+                    }
+                    if (used == 0) return null
+                    val prefix = if (used == prefixBuffer.size) prefixBuffer else prefixBuffer.copyOf(used)
+                    val size = imageSizeOf(prefix)
+                    val mime = ApiImage.mediaTypeOf(prefix, declared = null)
+                    val combined = SequenceInputStream(ByteArrayInputStream(prefix), input)
+                    val cancellable = object : FilterInputStream(combined) {
+                        override fun read(bytes: ByteArray, offset: Int, length: Int): Int {
+                            activeContext.ensureActive()
+                            return super.read(bytes, offset, length)
+                        }
+                    }
+                    val stored = store(cancellable, mime)
+                    return Attachment(
+                        kind = Attachment.Kind.IMAGE,
+                        name = size?.let { naming.imageName(it.first, it.second) } ?: naming.imageFallbackName(),
+                        mime = mime, data = "", width = size?.first ?: 0, height = size?.second ?: 0, path = stored,
+                    )
+                }
+            }
             /*
              * 有界读取，但只挡"异常的单张"（[MaxSingleImageBytes]，64MB）。
              *
@@ -336,7 +378,7 @@ internal object DeepSeekHistory {
          * 索引有两个用途：顺序（用户在 DeepSeek 里看到的顺序）与**标题**。
          *
          * 标题的用处不止排序：某条会话的文件缺失/损坏时，索引里还留着它的名字 ——
-         * 结果页就能说"少了《夏萧因重逢对话》"，而不是干巴巴一个"1 个未能导入"。
+         * 结果页就能说"少了《示例会话》"，而不是干巴巴一个"1 个未能导入"。
          *
          * ⚠️ 索引文件在**真实导出**里是一个 JSON **数组**（`[{id,title,pinned,
          * message_count,inserted_at,updated_at}, …]`），而我们最早的测试样本
@@ -344,7 +386,8 @@ internal object DeepSeekHistory {
          * 顺序退化成 ZIP 条目顺序、缺失条目的对账也整个失效（两件事都不报错，
          * 只是"看起来没问题"）。两种形状都认。
          */
-        val indexEntries = readIndex(zip)
+        val indexRead = readIndex(zip)
+        val indexEntries = indexRead.entries
         val indexIds = indexEntries.mapNotNull { it.str("id") }.distinct()
         val indexTitles = indexEntries
             .mapNotNull { entry -> entry.str("id")?.let { id -> id to entry.str("title") } }
@@ -376,6 +419,7 @@ internal object DeepSeekHistory {
             indexTitles = indexTitles,
             naming = naming,
             expected = expected,
+            indexVerified = indexRead.verified,
             totalBytes = totalBytes,
             onProgress = onProgress,
             onFailure = onFailure,
@@ -386,7 +430,24 @@ internal object DeepSeekHistory {
     private fun sessionIdOf(entryName: String): String =
         entryName.removePrefix(SESSIONS).removeSuffix(".json")
 
-    private fun ZipEntry.reader(zip: ZipFile): Reader = zip.getInputStream(this).reader(Charsets.UTF_8)
+    private suspend fun ZipEntry.reader(zip: ZipFile, onBytes: (Long) -> Unit = {}): Reader {
+        val activeContext = currentCoroutineContext()
+        val input = object : FilterInputStream(zip.getInputStream(this)) {
+            var consumed = 0L
+            override fun read(bytes: ByteArray, offset: Int, length: Int): Int {
+                activeContext.ensureActive()
+                val count = super.read(bytes, offset, length)
+                if (count > 0) { consumed += count; onBytes(consumed) }
+                return count
+            }
+        }
+        return object : FilterReader(input.reader(Charsets.UTF_8)) {
+            override fun read(chars: CharArray, offset: Int, length: Int): Int {
+                activeContext.ensureActive()
+                return super.read(chars, offset, length)
+            }
+        }
+    }
 
     // ══════════════════════════════════════════════════════
     //  第一遍：只读标量与树骨架
@@ -421,15 +482,14 @@ internal object DeepSeekHistory {
         while (stream.hasNextField()) {
             when (val name = stream.fieldName()) {
                 "messages" -> {
+                    if (stream.valueKind() == 'n') { stream.skipValue(); continue }
                     stream.beginArray()
                     while (stream.hasNextArrayElement()) {
                         // 一次只切一条消息的原文，解析完立刻丢
-                        val element = stream.captureValue()
-                        val light = readLightMessage(element, captureHead = headBudget > 0)
-                        if (light != null) {
-                            messages += light
-                            if (light.requestHead != null) headBudget--
-                        }
+                        val light = readLightMessage(stream, captureHead = headBudget > 0)
+                            ?: error("Message has no supported numeric id")
+                        messages += light
+                        if (light.requestHead != null) headBudget--
                     }
                 }
 
@@ -440,12 +500,11 @@ internal object DeepSeekHistory {
         return SessionScan(header, messages)
     }
 
-    private fun readLightMessage(element: String, captureHead: Boolean): LightMessage? {
+    private fun readLightMessage(stream: JsonStream, captureHead: Boolean): LightMessage? {
         var number: Long? = null
         var parent: Long? = null
         var role: String? = null
         var head: String? = null
-        val stream = JsonStream(StringReader(element))
         stream.beginObject()
         while (stream.hasNextField()) {
             when (val name = stream.fieldName()) {
@@ -468,6 +527,7 @@ internal object DeepSeekHistory {
     /** 在 `fragments` 数组里找第一条 `REQUEST` 片段，取它正文的开头几个字。 */
     private fun readRequestHead(stream: JsonStream): String? {
         var head: String? = null
+        if (stream.valueKind() == 'n') { stream.skipValue(); return null }
         stream.beginArray()
         while (stream.hasNextArrayElement()) {
             if (head != null) {
@@ -510,6 +570,7 @@ internal object DeepSeekHistory {
         val active: Set<Long>,
         /** 会话自身的创建时间（消息缺时间时兜底）。 */
         val createdAt: Long,
+        val repairs: Int = 0,
     )
 
     internal fun planSession(
@@ -517,14 +578,30 @@ internal object DeepSeekHistory {
         sessionId: String,
         naming: ExternalBackup.ImportNaming,
     ): SessionPlan? {
-        if (scan.messages.isEmpty()) return null
         val head = headerOf(scan.header) ?: JsonObject(emptyMap())
 
         val byNumber = LinkedHashMap<Long, LightMessage>()
         for (message in scan.messages) {
-            if (message.number !in byNumber) byNumber[message.number] = message
+            require(message.number !in byNumber) { "Duplicate message id: ${message.number}" }
+            byNumber[message.number] = message
         }
-        if (byNumber.isEmpty()) return null
+        var repairs = 0
+        val parents = LinkedHashMap<Long, Long?>()
+        for ((id, message) in byNumber) {
+            parents[id] = message.parentNumber?.takeIf { it in byNumber }
+            if (message.parentNumber != null && parents[id] == null) repairs++
+        }
+        // Preserve orphaned and cyclic branches. Break only the edge that prevents reaching a root.
+        val resolved = HashSet<Long>()
+        for (id in byNumber.keys) {
+            val chain = LinkedHashSet<Long>()
+            var cursor: Long? = id
+            while (cursor != null && cursor !in resolved) {
+                if (!chain.add(cursor)) { parents[cursor] = null; repairs++; break }
+                cursor = parents[cursor]
+            }
+            resolved += chain
+        }
 
         /*
          * ★ **整棵树都导，不只当前分支。**
@@ -537,12 +614,7 @@ internal object DeepSeekHistory {
          */
         val childrenOf = LinkedHashMap<Long?, MutableList<Long>>()
         for ((id, message) in byNumber) {
-            val rawParent = message.parentNumber
-            val parent = when {
-                rawParent == null -> null                       // 根
-                byNumber.containsKey(rawParent) -> rawParent     // 正常父子
-                else -> continue                                 // 断链：整支丢掉
-            }
+            val parent = parents[id]
             childrenOf.getOrPut(parent) { mutableListOf() } += id
         }
         childrenOf.values.forEach { it.sort() }
@@ -558,7 +630,7 @@ internal object DeepSeekHistory {
             ordered += id
             childrenOf[id]?.let { queue.addAll(it) }
         }
-        if (ordered.isEmpty()) return null
+        check(ordered.size == byNumber.size) { "Not all source messages are reachable" }
 
         // 当前分支：既用来判定"哪一条是选中的版本"，也用来取首条提问当标题
         val branchIds = branchOf(byNumber, head.long("current_message_id")).toHashSet()
@@ -582,7 +654,7 @@ internal object DeepSeekHistory {
         val updatedAt = parseIso(head.str("updated_at")) ?: insertedAt
 
         val kept = LinkedHashMap<Long, Long?>(ordered.size)
-        for (number in ordered) kept[number] = byNumber.getValue(number).parentNumber
+        for (number in ordered) kept[number] = parents[number]
 
         val pinned = head.str("pinned") == "true"
         val conversation = BackupConversation(
@@ -610,6 +682,7 @@ internal object DeepSeekHistory {
             variantIndex = variantIndexOf,
             active = selectedNumbers,
             createdAt = insertedAt,
+            repairs = repairs,
         )
     }
 
@@ -658,13 +731,12 @@ internal object DeepSeekHistory {
             message.request
         } else {
             // 模板正文（超时 / 内容过滤那类）也是正文：我们只透传，不做取舍
-            message.response + message.template
+            if (message.template.isEmpty()) message.response else message.response + message.template
         }
         val elapsedSecs = message.thinks.sumOf { it.second }
         return BackupMessage(
             id = "$ID_PREFIX$sessionId-${message.number}",
-            parentId = message.parentNumber
-                ?.takeIf { it in planned.kept }
+            parentId = planned.kept[message.number]
                 ?.let { "$ID_PREFIX$sessionId-$it" }
                 ?: "",
             variantIndex = planned.variantIndex[message.number] ?: 0,
@@ -673,7 +745,8 @@ internal object DeepSeekHistory {
             content = content,
             // 字节落盘，单条消息的附件也不再需要配额（行里只有文件名）
             attachments = attachments,
-            reasoning = message.thinks.joinToString("\n") { it.first }.takeIf { it.isNotBlank() },
+            reasoning = (if (message.thinks.size == 1) message.thinks[0].first
+                else message.thinks.joinToString("\n") { it.first }).takeIf { it.isNotBlank() },
             status = statusOf(message.status),
             model = null,
             thinkingMs = elapsedSecs.takeIf { it > 0L }?.times(1000L),
@@ -789,7 +862,7 @@ internal object DeepSeekHistory {
 
     private fun readJson(zip: ZipFile, name: String): JsonObject? {
         val entry = zip.getEntry(name) ?: return null
-        val text = runCatching { zip.getInputStream(entry).readBytes().decodeToString() }.getOrNull()
+        val text = runCatching { zip.readBounded(entry, 64 * 1024)?.decodeToString() }.getOrNull()
             ?: return null
         return runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()
     }
@@ -800,14 +873,44 @@ internal object DeepSeekHistory {
      * 读不出来就返回空表：索引只用于"顺序 + 对账"，缺了不影响导入本身 ——
      * 不能因为一个可选文件把整份归档判死。
      */
-    private fun readIndex(zip: ZipFile): List<JsonObject> {
-        val entry = zip.getEntry(INDEX) ?: return emptyList()
-        val text = runCatching { zip.getInputStream(entry).readBytes().decodeToString() }.getOrNull()
-            ?: return emptyList()
-        return when (val element = runCatching { json.parseToJsonElement(text) }.getOrNull()) {
-            is JsonArray -> element.mapNotNull { it as? JsonObject }
-            is JsonObject -> element.arrOrEmpty("sessions")
-            else -> emptyList()
+    private class IndexRead(val entries: List<JsonObject>, val verified: Boolean)
+
+    private fun readIndex(zip: ZipFile): IndexRead {
+        val entry = zip.getEntry(INDEX) ?: return IndexRead(emptyList(), false)
+        return try {
+            val entries = ArrayList<JsonObject>()
+            zip.getInputStream(entry).reader(Charsets.UTF_8).use { reader ->
+                val stream = JsonStream(reader)
+                fun readEntries() {
+                    stream.beginArray()
+                    while (stream.hasNextArrayElement()) {
+                        val fields = linkedMapOf<String, String>()
+                        stream.beginObject()
+                        while (stream.hasNextField()) {
+                            val name = stream.fieldName()
+                            if (name == "id" || name == "title") fields[name] = stream.captureValue()
+                            else stream.skipValue()
+                        }
+                        entries += checkNotNull(headerOf(fields))
+                    }
+                }
+                when (stream.valueKind()) {
+                    '[' -> readEntries()
+                    '{' -> {
+                        var found = false
+                        stream.beginObject()
+                        while (stream.hasNextField()) {
+                            if (stream.fieldName() == "sessions") { readEntries(); found = true }
+                            else stream.skipValue()
+                        }
+                        check(found) { "Missing sessions array" }
+                    }
+                    else -> error("Unsupported index")
+                }
+            }
+            IndexRead(entries, true)
+        } catch (error: Exception) {
+            IndexRead(emptyList(), false)
         }
     }
 

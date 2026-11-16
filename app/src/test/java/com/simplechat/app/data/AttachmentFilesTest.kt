@@ -14,6 +14,13 @@ import org.junit.Test
  */
 class AttachmentFilesTest {
 
+    @Test fun `backup attachment paths cannot escape private attachment directory`() {
+        val root = java.io.File(System.getProperty("java.io.tmpdir"), "attachment-root")
+        listOf(null, "", ".", "..", "../settings", "..\\settings", "/data/settings", "C:\\settings", "a\u0000b")
+            .forEach { assertNull(attachmentFile(root, it)) }
+        assertEquals(java.io.File(root, "safe.png").canonicalFile, attachmentFile(root, "safe.png"))
+    }
+
     private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
 
     @Test

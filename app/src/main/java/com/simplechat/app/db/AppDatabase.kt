@@ -24,7 +24,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     // v6：drafts 增加 title（「新对话」的待用标题）
     // v7：messages 增加 timeline / stopReason（Anthropic 兼容通道的内容块时间线）
     // v8：新增 attachment_refs（落盘图片的引用，删会话时据此清理文件）
-    version = 8,
+    // v9：附件可被多个会话引用（分叉后删除原会话不能丢图）
+    version = 9,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -142,11 +143,21 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        fun build(context: Context): AppDatabase =
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE `attachment_refs_new` (`path` TEXT NOT NULL, `conversationId` TEXT NOT NULL, PRIMARY KEY(`path`, `conversationId`))")
+                db.execSQL("INSERT INTO attachment_refs_new(path, conversationId) SELECT path, conversationId FROM attachment_refs")
+                db.execSQL("DROP TABLE attachment_refs")
+                db.execSQL("ALTER TABLE attachment_refs_new RENAME TO attachment_refs")
+                db.execSQL("CREATE INDEX `index_attachment_refs_conversationId` ON attachment_refs(`conversationId`)")
+            }
+        }
+
+        fun build(context: Context, name: String = "simplechat.db"): AppDatabase =
             Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
-                "simplechat.db",
+                name,
             )
                 .addMigrations(
                     MIGRATION_2_3,
@@ -155,6 +166,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_5_6,
                     MIGRATION_6_7,
                     MIGRATION_7_8,
+                    MIGRATION_8_9,
                 )
                 .build()
     }

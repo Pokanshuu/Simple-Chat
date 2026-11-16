@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -64,6 +65,9 @@ import com.simplechat.app.ui.common.SoftShape
 import com.simplechat.app.ui.common.rememberPressPosition
 import com.simplechat.app.ui.markdown.MarkdownText
 import com.simplechat.app.ui.markdown.MarkdownWithMath
+import com.simplechat.app.ui.markdown.SearchHighlightHost
+import com.simplechat.app.ui.markdown.LocalSearchHighlight
+import com.simplechat.app.ui.markdown.rememberSearchTextDecoration
 import com.simplechat.app.ui.theme.ChatColors
 import com.simplechat.app.ui.theme.LocalChatColors
 import com.simplechat.app.ui.common.PillShape
@@ -133,6 +137,8 @@ fun MessageList(
      * 连历史消息的初态也跟着变（用户在设置里刚改完，回头看旧会话该是新行为）。
      */
     autoCollapseThinking: Boolean = true,
+    searchTarget: SearchTarget? = null,
+    onDismissSearch: () -> Unit = {},
 ) {
     /*
      * 「谁被碰过」。
@@ -186,6 +192,8 @@ fun MessageList(
         ) { index, message ->
             MessageRow(
                 message = message,
+                search = searchTarget?.takeIf { it.messageId == message.id },
+                onDismissSearch = onDismissSearch,
                 peeked = peekedId == message.id,
                 /*
                  * 能不能续写由**位置 + 状态**共同决定（见 `ContinuePolicy`）。
@@ -235,6 +243,8 @@ fun MessageList(
 @Composable
 private fun MessageRow(
     message: UiMessage,
+    search: SearchTarget?,
+    onDismissSearch: () -> Unit,
     peeked: Boolean,
     canContinue: Boolean,
     speakingId: String?,
@@ -304,8 +314,26 @@ private fun MessageRow(
         }
     }
 
+    SearchHighlightHost(search, onDismissSearch) {
     Column(modifier = Modifier.fillMaxWidth()) {
-        when (message.role) {
+        if (message.content.length > LARGE_MESSAGE_CHARS || (message.reasoning?.length ?: 0) > LARGE_MESSAGE_CHARS) {
+            Column(Modifier.then(pressListener).combinedClickable(
+                enabled = actionable,
+                onClick = if (isUser) onEdit else onTogglePeek,
+                onLongClick = { menuOpen = true },
+            )) {
+            if (message.attachments.isNotEmpty()) MessageAttachments(message.attachments, onOpenImage)
+            message.reasoning?.takeIf { it.isNotEmpty() }?.let {
+                Text(stringResource(R.string.large_message_reasoning), style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                CompositionLocalProvider(LocalSearchHighlight provides null) { PagedMessageBody(it) }
+            }
+            PagedMessageBody(message.content, markdown = !isUser)
+            message.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            menu()
+            }
+        }
+        else when (message.role) {
             MessageRole.USER -> UserBubble(
                 message = message,
                 interactive = actionable,
@@ -371,6 +399,7 @@ private fun MessageRow(
             )
         }
     }
+    }
 }
 
 /**
@@ -429,6 +458,10 @@ fun UserBubble(
              */
             var expanded by remember(message.id) { mutableStateOf(false) }
             var folded by remember(message.id) { mutableStateOf(false) }
+            val search = LocalSearchHighlight.current
+            LaunchedEffect(search?.request) {
+                if (search != null && message.content.contains(search.query, ignoreCase = true)) expanded = true
+            }
 
             Box(
                 modifier = Modifier
@@ -547,8 +580,11 @@ fun UserBubble(
                                      * 块之间加间距会凭空多出一堆空行。
                                      */
                                     chunks.forEach { chunk ->
+                                        val (searchModifier, onSearchLayout) = rememberSearchTextDecoration(chunk)
                                         Text(
                                             text = chunk,
+                                            modifier = searchModifier,
+                                            onTextLayout = onSearchLayout,
                                             style = MaterialTheme.typography.bodyLarge,
                                             color = colors.onUserBubble,
                                         )

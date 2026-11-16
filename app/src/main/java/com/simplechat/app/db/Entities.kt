@@ -268,9 +268,10 @@ data class CompactionEntity(
  */
 @Entity(
     tableName = "attachment_refs",
+    primaryKeys = ["path", "conversationId"],
     indices = [Index(value = ["conversationId"])],
 )
 data class AttachmentRefEntity(
-    @PrimaryKey val path: String,
+    val path: String,
     val conversationId: String,
 )
