@@ -48,7 +48,11 @@ fun MessageEntity.toUi(): UiMessage = UiMessage(
     reasoning = reasoning,
     reasoningSeconds = thinkingMs?.let { it / 1000 },
     status = runCatching { MessageStatus.valueOf(status) }.getOrDefault(MessageStatus.DONE),
-    errorMessage = errorMessage,
+    /*
+     * 旧版本把异常原文直接落库了（`Software caused connection abort` 之类）。
+     * 读回来时翻成人话 —— 只改显示：库里仍是原文，排查时还能查。
+     */
+    errorMessage = errorMessage?.let { storedErrorText(it) },
     model = model,
     parentId = parentId,
     variantIndex = variantIndex,

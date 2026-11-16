@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  服务商（上游）自报错误 → 用户看得懂、知道下一步做什么的一句话。
+
+  单独成文件、不塞进 values/strings.xml：Android 会把 values*/ 下所有 xml 里的
+  <string> 合并成同一份资源表，按 key 取用，所以新增文案不必动老文件。
+  英文在 values-en/strings_provider.xml，**键名必须一一对应**。
+
+  使用方：net/NetworkErrors.kt
+  - error_provider_*：providerHintRes() 按关键字命中的提示句；
+  - error_provider_raw：保留服务端原文的括号模板（%1$s = 原文，过长由代码截断并加省略号）；
+  - error_provider_separator：多段提示之间的连接符。
+-->
+<resources>
+    <!-- 上游没有给这个模型分配可用通道（OpenCode Zen / 自建中转常见） -->
+    <string name="error_provider_no_channel">该服务商当前没有这个模型的可用通道，请换一个模型、换用官方接口，或稍后重试</string>
+
+    <!-- 鉴权失败：Key 无效 / 被禁用 / 账号被风控（如 `Authentication Fails (governor)`） -->
+    <string name="error_provider_auth">服务商鉴权失败：API Key 无效、被禁用，或账号被风控限制；请检查 Key，或用设置里的测试连接确认</string>
+
+    <!-- 额度 / 余额不足（insufficient_quota、insufficient balance） -->
+    <string name="error_provider_quota">账号额度不足，请充值或更换 Key</string>
+
+    <!-- 限流（rate limit、too many requests、HTTP 429） -->
+    <string name="error_provider_rate_limit">请求太频繁，请稍后再试</string>
+
+    <!-- 模型名不对 / 上游没有这个模型 -->
+    <string name="error_provider_model_not_found">服务商没有这个模型，请换模型或核对 Base URL</string>
+
+    <!-- 上下文超限（context length / maximum context / context window） -->
+    <string name="error_provider_context_length">本轮内容超出模型上下文上限，请压缩上下文或减少附件</string>
+
+    <!-- 诊断信息：原文放在全角括号里，跟在提示句后面；%1$s 由代码截断到 300 字符 -->
+    <string name="error_provider_raw">（服务端原文：%1$s）</string>
+
+    <!-- 提示句之间的连接符：中文用全角冒号；英文用半角冒号 + 空格（见 values-en） -->
+    <string name="error_provider_separator">：</string>
+</resources>

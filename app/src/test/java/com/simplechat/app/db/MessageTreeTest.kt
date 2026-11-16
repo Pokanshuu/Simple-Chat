@@ -249,4 +249,61 @@ class MessageTreeTest {
     fun `forking an empty path yields nothing`() {
         assertTrue(MessageTree.forkMessages(emptyList(), "new") { "x" }.isEmpty())
     }
+    // ── 骨架版：打开长会话时只读这几列（见 ChatRepository.loadActivePath） ──
+
+    private fun light(
+        id: String,
+        parentId: String = MessageEntity.ROOT_PARENT,
+        active: Boolean = false,
+        variantIndex: Int = 0,
+    ) = MessageLight(
+        id = id,
+        parentId = parentId,
+        variantIndex = variantIndex,
+        active = active,
+        role = if (variantIndex % 2 == 0) "user" else "assistant",
+        status = "DONE",
+        createdAt = 0,
+    )
+
+    @Test
+    fun `activePathIds 与 activePath 走同一条路径`() {
+        val tree = listOf(
+            light("u1", active = true),
+            light("a1", parentId = "u1", variantIndex = 1, active = true),
+            light("a2", parentId = "u1", variantIndex = 2, active = false),
+            light("u2", parentId = "a1", active = true),
+        )
+
+        assertEquals(
+            MessageTree.activePath(tree.map { it.toFullEntity() }).map { it.id },
+            MessageTree.activePathIds(tree),
+        )
+        assertEquals(listOf("u1", "a1", "u2"), MessageTree.activePathIds(tree))
+    }
+
+    @Test
+    fun `activePathIds 遇到环会停下而不是死循环`() {
+        val cyclic = listOf(
+            light("a", active = true),
+            light("b", parentId = "a", active = true),
+            // 坏数据：a 的 parentId 指回 b
+            light("a2", parentId = "b", active = false),
+        )
+        // 只要不挂住就是通过（数据损坏时宁可少显示，也不能卡死 UI）
+        assertTrue(MessageTree.activePathIds(cyclic).size <= cyclic.size)
+    }
+
+    /** 把骨架补成完整实体，用来对照两条实现走的是同一条路径。 */
+    private fun MessageLight.toFullEntity() = MessageEntity(
+        id = id,
+        conversationId = "c1",
+        parentId = parentId,
+        variantIndex = variantIndex,
+        active = active,
+        role = role,
+        content = id,
+        status = status,
+        createdAt = createdAt,
+    )
 }

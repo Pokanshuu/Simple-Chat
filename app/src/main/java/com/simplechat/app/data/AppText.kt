@@ -4,6 +4,9 @@ import android.app.Application
 import androidx.annotation.BoolRes
 import androidx.annotation.StringRes
 import com.simplechat.app.R
+import com.simplechat.app.net.isRawNetworkError
+import com.simplechat.app.net.networkFailureRes
+import com.simplechat.app.net.serverErrorText
 
 /**
  * 非 composable 侧的取词入口。
@@ -75,10 +78,31 @@ class AppTextException(val text: AppText) : IllegalArgumentException("AppText(#$
 /**
  * 任何异常 → 一句能直接给用户看的话。
  *
- * [AppTextException] 走翻译；其余异常（OkHttp、IO、JSON……）的 `message`
- * 本来就是英文系统文案，原样透出，总比空着强。
+ * - [AppTextException] 走翻译；
+ * - **网络类异常**（`IOException` / `SocketException` / 超时 / 断网 / 流被重置）
+ *   翻成人话。它们的 `message` 是 OkHttp 或系统 socket 的英文原文：
+ *   `Software caused connection abort`、`stream was reset: INTERNAL_ERROR` ——
+ *   用户既看不懂，也不知道该不该重试（真机截图反馈，v1.1.3 仍是原文上屏）；
+ * - 其它异常保留 `message`：那多半是我们自己的解析/断言错误，排查时要原文。
  */
 fun Throwable.userMessage(): String = when (this) {
     is AppTextException -> text.resolve()
+    is java.io.IOException -> Res.get(networkFailureRes(this))
     else -> message?.takeIf { it.isNotBlank() } ?: Res.get(R.string.error_unknown)
+}
+
+/**
+ * **历史消息里存着的**错误文案 → 人话。
+ *
+ * v1.1.3 及以前，[userMessage] 会把异常原文直接落库，于是旧会话里躺着
+ * `Software caused connection abort`、`stream was reset: INTERNAL_ERROR` 这类英文。
+ * 新版本不再产生它们，但**旧数据还在** —— 读回来时顺手翻一下：
+ * 只改显示、不改库（万一以后要排查，原文仍在库里）。
+ */
+fun storedErrorText(raw: String): String {
+    val text = raw.trim()
+    if (text.isEmpty()) return text
+    if (isRawNetworkError(text)) return Res.get(R.string.error_network_interrupted)
+    // 服务商侧原文（`No available channel for model …` 等）也一并翻；认不出原样返回
+    return serverErrorText(text)
 }

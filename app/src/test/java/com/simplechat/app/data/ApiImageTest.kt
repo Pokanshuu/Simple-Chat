@@ -3,6 +3,7 @@ package com.simplechat.app.data
 import java.util.Base64
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -13,6 +14,10 @@ import org.junit.Test
  * 这一层错了的表现最隐蔽也最贵：服务端只回一句
  * `You have uploaded an unsupported image`，而这个会话**每一轮**都会失败
  * （坏图在历史里，每轮都要重发）。所以按纯函数把判定钉死。
+ *
+ * 注意：JVM 单测里 `android.graphics.BitmapFactory` 是 stub（构造 `Options` 就抛
+ * "not mocked"），所以这些用例**不依赖**真实解码：格式靠文件头判断，尺寸靠
+ * [ApiImage.prepare] 内部的纯头解析兜底；涉及转码的用例只断言"转不了码时的取舍"。
  */
 class ApiImageTest {
 
@@ -24,6 +29,48 @@ class ApiImageTest {
     private fun pngHeader() = bytes(0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D)
     private fun webpHeader() = ascii("RIFF") + bytes(0, 0, 0, 0) + ascii("WEBP")
     private fun isoBmff(brand: String) = bytes(0, 0, 0, 0x18) + ascii("ftyp") + ascii(brand) + bytes(0, 0, 0, 0)
+
+    private fun putBeInt(out: ByteArray, at: Int, value: Int) {
+        out[at] = (value ushr 24).toByte()
+        out[at + 1] = (value ushr 16).toByte()
+        out[at + 2] = (value ushr 8).toByte()
+        out[at + 3] = value.toByte()
+    }
+
+    /**
+     * 带**真实 IHDR 尺寸**的 PNG 文件头。
+     *
+     * 光有 8 字节签名不够：[ApiImage.prepare] 要从头里读宽高来判断是否超限，
+     * 读不出尺寸的图会被当成损坏而丢弃（这本身就是要测的行为），
+     * 所以"能原样发"的测试图必须是一个尺寸可解析的 PNG。
+     */
+    private fun pngOfSize(width: Int, height: Int): ByteArray {
+        val out = ByteArray(24)
+        pngHeader().copyInto(out)
+        "IHDR".forEachIndexed { i, c -> out[12 + i] = c.code.toByte() }
+        putBeInt(out, 16, width)
+        putBeInt(out, 20, height)
+        return out
+    }
+
+    /** 带 SOF0 的最小 JPEG 头（段里**先高后宽**，与 `ImageSize` 的解析口径一致）。 */
+    private fun jpegOfSize(width: Int, height: Int): ByteArray {
+        val out = ByteArray(16)
+        out[0] = 0xFF.toByte()
+        out[1] = 0xD8.toByte() // SOI
+        out[2] = 0xFF.toByte()
+        out[3] = 0xC0.toByte() // SOF0
+        out[4] = 0x00.toByte()
+        out[5] = 17.toByte() // 段长（解析时按它跳过本段）
+        out[6] = 8.toByte() // 精度
+        out[7] = (height ushr 8).toByte()
+        out[8] = height.toByte()
+        out[9] = (width ushr 8).toByte()
+        out[10] = width.toByte()
+        return out
+    }
+
+    // ── 格式判定（行为不变） ─────────────────────────────
 
     @Test
     fun `按文件头识别四种服务端支持的格式`() {
@@ -70,9 +117,42 @@ class ApiImageTest {
         assertEquals("image/webp", ApiImage.legalMediaType("IMAGE/WEBP"))
     }
 
+    // ── 尺寸上限（本次修复新增） ─────────────────────────
+
+    @Test
+    fun `尺寸上限边界：单边都不超过 4096 才放行`() {
+        // 官方限制是单边 ≤8192，但一次请求带 ≥15 张图时降到 4096。
+        // 调用方整理单张图时拿不到本轮总张数，所以统一按 4096 这个保守值判定：
+        // 多转码一次只损失一点清晰度，判错则是整轮请求 400。
+        assertFalse(ApiImage.exceedsDimensionLimit(4096, 4096))
+        assertFalse(ApiImage.exceedsDimensionLimit(4096, 1000))
+        assertFalse(ApiImage.exceedsDimensionLimit(1600, 900))
+
+        assertTrue(ApiImage.exceedsDimensionLimit(4097, 1000))
+        assertTrue(ApiImage.exceedsDimensionLimit(1000, 4097))
+        // 6000×4000 的像素数（24M）其实没超过 30M，靠的是单边规则 —— 必须命中
+        assertTrue(ApiImage.exceedsDimensionLimit(6000, 4000))
+        assertTrue(ApiImage.exceedsDimensionLimit(8192, 8192))
+        assertTrue(ApiImage.exceedsDimensionLimit(16_384, 1024))
+    }
+
+    @Test
+    fun `尺寸为 0 或负数一律当超限`() {
+        // 尺寸必须是正数：0 / 负数只可能来自解析失败或伪造的文件头。
+        // 这种图"无法证明尺寸合规"，必须走转码或丢弃，不能从快路径漏出去 ——
+        // 否则又回到"魔数对但内容是坏的"那条被服务端拒的老路。
+        assertTrue(ApiImage.exceedsDimensionLimit(0, 0))
+        assertTrue(ApiImage.exceedsDimensionLimit(0, 1000))
+        assertTrue(ApiImage.exceedsDimensionLimit(1000, 0))
+        assertTrue(ApiImage.exceedsDimensionLimit(-1, 1000))
+        assertTrue(ApiImage.exceedsDimensionLimit(1000, -1))
+    }
+
+    // ── prepare 的取舍（JVM 里 BitmapFactory 是 stub，转码必然失败） ──
+
     @Test
     fun `小图原样发送，不做有损转码`() {
-        val png = pngHeader() + ByteArray(1024) { it.toByte() }
+        val png = pngOfSize(100, 100) + ByteArray(1024) { it.toByte() }
         val prepared = ApiImage.prepare(png)!!
         assertEquals("image/png", prepared.mediaType)
         assertTrue("小图不该被转码", !prepared.transcoded)
@@ -88,5 +168,53 @@ class ApiImageTest {
     fun `认不出来的内容转不了码就放弃，而不是发个坏的出去`() {
         // JVM 里没有 BitmapFactory，转码必然失败 —— 正好验证"失败就返回 null"这条底线
         assertNull(ApiImage.prepare(ascii("not an image at all")))
+    }
+
+    @Test
+    fun `尺寸超限的合法图片不会被原样透传`() {
+        // 9000×9000 的 PNG 头 + 少量填充：文件只有 ~2KB，旧逻辑会因为"格式合法 + 体积小"
+        // 原样发出去，然后被服务端按尺寸拒 —— 这正是这次要修的 bug。
+        // JVM 里没有 BitmapFactory，转码必然失败，所以这里返回 null（真机上会缩成 1600 的 JPEG）。
+        val huge = pngOfSize(9000, 9000) + ByteArray(2048) { it.toByte() }
+        assertNull(ApiImage.prepare(huge))
+    }
+
+    @Test
+    fun `尺寸超限且体积也超限的图片同样不会原样发`() {
+        // 体积那条阈值挡不住它（>1.5MB 本来就要转码），尺寸那条必须继续挡：转码失败后
+        // 不允许退回"原样发合法格式但超尺寸的图"
+        val huge = pngOfSize(8192, 8192) + ByteArray(1_600_000) { (it * 31).toByte() }
+        assertNull(ApiImage.prepare(huge))
+    }
+
+    @Test
+    fun `头坏掉的合法魔数图片会被丢掉，不会每轮重发`() {
+        // 只有 PNG 签名、IHDR 是乱的：detect 会认成 PNG，但尺寸解不出来 → 当损坏处理。
+        // 旧逻辑会把它原样发出去，服务端 400，而它躺在历史里，每轮都失败。
+        val brokenPng = pngHeader() + ByteArray(4096) { 0x41 }
+        assertNull(ApiImage.prepare(brokenPng))
+    }
+
+    @Test
+    fun `体积大但尺寸合规的图，转码失败时可以原样发`() {
+        // 转码失败时允许原样发的唯一情况：格式合法 + 尺寸已知且合规 + 体积合规。
+        // 能走到这里的合法格式图实际上只有"体积 > 1.5MB 但尺寸合规"这一档
+        // （小图在快路径就返回了）。JVM 里转码必定失败，正好把这条分支钉住。
+        val png = pngOfSize(1600, 900) + ByteArray(1_600_000) { (it * 17).toByte() }
+        val prepared = ApiImage.prepare(png)!!
+        assertEquals("image/png", prepared.mediaType)
+        assertFalse(prepared.transcoded)
+        assertArrayEquals(png, Base64.getDecoder().decode(prepared.base64))
+    }
+
+    @Test
+    fun `JPEG 也按头里的真实尺寸判断`() {
+        val small = jpegOfSize(800, 600) + ByteArray(512) { it.toByte() }
+        val prepared = ApiImage.prepare(small)!!
+        assertEquals("image/jpeg", prepared.mediaType)
+        assertFalse(prepared.transcoded)
+
+        val huge = jpegOfSize(8192, 4321) + ByteArray(512) { it.toByte() }
+        assertNull(ApiImage.prepare(huge))
     }
 }

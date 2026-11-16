@@ -105,6 +105,21 @@ interface ConversationDao {
 }
 
 /**
+ * 一条消息的**骨架**（见 `MessageDao.getLightFor`）。
+ *
+ * 刻意只有这几列：判断"当前分支是哪条"不需要正文与附件。
+ */
+data class MessageLight(
+    val id: String,
+    val parentId: String,
+    val variantIndex: Int,
+    val active: Boolean,
+    val role: String,
+    val status: String,
+    val createdAt: Long,
+)
+
+/**
  * 搜索命中：会话 + 命中的那条消息正文。
  *
  * [snippet] 为 null 表示只有**标题**命中，没有正文片段可显示。
@@ -156,6 +171,51 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages WHERE id = :id")
     suspend fun findById(id: String): MessageEntity?
+
+    /**
+     * 一个会话里所有消息的**骨架**：只读判活路径需要的几列。
+     *
+     * ### 为什么打开会话要先读一遍它
+     *
+     * 打开长会话最贵的不是"走树"，而是**把不需要的消息正文读出来**：
+     * 一条分支被重新生成过 5 次，树上就有 5 条回复，而界面上只显示其中一条；
+     * 每次 `SELECT *` 都把这 5 条的正文（还带 `attachments` / `timeline` 两段 JSON）
+     * 全读进内存。几十条消息看不出差别，几千条的会话就是几十兆 —— 真机上
+     * 表现是"点进去转半天，甚至闪退"。
+     *
+     * 先读骨架（每行只有几十字节）→ 在内存里走出活跃路径 → 只按 id 取那几条的正文。
+     * 被放弃的分支因此**一次都不会被读出来**。
+     */
+    @Query(
+        """
+        SELECT id, parentId, variantIndex, active, role, status, createdAt
+        FROM messages WHERE conversationId = :conversationId
+        """,
+    )
+    suspend fun getLightFor(conversationId: String): List<MessageLight>
+
+    /** 按 id 批量取整条消息（活跃路径上的那些）。 */
+    @Query("SELECT * FROM messages WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<String>): List<MessageEntity>
+
+    /**
+     * 同 [getByIds]，但把 `attachments` 截断到 [cap] 字符。
+     *
+     * **兜底用**：老数据里的图片是内联 base64，单行可能超过 `CursorWindow` 的 2MB，
+     * 那样整条会话都读不出来。截断之后那一行的附件解析会失败，按约定当"没有附件"，
+     * 至少正文、思考、时间线都还在，会话能打开。
+     */
+    @Query(
+        """
+        SELECT id, conversationId, parentId, variantIndex, active, role, content,
+               substr(attachments, 1, :cap) AS attachments,
+               reasoning, status, errorMessage, model, excluded,
+               thinkingMs, ttftMs, tps, tokens_in, tokens_out,
+               timeline, stopReason, createdAt
+        FROM messages WHERE id IN (:ids)
+        """,
+    )
+    suspend fun getByIdsCapped(ids: List<String>, cap: Int): List<MessageEntity>
 
     /** 同父兄弟里的下一个版本号。 */
     @Query(
@@ -280,6 +340,16 @@ interface MessageDao {
 
     @Query("SELECT id FROM messages WHERE id = :id")
     suspend fun findExistingId(id: String): String?
+
+    /**
+     * 一条会话的全部消息 id（只读一列，**不碰正文与附件**）。
+     *
+     * 导入时用来判重：逐条 `findExistingId` 是 N 次查询，几万条消息就是几万次
+     * Binder/游标开销；先取一份 id 集合再在内存里比对，代价与消息条数线性相关，
+     * 单次查询就能完成。
+     */
+    @Query("SELECT id FROM messages WHERE conversationId = :conversationId")
+    suspend fun idsFor(conversationId: String): List<String>
 }
 
 @Dao

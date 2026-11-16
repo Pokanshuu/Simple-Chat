@@ -65,7 +65,7 @@ internal fun messageIndexPreview(
     message: UiMessage,
     labels: MessageIndexLabels = MessageIndexLabels(),
 ): String {
-    val text = message.content.trim()
+    val text = message.content.take(PreviewSourceChars).trim()
     if (text.isNotEmpty()) return text
 
     val attachments = message.attachments
@@ -76,3 +76,12 @@ internal fun messageIndexPreview(
         else -> labels.file(attachments.first().name)
     }
 }
+
+/**
+ * 生成预览时最多看正文开头多少字。
+ *
+ * 预览只显示一行（`maxLines = 1`），但早先是 `content.trim()` ——
+ * 一条几万字的用户消息会**复制一份全文**再丢掉；长会话里打开一次索引就是几十兆的
+ * 垃圾分配。先截断再 trim，语义不变（trim 只影响首尾空白）。
+ */
+private const val PreviewSourceChars = 240

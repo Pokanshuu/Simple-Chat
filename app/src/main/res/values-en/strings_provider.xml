@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  English copy for provider-reported errors.
+  Kept 1:1 with `values/strings_provider.xml` — same keys, same order.
+
+  House style (same as values-en/strings.xml): sentence case, no contractions,
+  no trailing periods. The leading space in `error_provider_raw` and the trailing
+  space in `error_provider_separator` are quoted so aapt keeps them.
+-->
+<resources>
+    <!-- The upstream has no channel assigned for this model (common on OpenCode Zen / relays) -->
+    <string name="error_provider_no_channel">This provider has no channel available for that model right now. Try another model, switch to the official endpoint, or retry later</string>
+
+    <!-- Auth rejected: bad key, disabled key, or risk-control restriction (e.g. `Authentication Fails (governor)`) -->
+    <string name="error_provider_auth">The provider rejected the credentials: the API key is invalid or disabled, or the account is restricted. Check the key, or use Test connection in Settings to verify it</string>
+
+    <!-- Out of quota / balance -->
+    <string name="error_provider_quota">The account is out of quota. Top up or switch to another key</string>
+
+    <!-- Rate limited -->
+    <string name="error_provider_rate_limit">Too many requests. Wait a moment and retry</string>
+
+    <!-- Unknown model / model name mismatch -->
+    <string name="error_provider_model_not_found">The provider does not have this model. Switch models or double-check the Base URL</string>
+
+    <!-- Context window exceeded -->
+    <string name="error_provider_context_length">This turn exceeds the model context limit. Compact the context or remove attachments</string>
+
+    <!-- Diagnostic detail kept for troubleshooting; %1$s is truncated to 300 characters in code -->
+    <string name="error_provider_raw">" (server said: %1$s)"</string>
+
+    <!-- Joins hint segments; English uses a half-width colon plus a space -->
+    <string name="error_provider_separator">": "</string>
+</resources>

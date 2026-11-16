@@ -237,7 +237,17 @@ object ExternalBackup {
         }
     }
 
-    /** 真正的 ZIP 解析：只看中央目录，不复制、不整包读。 */
+    /**
+     * 真正的 ZIP 解析：只看中央目录，不复制、不整包读。
+     *
+     * ⚠️ **这里刻意不认 DeepSeek 官方导出**。
+     *
+     * 它单条会话可以几十 MB，必须走"两遍流式 + 边读边写库"（`DeepSeekHistory.open`
+     * 产出 `ImportSession`），而这个函数返回的是**整包建好**的 `BackupFile` —— 在这里
+     * 收下它，等于把几十 MB 的正文一次性攒进内存，又回到"长会话导入不了"。
+     * 所以 DeepSeek 归档在 `ChatRepository.importExternal` 里就被单独接管了，
+     * 根本不会走到这里。
+     */
     private fun parseZip(zip: ZipFile, naming: ImportNaming, onProgress: (Float) -> Unit): Parsed {
                 /*
                  * 先认**自己的**归档（`manifest.format = simplechat-archive`）：
@@ -249,36 +259,6 @@ object ExternalBackup {
                  */
                 val ours = readOwnArchive(zip)
                 if (ours != null) return Parsed(Source.SIMPLE_CHAT, ours)
-
-                /*
-                 * DeepSeek 官方导出：`manifest.json` 里是 `export_format_version`，
-                 * 与另外两种的 `format` 字段**天然不冲突**，但仍排在自家之后、
-                 * Chatbox 之前 —— 顺序只影响"同一份包被谁认领"，不存在歧义时无所谓。
-                 */
-                val deepSeekFailures = mutableListOf<ImportFailure>()
-                var deepSeekDroppedImages = 0
-                val deepSeek = DeepSeekHistory.open(
-                    zip = zip,
-                    naming = naming,
-                    onProgress = onProgress,
-                    onFailure = { deepSeekFailures += it },
-                    onImageDropped = { deepSeekDroppedImages++ },
-                )
-                if (deepSeek != null) {
-                    return Parsed(
-                        source = Source.DEEPSEEK,
-                        file = BackupFile(
-                            exportedAt = System.currentTimeMillis(),
-                            conversations = deepSeek.toList(),
-                        ),
-                        // 分支从 v1.1.1 起整棵保留（见 DeepSeekHistory.mapSession），
-                        // 所以这里**不再**挂"只导入了当前分支"那条提示
-                        warnings = listOf(AppText.of(R.string.warn_deepseek_limited)),
-                        expected = deepSeek.expected,
-                        failures = deepSeekFailures,
-                        droppedImages = deepSeekDroppedImages,
-                    )
-                }
 
                 val manifestEntry = zip.getEntry("manifest.json")
                     ?: throw AppTextException(R.string.err_no_manifest)

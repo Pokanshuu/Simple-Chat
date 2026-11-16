@@ -35,6 +35,27 @@ object MessageTree {
         siblingCountsOf(all.map { it.parentId })
 
     /**
+     * 同 [activePath]，但只吃**骨架**（[MessageLight]）并只返回 id。
+     *
+     * 打开长会话时先读骨架（每行几十字节）走出路径，再按 id 只取这条路径的正文 ——
+     * 被放弃的分支因此一次都不会被读出来（见 `ChatRepository.loadActivePath`）。
+     */
+    fun activePathIds(all: List<MessageLight>): List<String> {
+        val byParent = all.groupBy { it.parentId }
+        val path = ArrayList<String>()
+        val visited = HashSet<String>()
+
+        var parentId: String = MessageEntity.ROOT_PARENT
+        while (true) {
+            val next = byParent[parentId]?.firstOrNull { it.active } ?: break
+            if (!visited.add(next.id)) break
+            path += next.id
+            parentId = next.id
+        }
+        return path
+    }
+
+    /**
      * 同上，但只吃 `parentId` 列表。
      *
      * 给数据库用：数版本号不需要把整条消息（可能带着图片 base64）读出来。

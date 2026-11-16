@@ -1,9 +1,11 @@
 package com.simplechat.app.ui.chat
 
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -39,12 +41,13 @@ import com.simplechat.app.net.ReplyBlock
 import com.simplechat.app.net.StreamEvent
 import com.simplechat.app.net.anthropic.AnthropicRequest
 import com.simplechat.app.net.headersFor
-import androidx.compose.runtime.derivedStateOf
+import com.simplechat.app.net.serverErrorText
 import java.util.UUID
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -66,6 +69,14 @@ import kotlinx.coroutines.withContext
  */
 /** 换会话时后台预热的尾部消息条数：贴底打开先看到的就是这几条。 */
 private const val WarmTailMessages = 10
+
+/**
+ * 预热时单条消息的长度上限。
+ *
+ * 一条几万字的消息解析要几百毫秒；替它预热不会让首屏更快（列表本身也要等它排版），
+ * 只会把后台线程占满、拖慢真正该快的那几条。
+ */
+private const val WarmTailMaxChars = 24_000
 
 class ChatViewModel(
     private val chatApi: ChatApi,
@@ -275,6 +286,26 @@ class ChatViewModel(
         }
 
         /*
+         * 上下文统计：消息 / 设置 / 预设 / 压缩任何一个变了就重算，
+         * 但**防抖 + 后台线程**（原因见 contextStats 的说明）。
+         *
+         * 用 `collectLatest` + `delay` 而不是 `debounce`：后者是 FlowPreview API，
+         * 而这里要的语义就是"新输入来了就取消上一次等待"，两行代码说清楚。
+         *
+         * ⚠️ 这个 init 块**必须声明在 `settings` 等状态之后**：Kotlin 按声明顺序
+         * 初始化属性，而 `Main.immediate` 的 `launch` 会当场执行到第一个挂起点 ——
+         * 放在前面会读到还没赋值的委托（真机表现为启动即 NPE）。
+         */
+        viewModelScope.launch {
+            snapshotFlow { StatsInput(messages.toList(), settings, presets, compaction) }
+                .collectLatest { input ->
+                    delay(ContextStatsDebounceMs)
+                    val stats = withContext(Dispatchers.Default) { computeContextStats(input) }
+                    contextStats = stats
+                }
+        }
+
+        /*
          * 启动时**不恢复上次打开的会话**，一律停在「新对话」。
          *
          * 早先是恢复的，代价是：每次打开 App 都直接落进上一次那段对话里，
@@ -401,9 +432,11 @@ class ChatViewModel(
              * 转圈因此是顺的。
              */
             withContext(Dispatchers.Default) {
-                loaded.asReversed().take(WarmTailMessages).forEach { message ->
-                    warmMarkdownCache(message.content)
-                }
+                loaded.asReversed()
+                    .take(WarmTailMessages)
+                    // 超长消息不预热：解析它本身就要几百毫秒，预热只会把后台线程占满
+                    .filter { it.content.length <= WarmTailMaxChars }
+                    .forEach { message -> warmMarkdownCache(message.content) }
             }
 
             if (generation != switchGeneration) return@launch
@@ -733,7 +766,8 @@ class ChatViewModel(
                             compactPreview = collected.toString()
                         }
 
-                        is StreamEvent.Error -> failure = event.message
+                        // 流内错误对象是**上游网关原文**：先翻成人话，认不出才保留原文
+                        is StreamEvent.Error -> failure = serverErrorText(event.message)
                         else -> Unit
                     }
                 }
@@ -791,11 +825,51 @@ class ChatViewModel(
     /**
      * 当前会话的上下文占用与性能统计。
      *
-     * 用 `derivedStateOf` 缓存：流式期间每 50ms 就会重组一次，
-     * 若每次都对全部消息重扫一遍，长会话里会白白吃掉帧预算。
+     * ### 为什么不用 `derivedStateOf`
+     *
+     * 这段统计要**扫一遍全部消息的正文**来估 token。写成 `derivedStateOf` 时它依赖
+     * `messages` 这个快照列表 —— 而流式期间列表每 16ms 就变一次，于是它每帧都把
+     * 整条会话重新扫一遍（三十万 token 的会话 ≈ 每帧几十万字符 + 若干次全量 map）。
+     * 真机表现就是：长会话里一开始生成，整个界面就发涩、滑不动。
+     *
+     * 现在改成 `snapshotFlow` + 防抖 + 后台线程：输入栏上那行统计晚几百毫秒更新
+     * 完全无所谓，而主线程不再为它做任何与正文长度相关的工作。
      */
-    val contextStats: ContextStats by derivedStateOf {
-        val active = compaction
+    var contextStats by mutableStateOf(emptyContextStats())
+        private set
+
+    private fun emptyContextStats() = ContextStats(
+        usedTokens = 0,
+        windowTokens = settings.model.contextWindow,
+        messageCount = messages.size,
+        totalTokens = 0,
+        compactedTokenSaving = 0,
+        avgTtftMs = null,
+        avgTps = null,
+        totalThinkingSeconds = null,
+        hasCompaction = compaction != null,
+    )
+
+    /**
+     * 统计的**输入快照**。
+     *
+     * 刻意做成一个 data class 而不是在 flow 里直接读各状态：`snapshotFlow` 用
+     * `equals` 判"有没有变"，这里一次读全，语义最清楚（消息 / 设置 / 预设 / 压缩
+     * 任何一项变了都要重算）。
+     */
+    @Immutable
+    private data class StatsInput(
+        val messages: List<UiMessage>,
+        val settings: ConversationSettings,
+        val presets: List<Preset>,
+        val compaction: CompactionEntity?,
+    )
+
+    private fun computeContextStats(input: StatsInput): ContextStats {
+        val messages = input.messages
+        val settings = input.settings
+        val presets = input.presets
+        val active = input.compaction
 
         // —— 实际会发给 API 的部分 ——
         val system = settings.composedSystemPrompt(presets)
@@ -815,7 +889,7 @@ class ChatViewModel(
         val tpsList = messages.mapNotNull { it.tps }
         val thinking = messages.mapNotNull { it.reasoningSeconds }
 
-        ContextStats(
+        return ContextStats(
             usedTokens = TokenEstimate.ofAll(inContext) + attachmentTokens,
             windowTokens = settings.model.contextWindow,
             messageCount = messages.size,
@@ -1181,7 +1255,9 @@ class ChatViewModel(
 
                             StreamEvent.Done -> Unit
 
-                            is StreamEvent.Error -> failure = event.message
+                            // 流内错误对象是**上游网关原文**（如 `No available channel …`）：
+                            // 先翻成人话，认不出才保留原文（见 `serverErrorText`）
+                            is StreamEvent.Error -> failure = serverErrorText(event.message)
 
                             // 块通道不该出现这两类增量；出现了说明通道配错，忽略
                             is StreamEvent.Content, is StreamEvent.Reasoning -> Unit
@@ -1231,7 +1307,9 @@ class ChatViewModel(
 
                             StreamEvent.Done -> Unit
 
-                            is StreamEvent.Error -> failure = event.message
+                            // 流内错误对象是**上游网关原文**（如 `No available channel …`）：
+                            // 先翻成人话，认不出才保留原文（见 `serverErrorText`）
+                            is StreamEvent.Error -> failure = serverErrorText(event.message)
 
                             // 块级事件只属于 Anthropic 通道；这条路径上忽略
                             else -> Unit
@@ -1659,6 +1737,14 @@ class ChatViewModel(
          */
         private const val SETTINGS_PERSIST_DEBOUNCE_MS = 400L
 
+        /**
+         * 上下文统计的更新防抖。
+         *
+         * 统计要扫全部正文估 token；流式期间消息每 16ms 变一次，逐次重算会把主线程
+         * 吃穿。输入栏上那行数字晚 250ms 更新，用户完全感知不到。
+         */
+        private const val ContextStatsDebounceMs = 250L
+
         /** 压缩时保留最近多少条完整消息。 */
         private const val KEEP_RECENT = 6
 
@@ -1694,4 +1780,6 @@ private fun String.toConversationModeSafe(): ConversationMode =
  * `internal` 是为了能单测 —— 取整边界是最容易写错、又最不容易被发现的地方。
  */
 internal fun thinkingSeconds(ms: Long): Long = ((ms + 500) / 1000).coerceAtLeast(1)
+
+
 

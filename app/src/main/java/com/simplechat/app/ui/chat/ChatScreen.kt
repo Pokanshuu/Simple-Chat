@@ -52,6 +52,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -127,6 +128,14 @@ private const val HugeMessageChars = 20_000
 
 /** 换会话时，慢过这么久才显示转圈 —— 短会话不该闪一下圈圈。 */
 private const val SpinnerDelayMs = 120L
+
+/**
+ * 预热 Markdown 解析时，尾部消息超过这么多字符就不预热。
+ *
+ * 预热的意义是"打开就能看到的那一条不用现场解析"；一条几万字的消息本身就要
+ * 几百毫秒解析，替它预热只会把后台线程占满、让真正的首屏更晚。
+ */
+private const val WarmTailMaxChars = 24_000
 
 /** 等新会话内容就位的兜底上限。超过就当它已经好了，不能让界面停在透明态。 */
 private const val SwitchLoadTimeoutMs = 2_000L
@@ -568,9 +577,16 @@ fun ChatScreen(
      * 消息索引的内容（§34.3）—— **快照**：只在会话或条数变化时重建，不在流式期间
      * 反复重算（§34.5）。预览文本在这里算完，别在组合里现算（每次重组跑一遍
      * `take(N)` 是白烧）。
+     *
+     * 放到**后台线程**算：它要遍历整条路径（长会话几千条），而这件事与"首帧能看到
+     * 消息"无关 —— 放在主线程上，正好和列表首次布局抢那一帧。
      */
-    val messageIndexEntries = remember(vm.currentConversationId, vm.messages.size) {
-        buildMessageIndexEntries(vm.messages)
+    val messageIndexEntries by produceState(
+        initialValue = emptyList<MessageIndexEntry>(),
+        vm.currentConversationId,
+        vm.messages.size,
+    ) {
+        value = withContext(Dispatchers.Default) { buildMessageIndexEntries(vm.messages) }
     }
 
     val density = LocalDensity.current
@@ -727,17 +743,21 @@ fun ChatScreen(
     /*
      * 预热 Markdown 解析缓存（**后台线程**）。
      *
-     * 解析改成同步之后（见 `MarkdownText` 的 MarkdownStateCache），一条长消息
-     * 第一次组合时会在**主线程**逐块解析 —— 这就是"加载时卡一点点"的来源。
-     * 这里在列表一变就把各条的块提前解析好，条目真正组合时只命中缓存。
+     * ⚠️ **只预热末尾这一条**，不是整个会话。
      *
-     * **从最新一条往前**：贴底打开时先看到的正是尾部那几条。
+     * 早先这里是 `vm.messages.asReversed().map { it.content }.forEach { warm(it) }` ——
+     * 而 effect 的 key 是 `messages.size`：**每来一条新消息，就把全部历史重新解析一遍**。
+     * 一千条的会话里，每轮回复都要在后台把上百万字重新解析一次，解析结果还因为缓存
+     * 容量被反复冲刷（见 `MarkdownStateCache`）。这正是"长会话越聊越卡"的直接原因之一。
+     *
+     * 真正需要的只有"贴底打开时立刻能看到的那一条"，其余交给惰性渲染：
+     * 滚进视口才解析，解析结果进 LRU 缓存。
      */
-    LaunchedEffect(vm.messages.size) {
-        val contents = vm.messages.asReversed().map { it.content }
-        withContext(Dispatchers.Default) {
-            contents.forEach { warmMarkdownCache(it) }
-        }
+    LaunchedEffect(vm.currentConversationId, vm.messages.size) {
+        val tail = vm.messages.lastOrNull() ?: return@LaunchedEffect
+        // 超长消息不预热：解析它本身就要几百毫秒，预热反而把后台线程占满
+        if (tail.content.length > WarmTailMaxChars) return@LaunchedEffect
+        withContext(Dispatchers.Default) { warmMarkdownCache(tail.content) }
     }
 
     /** 追加新消息后跟到底部（用户没离开时）。 */
@@ -1755,3 +1775,4 @@ private fun BannerBar(message: String, onDismiss: () -> Unit) {
         )
     }
 }
+

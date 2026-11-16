@@ -170,18 +170,63 @@ fun MarkdownText(
  * 再滚回来、或同一段文字出现在别处，都直接命中，不重复解析。
  * 键是**块文本**（切块后内容稳定），命中率很高。
  */
-private val MarkdownStateCache = HashMap<String, State>()
+/**
+ * 按**块文本**缓存的解析结果（LRU）。
+ *
+ * 键是切块后的文本（内容稳定），命中率很高：同一条消息滚出再滚回、
+ * 或同一段文字出现在别处，都直接命中。
+ *
+ * ### 为什么按"字符总量"淘汰，而不是按条数
+ *
+ * 早先是"条数上限 256，满了 `clear()` 整体丢弃"。两个问题：
+ *
+ * 1. **条数与内存无关**：一块可能是 20 个字的一行，也可能是 3 万字的长回复；
+ *    同样 256 条，后者占的内存是前者的上千倍。
+ * 2. **整体清空会抖动**：长会话滚动时，缓存满 → 全清 → 接下来每块都要重解析 →
+ *    又迅速填满 → 再全清。真机表现就是"长会话上下滑一顿一顿的"。
+ *
+ * 按字符总量做 LRU（访问序）淘汰：容量与内存成正比，且只淘汰最久没被用到的那些。
+ */
+private val MarkdownStateCache = LinkedHashMap<String, State>(128, 0.75f, true)
 
-/** 缓存上限。单块 AST 很小，256 足够覆盖几屏消息。 */
-private const val MarkdownStateCacheMax = 256
+/** 缓存里所有块文本的字符总数（与 [MarkdownStateCache] 一起在锁内维护）。 */
+private var cachedChars = 0
 
-/** 取（没有就同步解析）一段文本的 Markdown 状态。 */
-private fun markdownStateOf(text: String): State = synchronized(MarkdownStateCache) {
-    MarkdownStateCache[text] ?: parseMarkdown(text).also {
-        // 满了就整体丢弃 —— 简单、不会算错；重建的代价只是一次同步解析
-        if (MarkdownStateCache.size >= MarkdownStateCacheMax) MarkdownStateCache.clear()
-        MarkdownStateCache[text] = it
+/** 缓存上限：40 万字符 ≈ 十几条长回复的解析结果，够几屏用，又不会自己变成内存大头。 */
+private const val MarkdownStateCacheMaxChars = 400_000
+
+/**
+ * 取（没有就同步解析）一段文本的 Markdown 状态。
+ *
+ * ⚠️ **解析必须在锁外做**。
+ *
+ * 早先把 `parseMarkdown(text)` 写在 `synchronized` 块里，两个线程同时要解析时
+ * 后到的那个会**持锁等前一个解析完**。而解析一条长消息可能要几百毫秒到几秒：
+ * 主线程（组合时取缓存）等后台（预热）的锁 → 界面直接卡住。
+ * 真机反馈"同一个长会话第一次打开顺畅、第二次打开卡死"正是这个模式 ——
+ * 第一次缓存是空的、只有后台在解析；第二次后台与主线程同时进来抢锁。
+ *
+ * 现在改成：锁内只做查/存，解析在锁外。极端情况下同一段文本可能被解析两次
+ * （两个线程同时 miss），代价是一次重复解析，换来的是主线程永远不会被解析挡住。
+ */
+private fun markdownStateOf(text: String): State {
+    synchronized(MarkdownStateCache) {
+        MarkdownStateCache[text]?.let { return it }
     }
+    val state = parseMarkdown(text)
+    synchronized(MarkdownStateCache) {
+        // 另一个线程可能已经放进去了：以先到的那份为准，避免缓存里出现两份状态
+        MarkdownStateCache[text]?.let { return it }
+        MarkdownStateCache[text] = state
+        cachedChars += text.length
+        // 按"最久未使用"淘汰，直到回到预算内（至少留一条：这条刚解析完，马上要渲染）
+        while (cachedChars > MarkdownStateCacheMaxChars && MarkdownStateCache.size > 1) {
+            val eldest = MarkdownStateCache.keys.firstOrNull() ?: break
+            MarkdownStateCache.remove(eldest)
+            cachedChars -= eldest.length
+        }
+    }
+    return state
 }
 
 /**
@@ -240,8 +285,22 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
     // 引用条的颜色取自 `quote` 的 color，正文仍走 paragraph（官方就是灰竖线 + 正常正文色）
     val quoteStyle = bodyStyle.copy(color = colors.markdownQuoteBar)
 
-    // 行内代码的胶囊形状/留白只能由 ExtendedSpans 画（SpanStyle 不支持 padding）
-    val extendedSpans = markdownExtendedSpans { InlineCodeSpans }
+    // 行内代码的胶囊形状/留白只能由 ExtendedSpans 画（SpanStyle 不支持 padding）。
+    // ⚠️ 必须**每个块各建一个**：它内部持有 lastLayout 的绘制指令（可变状态），
+    // 全局共用一个实例时，A 块的指令会被画到 B 块上 —— 表现就是"公式/标题后面
+    // 莫名多出灰色方块"（真机反馈的浅灰 / 深灰色块）。
+    val extendedSpans = markdownExtendedSpans {
+        remember {
+            ExtendedSpans(
+                RoundedCornerSpanPainter(
+                    cornerRadius = 6.sp,
+                    padding = RoundedCornerSpanPainter.TextPaddingValues(horizontal = 4.sp, vertical = 1.sp),
+                    topMargin = 0.sp,
+                    bottomMargin = 0.sp,
+                ),
+            )
+        }
+    }
 
     CompositionLocalProvider(LocalBulletListHandler provides BulletMarkers) {
         Markdown(
@@ -320,21 +379,6 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
     )
     }
 }
-
-/**
- * 行内代码的胶囊：圆角 6 + 左右 4sp/上下 1sp 留白（官方 5px/6px，手机上调小一档）。
- *
- * 抽成常量而不是每次组合都 `remember`：`ExtendedSpans` 是 `@Stable` 的，
- * 内容不变就该是同一个实例 —— 否则每帧都会触发一次文本重排。
- */
-private val InlineCodeSpans = ExtendedSpans(
-    RoundedCornerSpanPainter(
-        cornerRadius = 6.sp,
-        padding = RoundedCornerSpanPainter.TextPaddingValues(horizontal = 4.sp, vertical = 1.sp),
-        topMargin = 0.sp,
-        bottomMargin = 0.sp,
-    ),
-)
 
 /** 大标题上方补白（见 [MarkdownBlockView]）。 */
 private fun headingTopGap(text: String): Dp {
