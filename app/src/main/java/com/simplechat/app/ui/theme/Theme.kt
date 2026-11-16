@@ -91,6 +91,16 @@ data class ChatColors(
     /** 长按菜单等浮层表面。 */
     val menuBackground: Color,
     /**
+     * Markdown 专用配色（对齐官方 Web 端的 token，见 [MarkdownCodeBgLight]）。
+     *
+     * 与 [fieldBackground] 分开是刻意的：输入框底色偏深一档才压得住，
+     * 而代码块/行内代码要更浅 —— 直接复用会让整段代码"发灰"。
+     */
+    val markdownCodeBlock: Color,
+    val markdownInlineCode: Color,
+    val markdownQuoteBar: Color,
+    val markdownRule: Color,
+    /**
      * 抽屉 / 弹层背后的遮罩。
      *
      * 放在这里而不是用 Material 的 `colorScheme.scrim`：那个值在两套主题下
@@ -115,6 +125,10 @@ private val LightChatColors = ChatColors(
     capsuleSelected = CapsuleSelectedLight,
     fieldBackground = FieldBgLight,
     menuBackground = MenuBgLight,
+    markdownCodeBlock = MarkdownCodeBgLight,
+    markdownInlineCode = MarkdownInlineCodeBgLight,
+    markdownQuoteBar = MarkdownQuoteBarLight,
+    markdownRule = MarkdownRuleLight,
     scrim = Color.Black.copy(alpha = 0.45f),
 )
 
@@ -134,6 +148,10 @@ private val DarkChatColors = ChatColors(
     capsuleSelected = CapsuleSelectedDark,
     fieldBackground = FieldBgDark,
     menuBackground = MenuBgDark,
+    markdownCodeBlock = MarkdownCodeBgDark,
+    markdownInlineCode = MarkdownInlineCodeBgDark,
+    markdownQuoteBar = MarkdownQuoteBarDark,
+    markdownRule = MarkdownRuleDark,
     scrim = Color.Black.copy(alpha = 0.62f),
 )
 

@@ -81,3 +81,18 @@ val WarningAmber = Color(0xFFD98A1F)
 val WarningAmberDark = Color(0xFFE8A33D)
 val FieldBgLight = Color(0xFFF2F3F5)
 val FieldBgDark = Color(0xFF232427)
+
+// ── Markdown（对齐官方 Web 端的配色 token）────────────────
+//
+// 官方 `markdown.css` 用了一组独立的格子里：代码块 `/neutral-bluish-50`、
+// 行内代码 `-100`、引用竖线 `label-caption(400)`、表格横线 `border-l2`。
+// 我们的 `fieldBackground` 是给输入框/胶囊用的，比官方的代码块底色深一档 ——
+// 直接拿它当代码块底色，整段代码会显得"发灰、压页面"。所以单独一组。
+val MarkdownCodeBgLight = Color(0xFFF9FAFB)
+val MarkdownCodeBgDark = Color(0xFF1B1B1C)
+val MarkdownInlineCodeBgLight = Color(0xFFEBEEF2)
+val MarkdownInlineCodeBgDark = Color(0xFF2A2B2F)
+val MarkdownQuoteBarLight = Color(0xFFADB2B8)
+val MarkdownQuoteBarDark = Color(0xFF81858C)
+val MarkdownRuleLight = Color(0x1A000000)
+val MarkdownRuleDark = Color(0x1FFFFFFF)

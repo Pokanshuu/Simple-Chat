@@ -6,21 +6,23 @@ import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -39,31 +41,40 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mikepenz.markdown.compose.LocalBulletListHandler
 import com.mikepenz.markdown.compose.components.MarkdownComponent
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.markdownComponents
+import com.mikepenz.markdown.compose.elements.MarkdownDivider
+import com.mikepenz.markdown.compose.elements.MarkdownTableBasicText
 import com.mikepenz.markdown.compose.elements.highlightedCodeBlock
 import com.mikepenz.markdown.compose.elements.highlightedCodeFence
 import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
 import com.mikepenz.markdown.compose.elements.MarkdownBulletList
 import com.mikepenz.markdown.compose.elements.MarkdownOrderedList
 import com.mikepenz.markdown.compose.elements.listDepth
+import com.mikepenz.markdown.compose.extendedspans.ExtendedSpans
+import com.mikepenz.markdown.compose.extendedspans.RoundedCornerSpanPainter
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
+import com.mikepenz.markdown.model.BulletHandler
 import com.mikepenz.markdown.model.State
+import com.mikepenz.markdown.model.markdownDimens
+import com.mikepenz.markdown.model.markdownExtendedSpans
 import com.mikepenz.markdown.model.markdownPadding
 import com.mikepenz.markdown.model.parseMarkdown
 import com.simplechat.app.R
 import com.simplechat.app.data.LocaleHelper
-import com.simplechat.app.ui.chat.preferHorizontalScroll
 import com.simplechat.app.ui.common.AppIcons
 import com.simplechat.app.ui.common.IconCircleButton
-import com.simplechat.app.ui.common.SoftShape
 import com.simplechat.app.ui.theme.CodeTextStyle
 import com.simplechat.app.ui.theme.LocalChatColors
 import com.simplechat.app.ui.theme.markdownBodyStyle
@@ -75,6 +86,11 @@ import com.simplechat.app.ui.theme.SimpleChatTypography
 import kotlin.math.ceil
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import org.intellij.markdown.ast.ASTNode
+import org.intellij.markdown.ast.findChildOfType
+import org.intellij.markdown.flavours.gfm.GFMElementTypes.HEADER
+import org.intellij.markdown.flavours.gfm.GFMElementTypes.ROW
+import org.intellij.markdown.flavours.gfm.GFMTokenTypes.CELL
 
 /**
  * AI 正文的 Markdown 渲染。
@@ -212,25 +228,64 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
     // 同步解析（见 MarkdownStateCache 的说明）：高度第一次测量就是真实的。
     val state = remember(text) { markdownStateOf(text) }
 
-    Markdown(
+    /*
+     * 符号与引用条的颜色跟主题走，**字号/行高必须与正文一致**：
+     * 库把符号与正文并排放在 Row 顶部，字号不同基线就错开
+     * （真机反馈：无序符号和正文不对齐、数字大一圈）。
+     */
+    val markerStyle = MarkdownMarkerStyle.copy(
+        color = colors.processText,
+        textAlign = TextAlign.End,
+    )
+    // 引用条的颜色取自 `quote` 的 color，正文仍走 paragraph（官方就是灰竖线 + 正常正文色）
+    val quoteStyle = bodyStyle.copy(color = colors.markdownQuoteBar)
+
+    // 行内代码的胶囊形状/留白只能由 ExtendedSpans 画（SpanStyle 不支持 padding）
+    val extendedSpans = markdownExtendedSpans { InlineCodeSpans }
+
+    CompositionLocalProvider(LocalBulletListHandler provides BulletMarkers) {
+        Markdown(
         state,
-        modifier = modifier,
+        // 大标题（h1–h3）上方补白：官方 32px，块间距已给 16dp，这里再补 16dp
+        modifier = modifier.padding(top = headingTopGap(text)),
         colors = markdownColor(
             text = scheme.onBackground,
-            codeBackground = colors.fieldBackground,
-            inlineCodeBackground = colors.fieldBackground,
-            dividerColor = colors.divider,
-            tableBackground = colors.card,
+            codeBackground = colors.markdownCodeBlock,
+            inlineCodeBackground = colors.markdownInlineCode,
+            dividerColor = colors.markdownRule,
+            // 官方表格没有整块底色，只有行间横线；这里也不画卡片
+            tableBackground = Color.Transparent,
         ),
         /*
-         * ⚠️ **不能置 0。**
+         * 段落间距：官方 `margin: 16px 0`（相邻段落折叠后仍是 16px）。
          *
-         * 实测：置 0 之后段落间距从 108px 掉到 36px，段落会明显挤在一起。
-         * 库把它当成**每个元素自己的下边距**，切块后每块只有一个元素，
-         * 库原先在元素之间给的那层外边距就不出现了 —— 缺口由外层 Column
-         * （[MarkdownBlockColumnGap]）补回。完整对照表见 [MarkdownBlockGap]。
+         * 分块渲染之后这 16dp 由**外层 Column**（[MarkdownBlockColumnGap]）统一给，
+         * 库自己那一层置 0 —— 两边都给就叠成 24dp，长文读起来"一段一段断开"。
          */
-        padding = markdownPadding(block = MarkdownBlockGap),
+        padding = markdownPadding(
+            block = 0.dp,
+            // 列表：官方 ul/ol 上下 16px（外层 Column 已给）、项距 6px、缩进 18px/层
+            list = 0.dp,
+            listItemTop = 0.dp,
+            listItemBottom = 6.dp,
+            listIndent = 18.dp,
+            codeBlock = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            // 引用：官方 border-left 2px + padding-left 14px，没有额外上下内边距
+            blockQuote = PaddingValues(start = 16.dp),
+            blockQuoteText = PaddingValues(0.dp),
+            blockQuoteBar = PaddingValues.Absolute(left = 0.dp, right = 0.dp),
+        ),
+        dimens = markdownDimens(
+            dividerThickness = 1.dp,
+            codeBackgroundCornerSize = CodeBlockCornerRadius,
+            blockQuoteThickness = 2.dp,
+            // 官方单元格 10/16 的内边距；库只支持统一值，取中间 12dp 近似
+            tableCellPadding = 12.dp,
+            // 列宽是库的"等宽列"参数：官方按内容宽度排，库做不到，取小一点让两列表格不发散
+            tableCellWidth = 120.dp,
+            tableCornerSize = 0.dp,
+        ),
+        extendedSpans = extendedSpans,
         typography = markdownTypography(
             h1 = MarkdownHeadingStyles[0],
             h2 = MarkdownHeadingStyles[1],
@@ -241,59 +296,67 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
             // 正文与流式阶段用**同一个**样式，否则定稿瞬间字号会跳一下
             text = bodyStyle,
             paragraph = bodyStyle,
-            quote = bodyStyle,
-            ordered = MarkdownMarkerStyle,
-            bullet = MarkdownMarkerStyle,
+            quote = quoteStyle,
+            ordered = markerStyle,
+            bullet = markerStyle,
             list = bodyStyle,
             table = MarkdownTableStyle,
             code = CodeTextStyle,
-            // 这两个曾经是 `XxxStyle.copy(fontSize = 15.sp)` —— 写死的字号
-            // 不跟着全局基准走，改字号时必然漏掉。现在都从 Typography 派生。
             inlineCode = MarkdownInlineCodeStyle,
             alertTitle = SimpleChatTypography.titleSmall,
-            textLink = TextLinkStyles(
-                style = SpanStyle(
-                    color = scheme.primary,
-                    textDecoration = TextDecoration.Underline,
-                ),
-            ),
+            // 官方链接：品牌色、默认无下划线（悬停才加）。移动端没有 hover，
+            // 下划线常驻会让中文正文里到处是"着重线"，很吵。
+            textLink = TextLinkStyles(style = SpanStyle(color = scheme.primary)),
         ),
         components = markdownComponents(
             codeFence = collapsibleCodeFence,
             codeBlock = highlightedCodeBlock,
-            table = scrollableTable,
+            table = adaptiveTable,
             unorderedList = bulletList,
             orderedList = orderedList,
             checkbox = taskCheckbox,
+            horizontalRule = spacedHorizontalRule,
         ),
     )
+    }
 }
 
 /**
- * 块间距（**库内那一层**）：每个元素自己的下边距。
+ * 行内代码的胶囊：圆角 6 + 左右 4sp/上下 1sp 留白（官方 5px/6px，手机上调小一档）。
  *
- * ⚠️ 它和 [MarkdownBlockColumnGap] 是**两个来源、叠加生效**，改一个必须一起看。
- * 实测（同一会话同一段落序列，密度 3.0）：
- *
- * | 配置 | 段落间距 |
- * |---|---|
- * | 改造前（整篇一次渲染） | 108px |
- * | 切块 + `block = 0` + Column 12dp | 36px ← 段落会明显挤在一起 |
- * | 切块 + `block = 12dp` + Column 12dp | 72px |
- * | 切块 + `block = 12dp` + Column 24dp | 108px ✓ |
- *
- * 差的那一层来自库的**段落元素自身外边距**：整篇渲染时它出现在元素之间，
- * 切块之后每块只有一个元素，它就不再出现了 —— 只能由外层 Column 补回来。
- *
- * 取约两行高：够看出"分段了"，又不会把一段正文拆得七零八落。
- * 想更紧凑，把这两个常量按 1:2 一起调小即可。
- *
- * 当前 8dp + 16dp = 24dp（约 72px）：真机核对时把原先的 12dp + 24dp
- * 一起收紧了一档 —— 那一档是"与改造前一致"的中立值，但聊天界面里偏空。
+ * 抽成常量而不是每次组合都 `remember`：`ExtendedSpans` 是 `@Stable` 的，
+ * 内容不变就该是同一个实例 —— 否则每帧都会触发一次文本重排。
  */
-internal val MarkdownBlockGap = 8.dp
+private val InlineCodeSpans = ExtendedSpans(
+    RoundedCornerSpanPainter(
+        cornerRadius = 6.sp,
+        padding = RoundedCornerSpanPainter.TextPaddingValues(horizontal = 4.sp, vertical = 1.sp),
+        topMargin = 0.sp,
+        bottomMargin = 0.sp,
+    ),
+)
 
-/** 块间距（**外层 Column 那一层**），见 [MarkdownBlockGap] 的实测表。 */
+/** 大标题上方补白（见 [MarkdownBlockView]）。 */
+private fun headingTopGap(text: String): Dp {
+    val firstLine = text.trimStart()
+    return if (
+        firstLine.startsWith("# ") || firstLine.startsWith("## ") || firstLine.startsWith("### ")
+    ) {
+        16.dp
+    } else {
+        0.dp
+    }
+}
+
+/**
+ * 块间距（**外层 Column 那一层**）：块与块之间统一 16dp。
+ *
+ * 官方 Markdown 的段落是 `margin: 16px 0`，相邻段落折叠后仍是 16px。
+ * 分块渲染之后，库内那层（`markdownPadding.block`）**置 0**，
+ * 全部由这里给 —— 否则两份叠加成 24dp，长文读起来"一段一段断开"。
+ *
+ * 唯一例外是大标题（h1–h3）：官方上边距 32px，见 [headingTopGap] 补的那 16dp。
+ */
 private val MarkdownBlockColumnGap = 16.dp
 
 /**
@@ -442,49 +505,164 @@ private val CollapsedCodeHeight = 300.dp
  * 表现就是**展开/收起点了没反应**（本来就没被裁掉，展开自然没变化）。
  */
 /**
- * 表格：包一层横向滚动。
+ * 水平分割线：官方 `margin: 32px 0`。
  *
- * 库的表格按内容自然宽度排版，列多或单元格文字长时会超出屏幕被截断，
- * 窄屏尤其明显。包一层 `horizontalScroll` 之后表格按自然宽度布局、由手势
- * 横向查看，不再截断。
- *
- * `horizontalScroll` 会把子项的宽度约束放开，表格才拿得到"自然宽度" ——
- * 外面不能再套一层会收缩宽度的容器。
- *
- * 只包一层、其余一律走库的默认实现，视觉与改造前一致。
+ * 外层 Column 已经给 16dp，块内再补 16dp —— 上下各 32dp。
  */
-private val scrollableTable: MarkdownComponent = { model ->
-    Box(
-        Modifier
-            // 横滚优先于消息索引的左滑（§34.4）
-            .preferHorizontalScroll()
-            .horizontalScroll(rememberScrollState()),
-    ) {
-        baseComponents.table(model)
+private val spacedHorizontalRule: MarkdownComponent = { _ ->
+    Column {
+        Spacer(Modifier.height(16.dp))
+        MarkdownDivider()
+        Spacer(Modifier.height(16.dp))
     }
 }
 
-/** 库的默认组件集：给"只包一层、其余不动"的场合用。 */
-private val baseComponents = markdownComponents()
+/**
+ * 表格：对齐官方的"无卡片、只有行间横线、按内容分列宽、允许换行"。
+ *
+ * 库的默认表格是**等宽列 + 整块圆角底色 + 单元格只排一行**：两列表格会被拉成
+ * 两个 120dp 的大格子（中间空一大片），长内容又被省略号吃掉。官方 Web 端是
+ * 按内容宽度排、单元格可折行、只有行间横线 —— 这里直接自己排：
+ * 列宽按"该列最长单元格文字量"分配（`weight`），每行下面一条 1px 横线。
+ *
+ * 单元格仍用库的 [MarkdownTableBasicText]：单元格里的行内代码、粗体、图片
+ * 都由它按同一套 annotator 渲染，不必自己再实现一遍。
+ */
+private val adaptiveTable: MarkdownComponent = { model ->
+    val style = model.typography.table
+    val header = remember(model.node) { model.node.findChildOfType(HEADER) }
+    val rows = remember(model.node) { model.node.children.filter { it.type == ROW } }
+
+    /** 每列的权重：取该列所有单元格里最长的文字量（1..24），窄屏下按比例分配。 */
+    val weights = remember(model.content, model.node) {
+        val columnCount = maxOf(
+            header?.children?.count { it.type == CELL } ?: 0,
+            rows.maxOfOrNull { row -> row.children.count { it.type == CELL } } ?: 0,
+        )
+        val longest = IntArray(columnCount) { 1 }
+        fun scan(row: ASTNode) {
+            row.children.filter { it.type == CELL }.forEachIndexed { index, cell ->
+                if (index < columnCount) {
+                    longest[index] = maxOf(longest[index], cellTextLength(model.content, cell))
+                }
+            }
+        }
+        header?.let(::scan)
+        rows.forEach(::scan)
+        longest.map { it.coerceIn(1, 24).toFloat() }
+    }
+
+    fun weightOf(index: Int): Float = weights.getOrElse(index) { 1f }
+
+    /** 单元格内边距：官方 `th/td:first-child { padding-left: 0 }`、最后一列右侧也不留 —— 表格与正文左右对齐。 */
+    fun cellPadding(index: Int, count: Int): PaddingValues = PaddingValues(
+        start = if (index == 0) 0.dp else 10.dp,
+        end = if (index == count - 1) 0.dp else 10.dp,
+        top = 10.dp,
+        bottom = 10.dp,
+    )
+
+    Column(Modifier.fillMaxWidth()) {
+        if (header != null) {
+            val cells = header.children.filter { it.type == CELL }
+            Row(Modifier.fillMaxWidth()) {
+                cells.forEachIndexed { index, cell ->
+                    Box(
+                        Modifier
+                            .weight(weightOf(index))
+                            .padding(cellPadding(index, cells.size)),
+                    ) {
+                        MarkdownTableBasicText(
+                            content = model.content,
+                            cell = cell,
+                            style = style.copy(fontWeight = FontWeight.Medium),
+                            maxLines = Int.MAX_VALUE,
+                            overflow = TextOverflow.Clip,
+                        )
+                    }
+                }
+            }
+            MarkdownDivider()
+        }
+        rows.forEach { row ->
+            val cells = row.children.filter { it.type == CELL }
+            Row(Modifier.fillMaxWidth()) {
+                cells.forEachIndexed { index, cell ->
+                    Box(
+                        Modifier
+                            .weight(weightOf(index))
+                            .padding(cellPadding(index, cells.size)),
+                    ) {
+                        MarkdownTableBasicText(
+                            content = model.content,
+                            cell = cell,
+                            style = style,
+                            maxLines = Int.MAX_VALUE,
+                            overflow = TextOverflow.Clip,
+                        )
+                    }
+                }
+            }
+            MarkdownDivider()
+        }
+    }
+}
+
+/** 单元格原文长度（用于列宽权重）；越界都钳一下，坏数据不该崩在布局里。 */
+private fun cellTextLength(content: String, cell: ASTNode): Int {
+    val start = cell.startOffset.coerceIn(0, content.length)
+    val end = cell.endOffset.coerceIn(start, content.length)
+    return content.substring(start, end).trim().length.coerceAtLeast(1)
+}
 
 /**
- * 列表符号列宽：无序圆点、有序序号、任务复选框**共用同一列宽**。
+ * 列表符号列宽与内边距。
  *
- * 三种标记的自然宽度差很多（`•` 窄、`1.` 宽、复选框更宽），
- * 不定宽的话正文左边界会各不相同 —— 看着就是"列表没对齐"。
+ * 官方（浏览器 `::marker`）的形态是：正文缩进 18px，符号**右对齐**贴在这 18px 的
+ * 右缘，与正文之间只留几个像素。早先我们让符号**左对齐**、列宽还比正文字距宽，
+ * 于是 `•` 孤零零挂在最左边、离正文很远 —— 看着就是"没对齐、不自然"。
+ *
+ * 无序与有序**共用同一个列宽**：两段列表挨在一起时，正文左边界才是同一条竖线
+ * （先前 `•` 18dp、`1.` 26dp，两组列表的正文错开 8dp）。
+ * 序号最多两位数（`10.`），22dp 够放。
  */
-private val MarkerColumnWidth = 20.dp
+private val MarkerColumnWidth = 22.dp
 
-/** 符号相对正文首行的垂直补偿：`•` 与序号的字面中心比汉字中心高。 */
-private val MarkerTopOffset = 2.dp
+/** 符号与正文之间的空隙（右对齐后留在列尾）。 */
+private val MarkerGap = 5.dp
+
+/**
+ * 列表符号按层轮换（官方浏览器默认样式）：实心圆 → 空心圆 → 方块。
+ *
+ * 库默认**每一层都是 `•`**，缩进之后看不出层级；官方是 disc / circle / square。
+ */
+private val BulletMarkers = BulletHandler { _, _, _, _, depth ->
+    when (depth % 3) {
+        0 -> "•"
+        1 -> "◦"
+        else -> "▪"
+    }
+}
+
+/** 符号列：右对齐 + 列尾空隙（见 [MarkerColumnWidth]）。 */
+private fun RowScope.markerColumn(): Modifier =
+    Modifier.width(MarkerColumnWidth).padding(end = MarkerGap)
+
+/** 符号样式：与正文同字号行高，颜色为次级文字色，右对齐。 */
+@Composable
+private fun markerStyle(): TextStyle =
+    MarkdownMarkerStyle.copy(
+        color = LocalChatColors.current.processText,
+        textAlign = TextAlign.End,
+    )
 
 private val bulletList: MarkdownComponent = { model ->
     MarkdownBulletList(
         content = model.content,
         node = model.node,
-        style = MarkdownMarkerStyle,
+        style = markerStyle(),
         depth = model.listDepth,
-        markerModifier = { Modifier.width(MarkerColumnWidth).padding(top = MarkerTopOffset) },
+        markerModifier = { markerColumn() },
         listModifier = { Modifier },
     )
 }
@@ -493,9 +671,9 @@ private val orderedList: MarkdownComponent = { model ->
     MarkdownOrderedList(
         content = model.content,
         node = model.node,
-        style = MarkdownMarkerStyle,
+        style = markerStyle(),
         depth = model.listDepth,
-        markerModifier = { Modifier.width(MarkerColumnWidth).padding(top = MarkerTopOffset) },
+        markerModifier = { markerColumn() },
         listModifier = { Modifier },
     )
 }
@@ -553,6 +731,9 @@ private val collapsibleCodeFence: @Composable (MarkdownComponentModel) -> Unit =
     }
 }
 
+/** 代码块圆角：官方 12px。 */
+private val CodeBlockCornerRadius = 12.dp
+
 /** 普通代码块卡片（渲染 / 高亮 / 超长折叠）。 */
 @Composable
 private fun CodeFenceCard(
@@ -568,8 +749,14 @@ private fun CodeFenceCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            // ⚠️ 不用 `clip`：代码块展开后可能很长，带裁剪的图形层会让下半部分点不动（§31）
-            .background(LocalChatColors.current.fieldBackground, SoftShape),
+            /*
+             * 官方的代码块是"浅灰底 + 12 圆角 + 顶部语言条"，底色与条同色，
+             * 所以看上去只有一块圆角面板。我们用独立 token 而不是输入框那种
+             * `fieldBackground` —— 后者深一档，整段代码会显得发灰、压页面。
+             *
+             * ⚠️ 不用 `clip`：代码块展开后可能很长，带裁剪的图形层会让下半部分点不动（§31）
+             */
+            .background(LocalChatColors.current.markdownCodeBlock, RoundedCornerShape(CodeBlockCornerRadius)),
     ) {
         CodeHeader(language = language.orEmpty(), code = code, lineCount = lineCount)
 
@@ -638,24 +825,25 @@ private fun CodeHeader(language: String, code: String, lineCount: Int) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 12.dp, end = 6.dp, top = 4.dp),
+            // 官方 banner：13/20 字号、左右 16、上 8
+            .padding(start = 16.dp, end = 8.dp, top = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = language.ifBlank { stringResource(R.string.md_code_label) },
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.bodySmall,
             color = colors.processText,
             maxLines = 1,
         )
         // 行数**总是**显示 —— 它同时是"这段有多长"和"折叠了多少"的答案
         Text(
             text = stringResource(R.string.md_line_count, lineCount),
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.bodySmall,
             color = colors.placeholder,
             maxLines = 1,
             modifier = Modifier
                 .weight(1f)
-                .padding(start = 4.dp),
+                .padding(start = 6.dp),
         )
         IconCircleButton(
             icon = if (copied) AppIcons.Check else AppIcons.Copy,

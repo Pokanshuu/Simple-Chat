@@ -42,12 +42,17 @@ private fun textStyle(
 )
 
 /**
- * 排版规格对齐 DeepSeek 客户端（基准值，实际渲染会再乘 [TypeScale]）：
- * 正文 17sp / 行高约 1.7，标题 22-18sp Bold，分组小标签 13sp。
+ * 排版规格对标官方 Web 端（基准值，实际渲染会再乘 [TypeScale]）：
+ * 正文 **16px / 28px**、标题 24/22/20...16、分组小标签 13sp。
+ *
+ * `bodyLarge` 的两个基准值（17.3 / 30.3）是**反推**出来的：
+ * 官方 Web 端是 16/28，而我们有全局 [TypeScale] = 0.925 —— 16 / 0.925 = 17.3，
+ * 28 / 0.925 = 30.3，乘回去正好是官方的 16/28。写整数 17/29 会差 2% 字号、4% 行高，
+ * 单看不明显，和官方截图并排一放就能看出来"我们的行更紧"。
  */
 val SimpleChatTypography = Typography(
     // 正文：AI 回复与用户气泡共用，行高宽松，长文阅读友好
-    bodyLarge = textStyle(size = 17f, lineHeight = 29f),
+    bodyLarge = textStyle(size = 17.3f, lineHeight = 30.3f),
     bodyMedium = textStyle(size = 15f, lineHeight = 24f),
     bodySmall = textStyle(size = 13f, lineHeight = 20f),
     // 标题
@@ -69,41 +74,28 @@ val SimpleChatTypography = Typography(
 // 派生之后，这种可能从源头消失。
 
 /**
- * Markdown 正文 = 全局正文 + **按语种分档的对齐与行距**（多语言 §4）。
+ * Markdown 正文 = 全局正文（官方 16/28），**不做两端对齐**。
  *
- * 分档按**界面语言**：中文界面走中文档，英文界面走西文档。
- *
- * **中文档：两端对齐。** 中文没有词间空格，天然就是"一格一字"的方块排版 ——
- * 左对齐时右侧会参差，一行长一行短，长文读起来很毛躁。两端对齐把行内
- * 多余的空隙摊开，右侧就齐了。
- *
- * **西文档：左对齐。** 西文的词间空格是天然的断行点，两端对齐会把空格拉得
- * 宽窄不一，右侧齐了、词距反而更乱；左对齐（ragged right）才是西文正文的
- * 常规做法。行高也比中文紧一档 —— 29/17 ≈ 1.7 是给方块字留的呼吸，
- * 西文 1.6 上下就够，长文更紧凑。断行交给 HighQuality 的分词算法
- * （长单词的落点比 Simple 档准；**不开连字符** —— 聊天正文里断词很碍读）。
- *
- * 用派生而不是另起一份样式：字号仍然只有 `bodyLarge` 一个来源，
- * 这里**只声明刻意的差异**（对齐、行高、断行）。
- *
- * 流式阶段与定稿阶段都走这个样式，所以两阶段的对齐方式一致。
+ * 早先中文档开了 `TextAlign.Justify`，理由是"中文方块字没有词间空格"。
+ * 但实际正文里中英混排极常见（专有名词、代号、英文引文），
+ * 两端对齐会把那一行里的**西文词间空格**拉成一道道白沟 ——
+ * 真机截图上 "The       quick brown fox" 就是这样。
+ * 官方 Web 端就是默认左对齐（`markdown.css` 没有 justify），这里对齐官方。
  *
  * 两份样式都是**常量**（不是 `get()`）：`.copy` 会新建 TextStyle，挂在组合里的
- * 样式每帧读一次，白白的分配没必要。[MarkdownBlockView] 每块都会读它，
- * 分配一次就该是全部。
+ * 样式每帧读一次，白白的分配没必要。[MarkdownBlockView] 每块都会读它。
  */
 fun markdownBodyStyle(cjk: Boolean): TextStyle =
     if (cjk) MarkdownBodyCjkStyle else MarkdownBodyWesternStyle
 
-/** 中文档正文：两端对齐。 */
+/** 中文档正文：左对齐（原因见上）。 */
 private val MarkdownBodyCjkStyle: TextStyle =
-    SimpleChatTypography.bodyLarge.copy(textAlign = TextAlign.Justify)
+    SimpleChatTypography.bodyLarge.copy(textAlign = TextAlign.Start)
 
-/** 西文档正文：左对齐、行高紧一档、断行走 HighQuality（长单词落点更准，仍不开连字符）。 */
+/** 西文档正文：左对齐，断行走 HighQuality（长单词落点更准，仍不开连字符）。 */
 private val MarkdownBodyWesternStyle: TextStyle =
     SimpleChatTypography.bodyLarge.copy(
         textAlign = TextAlign.Start,
-        lineHeight = (SimpleChatTypography.bodyLarge.lineHeight.value * 0.93f).sp,
         lineBreak = LineBreak.Paragraph,
     )
 
@@ -111,41 +103,46 @@ private val MarkdownBodyWesternStyle: TextStyle =
 val ProcessTextStyle: TextStyle get() = SimpleChatTypography.bodyMedium
 
 /**
- * Markdown 的六级标题。
+ * Markdown 的六级标题，**比例对齐官方 Web 端**（正文 16px 时：
+ * h1 24 / h2 22 / h3 20 / h4–h6 16；h1–h3 Bold、h4–h6 SemiBold）。
  *
- * 刻意比 Material 的 `headlineLarge` 那一套**小一大截** ——
- * 聊天窗口里 32sp 的 H1 比正文还抢眼，读起来像文档而不像对话。
- * 这里让 H1 只比正文大一档。
+ * 换算到我们的正文基准（`bodyLarge` 17 / 29）就是下表的数字 ——
+ * 先前是 20/19/18/17/16/16 一路小下去，层级只差 1sp，
+ * 视觉上"标题只是字大一点点"，长文里几乎没有结构感。
  *
- * **六级一律 `Bold`**：层级靠字号递减表达，不再靠字重分级。
- * 早先 H1–H3 用 Bold、H4–H5 用 SemiBold、H6 用 Medium，
- * 小标题在长文里显得发灰、认不出是标题。
+ * 为什么 h4–h6 与正文同字号：官方就是这么定的 —— h4 起靠**字重**分层，
+ * 不靠字号。再小下去会正文还小，那就不像标题了。
  */
 val MarkdownHeadingStyles: List<TextStyle> = listOf(
-    textStyle(size = 20f, lineHeight = 30f, weight = FontWeight.Bold),
-    textStyle(size = 19f, lineHeight = 28f, weight = FontWeight.Bold),
-    textStyle(size = 18f, lineHeight = 27f, weight = FontWeight.Bold),
-    textStyle(size = 17f, lineHeight = 26f, weight = FontWeight.Bold),
-    textStyle(size = 16f, lineHeight = 25f, weight = FontWeight.Bold),
-    textStyle(size = 16f, lineHeight = 25f, weight = FontWeight.Bold),
+    textStyle(size = 25.5f, lineHeight = 35f, weight = FontWeight.Bold),
+    textStyle(size = 23.4f, lineHeight = 33f, weight = FontWeight.Bold),
+    textStyle(size = 21.25f, lineHeight = 31f, weight = FontWeight.Bold),
+    textStyle(size = 17f, lineHeight = 29f, weight = FontWeight.SemiBold),
+    textStyle(size = 17f, lineHeight = 29f, weight = FontWeight.SemiBold),
+    textStyle(size = 17f, lineHeight = 29f, weight = FontWeight.SemiBold),
 )
 
-/** 表格内文字：比正文小一档，否则窄屏下三列就挤爆了。 */
-val MarkdownTableStyle: TextStyle = textStyle(size = 15f, lineHeight = 22f)
+/** 表格内文字：官方 15/25（正文 16/28），比正文小一档、行高略宽。 */
+val MarkdownTableStyle: TextStyle = textStyle(size = 15.9f, lineHeight = 26f)
 
 /**
  * 列表项目符号与序号（`bullet` / `ordered`）。
  *
- * ⚠️ 库里这两档样式**只作用于符号本身**，不影响列表项正文 —— 所以可以放心放大：
- * 正文是 CJK，`•` 与 `1.` 按正文字号排出来只有几个像素，几乎看不见。
- * 行高与正文对齐，符号才会落在首行文字的中线上。
+ * ⚠️ **必须与正文同字号、同行高。**
+ *
+ * 库把符号放在一个 `Row` 的**顶部**、和列表正文并排；两边字号一旦不同，
+ * 基线就错开 —— 真机反馈正是"无序符号和正文不对齐，数字大一圈"。
+ *
+ * 先前为了让 CJK 里的 `•` 显得明显，把这一档放大到 21sp；结果英文列表里
+ * 数字比正文大 34%，而且整体往上蹿半行。官方（浏览器默认）就是**正文字号**，
+ * 这里照做 —— 颜色由渲染处按主题补成次级文字色。
  */
-val MarkdownMarkerStyle: TextStyle = textStyle(size = 21f, lineHeight = 29f)
+val MarkdownMarkerStyle: TextStyle = SimpleChatTypography.bodyLarge
 
-/** 行内代码：比代码块略大一档，视觉重量才跟正文接近。 */
+/** 行内代码：官方 `0.875em`（正文 16 时 14px），等宽字体。 */
 val MarkdownInlineCodeStyle: TextStyle =
-    textStyle(size = 15f, lineHeight = 22f, family = FontFamily.Monospace)
+    textStyle(size = 14.9f, lineHeight = 22f, family = FontFamily.Monospace)
 
-/** 代码块等宽样式。 */
+/** 代码块正文：官方 13/22（正文 16/28）。 */
 val CodeTextStyle: TextStyle =
-    textStyle(size = 14f, lineHeight = 22f, family = FontFamily.Monospace)
+    textStyle(size = 13.8f, lineHeight = 23f, family = FontFamily.Monospace)

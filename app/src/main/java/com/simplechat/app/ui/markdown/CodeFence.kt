@@ -135,7 +135,9 @@ internal fun CodeFenceText(
     MarkdownCodeBackground(
         color = colors.codeBackground,
         shape = RoundedCornerShape(cornerSize),
-        modifier = modifier.fillMaxWidth().padding(vertical = 8.dp),
+        // 圆角与底色由外层的卡片给；这里不再加内边距 —— 官方代码区 padding 16 已由
+        // `padding.codeBlock`（16/12）统一给，再加 8dp 会把顶部顶出多余空隙
+        modifier = modifier.fillMaxWidth(),
         showHeader = false,
         language = language,
         code = shown,
