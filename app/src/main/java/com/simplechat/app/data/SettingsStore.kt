@@ -77,6 +77,8 @@ data class StoredSettings(
     val activeApiProfileId: String = "legacy",
     val autoReadAloud: Boolean = false,
     val showImageSkipNotice: Boolean = true,
+    /** Include messages from inactive conversation branches in global search. */
+    val searchInactiveBranches: Boolean = true,
     val reasoningLevelId: String = "OFF",
     val temperature: Float = 1.0f,
     val topP: Float = 1.0f,
@@ -182,6 +184,8 @@ class SettingsStore(
             activeApiProfileId = prefs[Keys.ACTIVE_PROFILE] ?: "legacy",
             autoReadAloud = prefs[Keys.AUTO_READ_ALOUD] ?: false,
             showImageSkipNotice = prefs[Keys.IMAGE_SKIP_NOTICE] ?: true,
+            searchInactiveBranches = prefs[Keys.SEARCH_INACTIVE_BRANCHES]
+                ?: StoredSettings().searchInactiveBranches,
             reasoningLevelId = prefs[Keys.REASONING] ?: StoredSettings().reasoningLevelId,
             temperature = prefs[Keys.TEMPERATURE] ?: StoredSettings().temperature,
             topP = prefs[Keys.TOP_P] ?: StoredSettings().topP,
@@ -358,6 +362,10 @@ class SettingsStore(
         preferences.edit { it[Keys.IMAGE_SKIP_NOTICE] = enabled }
     }
 
+    suspend fun setSearchInactiveBranches(enabled: Boolean) {
+        preferences.edit { it[Keys.SEARCH_INACTIVE_BRANCHES] = enabled }
+    }
+
     suspend fun setAutoReadAloud(enabled: Boolean) {
         preferences.edit { it[Keys.AUTO_READ_ALOUD] = enabled }
     }
@@ -497,6 +505,7 @@ class SettingsStore(
         val PROFILES = stringPreferencesKey("api_profiles_v1")
         val ACTIVE_PROFILE = stringPreferencesKey("active_api_profile")
         val IMAGE_SKIP_NOTICE = booleanPreferencesKey("show_image_skip_notice")
+        val SEARCH_INACTIVE_BRANCHES = booleanPreferencesKey("search_inactive_branches")
         val AUTO_READ_ALOUD = booleanPreferencesKey("auto_read_aloud")
         val PROVIDER = stringPreferencesKey("provider_id")
         val BASE_URL = stringPreferencesKey("base_url")

@@ -114,7 +114,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
         ),
     )
     val historyViewModel: HistoryViewModel = history ?: viewModel(
-        factory = HistoryViewModel.factory(container.chatRepository),
+        factory = HistoryViewModel.factory(container.chatRepository, container.settingsStore),
     )
 
     val conversations by historyViewModel.conversations.collectAsStateWithLifecycle()

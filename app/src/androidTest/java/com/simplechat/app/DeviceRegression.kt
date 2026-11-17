@@ -131,6 +131,14 @@ class DeviceRegression : Instrumentation() {
             val hits = repository.searchConversations("FIND_DEVICE_KEYWORD").first()
             val hit = hits.single()
             check(hit.messageId == "deepseek-branches-2")
+            check(repository.searchConversations(
+                "FIND_DEVICE_KEYWORD",
+                includeInactiveBranches = false,
+            ).first().isEmpty())
+            check(repository.searchConversations(
+                "new branch",
+                includeInactiveBranches = false,
+            ).first().single().messageId == "deepseek-branches-3")
             repository.revealSearchMessage(hit.conversation.id, hit.messageId!!)
             check(repository.loadActivePath(hit.conversation.id).last().id == hit.messageId)
             check(repository.searchConversations("%").first().isEmpty())

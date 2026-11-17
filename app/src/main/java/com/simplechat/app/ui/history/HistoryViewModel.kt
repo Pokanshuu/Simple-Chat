@@ -13,6 +13,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.simplechat.app.R
 import com.simplechat.app.data.ChatRepository
 import com.simplechat.app.data.Res
+import com.simplechat.app.data.SettingsStore
 import com.simplechat.app.db.ConversationEntity
 import com.simplechat.app.db.ConversationSearchHit
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -20,8 +21,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -34,11 +37,14 @@ import kotlinx.coroutines.launch
 data class SearchPage(val hits: List<ConversationSearchHit> = emptyList(), val hasMore: Boolean = false)
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class HistoryViewModel(private val repository: ChatRepository) : ViewModel() {
+class HistoryViewModel(
+    private val repository: ChatRepository,
+    private val settingsStore: SettingsStore? = null,
+) : ViewModel() {
 
     private val queryFlow = MutableStateFlow("")
     private val searchLimit = MutableStateFlow(100)
-    private var previousSearchQuery = ""
+    private var previousSearch: Pair<String, Boolean>? = null
     fun loadMoreSearchResults() { searchLimit.value += 100 }
 
 
@@ -59,17 +65,26 @@ class HistoryViewModel(private val repository: ChatRepository) : ViewModel() {
      *
      * 关键词为空时直接给空列表、不查库 —— 搜索页在空关键词下本来就只显示一句提示。
      */
-    val searchPage: StateFlow<SearchPage> = combine(queryFlow, searchLimit) { keyword, limit -> keyword to limit }
-        .flatMapLatest { (keyword, limit) ->
-            val changed = previousSearchQuery != keyword
-            previousSearchQuery = keyword
+    val searchPage: StateFlow<SearchPage> = combine(
+        queryFlow,
+        searchLimit,
+        (settingsStore?.flow?.map { it.searchInactiveBranches } ?: flowOf(true)).distinctUntilChanged(),
+    ) { keyword, limit, includeInactiveBranches -> Triple(keyword, limit, includeInactiveBranches) }
+        .flatMapLatest { (keyword, limit, includeInactiveBranches) ->
+            val searchState = keyword to includeInactiveBranches
+            val changed = previousSearch != searchState
+            previousSearch = searchState
             if (keyword.isBlank()) {
                 flowOf(SearchPage())
             } else {
                 kotlinx.coroutines.flow.flow {
                     if (changed) emit(SearchPage())
                     kotlinx.coroutines.delay(180)
-                    repository.searchConversations(keyword, limit + 1).collect { hits ->
+                    repository.searchConversations(
+                        keyword,
+                        limit = limit + 1,
+                        includeInactiveBranches = includeInactiveBranches,
+                    ).collect { hits ->
                         emit(SearchPage(hits.take(limit), hits.size > limit))
                     }
                 }
@@ -143,8 +158,8 @@ class HistoryViewModel(private val repository: ChatRepository) : ViewModel() {
     }
 
     companion object {
-        fun factory(repository: ChatRepository): ViewModelProvider.Factory = viewModelFactory {
-            initializer { HistoryViewModel(repository) }
+        fun factory(repository: ChatRepository, settingsStore: SettingsStore): ViewModelProvider.Factory = viewModelFactory {
+            initializer { HistoryViewModel(repository, settingsStore) }
         }
     }
 }

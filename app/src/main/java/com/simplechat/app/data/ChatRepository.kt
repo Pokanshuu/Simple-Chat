@@ -88,9 +88,13 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
      */
     fun observeConversation(id: String): Flow<ConversationEntity?> = conversations.observeById(id)
 
-    /** 全文搜索：标题或**消息正文**命中。 */
-    fun searchConversations(query: String, limit: Int = Int.MAX_VALUE): Flow<List<ConversationSearchHit>> =
-        conversations.search(query.trim(), limit)
+    /** Full-text search across titles and message bodies, optionally including inactive branches. */
+    fun searchConversations(
+        query: String,
+        limit: Int = Int.MAX_VALUE,
+        includeInactiveBranches: Boolean = true,
+    ): Flow<List<ConversationSearchHit>> =
+        conversations.search(query.trim(), includeInactiveBranches, limit)
 
     fun observePresets(): Flow<List<Preset>> = presets.observeAll().map { list -> list.map { it.toUi() } }
 

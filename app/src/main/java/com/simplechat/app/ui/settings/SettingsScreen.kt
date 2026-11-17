@@ -531,6 +531,9 @@ fun SettingsScreen(
                             onToggleAutoCollapse = {
                                 scope.launch { store.setAutoCollapseThinking(it) }
                             },
+                            onToggleSearchInactiveBranches = {
+                                scope.launch { store.setSearchInactiveBranches(it) }
+                            },
                         )
 
                         SettingsPage.DATA -> DataPage(
@@ -900,6 +903,7 @@ private fun RootPage(
     onAccentChange: (AccentColor) -> Unit,
     onLanguageChange: (AppLanguage) -> Unit,
     onToggleAutoCollapse: (Boolean) -> Unit,
+    onToggleSearchInactiveBranches: (Boolean) -> Unit,
 ) {
     var themeMenuOpen by remember { mutableStateOf(false) }
     var accentMenuOpen by remember { mutableStateOf(false) }
@@ -1050,6 +1054,15 @@ private fun RootPage(
                     ?.second ?: R.string.font_step_standard,
             ),
             onClick = { onOpen(SettingsPage.FONT) },
+        )
+
+        RowDivider()
+
+        SettingsSwitchRow(
+            icon = AppIcons.Search,
+            label = stringResource(R.string.settings_search_inactive_branches),
+            checked = stored.searchInactiveBranches,
+            onCheckedChange = onToggleSearchInactiveBranches,
         )
 
         RowDivider()

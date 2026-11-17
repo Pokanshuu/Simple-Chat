@@ -22,7 +22,7 @@ interface ConversationDao {
     )
     fun observeAll(): Flow<List<ConversationEntity>>
 
-    /** One bounded preview per matching message, including inactive variants; title-only hits remain visible. */
+    /** One bounded preview per matching message; title-only hits remain visible. */
     @Query(
         """
         SELECT c.*,
@@ -36,7 +36,9 @@ interface ConversationDao {
                  AND sibling.parentId = m.parentId)
             END AS variantCount
         FROM conversations c
-        LEFT JOIN messages m ON m.conversationId = c.id AND instr(lower(m.content), lower(:query)) > 0
+        LEFT JOIN messages m ON m.conversationId = c.id
+            AND instr(lower(m.content), lower(:query)) > 0
+            AND (:includeInactiveBranches OR m.active = 1)
         WHERE length(:query) > 0 AND (m.id IS NOT NULL OR instr(lower(c.title), lower(:query)) > 0)
         ORDER BY c.pinned DESC,
                  CASE WHEN c.pinned THEN c.pinnedAt ELSE c.updatedAt END DESC,
@@ -44,7 +46,11 @@ interface ConversationDao {
         LIMIT :limit
         """,
     )
-    fun search(query: String, limit: Int = Int.MAX_VALUE): Flow<List<ConversationSearchHit>>
+    fun search(
+        query: String,
+        includeInactiveBranches: Boolean = true,
+        limit: Int = Int.MAX_VALUE,
+    ): Flow<List<ConversationSearchHit>>
 
     @Query("SELECT * FROM conversations WHERE id = :id")
     suspend fun findById(id: String): ConversationEntity?
