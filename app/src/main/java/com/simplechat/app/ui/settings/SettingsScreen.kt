@@ -101,6 +101,7 @@ import com.simplechat.app.ui.common.AppSwitch
 import com.simplechat.app.ui.common.ContainerShape
 import com.simplechat.app.ui.common.IconCircleButton
 import com.simplechat.app.ui.common.PillShape
+import com.simplechat.app.ui.common.Space
 import com.simplechat.app.ui.common.screenTransform
 import com.simplechat.app.ui.theme.AccentColor
 import com.simplechat.app.ui.theme.LocalChatColors
@@ -1185,7 +1186,8 @@ private fun VoiceRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .heightIn(min = Space.Row)
+            .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -1503,7 +1505,7 @@ internal fun ApiProfilesPage(
         stored.apiProfiles.forEachIndexed { index, profile ->
             if (index > 0) RowDivider(inset = 16.dp)
             Row(Modifier.fillMaxWidth().padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f).clickable { onSelect(profile) }.padding(16.dp)) {
+                Column(Modifier.weight(1f).clickable { onSelect(profile) }.padding(horizontal = Space.Screen, vertical = Space.RowPadY)) {
                     Text(profile.name, style = MaterialTheme.typography.titleSmall,
                         color = if (profile.id == stored.activeApiProfileId) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
                     val provider = ProviderKind.entries.firstOrNull { it.name == profile.providerId }
@@ -1610,7 +1612,7 @@ private fun PresetRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onEdit)
-            .padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 14.dp),
+            .padding(start = 16.dp, end = 8.dp, top = Space.RowPadY, bottom = Space.RowPadY),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
@@ -2062,7 +2064,7 @@ private fun LicensesPage() {
                 text = stringResource(textRes),
                 style = MaterialTheme.typography.bodyMedium,
                 color = colors.processText,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = Space.Screen, vertical = Space.RowPadY),
             )
         }
     }
@@ -2080,7 +2082,8 @@ private fun LicenseRow(entry: LicenseEntry, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .heightIn(min = Space.Row)
+            .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
@@ -2209,7 +2212,7 @@ fun SettingsSectionLabel(text: String) {
         text = text,
         style = MaterialTheme.typography.labelMedium,
         color = colors.placeholder,
-        modifier = Modifier.padding(start = 4.dp, top = 24.dp, bottom = 10.dp),
+        modifier = Modifier.padding(start = 4.dp, top = Space.Section, bottom = Space.Gap),
     )
 }
 
@@ -2227,7 +2230,7 @@ fun SettingsCard(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun RowDivider(inset: androidx.compose.ui.unit.Dp = 52.dp) {
+private fun RowDivider(inset: androidx.compose.ui.unit.Dp = Space.Screen + Space.Icon + Space.IconGap) {
     val colors = LocalChatColors.current
     Box(
         modifier = Modifier
@@ -2317,16 +2320,17 @@ fun SettingsNavRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 16.dp),
+            .heightIn(min = Space.Row)
+            .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(Space.IconGap),
     ) {
         if (icon != null) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.size(21.dp),
+                modifier = Modifier.size(Space.Icon),
             )
         }
         Text(
@@ -2371,7 +2375,8 @@ private fun SettingsActionRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .heightIn(min = Space.Row)
+            .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Text(
@@ -2401,16 +2406,17 @@ private fun SettingsSwitchRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onCheckedChange(!checked) }
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .heightIn(min = Space.Row)
+            .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(Space.IconGap),
     ) {
         if (icon != null) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.size(21.dp),
+                modifier = Modifier.size(Space.Icon),
             )
         }
         Text(
@@ -2447,7 +2453,8 @@ private fun LinkRow(label: String, value: String, url: String) {
                 // 没有浏览器时不要崩：提示一句就够了
                 runCatching { context.startActivity(intent) }
             }
-            .padding(horizontal = 16.dp, vertical = 16.dp),
+            .heightIn(min = Space.Row)
+            .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -2475,7 +2482,8 @@ private fun InfoRow(label: String, value: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 16.dp),
+            .heightIn(min = Space.Row)
+            .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -2530,7 +2538,7 @@ private fun <T> ChoiceDialog(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = Space.RowPadY),
             )
 
             if (options.isEmpty()) {
@@ -2555,7 +2563,8 @@ private fun <T> ChoiceDialog(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { onSelect(item) }
-                                .padding(horizontal = 20.dp, vertical = 14.dp),
+                                .heightIn(min = Space.Row)
+                                .padding(horizontal = 20.dp, vertical = Space.RowPadY),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
@@ -2580,7 +2589,8 @@ private fun <T> ChoiceDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable(onClick = onClick)
-                        .padding(horizontal = 20.dp, vertical = 14.dp),
+                        .heightIn(min = Space.Row)
+                        .padding(horizontal = 20.dp, vertical = Space.RowPadY),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(

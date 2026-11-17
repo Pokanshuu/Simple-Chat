@@ -439,7 +439,7 @@ fun MessageIndexOverlay(
 /**
  * 索引的一行。
  *
- * 节奏与会话抽屉的行一致：46dp 起步、[SoftShape]、当前条垫
+ * 节奏与会话抽屉的行一致：[com.simplechat.app.ui.common.Space.Row]、[SoftShape]、当前条垫
  * [com.simplechat.app.ui.theme.ChatColors.fieldBackground]。**只放正文截断**，
  * 不带时间（§34.3）。
  */
@@ -452,12 +452,12 @@ private fun MessageIndexRow(
     val colors = LocalChatColors.current
     Box(
         modifier = Modifier
-            .padding(horizontal = Space.Gap, vertical = 2.dp)
+            .padding(horizontal = Space.Gap)
             .fillMaxWidth()
             .clip(SoftShape)
             .background(if (current) colors.fieldBackground else colors.card)
             .clickable(onClick = onClick)
-            .heightIn(min = 46.dp)
+            .heightIn(min = Space.Row)
             .padding(horizontal = Space.Inline, vertical = 2.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
