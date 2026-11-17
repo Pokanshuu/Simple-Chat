@@ -119,6 +119,12 @@
     <string name="settings_about">关于</string>
     <string name="settings_group_account">账户</string>
     <string name="settings_group_personal">个性化</string>
+    <string name="settings_group_chat">对话</string>
+    <string name="settings_chat_behavior">对话行为</string>
+    <string name="settings_theme_mode">主题模式</string>
+    <string name="settings_group_text">文字</string>
+    <string name="settings_group_display">显示</string>
+    <string name="settings_group_search">搜索</string>
     <string name="settings_group_backup">备份</string>
     <string name="settings_group_diagnostics">诊断</string>
     <string name="settings_group_reset">重置</string>

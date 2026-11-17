@@ -11,6 +11,8 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -125,18 +127,27 @@ import kotlinx.coroutines.withTimeoutOrNull
  *
  * [depth] 只用来判断转场方向：二级页从右侧进来，返回时原路退回。
  */
-private enum class SettingsPage(val depth: Int) {
-    ROOT(0),
-    DATA(1),
-    API(1),
-    API_PROFILES(2),
-    PRESETS(1),
-    FONT(1),
+private enum class SettingsPage(private val parentName: String?) {
+    ROOT(null),
+    DATA("ROOT"),
+    API("ROOT"),
+    API_PROFILES("API"),
+    PRESETS("ROOT"),
+    /** 外观：主题模式、主题色、字体大小入口。 */
+    APPEARANCE("ROOT"),
+    /** 字体大小（外观 → 二级）。 */
+    FONT("APPEARANCE"),
+    /** 对话行为：思考折叠、搜索范围等开关。 */
+    CHAT("ROOT"),
     /** 朗读音色（系统 TTS）。 */
-    VOICE(1),
-    ABOUT(1),
+    VOICE("ROOT"),
+    ABOUT("ROOT"),
     /** 开源许可与版权清单（关于 → 二级）。 */
-    LICENSES(2),
+    LICENSES("ABOUT");
+
+    /** 返回键回到哪一页；层级只在这里声明一次，转场方向也由它推出。 */
+    val parent: SettingsPage? get() = parentName?.let { valueOf(it) }
+    val depth: Int get() = parent?.let { it.depth + 1 } ?: 0
 }
 
 private sealed interface SettingsDialog {
@@ -190,11 +201,9 @@ private enum class ApiStylePreference(val labelRes: Int) {
 /**
  * 设置页。
  *
- * 一级列表只放**入口**，具体编辑都进二级页面 —— 一级列表保持一屏内可扫完。
- * 外观例外：只有三个互斥选项，弹个菜单比切页面快。
- *
- * 每个一级入口配**各自不同**的图标（数据管理 / API 配置 / 外观 / 字体大小 /
- * 自动折叠思考 / 关于）；二级页面里的行不再配图标，避免图标语义打架。
+ * 一级页面按账户、个性化、对话和数据管理分组。
+ * 外观包含主题、主题色和字体大小；对话行为包含思考折叠和搜索范围。
+ * 子页面使用 [SettingsPage.parent] 处理返回路径。
  */
 @Composable
 fun SettingsScreen(
@@ -303,7 +312,7 @@ fun SettingsScreen(
     LaunchedEffect(Unit) { repository.observePresets().collect { presets = it } }
 
     // 二级页面按返回键先回一级，而不是直接退出设置
-    fun previousPage() { page = if (page == SettingsPage.API_PROFILES) SettingsPage.API else SettingsPage.ROOT }
+    fun previousPage() { page = page.parent ?: SettingsPage.ROOT }
     BackHandler(enabled = page != SettingsPage.ROOT) { previousPage() }
     LaunchedEffect(stored.activeApiProfileId, stored.baseUrl) { testResult = null }
 
@@ -476,7 +485,9 @@ fun SettingsScreen(
                 SettingsPage.API -> stringResource(R.string.settings_api)
                 SettingsPage.API_PROFILES -> stringResource(R.string.api_profiles_title)
                 SettingsPage.PRESETS -> stringResource(R.string.settings_presets)
+                SettingsPage.APPEARANCE -> stringResource(R.string.settings_appearance)
                 SettingsPage.FONT -> stringResource(R.string.settings_font_size)
+                SettingsPage.CHAT -> stringResource(R.string.settings_chat_behavior)
                 SettingsPage.VOICE -> stringResource(R.string.tts_voice)
                 SettingsPage.ABOUT -> stringResource(R.string.settings_about)
                 SettingsPage.LICENSES -> stringResource(R.string.about_licenses)
@@ -525,9 +536,20 @@ fun SettingsScreen(
                             accentColor = accentColor,
                             language = AppLanguage.fromId(stored.languageId),
                             onOpen = { page = it },
+                            onLanguageChange = { scope.launch { store.setLanguage(it.name) } },
+                        )
+
+                        SettingsPage.APPEARANCE -> AppearancePage(
+                            stored = stored,
+                            themeMode = themeMode,
+                            accentColor = accentColor,
                             onThemeChange = { scope.launch { store.setThemeMode(it.name) } },
                             onAccentChange = { scope.launch { store.setAccentColor(it.name) } },
-                            onLanguageChange = { scope.launch { store.setLanguage(it.name) } },
+                            onOpenFont = { page = SettingsPage.FONT },
+                        )
+
+                        SettingsPage.CHAT -> ChatBehaviorPage(
+                            stored = stored,
                             onToggleAutoCollapse = {
                                 scope.launch { store.setAutoCollapseThinking(it) }
                             },
@@ -899,14 +921,8 @@ private fun RootPage(
     accentColor: AccentColor,
     language: AppLanguage,
     onOpen: (SettingsPage) -> Unit,
-    onThemeChange: (ThemeMode) -> Unit,
-    onAccentChange: (AccentColor) -> Unit,
     onLanguageChange: (AppLanguage) -> Unit,
-    onToggleAutoCollapse: (Boolean) -> Unit,
-    onToggleSearchInactiveBranches: (Boolean) -> Unit,
 ) {
-    var themeMenuOpen by remember { mutableStateOf(false) }
-    var accentMenuOpen by remember { mutableStateOf(false) }
     var languageMenuOpen by remember { mutableStateOf(false) }
 
     SettingsSectionLabel(stringResource(R.string.settings_group_account))
@@ -927,41 +943,20 @@ private fun RootPage(
         )
     }
 
+    /*
+     * 个性化只放「界面看起来怎样」：外观（主题模式 / 主题色 / 字号收进二级页）与语言。
+     * 原来八行挤在一张卡里 —— 主题、语言、主题色、预设、字号、两个对话开关、朗读音色 ——
+     * 「改界面」和「改对话」交错排列，找一项要从头扫到尾。
+     */
     SettingsSectionLabel(stringResource(R.string.settings_group_personal))
 
     SettingsCard {
-        // 外观：三个互斥选项，直接弹菜单
-        Box {
-            SettingsNavRow(
-                icon = AppIcons.Contrast,
-                label = stringResource(R.string.settings_appearance),
-                value = when (themeMode) {
-                    ThemeMode.SYSTEM -> stringResource(R.string.value_follow_system)
-                    ThemeMode.LIGHT -> stringResource(R.string.value_light)
-                    ThemeMode.DARK -> stringResource(R.string.value_dark)
-                },
-                onClick = { themeMenuOpen = true },
-            )
-            AppMenu(
-                expanded = themeMenuOpen,
-                onDismissRequest = { themeMenuOpen = false },
-            ) {
-                ThemeMode.entries.forEach { mode ->
-                    AppMenuItem(
-                        label = when (mode) {
-                            ThemeMode.SYSTEM -> stringResource(R.string.value_follow_system)
-                            ThemeMode.LIGHT -> stringResource(R.string.value_light)
-                            ThemeMode.DARK -> stringResource(R.string.value_dark)
-                        },
-                        selected = mode == themeMode,
-                        onClick = {
-                            themeMenuOpen = false
-                            onThemeChange(mode)
-                        },
-                    )
-                }
-            }
-        }
+        SettingsNavRow(
+            icon = AppIcons.Contrast,
+            label = stringResource(R.string.settings_appearance),
+            value = "${themeModeLabel(themeMode)} · ${accentColor.label}",
+            onClick = { onOpen(SettingsPage.APPEARANCE) },
+        )
 
         RowDivider()
 
@@ -997,45 +992,12 @@ private fun RootPage(
                 }
             }
         }
+    }
 
-        RowDivider()
+    // 对话：影响「AI 怎么说、怎么呈现、怎么读出来」的设置
+    SettingsSectionLabel(stringResource(R.string.settings_group_chat))
 
-        // 主题色：点开弹一排色块
-        Box {
-            SettingsNavRow(
-                icon = AppIcons.Palette,
-                label = stringResource(R.string.settings_accent),
-                value = accentColor.label,
-                onClick = { accentMenuOpen = true },
-            )
-            AppMenu(
-                expanded = accentMenuOpen,
-                onDismissRequest = { accentMenuOpen = false },
-                // 七个色块横排，比默认菜单宽
-                width = AccentMenuWidth,
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    AccentColor.entries.forEach { color ->
-                        AccentSwatch(
-                            color = color,
-                            selected = color == accentColor,
-                            onClick = {
-                                accentMenuOpen = false
-                                onAccentChange(color)
-                            },
-                        )
-                    }
-                }
-            }
-        }
-
-        RowDivider()
-
+    SettingsCard {
         SettingsNavRow(
             icon = AppIcons.Prompt,
             label = stringResource(R.string.settings_presets),
@@ -1046,32 +1008,10 @@ private fun RootPage(
         RowDivider()
 
         SettingsNavRow(
-            icon = AppIcons.FontSize,
-            label = stringResource(R.string.settings_font_size),
-            value = stringResource(
-                fontSizeSteps
-                    .minByOrNull { kotlin.math.abs(it.first - stored.fontScale) }
-                    ?.second ?: R.string.font_step_standard,
-            ),
-            onClick = { onOpen(SettingsPage.FONT) },
-        )
-
-        RowDivider()
-
-        SettingsSwitchRow(
-            icon = AppIcons.Search,
-            label = stringResource(R.string.settings_search_inactive_branches),
-            checked = stored.searchInactiveBranches,
-            onCheckedChange = onToggleSearchInactiveBranches,
-        )
-
-        RowDivider()
-
-        SettingsSwitchRow(
-            icon = AppIcons.Collapse,
-            label = stringResource(R.string.settings_auto_collapse),
-            checked = stored.autoCollapseThinking,
-            onCheckedChange = onToggleAutoCollapse,
+            icon = AppIcons.MessageSquare,
+            label = stringResource(R.string.settings_chat_behavior),
+            value = null,
+            onClick = { onOpen(SettingsPage.CHAT) },
         )
 
         RowDivider()
@@ -1094,6 +1034,165 @@ private fun RootPage(
             value = null,
             onClick = { onOpen(SettingsPage.ABOUT) },
         )
+    }
+}
+
+@Composable
+private fun themeModeLabel(mode: ThemeMode): String = when (mode) {
+    ThemeMode.SYSTEM -> stringResource(R.string.value_follow_system)
+    ThemeMode.LIGHT -> stringResource(R.string.value_light)
+    ThemeMode.DARK -> stringResource(R.string.value_dark)
+}
+
+// ══════════════════════════════════════════════════════════
+//  二级：外观
+// ══════════════════════════════════════════════════════════
+
+/**
+ * 外观：主题模式、主题色、字体大小。
+ *
+ * 主题模式与主题色原来在一级页各弹一个菜单 —— 这两项本来就要「看着挑」，
+ * 藏在菜单里每次都得点开才知道当前是哪个。现在平铺成单选行与一排色块，一眼可见。
+ */
+@Composable
+private fun AppearancePage(
+    stored: StoredSettings,
+    themeMode: ThemeMode,
+    accentColor: AccentColor,
+    onThemeChange: (ThemeMode) -> Unit,
+    onAccentChange: (AccentColor) -> Unit,
+    onOpenFont: () -> Unit,
+) {
+    SettingsSectionLabel(stringResource(R.string.settings_theme_mode))
+
+    SettingsCard {
+        listOf(
+            ThemeMode.SYSTEM to AppIcons.Monitor,
+            ThemeMode.LIGHT to AppIcons.Sun,
+            ThemeMode.DARK to AppIcons.Moon,
+        ).forEachIndexed { i, (mode, icon) ->
+            if (i > 0) RowDivider()
+            SettingsChoiceRow(
+                icon = icon,
+                label = themeModeLabel(mode),
+                selected = mode == themeMode,
+                onClick = { onThemeChange(mode) },
+            )
+        }
+    }
+
+    SettingsSectionLabel(stringResource(R.string.settings_accent))
+
+    SettingsCard {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AccentColor.entries.forEach { color ->
+                AccentSwatch(
+                    color = color,
+                    selected = color == accentColor,
+                    onClick = { onAccentChange(color) },
+                )
+            }
+        }
+    }
+
+    SettingsSectionLabel(stringResource(R.string.settings_group_text))
+
+    SettingsCard {
+        SettingsNavRow(
+            icon = AppIcons.FontSize,
+            label = stringResource(R.string.settings_font_size),
+            value = if (stored.followSystemFont) {
+                stringResource(R.string.value_follow_system)
+            } else {
+                stringResource(
+                    fontSizeSteps
+                        .minByOrNull { kotlin.math.abs(it.first - stored.fontScale) }
+                        ?.second ?: R.string.font_step_standard,
+                )
+            },
+            onClick = onOpenFont,
+        )
+    }
+}
+
+// ══════════════════════════════════════════════════════════
+//  二级：对话行为
+// ══════════════════════════════════════════════════════════
+
+@Composable
+private fun ChatBehaviorPage(
+    stored: StoredSettings,
+    onToggleAutoCollapse: (Boolean) -> Unit,
+    onToggleSearchInactiveBranches: (Boolean) -> Unit,
+) {
+    SettingsSectionLabel(stringResource(R.string.settings_group_display))
+
+    SettingsCard {
+        SettingsSwitchRow(
+            icon = AppIcons.Collapse,
+            label = stringResource(R.string.settings_auto_collapse),
+            checked = stored.autoCollapseThinking,
+            onCheckedChange = onToggleAutoCollapse,
+        )
+    }
+
+    SettingsSectionLabel(stringResource(R.string.settings_group_search))
+
+    SettingsCard {
+        SettingsSwitchRow(
+            icon = AppIcons.Search,
+            label = stringResource(R.string.settings_search_inactive_branches),
+            checked = stored.searchInactiveBranches,
+            onCheckedChange = onToggleSearchInactiveBranches,
+        )
+    }
+}
+
+/** 单选行：图标 + 标题 + 选中时行尾一个主色对勾。 */
+@Composable
+private fun SettingsChoiceRow(
+    icon: ImageVector?,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            .heightIn(min = Space.Row)
+            .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.IconGap),
+    ) {
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(Space.Icon),
+            )
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        if (selected) {
+            Icon(
+                imageVector = AppIcons.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(Space.Icon),
+            )
+        }
     }
 }
 
@@ -2195,7 +2294,7 @@ fun SettingsTopBar(title: String, onBack: () -> Unit) {
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .padding(start = 16.dp)
-                .size(36.dp)
+                .size(32.dp)
                 .clip(CircleShape)
                 .background(colors.fieldBackground)
                 .clickable(onClick = onBack),
@@ -2205,7 +2304,7 @@ fun SettingsTopBar(title: String, onBack: () -> Unit) {
                 imageVector = AppIcons.ChevronLeft,
                 contentDescription = stringResource(R.string.action_back),
                 tint = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.size(16.dp),
             )
         }
 
@@ -2253,9 +2352,6 @@ private fun RowDivider(inset: androidx.compose.ui.unit.Dp = Space.Screen + Space
             .background(colors.divider),
     )
 }
-
-/** 主题色菜单的宽度：七个 30dp 色块 + 间距，比默认菜单宽。 */
-private val AccentMenuWidth = 266.dp
 
 /**
  * 读系统音色列表的超时。

@@ -190,13 +190,13 @@ fun HistoryDrawerContent(
                     .heightIn(min = Space.Row)
                     .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(Space.IconGap),
             ) {
                 Icon(
                     imageVector = AppIcons.Settings,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(21.dp),
+                    modifier = Modifier.size(Space.Icon),
                 )
                 Text(
                     text = stringResource(R.string.settings_title),
@@ -416,7 +416,7 @@ internal fun ConversationRow(
                     imageVector = if (selected) AppIcons.CircleCheck else AppIcons.Circle,
                     contentDescription = null,
                     tint = if (selected) MaterialTheme.colorScheme.primary else colors.placeholder,
-                    modifier = Modifier.size(19.dp),
+                    modifier = Modifier.size(Space.Icon),
                 )
             }
             Column(modifier = Modifier.weight(1f).padding(vertical = if (searchDate != null) 10.dp else 0.dp)) {
