@@ -81,7 +81,10 @@ internal object MessageShareRegression {
         suspend fun find(label: String): AccessibilityNodeInfo = withTimeoutOrNull(6000) {
             var node: AccessibilityNodeInfo? = null
             while (node == null) {
-                node = nodes().firstOrNull { it.isVisibleToUser && (it.text?.toString()?.startsWith(label) == true || it.contentDescription?.toString() == label) }
+                val visible = nodes().filter { it.isVisibleToUser }
+                // Prefer the button label over descriptions such as “生成一张长图…”.
+                node = visible.firstOrNull { it.text?.toString() == label || it.contentDescription?.toString() == label }
+                    ?: visible.firstOrNull { it.text?.toString()?.startsWith(label) == true }
                 if (node == null) delay(50)
             }
             node

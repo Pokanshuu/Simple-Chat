@@ -142,7 +142,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
     var confirmBatchDelete by remember { mutableStateOf(false) }
 
     // 首次进入播种内置预设
-    remember { historyViewModel.seedPresets(); Unit }
+    androidx.compose.runtime.LaunchedEffect(historyViewModel) { historyViewModel.seedPresets() }
 
     /** 关抽屉时顺带退出多选，避免下次打开还停在选择态。 */
     fun closeDrawer() {

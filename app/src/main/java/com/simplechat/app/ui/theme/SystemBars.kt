@@ -10,7 +10,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.LocalActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 
@@ -59,7 +59,7 @@ import androidx.lifecycle.LifecycleEventObserver
 @Composable
 fun ApplySystemBarAppearance() {
     val dark = LocalIsDarkTheme.current
-    val activity = LocalContext.current as? ComponentActivity ?: return
+    val activity = LocalActivity.current as? ComponentActivity ?: return
 
     SideEffect { applySystemBarAppearance(activity, dark) }
 

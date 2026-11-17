@@ -373,6 +373,7 @@ internal fun ConversationRow(
     searchVariant: String? = null,
 ) {
     val colors = LocalChatColors.current
+    val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
     // 高亮跟着主题色（Material 的 primary 就是设置页里选的品牌色）
     val highlightColor = MaterialTheme.colorScheme.primary
     var menuOpen by remember { mutableStateOf(false) }
@@ -430,8 +431,8 @@ internal fun ConversationRow(
                             }) + (searchVariant?.let { " · $it" } ?: ""),
                             style = MaterialTheme.typography.labelSmall, color = colors.placeholder,
                         )
-                        Text(remember(searchDate, java.util.Locale.getDefault()) {
-                            java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(searchDate))
+                        Text(remember(searchDate, locale) {
+                            java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM, locale).format(java.util.Date(searchDate))
                         }, style = MaterialTheme.typography.labelSmall, color = colors.placeholder)
                     }
                     Spacer(Modifier.size(4.dp))

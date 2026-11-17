@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -48,6 +49,7 @@ internal fun MessageShareTools(
     selection: MessageShareSelection, groups: List<MessageShareGroup>, title: String, modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
     var hint by remember { mutableStateOf<String?>(null) }
@@ -63,20 +65,20 @@ internal fun MessageShareTools(
         scope.launch {
             try { block() }
             catch (error: CancellationException) { throw error }
-            catch (error: Exception) { hint = context.getString(R.string.share_failed, error.userMessage()) }
+            catch (error: Exception) { hint = resources.getString(R.string.share_failed, error.userMessage()) }
             finally { busy = false }
         }
     }
     fun document() = MessageShareDocument(title, selection.selected(groups)).also { require(it.groups.isNotEmpty()) }
     fun openChooser(intent: Intent) {
-        context.startActivity(Intent.createChooser(intent, context.getString(R.string.action_share)))
+        context.startActivity(Intent.createChooser(intent, resources.getString(R.string.action_share)))
     }
     val saveMarkdown = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/markdown")) { uri ->
         val file = markdownFile
         if (uri != null && file != null) runExport {
             try {
                 withContext(Dispatchers.IO) { copyExportFile(file, { checkNotNull(context.contentResolver.openOutputStream(uri, "wt")) }) }
-                hint = context.getString(R.string.share_saved)
+                hint = resources.getString(R.string.share_saved)
             } catch (error: Exception) {
                 withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { runCatching { DocumentsContract.deleteDocument(context.contentResolver, uri) } }
                 throw error
@@ -101,7 +103,7 @@ internal fun MessageShareTools(
                     throw error
                 }
             }
-            hint = context.getString(R.string.share_saved)
+            hint = resources.getString(R.string.share_saved)
         }
     }
 
@@ -122,14 +124,14 @@ internal fun MessageShareTools(
             runExport {
                 val text = withContext(Dispatchers.Default) {
                     require(snapshot.messages.sumOf { it.content.length.toLong() + it.attachments.filterNot { a -> a.isImage }.sumOf { a -> a.data.length.toLong() } } <= MAX_SHARE_TEXT_CHARS) {
-                        context.getString(R.string.share_copy_too_long)
+                        resources.getString(R.string.share_copy_too_long)
                     }
-                    sharedPlainText(snapshot, context.getString(R.string.export_role_me), context.getString(R.string.export_role_ai), context.getString(R.string.share_image_attachment_note)).also {
-                        require(it.length <= MAX_SHARE_TEXT_CHARS) { context.getString(R.string.share_copy_too_long) }
+                    sharedPlainText(snapshot, resources.getString(R.string.export_role_me), resources.getString(R.string.export_role_ai), resources.getString(R.string.share_image_attachment_note)).also {
+                        require(it.length <= MAX_SHARE_TEXT_CHARS) { resources.getString(R.string.share_copy_too_long) }
                     }
                 }
                 (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText(title, text))
-                hint = context.getString(R.string.share_copied)
+                hint = resources.getString(R.string.share_copied)
             }
         },
         onShare = {

@@ -78,7 +78,7 @@ internal object NewFeaturesUiRegression {
             }
             instrumentation.waitForIdleSync()
             suspend fun nodes(): List<AccessibilityNodeInfo> {
-                automation.clearCache()
+                if (android.os.Build.VERSION.SDK_INT >= 33) automation.clearCache()
                 var node = automation.rootInActiveWindow
                 repeat(20) { if (node == null) { delay(100); node = automation.rootInActiveWindow } }
                 val out = mutableListOf<AccessibilityNodeInfo>()
