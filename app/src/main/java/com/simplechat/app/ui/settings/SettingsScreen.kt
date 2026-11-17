@@ -75,6 +75,7 @@ import com.simplechat.app.ui.common.BubbleShapeOut
 import com.simplechat.app.App
 import com.simplechat.app.R
 import com.simplechat.app.data.ApiKey
+import com.simplechat.app.net.UpdateChecker
 import com.simplechat.app.data.AppLanguage
 import com.simplechat.app.data.ImportMode
 import com.simplechat.app.data.Res
@@ -1871,12 +1872,40 @@ private fun FontPage(
 
 @Composable
 private fun AboutPage(onOpenLicenses: () -> Unit) {
+    val colors = LocalChatColors.current
+    val scope = rememberCoroutineScope()
+    var checking by remember { mutableStateOf(false) }
+    var checkResult by remember { mutableStateOf<UpdateChecker.Result?>(null) }
+
     SettingsSectionLabel(stringResource(R.string.about_version))
 
     SettingsCard {
         InfoRow(label = stringResource(R.string.about_version), value = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
         RowDivider(inset = 16.dp)
         InfoRow(label = stringResource(R.string.about_package), value = BuildConfig.APPLICATION_ID)
+    }
+
+    /*
+     * 「检查更新」单独一张卡：上面几行是只读信息，这一行是**可点**的 ——
+     * 混排会出现"有的能点有的不能点"。
+     */
+    SettingsSectionLabel(stringResource(R.string.about_update))
+
+    SettingsCard {
+        SettingsActionRow(
+            label = stringResource(R.string.about_check_update),
+            hint = stringResource(R.string.about_current_version, BuildConfig.VERSION_NAME),
+            onClick = {
+                if (checking) return@SettingsActionRow
+                checking = true
+                checkResult = null
+                scope.launch {
+                    checkResult = UpdateChecker.check(BuildConfig.VERSION_NAME)
+                    checking = false
+                }
+            },
+            enabled = !checking,
+        )
     }
 
     /*
@@ -1919,6 +1948,80 @@ private fun AboutPage(onOpenLicenses: () -> Unit) {
         color = LocalChatColors.current.placeholder,
         modifier = Modifier.padding(horizontal = 4.dp),
     )
+
+    checkResult?.let { result ->
+        val context = LocalContext.current
+        UpdateResultDialog(
+            result = result,
+            onDismiss = { checkResult = null },
+            onOpen = { url ->
+                checkResult = null
+                openInBrowser(context, url)
+            },
+        )
+    }
+}
+
+/**
+ * 检查更新的结果。
+ *
+ * 三种结果一句话说清：有新版本 → 给一个「前往下载」；没有 → 「已是最新版」；
+ * 查不出来 → 「检查失败」（不猜原因，也不催用户重试 —— 网络的事他比我们清楚）。
+ */
+@Composable
+private fun UpdateResultDialog(
+    result: UpdateChecker.Result,
+    onDismiss: () -> Unit,
+    onOpen: (String) -> Unit,
+) {
+    val colors = LocalChatColors.current
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(ContainerShape)
+                .background(colors.card)
+                .padding(20.dp),
+        ) {
+            Text(
+                text = when (result) {
+                    is UpdateChecker.Result.Newer -> stringResource(R.string.update_new_title, result.release.tag)
+                    UpdateChecker.Result.UpToDate -> stringResource(R.string.update_up_to_date)
+                    is UpdateChecker.Result.Failed -> stringResource(R.string.update_failed)
+                },
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            if (result is UpdateChecker.Result.Newer) {
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    text = stringResource(R.string.about_current_version, BuildConfig.VERSION_NAME),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colors.placeholder,
+                )
+            }
+            Spacer(Modifier.size(18.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextAction(stringResource(R.string.action_close), onClick = onDismiss)
+                if (result is UpdateChecker.Result.Newer) {
+                    Spacer(Modifier.size(8.dp))
+                    TextAction(
+                        stringResource(R.string.update_open),
+                        primary = true,
+                        onClick = { onOpen(result.release.url) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 用浏览器打开链接；没有浏览器时静默失败（不值得为一步跳转崩掉整个设置页）。 */
+private fun openInBrowser(context: android.content.Context, url: String) {
+    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
 }
 
 // ══════════════════════════════════════════════════════════

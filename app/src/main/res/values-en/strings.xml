@@ -210,6 +210,13 @@
 
     <!-- ── Settings: about ──────────────────────────────── -->
     <string name="about_version">Version</string>
+    <string name="about_update">Update</string>
+    <string name="about_check_update">Check for updates</string>
+    <string name="about_current_version">Current v%1$s</string>
+    <string name="update_new_title">New version %1$s</string>
+    <string name="update_up_to_date">Up to date</string>
+    <string name="update_failed">Check failed</string>
+    <string name="update_open">Open download</string>
     <string name="about_package">Package</string>
     <string name="about_project">Project</string>
     <string name="about_project_url">Repository</string>

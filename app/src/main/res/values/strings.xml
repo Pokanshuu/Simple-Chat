@@ -215,6 +215,13 @@
 
     <!-- ── 设置：关于 ───────────────────────────────────── -->
     <string name="about_version">版本</string>
+    <string name="about_update">更新</string>
+    <string name="about_check_update">检查更新</string>
+    <string name="about_current_version">当前 v%1$s</string>
+    <string name="update_new_title">发现新版本 %1$s</string>
+    <string name="update_up_to_date">已是最新版</string>
+    <string name="update_failed">检查失败</string>
+    <string name="update_open">前往下载</string>
     <string name="about_package">包名</string>
     <string name="about_project">项目</string>
     <string name="about_project_url">项目地址</string>
