@@ -534,6 +534,10 @@
     <string name="search_browsing">Browsing the web</string>
     <string name="search_view_all">View all</string>
     <string name="search_results">Search results</string>
+    <plurals name="search_sources">
+        <item quantity="one">%1$d source</item>
+        <item quantity="other">%1$d sources</item>
+    </plurals>
     <string name="search_panel_empty">No sources to show for this turn</string>
 
     <!-- Thinking header (official wording) -->

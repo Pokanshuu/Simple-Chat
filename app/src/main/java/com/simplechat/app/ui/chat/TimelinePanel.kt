@@ -24,9 +24,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -442,10 +445,12 @@ private fun Chip(
 }
 
 /**
- * 正文下方的来源条：编号 + 站点名。
+ * 正文下方的来源胶囊：叠放的站点图标 + 「N 个来源」，点开是完整的搜索结果面板。
  *
- * 与正文里的角标是**同一套编号**，所以两条路都通：想点正文里那个小数字也行，
- * 想从列表里挑一个也行。
+ * 原先是一排横向滚动的「编号 + 站点名」小块，来源一多就挤出屏幕，
+ * 而且每块只能打开一条。现在收成一枚胶囊：前几个站点的图标叠在一起，
+ * 告诉用户"参考了哪些网站"，要看细节就点开面板。
+ * 具体某一条仍可以从正文角标直接点 —— 两条路用的是同一套编号。
  */
 @Composable
 fun SourcesStrip(
@@ -455,36 +460,39 @@ fun SourcesStrip(
 ) {
     if (sources.isEmpty()) return
     val colors = LocalChatColors.current
+    // 同一站点只露一次图标：搜索结果常有同站多页
+    val faces = remember(sources) { sources.distinctBy { it.siteName.ifBlank { it.url } }.take(MaxStackedIcons) }
     Row(
         modifier = modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+            .clip(CircleShape)
+            .background(colors.card)
+            .clickable { onOpenSources(sources) }
+            .padding(start = 5.dp, end = 11.dp, top = 5.dp, bottom = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        sources.forEach { source ->
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(colors.card)
-                    .clickable { onOpenSources(listOf(source)) }
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
-            ) {
-                Text(
-                    text = source.index.toString(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = colors.processText.copy(alpha = 0.7f),
-                )
-                Text(
-                    text = source.siteName.ifBlank { source.title },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = colors.processText,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+        Box {
+            faces.forEachIndexed { i, source ->
+                SiteIcon(
+                    source = source,
+                    size = StackedIconSize,
+                    ring = colors.card,
+                    modifier = Modifier
+                        .padding(start = StackedIconStep * i)
+                        // 先出现的压在上面：从左往右读，第一个最完整
+                        .zIndex((faces.size - i).toFloat()),
                 )
             }
         }
+        Spacer(Modifier.width(7.dp))
+        Text(
+            text = pluralStringResource(R.plurals.search_sources, sources.size, sources.size),
+            style = MaterialTheme.typography.labelMedium,
+            color = colors.processText,
+            maxLines = 1,
+        )
     }
 }
+
+private const val MaxStackedIcons = 4
+private val StackedIconSize = 18.dp
+private val StackedIconStep = 12.dp

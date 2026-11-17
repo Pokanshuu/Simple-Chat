@@ -180,7 +180,7 @@ class ReplyTimelineViewTest {
             streaming = false,
         )
         assertEquals(
-            "第一句[¹](#cite-1)[²](#cite-2)第二句[¹](#cite-1)",
+            "第一句 [1](#cite-1) [2](#cite-2)第二句 [1](#cite-1)",
             view.answer,
         )
         assertEquals(2, view.sources.size)
@@ -200,7 +200,7 @@ class ReplyTimelineViewTest {
             listOf("https://a/1", "https://c/3"),
             view.sources.map { it.url },
         )
-        assertEquals("[²](#cite-2)", view.answer.takeLast(12))
+        assertTrue(view.answer.endsWith(" [2](#cite-2)"))
     }
 
     @Test
@@ -209,7 +209,7 @@ class ReplyTimelineViewTest {
             listOf(text("正文\n\n", Citation("https://a/1", "甲"))),
             streaming = false,
         )
-        assertEquals("正文[¹](#cite-1)\n\n", view.answer)
+        assertEquals("正文 [1](#cite-1)\n\n", view.answer)
     }
 
     @Test
@@ -218,21 +218,14 @@ class ReplyTimelineViewTest {
             SourceRef(1, "https://a/1", "甲", "a", null, null, null),
             SourceRef(2, "https://b/2?x=(y)", "乙", "b", null, null, null),
         )
-        val resolved = resolveCitationLinks("正文[¹](#cite-1)与[²](#cite-2)", sources)
-        assertEquals("正文[¹](https://a/1)与[²](https://b/2?x=%28y%29)", resolved)
+        val resolved = resolveCitationLinks("正文[1](#cite-1)与[2](#cite-2)", sources)
+        assertEquals("正文[1](https://a/1)与[2](https://b/2?x=%28y%29)", resolved)
     }
 
     @Test
     fun `未知编号的角标原样保留`() {
-        val resolved = resolveCitationLinks("正文[³](#cite-3)", emptyList())
-        assertEquals("正文[³](#cite-3)", resolved)
-    }
-
-    @Test
-    fun `上标数字支持多位`() {
-        assertEquals("¹", superscript(1))
-        assertEquals("¹⁰", superscript(10))
-        assertEquals("⁰", superscript(0))
+        val resolved = resolveCitationLinks("正文[3](#cite-3)", emptyList())
+        assertEquals("正文[3](#cite-3)", resolved)
     }
 
     // ── 读链接 / 打开网页 / 页内查找 ───────────────────────

@@ -537,6 +537,9 @@
     <string name="search_browsing">正在浏览网页</string>
     <string name="search_view_all">查看全部</string>
     <string name="search_results">搜索结果</string>
+    <plurals name="search_sources">
+        <item quantity="other">%1$d 个来源</item>
+    </plurals>
     <string name="search_panel_empty">这次没有可展示的来源</string>
 
     <!-- 思考标题（扩展通道用「已思考（用时 N 秒）」的官方措辞） -->

@@ -294,7 +294,8 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
     // 莫名多出灰色方块"（真机反馈的浅灰 / 深灰色块）。
     val extendedSpans = markdownExtendedSpans {
         val searchPainter = rememberSearchSpanPainter()
-        remember(searchPainter) {
+        val citationPainter = rememberCitationChipPainter()
+        remember(searchPainter, citationPainter) {
                 val backgroundPainter = RoundedCornerSpanPainter(
                     cornerRadius = 3.sp,
                     /*
@@ -308,7 +309,7 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
                     topMargin = 5.sp,
                     bottomMargin = 5.sp,
                 )
-            ExtendedSpans(*listOfNotNull(backgroundPainter, searchPainter).toTypedArray())
+            ExtendedSpans(*listOfNotNull(backgroundPainter, citationPainter, searchPainter).toTypedArray())
         }
     }
 

@@ -307,13 +307,17 @@ private fun joinText(
 }
 
 /**
- * 正文里的引用角标：`[ⁿ](#cite-N)`。
+ * 正文里的引用角标：`[N](#cite-N)`，渲染时画成小胶囊（见 `CitationChipPainter`）。
  *
  * 先写成**页内锚点**而不是真实 URL，因为 markdown 的链接目标遇到 `)`、空格、中文
  * 会被截断，一次搜索就能把整段正文的排版搞乱。真正的 URL 在渲染前由
  * [resolveCitationLinks] 换进去 —— 那一步只做字符串替换，不参与解析。
+ *
+ * 链接文字只放**纯数字**：胶囊的绘制靠"链接文字全是数字"认出角标，
+ * 不必在 URL 上做记号（那会改坏真实链接）。前面那个细空格（U+2009）
+ * 是胶囊与前文 / 相邻胶囊之间的留白，胶囊的左右内边距就画在它里面。
  */
-internal fun citationMark(index: Int): String = "[${superscript(index)}](#cite-$index)"
+internal fun citationMark(index: Int): String = " [$index](#cite-$index)"
 
 /** 角标链接在正文里的占位形态，见 [citationMark]。 */
 private val CitationHref = Regex("""\(#cite-(\d+)\)""")
@@ -334,15 +338,11 @@ internal fun resolveCitationLinks(markdown: String, sources: List<SourceRef>): S
     }
 }
 
-private fun escapeHref(url: String): String = url
+internal fun escapeHref(url: String): String = url
     .replace("(", "%28")
     .replace(")", "%29")
     .replace(" ", "%20")
     .replace("\n", "")
-
-/** 上标数字，任意位。不用 `[1]` 是因为它会和 markdown 链接语法打架。 */
-internal fun superscript(value: Int): String =
-    value.toString().map { digit -> "⁰¹²³⁴⁵⁶⁷⁸⁹"[digit - '0'] }.joinToString("")
 
 private fun statusOf(result: Any?, streaming: Boolean): ToolStatus = when {
     result == null -> if (streaming) ToolStatus.WIP else ToolStatus.FAILED

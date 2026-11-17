@@ -85,6 +85,7 @@ import com.simplechat.app.ui.common.IconCircleButton
 import com.simplechat.app.ui.common.SoftShape
 import com.simplechat.app.ui.common.rememberPressPosition
 import com.simplechat.app.ui.markdown.MarkdownText
+import com.simplechat.app.ui.markdown.LocalCitationClick
 import com.simplechat.app.ui.markdown.MarkdownWithMath
 import com.simplechat.app.ui.markdown.SearchHighlightHost
 import com.simplechat.app.ui.markdown.LocalSearchHighlight
@@ -956,11 +957,25 @@ fun AssistantBlock(
          * 流式的开销靠两道闸压住：上游按固定节奏采样（见 `MarkdownText`），
          * 下游逐块渲染、只有尾块重解析（见 `MarkdownTextBlocks`）。
          */
+        /*
+         * 点正文角标：按 URL 对回来源表，打开只含这一条的来源弹窗，
+         * 不再直接跳浏览器 —— 先让用户看清是哪个网页、讲了什么，再决定要不要去。
+         */
+        val sources = timeline?.sources.orEmpty()
+        val onCitationClick: ((String) -> Unit)? = remember(sources) {
+            if (sources.isEmpty()) {
+                null
+            } else {
+                { url -> sources.firstOrNull { it.url == url || escapeHref(it.url) == url }?.let { sourceSheet = listOf(it) } }
+            }
+        }
         SelectableText(selecting, selectionState) {
-            MarkdownWithMath(
-                content = answer,
-                streaming = message.streaming,
-            )
+            CompositionLocalProvider(LocalCitationClick provides onCitationClick) {
+                MarkdownWithMath(
+                    content = answer,
+                    streaming = message.streaming,
+                )
+            }
         }
 
         // 正文下方的来源条：与正文角标同一套编号，两条路都能点开

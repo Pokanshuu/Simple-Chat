@@ -2,40 +2,55 @@ package com.simplechat.app.ui.chat
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.simplechat.app.R
-import com.simplechat.app.ui.common.ContainerShape
+import com.simplechat.app.ui.common.AppIcons
+import com.simplechat.app.ui.common.IconCircleButton
 import com.simplechat.app.ui.theme.LocalChatColors
 
 /**
- * 来源列表弹窗。
+ * 搜索结果面板（自绘底部面板）。
  *
- * 点「已阅读 N 个网页」或正文下方的来源条都会打开它 —— 一处列表、两种入口，
- * 不再各写一套。每行给出**编号 + 站点名 + 标题 + 摘要**：编号与正文角标对齐，
- * 用户能立刻把「正文里那个 ³」对上「第 3 条」。
+ * 三个入口共用这一处：时间线里的「已阅读 N 个网页」、正文下方的来源胶囊（全部来源）、
+ * 正文里的引用角标（只有被点的那一条）。只有一条时直接把摘要整段展开，
+ * 让用户先看清"这个角标说的是哪个网页、讲了什么"，再决定要不要跳出去。
  *
- * 点一行直接交给系统浏览器（`LocalUriHandler`）。刻意**不做内置 WebView**：
+ * 每行：站点图标 + 站点名 · 日期 + 标题 + 摘要，左上角的编号与正文角标一一对应。
+ *
+ * ⚠️ 与项目里其他底部面板一样**不用 `ModalBottomSheet`**（见 `Attachments.kt` 的说明），
+ * 用 `Dialog` + 关掉平台默认宽度、让窗口铺到边到边，卡片贴底。
+ *
+ * 点一行交给系统浏览器（`LocalUriHandler`）。刻意**不做内置 WebView**：
  * 那等于把一个浏览器塞进 APK，与本项目「轻量」的第一要义冲突。
  */
 @Composable
@@ -45,123 +60,159 @@ fun SourceSheet(
 ) {
     val colors = LocalChatColors.current
     val uri = LocalUriHandler.current
+    val single = sources.size == 1
+    // 最多占屏高的七成：上方留出对话，用户知道自己还在原处
+    val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.7f).dp
 
-    Dialog(onDismissRequest = onDismiss) {
-        Column(
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+    ) {
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .clip(ContainerShape)
-                .background(colors.card)
-                .padding(vertical = 18.dp),
+                .fillMaxSize()
+                .background(colors.scrim)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss,
+                ),
+            contentAlignment = Alignment.BottomCenter,
         ) {
-            Text(
-                text = stringResource(R.string.search_results),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(horizontal = 20.dp),
-            )
-            Spacer(Modifier.size(6.dp))
-            Text(
-                text = stringResource(R.string.search_read_many, sources.size),
-                style = MaterialTheme.typography.labelMedium,
-                color = colors.placeholder,
-                modifier = Modifier.padding(horizontal = 20.dp),
-            )
-            Spacer(Modifier.size(12.dp))
-
-            if (sources.isEmpty()) {
-                Text(
-                    text = stringResource(R.string.search_panel_empty),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.placeholder,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                )
-            } else {
-                Column(
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
+                    .background(colors.card)
+                    // 吞掉卡片内的点击，避免落到外面的关闭层上
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {},
+                    )
+                    .navigationBarsPadding()
+                    .padding(top = 14.dp, bottom = 8.dp),
+            ) {
+                // ── 标题行：搜索结果 · N 个来源 · ✕ ─────────────
+                Row(
                     modifier = Modifier
-                        // 再多也别把整屏占满：给"关掉"留一条退路
-                        .heightIn(max = 420.dp)
-                        .verticalScroll(rememberScrollState()),
+                        .fillMaxWidth()
+                        .padding(start = 20.dp, end = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    sources.forEach { source ->
-                        SourceRow(source) {
-                            if (source.url.isNotBlank()) runCatching { uri.openUri(source.url) }
+                    Text(
+                        text = stringResource(R.string.search_results),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = pluralStringResource(R.plurals.search_sources, sources.size, sources.size),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.placeholder,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconCircleButton(
+                        icon = AppIcons.Close,
+                        contentDescription = stringResource(R.string.action_close),
+                        onClick = onDismiss,
+                        size = 30.dp,
+                        iconSize = 16.dp,
+                        background = colors.fieldBackground,
+                        tint = colors.processText,
+                    )
+                }
+                Spacer(Modifier.size(8.dp))
+
+                if (sources.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.search_panel_empty),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.placeholder,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                    )
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .heightIn(max = maxHeight)
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        sources.forEach { source ->
+                            SourceRow(source, expanded = single) {
+                                if (source.url.isNotBlank()) runCatching { uri.openUri(source.url) }
+                            }
                         }
                     }
                 }
             }
-
-            Spacer(Modifier.size(8.dp))
-            Text(
-                text = stringResource(R.string.action_close),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onDismiss)
-                    .padding(horizontal = 20.dp, vertical = 10.dp),
-            )
         }
     }
 }
 
 @Composable
-private fun SourceRow(source: SourceRef, onClick: () -> Unit) {
+private fun SourceRow(source: SourceRef, expanded: Boolean, onClick: () -> Unit) {
     val colors = LocalChatColors.current
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(horizontal = 20.dp, vertical = 11.dp),
     ) {
-        // 编号：与正文角标一一对应
-        Text(
-            text = source.index.toString(),
-            style = MaterialTheme.typography.labelMedium,
-            color = colors.processText.copy(alpha = 0.7f),
-            modifier = Modifier
-                .size(20.dp)
-                .clip(CircleShape)
-                .background(colors.fieldBackground)
-                .padding(top = 3.dp),
-        )
-        Column(modifier = Modifier.weight(1f)) {
+        // ── 站点行：图标 · 站点名 · 日期 ·（右侧）编号 ──────
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            SiteIcon(source = source, size = 16.dp)
             Text(
-                text = source.title,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
+                text = source.siteName.ifBlank { hostOf(source.url) },
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.processText,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
             )
-            Spacer(Modifier.size(2.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
+            source.pageAge?.takeIf { it.isNotBlank() }?.let { age ->
                 Text(
-                    text = source.siteName,
+                    text = "· " + age.take(10),
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.placeholder,
-                )
-                source.pageAge?.let { age ->
-                    Text(
-                        text = age.take(10),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.placeholder,
-                    )
-                }
-            }
-            source.snippet?.let { snippet ->
-                Spacer(Modifier.size(4.dp))
-                Text(
-                    text = snippet,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = colors.processText,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
+                    maxLines = 1,
                 )
             }
+            Spacer(Modifier.weight(1f))
+            // 编号：与正文角标一一对应
+            Text(
+                text = source.index.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.processText,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(colors.markdownInlineCode)
+                    .padding(horizontal = 6.dp, vertical = 1.dp),
+            )
+        }
+        Spacer(Modifier.size(5.dp))
+        Text(
+            text = source.title.ifBlank { source.url },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = if (expanded) 4 else 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        source.snippet?.takeIf { it.isNotBlank() }?.let { snippet ->
+            Spacer(Modifier.size(3.dp))
+            Text(
+                text = snippet,
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.placeholder,
+                maxLines = if (expanded) 12 else 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
+
+/** 站点名缺省时退回域名（去掉 `www.`）。 */
+private fun hostOf(url: String): String =
+    url.substringAfter("://").substringBefore('/').substringBefore('?').removePrefix("www.")
