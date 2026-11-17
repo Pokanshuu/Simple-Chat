@@ -5,6 +5,18 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!--
+        「后台继续生成」：生成期间用一个 dataSync 型前台服务把进程提权。
+
+        没有它的话，退到后台的普通进程随时会被系统回收 —— 表现是长回复写到一半
+        突然停住（见 `service/GenerationService`）。`WAKE_LOCK` 只在生成期间持有
+        PARTIAL 锁（保 CPU，不点屏），生成结束立刻释放。
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!--
         语音输入（录音 → 系统识别）**仍然下线**，所以这里不声明 `RECORD_AUDIO`，
         也不声明识别服务的 `<queries>` —— 否则装完之后系统设置里会挂着一个
         用不上的"麦克风"权限。
@@ -61,6 +73,16 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!--
+            「后台继续生成」的前台服务。`dataSync` 是 Android 14+ 强制要求声明的那一类：
+            它描述的是"正在把数据同步到远端/本地"，与本场景（持续接收流式回复）最贴切。
+            `exported=false`：只有自己能起。
+        -->
+        <service
+            android:name=".service.GenerationService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
 </manifest>

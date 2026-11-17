@@ -85,6 +85,8 @@
     <string name="error_http_too_large">The request is too large (images or history). Reduce it and retry</string>
     <string name="error_http_rate_limited">Too many requests. Wait a moment and retry</string>
     <string name="error_no_api_key">No API key yet. Fill it in under Settings → API, then retry.</string>
+    <string name="error_api_key_chars">The API key contains non-ASCII characters (Chinese, full-width punctuation or line breaks), which cannot be sent in a request header. Re-paste a plain ASCII key under Settings → API → API Key.</string>
+    <string name="api_key_illegal_chars">An API key may only contain visible ASCII characters; found an illegal character %1$s (pasting often brings in Chinese text, full-width punctuation or line breaks).</string>
     <string name="error_no_model">No model selected yet. Pick one under Settings → API (tap “Test connection” to fetch a custom endpoint’s models, or enter the model id manually).</string>
     <string name="error_request_failed">Request failed</string>
     <string name="error_no_content">The model returned no content</string>
@@ -123,6 +125,8 @@
     <string name="settings_appearance">Appearance</string>
     <string name="settings_accent">Accent color</string>
     <string name="settings_auto_collapse">Auto-collapse thinking</string>
+    <string name="generation_channel">Generation progress</string>
+    <string name="generation_running_title">Generating reply</string>
     <string name="settings_about_title">About SimpleChat</string>
     <string name="settings_export_all">Export all data</string>
     <string name="settings_export_all_summary">Exports conversations, messages and all versions</string>
@@ -210,6 +214,15 @@
     <string name="about_project">Project</string>
     <string name="about_project_url">Repository</string>
     <string name="about_licenses">Open-source licenses</string>
+    <string name="licenses_count">%1$d components</string>
+    <string name="licenses_third_party">Third-party components</string>
+    <string name="licenses_reference_title">References (no code bundled)</string>
+    <string name="credit_deepseek_demo">DeepSeek Chat Demo (MIT) — referenced for the archive format and flow of DeepSeek chat-history import.</string>
+    <string name="license_version">Version</string>
+    <string name="license_type">License</string>
+    <string name="license_copyright">Copyright</string>
+    <string name="license_project">Project page</string>
+    <string name="license_full_text">License text</string>
     <string name="about_icon">Icon</string>
     <string name="about_libs_net">Networking &amp; serialization</string>
     <string name="about_libs_storage">Storage &amp; UI</string>

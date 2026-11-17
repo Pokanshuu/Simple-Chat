@@ -74,6 +74,7 @@ import com.simplechat.app.ui.common.ContainerShape
 import com.simplechat.app.ui.common.BubbleShapeOut
 import com.simplechat.app.App
 import com.simplechat.app.R
+import com.simplechat.app.data.ApiKey
 import com.simplechat.app.data.AppLanguage
 import com.simplechat.app.data.ImportMode
 import com.simplechat.app.data.Res
@@ -132,6 +133,8 @@ private enum class SettingsPage(val depth: Int) {
     /** 朗读音色（系统 TTS）。 */
     VOICE(1),
     ABOUT(1),
+    /** 开源许可与版权清单（关于 → 二级）。 */
+    LICENSES(2),
 }
 
 private sealed interface SettingsDialog {
@@ -474,6 +477,7 @@ fun SettingsScreen(
                 SettingsPage.FONT -> stringResource(R.string.settings_font_size)
                 SettingsPage.VOICE -> stringResource(R.string.tts_voice)
                 SettingsPage.ABOUT -> stringResource(R.string.settings_about)
+                SettingsPage.LICENSES -> stringResource(R.string.about_licenses)
             },
             onBack = {
                 if (archiveProgress.value == null && importProgress.value == null && !importReading) {
@@ -603,7 +607,11 @@ fun SettingsScreen(
                             onScaleCommit = { scope.launch { store.setFontScale(it) } },
                         )
 
-                        SettingsPage.ABOUT -> AboutPage()
+                        SettingsPage.ABOUT -> AboutPage(
+                            onOpenLicenses = { page = SettingsPage.LICENSES },
+                        )
+
+                        SettingsPage.LICENSES -> LicensesPage()
 
                         SettingsPage.VOICE -> VoicePage(
                             selectedName = stored.ttsVoiceName,
@@ -729,6 +737,23 @@ fun SettingsScreen(
             initial = stored.apiKey,
             placeholder = "sk-…",
             secret = true,
+            /*
+             * 粘进来的东西经常带换行、空格，甚至整段中文占位符。HTTP 头只接受可见 ASCII，
+             * 不拦的话错误会以 `Unexpected char 0x4f55 at 8 in Authorization value`
+             * 的形式出现在对话里 —— 用户完全看不懂（见 `ApiKey`）。
+             */
+            validate = { raw ->
+                val clean = ApiKey.normalize(raw)
+                val illegal = ApiKey.firstIllegalChar(clean)
+                if (illegal == null) {
+                    null
+                } else {
+                    Res.get(
+                        R.string.api_key_illegal_chars,
+                        "0x%04x".format(illegal.code),
+                    )
+                }
+            },
             onDismiss = { dialog = null },
             onConfirm = { value ->
                 dialog = null
@@ -1845,7 +1870,7 @@ private fun FontPage(
 // ══════════════════════════════════════════════════════════
 
 @Composable
-private fun AboutPage() {
+private fun AboutPage(onOpenLicenses: () -> Unit) {
     SettingsSectionLabel(stringResource(R.string.about_version))
 
     SettingsCard {
@@ -1871,26 +1896,19 @@ private fun AboutPage() {
 
     SettingsSectionLabel(stringResource(R.string.about_licenses))
 
+    /*
+     * 只放一行入口，不把十几个组件铺在「关于」页里。
+     *
+     * 合规要看的是**每个组件的五项信息**（名称与版本 / 许可证 / 版权 / 官方链接 /
+     * 许可证全文），那必须是一页能逐条读的清单，而不是几张 `名字 (MIT)` 的便签。
+     */
     SettingsCard {
-        InfoRow(label = stringResource(R.string.about_icon), value = "Lucide (ISC)")
-        RowDivider(inset = 16.dp)
-        InfoRow(label = stringResource(R.string.about_libs_net), value = "OkHttp · kotlinx.serialization")
-        RowDivider(inset = 16.dp)
-        InfoRow(label = stringResource(R.string.about_libs_storage), value = "Room · DataStore · Jetpack Compose")
-        RowDivider(inset = 16.dp)
-        InfoRow(label = "Markdown", value = "multiplatform-markdown-renderer (Apache-2.0)")
-        RowDivider(inset = 16.dp)
-        InfoRow(label = stringResource(R.string.about_libs_parsing), value = "JetBrains markdown · Highlights")
-        RowDivider(inset = 16.dp)
-        InfoRow(label = stringResource(R.string.about_libs_crypto), value = "Android Keystore (AES-256-GCM)")
-        RowDivider(inset = 16.dp)
-        InfoRow(label = stringResource(R.string.about_libs_math), value = "latex-renderer (MIT)")
-        RowDivider(inset = 16.dp)
-        InfoRow(label = stringResource(R.string.about_libs_diagram), value = "Mermaid (MIT)")
-        RowDivider(inset = 16.dp)
-        InfoRow(label = "DeepSeek Chat Demo", value = "MIT")
-        RowDivider(inset = 16.dp)
-        InfoRow(label = "Simple-Agent", value = "MIT")
+        SettingsNavRow(
+            icon = AppIcons.FileText,
+            label = stringResource(R.string.about_licenses),
+            value = stringResource(R.string.licenses_count, thirdPartyLicenses.size),
+            onClick = onOpenLicenses,
+        )
     }
 
     Spacer(Modifier.size(16.dp))
@@ -1901,6 +1919,142 @@ private fun AboutPage() {
         color = LocalChatColors.current.placeholder,
         modifier = Modifier.padding(horizontal = 4.dp),
     )
+}
+
+// ══════════════════════════════════════════════════════════
+//  三级：开源许可与版权
+// ══════════════════════════════════════════════════════════
+
+/**
+ * 第三方组件清单。
+ *
+ * 合规要的是**每个组件的五项**：名称与版本、许可证、版权所有、官方链接、许可证全文。
+ * 这必须是一页能逐条读的清单 —— 挤在「关于」页里的 `名字 (MIT)` 便签既查不到版本，
+ * 也拿不到版权方。
+ */
+@Composable
+private fun LicensesPage() {
+    val colors = LocalChatColors.current
+    var selected by remember { mutableStateOf<LicenseEntry?>(null) }
+
+    SettingsSectionLabel(stringResource(R.string.licenses_third_party))
+
+    SettingsCard {
+        thirdPartyLicenses.forEachIndexed { index, entry ->
+            if (index > 0) RowDivider(inset = 16.dp)
+            LicenseRow(entry = entry, onClick = { selected = entry })
+        }
+    }
+
+    if (referenceCredits.isNotEmpty()) {
+        Spacer(Modifier.size(16.dp))
+        SettingsSectionLabel(stringResource(R.string.licenses_reference_title))
+        SettingsCard {
+            referenceCredits.forEachIndexed { index, textRes ->
+                if (index > 0) RowDivider(inset = 16.dp)
+                Text(
+                    text = stringResource(textRes),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.processText,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                )
+            }
+        }
+    }
+
+    selected?.let { entry ->
+        LicenseDetailDialog(entry = entry, onDismiss = { selected = null })
+    }
+}
+
+/** 清单里的一行：名称 + 版本 · 许可证 + 版权方。 */
+@Composable
+private fun LicenseRow(entry: LicenseEntry, onClick: () -> Unit) {
+    val colors = LocalChatColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = entry.name,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.size(3.dp))
+            Text(
+                text = "${entry.version} · ${entry.license}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(Modifier.size(2.dp))
+            Text(
+                text = entry.copyright,
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.placeholder,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.size(8.dp))
+        Icon(
+            imageVector = AppIcons.ChevronRight,
+            contentDescription = null,
+            tint = colors.placeholder,
+            modifier = Modifier.size(16.dp),
+        )
+    }
+}
+
+/** 单个组件的详情：五项信息齐全，链接可直接打开。 */
+@Composable
+private fun LicenseDetailDialog(entry: LicenseEntry, onDismiss: () -> Unit) {
+    val colors = LocalChatColors.current
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(ContainerShape)
+                .background(colors.card)
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = 16.dp),
+        ) {
+            Text(
+                text = entry.name,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            Spacer(Modifier.size(12.dp))
+            InfoRow(label = stringResource(R.string.license_version), value = entry.version)
+            RowDivider(inset = 16.dp)
+            InfoRow(label = stringResource(R.string.license_type), value = entry.license)
+            RowDivider(inset = 16.dp)
+            InfoRow(label = stringResource(R.string.license_copyright), value = entry.copyright)
+            RowDivider(inset = 16.dp)
+            LinkRow(
+                label = stringResource(R.string.license_project),
+                value = entry.projectUrl,
+                url = entry.projectUrl,
+            )
+            RowDivider(inset = 16.dp)
+            LinkRow(
+                label = stringResource(R.string.license_full_text),
+                value = entry.licenseUrl,
+                url = entry.licenseUrl,
+            )
+            Spacer(Modifier.size(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextAction(stringResource(R.string.action_close), onClick = onDismiss)
+            }
+        }
+    }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -2343,9 +2497,12 @@ private fun TextInputDialog(
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
     secret: Boolean = false,
+    /** 返回非空字符串 = 校验失败的原因；此时不关窗、不提交。 */
+    validate: ((String) -> String?)? = null,
 ) {
     val colors = LocalChatColors.current
     var value by remember { mutableStateOf(initial) }
+    var error by remember { mutableStateOf<String?>(null) }
 
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -2371,7 +2528,11 @@ private fun TextInputDialog(
             ) {
                 BasicTextField(
                     value = value,
-                    onValueChange = { value = it },
+                    onValueChange = {
+                        value = it
+                        // 用户开始改了就把旧的红字收掉，别让它跟着新内容一起错着
+                        error = null
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     textStyle = MaterialTheme.typography.bodyMedium.copy(
                         color = MaterialTheme.colorScheme.onSurface,
@@ -2400,13 +2561,33 @@ private fun TextInputDialog(
 
             Spacer(Modifier.size(18.dp))
 
+            /*
+             * 校验失败时**不关窗**：把原因就地写在按钮上方，用户改一个字就能再点。
+             * 关掉窗再弹一句提示，等于让他重新打开一遍再粘一次。
+             */
+            error?.let { text ->
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = LocalChatColors.current.danger,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                )
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
             ) {
                 TextAction(stringResource(R.string.action_cancel), onClick = onDismiss)
                 Spacer(Modifier.size(8.dp))
-                TextAction(stringResource(R.string.action_save), primary = true, onClick = { onConfirm(value) })
+                TextAction(
+                    stringResource(R.string.action_save),
+                    primary = true,
+                    onClick = {
+                        val problem = validate?.invoke(value)
+                        if (problem != null) error = problem else onConfirm(value)
+                    },
+                )
             }
         }
     }

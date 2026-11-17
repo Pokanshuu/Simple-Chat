@@ -12,6 +12,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.simplechat.app.R
+import com.simplechat.app.data.ApiKey
+import com.simplechat.app.data.BackgroundGeneration
 import com.simplechat.app.data.Attachment
 import com.simplechat.app.data.ChatRepository
 import com.simplechat.app.ui.markdown.warmMarkdownCache
@@ -1348,14 +1350,64 @@ class ChatViewModel(
         isStreaming = false
         streamJob?.cancel()
         streamJob = null
+        // 用户主动停止：前台服务立刻收掉，不留一条"正在生成"的通知
+        BackgroundGeneration.sync(false)
+    }
+
+    /**
+     * ViewModel 被回收（退出对话页 / Activity 结束）。
+     *
+     * 流随 `viewModelScope` 一起取消，前台服务也必须收掉 ——
+     * 否则会留下一条永远"正在生成"的通知。
+     */
+    override fun onCleared() {
+        BackgroundGeneration.sync(false)
+        super.onCleared()
+    }
+
+    /**
+     * 请求**还没发出去**就失败的收尾。
+     *
+     * 与流式里的失败走同一套表现（回复上挂红字 + 重试按钮），但不必经过网络层：
+     * 空的流式气泡留在界面上等下一个 token，用户只会以为"卡住了"。
+     */
+    private fun rejectBeforeSend(replyId: String, message: String) {
+        val conversationId = currentConversationId ?: return
+        patch(replyId) { it.copy(status = MessageStatus.ERROR, errorMessage = message) }
+        viewModelScope.launch {
+            runCatching {
+                repository.finishMessage(
+                    id = replyId,
+                    content = "",
+                    reasoning = null,
+                    status = MessageStatus.ERROR,
+                    errorMessage = message,
+                )
+                repository.touchConversation(conversationId)
+            }
+        }
     }
 
     // ── 流式实现 ──────────────────────────────────────────
 
     private fun startStream(conversationId: String, replyId: String, prefix: UiMessage? = null) {
         if (conversationId != currentConversationId) return
+        /*
+         * ★ **发请求之前先验 Key 的字符集。**
+         *
+         * `Authorization` 头只接受可见 ASCII。Key 里混进中文 / 全角 / 换行时，
+         * OkHttp 抛的是 `Unexpected char 0x4f55 at 8 in Authorization value` ——
+         * 码点是第一个非法字符，用户既不知道是哪个字段，也不知道该改什么。
+         * 在这里先拦下，把这条回复直接标成错误，文案说清楚去哪儿改。
+         */
+        if (!ApiKey.isHeaderSafe(stored.apiKey)) {
+            rejectBeforeSend(replyId = replyId, message = Res.get(R.string.error_api_key_chars))
+            return
+        }
         val generation = ++streamGeneration
         isStreaming = true
+        // 生成期间把进程提到前台服务优先级：退到后台 / 熄屏也继续收
+        BackgroundGeneration.sync(true)
         stoppedByUser = false
         lastCheckpointAt = System.currentTimeMillis()
         val extended = apiStyle == ApiStyle.ANTHROPIC
@@ -1676,6 +1728,8 @@ class ChatViewModel(
             if (generation == streamGeneration) {
                 isStreaming = false
                 streamJob = null
+                // 生成结束：前台服务退回普通优先级，通知随之消失
+                BackgroundGeneration.sync(false)
                 if (persisted && status == MessageStatus.DONE && conversationId == currentConversationId) {
                     replyCompletions.tryEmit(CompletedReply(conversationId, replyId))
                 }

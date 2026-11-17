@@ -87,6 +87,19 @@ class AppTextException(val text: AppText) : IllegalArgumentException("AppText(#$
  */
 fun Throwable.userMessage(): String = when (this) {
     is AppTextException -> text.resolve()
+    /*
+     * OkHttp 对非法请求头抛的是 `IllegalArgumentException`：
+     * `Unexpected char 0x4f55 at 8 in Authorization value`。
+     * 实际原因几乎总是 API Key 里粘进了中文 / 全角字符 / 换行 —— 见 `ApiKey`。
+     * 这里兜一层：请求已经发出去才发现的情况（比如旧配置）也不再上屏一串码点。
+     */
+    is IllegalArgumentException ->
+        if (message?.contains("Authorization", ignoreCase = true) == true) {
+            Res.get(R.string.error_api_key_chars)
+        } else {
+            message?.takeIf { it.isNotBlank() } ?: Res.get(R.string.error_unknown)
+        }
+
     is java.io.IOException -> Res.get(networkFailureRes(this))
     else -> message?.takeIf { it.isNotBlank() } ?: Res.get(R.string.error_unknown)
 }

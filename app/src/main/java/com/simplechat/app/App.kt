@@ -32,6 +32,8 @@ class App : Application() {
         com.simplechat.app.data.CrashDiagnostics.install(this)
         Res.init(this)
         container = AppContainer(this)
+        // 「后台继续生成」的前台服务需要 application context（见 BackgroundGeneration）
+        com.simplechat.app.data.BackgroundGeneration.install(this)
 
         // 把 v1.7 之前留在 DataStore 里的**明文** API Key 就地加密。
         // 一次性动作，放在进程启动时做，不与任何界面竞争。

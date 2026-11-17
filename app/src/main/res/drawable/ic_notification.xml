@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    通知栏小图标：**纯白单色**（系统会按主题染色）。
+
+    用矢量而不是 launcher 的那张 PNG：小图标会被系统裁到一个 24dp 的方框里再染色，
+    带背景色的 PNG 放进去是一团实心方块。这里只画一个对话气泡。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4,4h16a2,2 0 0 1 2,2v9a2,2 0 0 1 -2,2H9l-5,4V6a2,2 0 0 1 2,-2z" />
+</vector>

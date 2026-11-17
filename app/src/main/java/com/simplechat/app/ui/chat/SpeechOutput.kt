@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.simplechat.app.R
+import com.simplechat.app.data.ApiKey
 import com.simplechat.app.data.Res
 import com.simplechat.app.data.userMessage
 import com.simplechat.app.net.DeepSeekTts
@@ -298,6 +299,12 @@ class SpeechOutputController(private val context: Context) {
         val config = officialConfig
         if (config == null) {
             error = Res.get(R.string.tts_official_unavailable)
+            return
+        }
+        // 与对话请求同一条底线：Key 里混进非 ASCII 时 OkHttp 只会报一个码点，
+        // 在这里提前说清楚（见 ApiKey）
+        if (!ApiKey.isHeaderSafe(config.apiKey)) {
+            error = Res.get(R.string.error_api_key_chars)
             return
         }
         val chunks = DeepSeekTts.splitForSpeech(text)

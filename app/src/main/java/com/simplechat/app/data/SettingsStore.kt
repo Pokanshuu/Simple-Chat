@@ -244,7 +244,10 @@ class SettingsStore(
     }
 
     suspend fun setApiKey(apiKey: String) {
-        val trimmed = apiKey.trim()
+        // 清洗在**入口**做一次：粘贴带进来的换行/空格是 OkHttp 报
+        // `Unexpected char 0x0a in Authorization value` 的头号原因
+        // （见 ApiKey 的说明）。非 ASCII 不在这里静默丢弃，交给界面拦。
+        val trimmed = ApiKey.normalize(apiKey)
         editApi { prefs ->
             // Different credentials at the same URL can expose a different model catalog.
             prefs.remove(Keys.MODEL_IDS)
