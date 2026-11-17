@@ -178,6 +178,19 @@ object AppIcons {
     //  通用
     // ══════════════════════════════════════════════════════
 
+    /** 分享（Lucide: share-2） */
+    val Share: ImageVector by lazy {
+        vector("Share") {
+            stroke {
+                moveTo(8.6f, 10.5f); lineTo(15.4f, 6.5f)
+                moveTo(8.6f, 13.5f); lineTo(15.4f, 17.5f)
+                moveTo(3f, 12f); arcToRelative(3f, 3f, 0f, true, true, 6f, 0f); arcToRelative(3f, 3f, 0f, true, true, -6f, 0f)
+                moveTo(15f, 5f); arcToRelative(3f, 3f, 0f, true, true, 6f, 0f); arcToRelative(3f, 3f, 0f, true, true, -6f, 0f)
+                moveTo(15f, 19f); arcToRelative(3f, 3f, 0f, true, true, 6f, 0f); arcToRelative(3f, 3f, 0f, true, true, -6f, 0f)
+            }
+        }
+    }
+
     /** 关闭（Lucide: x） */
     val Close: ImageVector by lazy {
         vector("Close") {

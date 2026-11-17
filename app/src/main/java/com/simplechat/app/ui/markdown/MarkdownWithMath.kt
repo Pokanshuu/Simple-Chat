@@ -10,7 +10,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.*
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.res.stringResource
@@ -94,14 +94,20 @@ fun MarkdownWithMath(
 
 @Composable
 private fun CompatibleFormula(segment: ContentSegment.Formula, config: LatexConfig) {
+    if (LocalMarkdownExport.current != null) {
+        ExportFormula(segment.tex, config.fontSize)
+        return
+    }
     val prepared by produceState<LatexPresentation?>(null, segment.tex) {
         value = withContext(Dispatchers.Default) { prepareLatexPresentation(segment.tex) }
     }
     var sourceVisible by remember(segment.tex) { mutableStateOf(false) }
     val presentation = prepared
     Column(Modifier.fillMaxWidth().padding(vertical = if (segment.display) 4.dp else 0.dp)) {
-        if (presentation?.simplified == true) TextButton(onClick = { sourceVisible = !sourceVisible }) {
-            Text(stringResource(if (sourceVisible) R.string.latex_show_rendered else R.string.latex_compatible_source))
+        if (presentation?.simplified == true) DisableSelection {
+            TextButton(onClick = { sourceVisible = !sourceVisible }) {
+                Text(stringResource(if (sourceVisible) R.string.latex_show_rendered else R.string.latex_compatible_source))
+            }
         }
         if (presentation?.nativeTex != null && !sourceVisible) {
             // Horizontal scrolling keeps wide formulas accessible instead of clipping content.
@@ -109,12 +115,13 @@ private fun CompatibleFormula(segment: ContentSegment.Formula, config: LatexConf
                 modifier = Modifier.horizontalScroll(rememberScrollState()))
         } else {
             if (presentation != null && presentation.nativeTex == null) {
-                Text(stringResource(R.string.latex_source_fallback), style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                DisableSelection {
+                    Text(stringResource(R.string.latex_source_fallback), style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
-            SelectionContainer {
-                Text(segment.tex, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace))
-            }
+            // Join the message's selection registrar, so ranges can cross formula source.
+            Text(segment.tex, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace))
         }
     }
 }

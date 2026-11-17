@@ -3,13 +3,6 @@ package com.simplechat.app.ui.chat
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.PointerInputChange
-import androidx.compose.ui.input.pointer.changedToUp
-import androidx.compose.ui.input.pointer.positionChange
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.text.selection.SelectionState
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.platform.LocalView
@@ -53,9 +46,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -69,6 +65,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.layout.LocalPinnableContainer
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -164,6 +162,9 @@ fun MessageList(
     onDismissSearch: () -> Unit = {},
     searchBottomObstructionPx: Int = 0,
     searchPlacementReset: Long = 0,
+    textSelection: MessageTextSelection = remember { MessageTextSelection() },
+    shareSelection: MessageShareSelection? = null,
+    onShare: ((UiMessage) -> Unit)? = null,
 ) {
     /*
      * 「谁被碰过」。
@@ -178,79 +179,27 @@ fun MessageList(
      * 而且它的点击已经是「编辑」，没有余量再挂一个手势。
      */
     var peekedId by remember { mutableStateOf<String?>(null) }
-
-    /**
-     * 正在「选择文本」的那一条（null = 没在选）。
-     *
-     * 抬到列表这一层，才接得住**点空白处退出** —— 只挂在单条消息上时，
-     * 点在别处（另一条消息、列表留白）就退不出来。
-     */
-    var selectingId by remember { mutableStateOf<String?>(null) }
+    val shareMessages = if (onShare != null || shareSelection?.active == true) messages.toList() else emptyList()
+    val shareGroups = remember(shareMessages) {
+        messageShareGroups(shareMessages)
+    }
+    val shareGroupByMessage = remember(shareGroups) {
+        shareGroups.flatMap { group -> group.messages.map { it.id to group } }.toMap()
+    }
 
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }
             .collect { scrolling ->
                 // 只有"碰一下看元信息"是即时的：手指一动就收起。
                 if (scrolling) peekedId = null
-                /*
-                 * 滚动也要收掉选择态。
-                 *
-                 * 本来想让它"滚了也不退"（翻上去看上文再复制），但 `SelectionContainer`
-                 * 在第一次触摸落下时就把选区清了 —— 顺序是：手指按下 → 框架清选区 →
-                 * 我们的手势才认出这是拖动。于是滚完之后选区已经没了、`selectingId`
-                 * 还在，长按菜单被 `interactive = false` 挡住，又回到"退不出去"的老问题。
-                 * 与其留一个看不见的模式，不如跟着框架一起收。
-                 */
-                if (scrolling && selectingId != null) selectingId = null
             }
     }
-    /*
-     * 选择态下**点一下就退出**（滑动不算）。
-     *
-     * ⚠️ 这里不能再用 `detectTapGestures`：它等的是"未被消费的 down"，
-     * 而这一条自己的 `SelectionContainer`、别的消息的 `combinedClickable`
-     * 都会先把 down 消费掉 —— 结果点哪儿都退不出，选择态一直留着，
-     * 连长按菜单都被 `interactive = false` 挡住（实测：选完点旁边一段，
-     * 选区消失了，但再长按弹不出菜单）。
-     *
-     * 改成在 **Initial 阶段**旁观：不消费 down（否则手柄拖不动），
-     * 只记录"按下 → 位移未过 touchSlop → 抬起"，抬手时才消费 up ——
-     * 被点的那条因此不会顺带触发"编辑 / 看元信息"。
-     */
-    val dismissSelectionOnTap = Modifier.pointerInput(selectingId) {
-        if (selectingId == null) return@pointerInput
-        awaitEachGesture {
-            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-            var up: PointerInputChange? = null
-            var dragged = false
-            while (true) {
-                val event = awaitPointerEvent(PointerEventPass.Initial)
-                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                if (change.positionChange().getDistance() > viewConfiguration.touchSlop) {
-                    dragged = true
-                    break
-                }
-                if (change.changedToUp()) {
-                    up = change
-                    break
-                }
-            }
-            /*
-             * 只认「轻点」：按下到抬起短于长按阈值。
-             *
-             * 两个必须排除的按住：
-             * 1. 长按照样要弹菜单 —— 不能把长按当点击；
-             * 2. 进入选择态时注入的那次合成按住是 560ms（`SyntheticHoldMs`），
-             *    不排除的话它会被自己当成"点了一下"，选区刚出来就被自己关掉。
-             */
-            val tap = up != null && !dragged &&
-                (up.uptimeMillis - down.uptimeMillis) < viewConfiguration.longPressTimeoutMillis
-            if (tap) {
-                // 退出选择态本身就是这次点击的结果，不能再让被点的那条跟着响应
-                up?.consume()
-                selectingId = null
-            }
-        }
+
+    // Deletion / branch switches must not leave a selection mode with no message.
+    val currentMessages by rememberUpdatedState(messages)
+    LaunchedEffect(textSelection) {
+        snapshotFlow { textSelection.messageId?.takeUnless { id -> currentMessages.any { it.id == id } } }
+            .collect { missingId -> if (missingId != null) textSelection.dismiss(missingId) }
     }
 
     var viewport by remember { mutableStateOf(Rect.Zero) }
@@ -277,7 +226,7 @@ fun MessageList(
         modifier = modifier
             .fillMaxWidth()
             .onGloballyPositioned { viewport = it.boundsInWindow() }
-            .then(dismissSelectionOnTap),
+            .dismissMessageSelectionOnTap(textSelection),
         contentPadding = searchContentPadding,
         verticalArrangement = Arrangement.spacedBy(18.dp),
         /*
@@ -306,14 +255,20 @@ fun MessageList(
             key = { _, m -> m.id },
             contentType = { _, m -> m.role },
         ) { index, message ->
+            val sharedGroup = shareGroupByMessage[message.id]
+            val row: @Composable () -> Unit = {
             MessageRow(
                 message = message,
                 search = searchTarget?.takeIf { it.messageId == message.id },
                 onDismissSearch = onDismissSearch,
                 peeked = peekedId == message.id,
-                selecting = selectingId == message.id,
-                onSelectingChange = { active ->
-                    selectingId = if (active) message.id else selectingId?.takeUnless { it == message.id }
+                selecting = textSelection.messageId == message.id,
+                selectionActive = textSelection.isActive || shareSelection?.active == true,
+                sharing = shareSelection?.active == true,
+                onShare = if (onShare != null && sharedGroup?.available == true) ({ onShare(message) }) else null,
+                onSelectingChange = { state ->
+                    if (state != null) textSelection.begin(message.id, state)
+                    else textSelection.dismiss(message.id)
                 },
                 /*
                  * 能不能续写由**位置 + 状态**共同决定（见 `ContinuePolicy`）。
@@ -349,6 +304,11 @@ fun MessageList(
                 onOpenImage = { onOpenImage(message, it) },
                 onRetry = { onRetry(message) },
             )
+            }
+            if (shareSelection?.active == true && sharedGroup != null) {
+                ShareSelectableRow(sharedGroup, sharedGroup.id in shareSelection.selectedIds,
+                    onToggle = { shareSelection.toggle(sharedGroup) }, content = row)
+            } else row()
         }
     }
     }
@@ -369,7 +329,10 @@ private fun MessageRow(
     peeked: Boolean,
     /** 这条是否处于「选择文本」态（由列表统一持有，见 `MessageList`）。 */
     selecting: Boolean,
-    onSelectingChange: (Boolean) -> Unit,
+    selectionActive: Boolean,
+    sharing: Boolean,
+    onShare: (() -> Unit)?,
+    onSelectingChange: (SelectionState?) -> Unit,
     canContinue: Boolean,
     speakingId: String?,
     readAloudAvailable: Boolean,
@@ -390,12 +353,21 @@ private fun MessageRow(
     var menuOpen by remember { mutableStateOf(false) }
     /*
      * 「选择文本」= 让这一条的正文变成可选，**不留任何界面痕迹**：
-     * 没有提示条、没有「完成」按钮，点空白处就退出（见 `MessageList` 的
-     * `dismissSelectionOnTap`）。为什么不能常驻：`SelectionContainer` 自己也要用
+     * 没有提示条、没有「完成」按钮，点空白处就退出（见
+     * `dismissMessageSelectionOnTap`）。为什么不能常驻：`SelectionContainer` 自己也要用
      * **长按**起选，而长按是这一条的菜单入口，两者会抢同一个手势。
      */
     val selectionState = remember(message.id) { SelectionState() }
     val view = LocalView.current
+    val viewConfiguration = LocalViewConfiguration.current
+    val onSelectionChange by rememberUpdatedState(onSelectingChange)
+    // Keep just the selected row composed, including its page, registrar and Text nodes.
+    // A state object alone cannot preserve anchors after a lazy item is disposed.
+    val pinnableContainer = LocalPinnableContainer.current
+    DisposableEffect(selecting, pinnableContainer) {
+        val pinned = if (selecting) pinnableContainer?.pin() else null
+        onDispose { pinned?.release() }
+    }
     // 长按落点（窗口坐标）：进入选择态后要在这同一个点上合成一次长按，
     // 让选区**从用户按下去的地方**开始，而不是"先进入模式，再自己长按一次"。
     val (windowPressPosition, windowPressListener) = rememberPressWindowPosition()
@@ -405,12 +377,26 @@ private fun MessageRow(
             selectionState.clear()
             return@LaunchedEffect
         }
-        val point = windowPressPosition() ?: return@LaunchedEffect
+        val point = windowPressPosition()
+        if (point == null) {
+            onSelectionChange(null)
+            return@LaunchedEffect
+        }
         // 等这一帧把 SelectionContainer 真正挂上（菜单的关闭动画也在同一帧里），再注入
         withFrameNanos { }
         withFrameNanos { }
         delay(SelectionStartDelayMs)
-        startSelectionAt(view, point)
+        startSelectionAt(view, point, viewConfiguration.longPressTimeoutMillis + 60L)
+        if (selectionState.selectedTexts.isEmpty()) onSelectionChange(null)
+    }
+    LaunchedEffect(selecting, selectionState) {
+        if (!selecting) return@LaunchedEffect
+        var hadSelection = false
+        snapshotFlow { selectionState.selectedTexts.isNotEmpty() }.collect { hasSelection ->
+            if (hasSelection) hadSelection = true
+            // Native Copy / focus loss also ends the mode. Never leave a hidden gate behind.
+            else if (hadSelection) onSelectionChange(null)
+        }
     }
     val isUser = message.role == MessageRole.USER
     // 流式未结束时不对这条给出编辑/删除入口，避免和落库打架
@@ -433,7 +419,11 @@ private fun MessageRow(
             }
             AppMenuItem(stringResource(R.string.action_select_text), AppIcons.TextSelect) {
                 menuOpen = false
-                onSelectingChange(true)
+                onSelectingChange(selectionState)
+            }
+            if (onShare != null) AppMenuItem(stringResource(R.string.action_share), AppIcons.Share) {
+                menuOpen = false
+                onShare()
             }
             if (!isUser) {
                 AppMenuItem(stringResource(R.string.msg_regenerate), AppIcons.Refresh) {
@@ -470,7 +460,7 @@ private fun MessageRow(
     Column(modifier = Modifier.fillMaxWidth().then(windowPressListener)) {
         if (message.content.length > LARGE_MESSAGE_CHARS || (message.reasoning?.length ?: 0) > LARGE_MESSAGE_CHARS) {
             Column(Modifier.then(pressListener).combinedClickable(
-                enabled = actionable && !selecting,
+                enabled = actionable && !selectionActive,
                 onClick = if (isUser) onEdit else onTogglePeek,
                 onLongClick = { menuOpen = true },
             )) {
@@ -488,7 +478,7 @@ private fun MessageRow(
         else when (message.role) {
             MessageRole.USER -> UserBubble(
                 message = message,
-                interactive = actionable && !selecting,
+                interactive = actionable && !selectionActive,
                 selecting = selecting,
                 selectionState = selectionState,
                 // 点一下就进「修改输入」（对齐官方入口习惯）
@@ -502,7 +492,7 @@ private fun MessageRow(
 
             MessageRole.ASSISTANT -> AssistantBlock(
                 message = message,
-                interactive = actionable && !selecting,
+                interactive = actionable && !selectionActive,
                 selecting = selecting,
                 selectionState = selectionState,
                 autoCollapseThinking = autoCollapseThinking,
@@ -523,7 +513,7 @@ private fun MessageRow(
          * 点气泡即可编辑、长按有菜单。只有存在多个版本时，才补一个
          * 极简的 `‹ 2/3 ›`，否则旧版本在界面上就彻底够不着了。
          */
-        if (actionable && isUser && message.variantCount > 1) {
+        if (actionable && !sharing && isUser && message.variantCount > 1) {
             Spacer(Modifier.size(MessageGap))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -537,7 +527,7 @@ private fun MessageRow(
             }
         }
 
-        if (actionable && !isUser) {
+        if (actionable && !sharing && !isUser) {
             Spacer(Modifier.size(MessageGap))
             MessageActions(
                 message = message,
@@ -745,15 +735,19 @@ fun UserBubble(
                                          * `spacedBy(8.dp)` 是给"附件 ↔ 正文"用的，
                                          * 块之间加间距会凭空多出一堆空行。
                                          */
-                                        chunks.forEach { chunk ->
-                                            val (searchModifier, onSearchLayout) = rememberSearchTextDecoration(chunk)
-                                            Text(
-                                                text = chunk,
-                                                modifier = searchModifier,
-                                                onTextLayout = onSearchLayout,
-                                                style = MaterialTheme.typography.bodyLarge,
-                                                color = colors.onUserBubble,
-                                            )
+                                        Column {
+                                            // SelectionContainer places direct children at (0, 0).
+                                            // Keep chunks in one vertical layout in both modes.
+                                            chunks.forEach { chunk ->
+                                                val (searchModifier, onSearchLayout) = rememberSearchTextDecoration(chunk)
+                                                Text(
+                                                    text = chunk,
+                                                    modifier = searchModifier,
+                                                    onTextLayout = onSearchLayout,
+                                                    style = MaterialTheme.typography.bodyLarge,
+                                                    color = colors.onUserBubble,
+                                                )
+                                            }
                                         }
                                     } else {
                                         /*
@@ -1132,7 +1126,10 @@ private fun SelectableText(
     state: SelectionState,
     content: @Composable () -> Unit,
 ) {
-    if (selecting) SelectionContainer(state = state) { content() } else content()
+    // Moving into/out of the registrar must preserve the current page and expanded code blocks.
+    val currentContent by rememberUpdatedState(content)
+    val body = remember { movableContentOf { currentContent() } }
+    if (selecting) SelectionContainer(state = state) { body() } else body()
 }
 
 /**
@@ -1146,7 +1143,7 @@ private fun SelectableText(
  * 时长 ≥ 系统的长按阈值，否则会被判成"点了一下"（那会把选择态立刻关掉）。
  * 注入的事件只发给本进程的 Compose 视图，不经过窗口路由，也不影响其他 App。
  */
-private fun startSelectionAt(view: View, windowPoint: IntOffset) {
+private suspend fun startSelectionAt(view: View, windowPoint: IntOffset, holdMillis: Long) {
     if (!view.isShown) return
     val origin = IntArray(2)
     view.getLocationInWindow(origin)
@@ -1156,15 +1153,18 @@ private fun startSelectionAt(view: View, windowPoint: IntOffset) {
     val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0)
     view.dispatchTouchEvent(down)
     down.recycle()
-    view.postDelayed({
-        val up = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0)
-        view.dispatchTouchEvent(up)
-        up.recycle()
-    }, SyntheticHoldMs)
+    var completed = false
+    try {
+        delay(holdMillis)
+        completed = true
+    } finally {
+        // Cancellation (navigation / dismissal) must terminate the injected pointer too.
+        val action = if (completed) MotionEvent.ACTION_UP else MotionEvent.ACTION_CANCEL
+        val end = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, x, y, 0)
+        view.dispatchTouchEvent(end)
+        end.recycle()
+    }
 }
-
-/** 合成长按的按住时长：系统长按阈值约 500ms，留一点余量。 */
-private const val SyntheticHoldMs = 560L
 
 /**
  * 进入选择态后、注入长按前的等待。

@@ -779,9 +779,10 @@ private class AppMenuPositionProvider(
  * 否则点输入框反而会把键盘收掉。
  */
 @Composable
-fun Modifier.dismissKeyboardOnTouch(): Modifier {
+fun Modifier.dismissKeyboardOnTouch(clearFocus: () -> Boolean = { true }): Modifier {
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
+    val shouldClearFocus by rememberUpdatedState(clearFocus)
 
     return this.pointerInput(Unit) {
         awaitPointerEventScope {
@@ -789,7 +790,9 @@ fun Modifier.dismissKeyboardOnTouch(): Modifier {
                 val event = awaitPointerEvent(PointerEventPass.Initial)
                 val change = event.changes.firstOrNull() ?: continue
                 if (change.pressed && !change.previousPressed) {
-                    focusManager.clearFocus()
+                    // A text selection also owns focus. Clearing it on DOWN destroys the
+                    // range before we can distinguish a tap from a scroll.
+                    if (shouldClearFocus()) focusManager.clearFocus()
                     keyboard?.hide()
                 }
             }

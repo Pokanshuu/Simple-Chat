@@ -1101,12 +1101,23 @@ fun ChatScreen(
         panel = if (panel == target) InputPanelState.NONE else target
     }
 
+    val textSelection = remember(vm) { MessageTextSelection() }
+    val shareSelection = remember(vm) { MessageShareSelection() }
+    val shareMessages = vm.messages.toList()
+    val shareGroups = remember(shareMessages) { messageShareGroups(shareMessages) }
+    LaunchedEffect(vm.currentConversationId) { textSelection.dismiss(); shareSelection.close() }
+    LaunchedEffect(shareGroups) { if (shareSelection.active) shareSelection.reconcile(shareGroups) }
+    BackHandler(enabled = shareSelection.active) { shareSelection.close() }
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.pageBackground),
+            .background(colors.pageBackground)
+            .dismissMessageSelectionOnTap(textSelection),
     ) {
-        ChatTopBar(
+        if (shareSelection.active) {
+            MessageShareTopBar(shareSelection, shareGroups, onClose = { shareSelection.close() })
+        } else ChatTopBar(
             title = vm.conversationTitle(),
             autoReadAloud = vm.autoReadAloud,
             readAloudAvailable = ReadAloudEnabled && readAloudAvailable,
@@ -1126,7 +1137,7 @@ fun ChatScreen(
                 resumeFollowing()
             },
             // 点顶栏任意处也收键盘
-            modifier = Modifier.dismissKeyboardOnTouch(),
+            modifier = Modifier.dismissKeyboardOnTouch(clearFocus = { !textSelection.isActive }),
         )
 
         /*
@@ -1139,14 +1150,14 @@ fun ChatScreen(
         Box(
             modifier = Modifier
                 .weight(1f)
-                .messageIndexDrag(messageIndex),
+                .then(if (shareSelection.active) Modifier else Modifier.messageIndexDrag(messageIndex)),
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer { alpha = dissolve.value }
                     // 点消息区空白处收键盘；不消费事件，气泡照常可点
-                    .dismissKeyboardOnTouch()
+                    .dismissKeyboardOnTouch(clearFocus = { !textSelection.isActive })
             ) {
                 if (vm.messages.isEmpty()) {
                     // 空态也要避开输入栏，否则"一起创作吧"会压在输入框上
@@ -1160,6 +1171,17 @@ fun ChatScreen(
                 } else {
                     MessageList(
                         messages = vm.messages,
+                        textSelection = textSelection,
+                        shareSelection = shareSelection,
+                        onShare = { message ->
+                            textSelection.dismiss()
+                            dismissInput()
+                            panel = InputPanelState.NONE
+                            messageIndex.collapse()
+                            detached = true
+                            vm.dismissSearch()
+                            shareSelection.begin(message.id, shareGroups)
+                        },
                         searchTarget = vm.searchTarget,
                         searchBottomObstructionPx = inputAreaHeight,
                         searchPlacementReset = searchPlacementReset,
@@ -1302,7 +1324,7 @@ fun ChatScreen(
                  * 所以跟底时这个按钮压根不存在 —— 正是要的。
                  * 留 `!atBottom` 只是为了避免"明明已经在底部还挂着一个回到底部"。
                  */
-                visible = vm.messages.isNotEmpty() && detached && !atBottom,
+                visible = !shareSelection.active && vm.messages.isNotEmpty() && detached && !atBottom,
                 // 生成中在按钮外圈转一圈进度环；生成完自动消失
                 generating = vm.isStreaming,
                 onClick = {
@@ -1371,7 +1393,10 @@ fun ChatScreen(
                 )
             }
 
-            Column(
+            if (shareSelection.active) {
+                MessageShareTools(shareSelection, shareGroups, vm.conversationTitle(),
+                    modifier = Modifier.align(Alignment.BottomCenter).onSizeChanged { inputAreaHeight = it.height })
+            } else Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()

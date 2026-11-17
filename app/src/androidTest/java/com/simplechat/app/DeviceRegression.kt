@@ -31,6 +31,9 @@ class DeviceRegression : Instrumentation() {
     private var searchTests = false
     private var hotfixTests = false
     private var navigationTests = false
+    private var selectionTests = false
+    private var shareTests = false
+    private var nativeShareTests = false
     override fun onCreate(arguments: Bundle?) {
         realArchive = arguments?.getString("source")
         uiOnly = arguments?.getString("ui") == "true"
@@ -38,6 +41,9 @@ class DeviceRegression : Instrumentation() {
         searchTests = arguments?.getString("search") == "true"
         hotfixTests = arguments?.getString("hotfix") == "true"
         navigationTests = arguments?.getString("navigation") == "true"
+        selectionTests = arguments?.getString("selection") == "true"
+        shareTests = arguments?.getString("share") == "true"
+        nativeShareTests = arguments?.getString("nativeShare") == "true"
         super.onCreate(arguments)
         start()
     }
@@ -46,7 +52,10 @@ class DeviceRegression : Instrumentation() {
         try {
             runBlocking {
                 val source = realArchive
-                if (navigationTests) {
+                if (nativeShareTests) NativeShareRenderRegression.run(this@DeviceRegression, ::passed)
+                else if (shareTests) MessageShareRegression.run(this@DeviceRegression, ::passed)
+                else if (selectionTests) TextSelectionRegression.run(this@DeviceRegression, ::passed)
+                else if (navigationTests) {
                     SearchNavigationRegression.run(this@DeviceRegression, ::passed, com.simplechat.app.ui.theme.ThemeMode.LIGHT)
                     SearchNavigationRegression.run(this@DeviceRegression, ::passed, com.simplechat.app.ui.theme.ThemeMode.DARK)
                 }

@@ -1,6 +1,7 @@
 package com.simplechat.app.ui.chat
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -22,11 +23,13 @@ internal fun PagedMessageBody(text: String, markdown: Boolean = true) {
     }
     val window = messagePage(text, page)
     Column {
-        Text(stringResource(R.string.large_message_paged), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = { page = window.index - 1 }, enabled = window.index > 0) { Text(stringResource(R.string.page_previous)) }
-            Text("${window.index + 1}/${window.count}", modifier = Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.onSurface)
-            TextButton(onClick = { page = window.index + 1 }, enabled = window.index + 1 < window.count) { Text(stringResource(R.string.page_next)) }
+        DisableSelection {
+            Text(stringResource(R.string.large_message_paged), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { page = window.index - 1 }, enabled = window.index > 0) { Text(stringResource(R.string.page_previous)) }
+                Text("${window.index + 1}/${window.count}", modifier = Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.onSurface)
+                TextButton(onClick = { page = window.index + 1 }, enabled = window.index + 1 < window.count) { Text(stringResource(R.string.page_next)) }
+            }
         }
         val shown = text.substring(window.start, window.end)
         if (markdown) MarkdownWithMath(shown)

@@ -603,6 +603,29 @@
     <string name="search_role_assistant">AI reply</string>
     <string name="search_title_match">Title match</string>
     <string name="search_load_more">Load more results</string>
+    <string name="action_share">Share</string>
+    <string name="share_group_select">Select this exchange</string>
+    <string name="share_select_all">Select all</string>
+    <string name="share_exit">Exit sharing</string>
+    <string name="share_selected_count">%1$d exchanges selected</string>
+    <string name="share_image">Create images</string>
+    <string name="share_markdown">Export MD</string>
+    <string name="share_copy_text">Copy text</string>
+    <string name="share_more">More sharing</string>
+    <string name="share_image_preview">Share images · %1$d pages</string>
+    <string name="share_save_images">Save images</string>
+    <string name="share_image_attachment_note">Image attachment (name only in Markdown and text)</string>
+    <string name="share_image_too_long">Too much content for images. Export Markdown to keep the complete text.</string>
+    <string name="share_copy_too_long">Too much content for the clipboard. Export Markdown to keep the complete text.</string>
+    <string name="share_failed">Sharing failed: %1$s</string>
+    <string name="share_saved">Saved to the selected location</string>
+    <string name="share_copied">Selected exchanges copied</string>
+    <string name="share_image_layout">Choose image layout</string>
+    <string name="share_image_long">Long screenshot</string>
+    <string name="share_image_long_hint">One long image; automatically use paged images if it exceeds the limit</string>
+    <string name="share_image_pages">Paged images</string>
+    <string name="share_image_pages_hint">Multiple images sized for reading on a phone</string>
+    <string name="share_image_generate">Generate</string>
 </resources>
 
 

@@ -603,6 +603,29 @@
     <string name="search_role_assistant">AI 回复</string>
     <string name="search_title_match">标题匹配</string>
     <string name="search_load_more">加载更多结果</string>
+    <string name="action_share">分享</string>
+    <string name="share_group_select">选择这一组问答</string>
+    <string name="share_select_all">全选</string>
+    <string name="share_exit">退出多选分享</string>
+    <string name="share_selected_count">已选 %1$d 组</string>
+    <string name="share_image">生成图片</string>
+    <string name="share_markdown">导出 MD</string>
+    <string name="share_copy_text">复制文本</string>
+    <string name="share_more">更多分享</string>
+    <string name="share_image_preview">分享图片 · %1$d 张</string>
+    <string name="share_save_images">保存图片</string>
+    <string name="share_image_attachment_note">图片附件（MD 与文本仅包含名称）</string>
+    <string name="share_image_too_long">内容过长，无法生成图片，请使用 Markdown 导出完整内容</string>
+    <string name="share_copy_too_long">内容超过剪贴板容量，请使用 Markdown 导出完整内容</string>
+    <string name="share_failed">分享失败：%1$s</string>
+    <string name="share_saved">已保存到所选位置</string>
+    <string name="share_copied">已复制所选问答</string>
+    <string name="share_image_layout">选择图片形式</string>
+    <string name="share_image_long">长截图</string>
+    <string name="share_image_long_hint">生成一张长图，超过上限自动改用分页图片</string>
+    <string name="share_image_pages">分页图片</string>
+    <string name="share_image_pages_hint">分成适合手机阅读的多张图片</string>
+    <string name="share_image_generate">生成</string>
 </resources>
 
 

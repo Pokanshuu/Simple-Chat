@@ -99,6 +99,13 @@ internal fun CodeFenceText(
     val highlighted = remember(shown, language, dark) { highlighter.of(shown, language, dark) }
     val (searchModifier, onSearchLayout) = rememberSearchTextDecoration(shown)
 
+    if (LocalMarkdownExport.current != null) {
+        // Export has no horizontal viewport: wrap long lines, and include every line.
+        MarkdownBasicText(text = highlighted, style = style, modifier = modifier.fillMaxWidth()
+            .padding(blockPadding).then(searchModifier), onTextLayout = onSearchLayout)
+        return
+    }
+
     /*
      * 代码的**自然宽度**（最长一行）—— 横滚的可滚距离全靠它。
      *

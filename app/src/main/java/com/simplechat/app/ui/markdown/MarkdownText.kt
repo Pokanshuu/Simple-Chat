@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.DisableSelection
 import com.simplechat.app.ui.chat.preferHorizontalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -576,12 +577,15 @@ private val spacedHorizontalRule: MarkdownComponent = { _ ->
 
 /** Content-sized columns share one horizontal scroller, so headers and body remain aligned. */
 private val adaptiveTable: MarkdownComponent = { model ->
+    val exporting = LocalMarkdownExport.current
     val style = model.typography.table
     val header = remember(model.node) { model.node.findChildOfType(HEADER) }
     val rows = remember(model.node) { model.node.children.filter { it.type == ROW } }
     val density = LocalDensity.current
     val measurer = rememberTextMeasurer()
-    val columnWidths = remember(model.content, model.node, style, density) {
+    val formulaMeasurer = if (exporting != null) com.hrm.latex.renderer.measure.rememberLatexMeasurer(
+        com.hrm.latex.renderer.model.LatexConfig(fontSize = style.fontSize, fontFamilies = exporting.fonts)) else null
+    val columnWidths = exporting?.tableMetrics?.widths ?: remember(model.content, model.node, style, density) {
         val tableRows = listOfNotNull(header) + rows
         val columnCount = tableRows.maxOfOrNull { row -> row.children.count { it.type == CELL } } ?: 0
         val widths = FloatArray(columnCount) { with(density) { 88.dp.toPx() } }
@@ -589,17 +593,27 @@ private val adaptiveTable: MarkdownComponent = { model ->
             row.children.filter { it.type == CELL }.forEachIndexed { index, cell ->
                 // Width sampling is bounded; rendering below still includes the entire cell.
                 val raw = model.content.substring(cell.startOffset, cell.endOffset).take(256)
-                val measured = measurer.measure(text = raw, style = style.copy(fontWeight = FontWeight.Medium),
-                    softWrap = false, constraints = Constraints(maxWidth = with(density) { 320.dp.roundToPx() }))
-                val longest = (0 until measured.lineCount).maxOfOrNull { measured.getLineRight(it) } ?: 0f
+                fun textWidth(text: String): Float {
+                    val measured = measurer.measure(text = text, style = style.copy(fontWeight = FontWeight.Medium),
+                        softWrap = false, constraints = Constraints(maxWidth = with(density) { 320.dp.roundToPx() }))
+                    return (0 until measured.lineCount).maxOfOrNull { measured.getLineRight(it) } ?: 0f
+                }
+                val longest = if (formulaMeasurer == null) textWidth(raw) else splitMath(raw).maxOfOrNull { segment ->
+                    when (segment) {
+                        is ContentSegment.Text -> textWidth(segment.text)
+                        is ContentSegment.Formula -> prepareLatexPresentation(segment.tex).nativeTex
+                            ?.let { formulaMeasurer.measure(it, isDarkTheme = false)?.widthPx } ?: textWidth(segment.tex)
+                    }
+                } ?: 0f
                 widths[index] = maxOf(widths[index], (longest + with(density) { 24.dp.toPx() })
                     .coerceAtMost(with(density) { 320.dp.toPx() }))
             }
         }
         widths.map { with(density) { it.toDp() } }
     }
+    if (exporting != null) exporting.tableMetrics.widths = columnWidths
     val totalWidth = columnWidths.fold(0.dp) { sum, width -> sum + width }
-    Box(Modifier.fillMaxWidth().preferHorizontalScroll().horizontalScroll(rememberScrollState())) {
+    val table: @Composable () -> Unit = {
         Column(Modifier.width(totalWidth)) {
             @Composable fun TableRow(row: ASTNode, heading: Boolean) {
                 val cells = row.children.filter { it.type == CELL }
@@ -617,15 +631,34 @@ private val adaptiveTable: MarkdownComponent = { model ->
                 }
                 MarkdownDivider()
             }
-            header?.let { TableRow(it, true) }
-            rows.forEach { TableRow(it, false) }
+            if (exporting?.tableHeader != false) header?.let { TableRow(it, true) }
+            rows.forEachIndexed { index, row ->
+                if (exporting?.tableRows == null || index in exporting.tableRows) TableRow(row, false)
+            }
         }
     }
+    if (exporting != null) ExportFitWidth { table() }
+    else Box(Modifier.fillMaxWidth().preferHorizontalScroll().horizontalScroll(rememberScrollState())) { table() }
 }
 
 /** Use the same AST annotator as the stock table, with the normal text layout/span callback. */
 @Composable
 private fun SearchableTableText(content: String, cell: ASTNode, style: TextStyle) {
+    if (LocalMarkdownExport.current != null) {
+        val raw = content.substring(cell.startOffset, cell.endOffset)
+        val segments = remember(raw) { splitMath(raw) }
+        if (segments.any { it is ContentSegment.Formula }) {
+            Column {
+                segments.forEach { segment ->
+                    when (segment) {
+                        is ContentSegment.Formula -> ExportFormula(segment.tex, style.fontSize)
+                        is ContentSegment.Text -> if (segment.text.isNotBlank()) MarkdownText(segment.text.trim())
+                    }
+                }
+            }
+            return
+        }
+    }
     val settings = annotatorSettings()
     val annotated = buildAnnotatedString {
         pushStyle(style.toSpanStyle())
@@ -681,7 +714,7 @@ private val collapsibleCodeFence: @Composable (MarkdownComponentModel) -> Unit =
      * 判据是**语言标记**而不是去猜内容：猜错的下场是一段普通代码被执行成图，
      * 那比不渲染糟得多。
      */
-    if (language.equals("mermaid", ignoreCase = true)) {
+    if (language.equals("mermaid", ignoreCase = true) && LocalMarkdownExport.current == null) {
         MermaidBlock(code = code.trim(), modifier = Modifier.fillMaxWidth())
     } else {
         CodeFenceCard(model = model, language = language, code = code, lineCount = lineCount, collapsible = collapsible)
@@ -700,6 +733,7 @@ private fun CodeFenceCard(
     lineCount: Int,
     collapsible: Boolean,
 ) {
+    val exporting = LocalMarkdownExport.current != null
     // 内容一变（换版本 / 重新生成）就重新收起，免得上一条的展开状态串到这一条
     var expanded by remember(model.content) { mutableStateOf(false) }
     val search = LocalSearchHighlight.current
@@ -719,13 +753,15 @@ private fun CodeFenceCard(
              */
             .background(LocalChatColors.current.markdownCodeBlock, RoundedCornerShape(CodeBlockCornerRadius)),
     ) {
-        CodeHeader(language = language.orEmpty(), code = code, lineCount = lineCount)
+        if (!exporting) DisableSelection {
+            CodeHeader(language = language.orEmpty(), code = code, lineCount = lineCount)
+        }
 
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(
-                    if (collapsible && !expanded) Modifier.heightIn(max = CollapsedCodeHeight)
+                    if (!exporting && collapsible && !expanded) Modifier.heightIn(max = CollapsedCodeHeight)
                     else Modifier,
                 )
                 .clipToBounds(),
@@ -740,17 +776,19 @@ private fun CodeFenceCard(
                     code = fenceCode,
                     language = fenceLanguage,
                     style = style,
-                    truncated = collapsible && !expanded,
+                    truncated = !exporting && collapsible && !expanded,
                 )
             }
         }
 
-        if (collapsible) {
-            CodeExpandToggle(
-                lineCount = lineCount,
-                expanded = expanded,
-                onToggle = { expanded = !expanded },
-            )
+        if (collapsible && !exporting) {
+            DisableSelection {
+                CodeExpandToggle(
+                    lineCount = lineCount,
+                    expanded = expanded,
+                    onToggle = { expanded = !expanded },
+                )
+            }
         }
     }
 }

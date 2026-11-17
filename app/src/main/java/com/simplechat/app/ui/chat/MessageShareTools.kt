@@ -1,0 +1,232 @@
+package com.simplechat.app.ui.chat
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.graphics.BitmapFactory
+import android.graphics.BitmapRegionDecoder
+import android.graphics.Rect
+import android.provider.DocumentsContract
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
+import com.simplechat.app.R
+import com.simplechat.app.data.copyExportFile
+import com.simplechat.app.data.userMessage
+import com.simplechat.app.ui.common.AppIcons
+import com.simplechat.app.ui.common.IconCircleButton
+import com.simplechat.app.ui.theme.LocalIsDarkTheme
+import java.io.File
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+@Composable
+internal fun MessageShareTools(
+    selection: MessageShareSelection, groups: List<MessageShareGroup>, title: String, modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    var hint by remember { mutableStateOf<String?>(null) }
+    var markdownFile by remember { mutableStateOf<File?>(null) }
+    var images by remember { mutableStateOf<List<File>>(emptyList()) }
+    var preview by remember { mutableStateOf(false) }
+    var imageDocument by remember { mutableStateOf<MessageShareDocument?>(null) }
+    var imageMode by rememberSaveable { mutableStateOf(ShareImageMode.LONG) }
+
+    fun runExport(block: suspend () -> Unit) {
+        if (busy) return
+        busy = true; hint = null
+        scope.launch {
+            try { block() }
+            catch (error: CancellationException) { throw error }
+            catch (error: Exception) { hint = context.getString(R.string.share_failed, error.userMessage()) }
+            finally { busy = false }
+        }
+    }
+    fun document() = MessageShareDocument(title, selection.selected(groups)).also { require(it.groups.isNotEmpty()) }
+    fun openChooser(intent: Intent) {
+        context.startActivity(Intent.createChooser(intent, context.getString(R.string.action_share)))
+    }
+    val saveMarkdown = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/markdown")) { uri ->
+        val file = markdownFile
+        if (uri != null && file != null) runExport {
+            try {
+                withContext(Dispatchers.IO) { copyExportFile(file, { checkNotNull(context.contentResolver.openOutputStream(uri, "wt")) }) }
+                hint = context.getString(R.string.share_saved)
+            } catch (error: Exception) {
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { runCatching { DocumentsContract.deleteDocument(context.contentResolver, uri) } }
+                throw error
+            }
+        }
+    }
+    val saveImages = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
+        val snapshot = images
+        if (tree != null && snapshot.isNotEmpty()) runExport {
+            withContext(Dispatchers.IO) {
+                val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+                val created = mutableListOf<android.net.Uri>()
+                try {
+                    val stamp = System.currentTimeMillis()
+                    snapshot.forEachIndexed { index, file ->
+                        val uri = checkNotNull(DocumentsContract.createDocument(context.contentResolver, parent, "image/png", "SimpleChat-$stamp-${index + 1}.png"))
+                        created += uri
+                        copyExportFile(file, { checkNotNull(context.contentResolver.openOutputStream(uri, "wt")) })
+                    }
+                } catch (error: Throwable) {
+                    created.forEach { runCatching { DocumentsContract.deleteDocument(context.contentResolver, it) } }
+                    throw error
+                }
+            }
+            hint = context.getString(R.string.share_saved)
+        }
+    }
+
+    MessageShareBottomBar(selection.selected(groups).size, busy, hint,
+        onImage = {
+            imageDocument = document()
+        },
+        onMarkdown = {
+            val snapshot = document()
+            runExport {
+                val file = exportSharedMarkdown(context, snapshot)
+                markdownFile = file
+                saveMarkdown.launch(file.name)
+            }
+        },
+        onCopy = {
+            val snapshot = document()
+            runExport {
+                val text = withContext(Dispatchers.Default) {
+                    require(snapshot.messages.sumOf { it.content.length.toLong() + it.attachments.filterNot { a -> a.isImage }.sumOf { a -> a.data.length.toLong() } } <= MAX_SHARE_TEXT_CHARS) {
+                        context.getString(R.string.share_copy_too_long)
+                    }
+                    sharedPlainText(snapshot, context.getString(R.string.export_role_me), context.getString(R.string.export_role_ai), context.getString(R.string.share_image_attachment_note)).also {
+                        require(it.length <= MAX_SHARE_TEXT_CHARS) { context.getString(R.string.share_copy_too_long) }
+                    }
+                }
+                (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText(title, text))
+                hint = context.getString(R.string.share_copied)
+            }
+        },
+        onShare = {
+            val snapshot = document()
+            runExport {
+                val file = exportSharedMarkdown(context, snapshot)
+                openChooser(messageShareIntent(context, listOf(file), "text/markdown", snapshot.title))
+            }
+        }, modifier = modifier,
+    )
+
+    imageDocument?.let { snapshot ->
+        AlertDialog(
+            onDismissRequest = { imageDocument = null },
+            title = { Text(stringResource(R.string.share_image_layout)) },
+            text = {
+                Column {
+                    ShareImageMode.entries.forEach { mode ->
+                        Row(Modifier.fillMaxWidth().clickable { imageMode = mode }.padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = imageMode == mode, onClick = { imageMode = mode })
+                            Column(Modifier.padding(start = 8.dp)) {
+                                Text(stringResource(if (mode == ShareImageMode.LONG) R.string.share_image_long else R.string.share_image_pages),
+                                    style = MaterialTheme.typography.titleSmall)
+                                Text(stringResource(if (mode == ShareImageMode.LONG) R.string.share_image_long_hint else R.string.share_image_pages_hint),
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val mode = imageMode
+                    imageDocument = null
+                    runExport { images = exportSharedImages(context, snapshot, mode); preview = true }
+                }) { Text(stringResource(R.string.share_image_generate)) }
+            },
+            dismissButton = { TextButton(onClick = { imageDocument = null }) { Text(stringResource(R.string.action_cancel)) } },
+        )
+    }
+
+    if (preview) Dialog(onDismissRequest = { if (!busy) preview = false },
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        val dialogView = LocalView.current
+        val dark = LocalIsDarkTheme.current
+        SideEffect {
+            (dialogView.parent as? DialogWindowProvider)?.window?.let { window ->
+                WindowCompat.getInsetsController(window, dialogView).apply {
+                    isAppearanceLightStatusBars = !dark
+                    isAppearanceLightNavigationBars = !dark
+                }
+            }
+        }
+        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).systemBarsPadding()) {
+            Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.share_image_preview, images.size), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                IconCircleButton(AppIcons.Close, stringResource(R.string.action_close), { if (!busy) preview = false })
+            }
+            // Decode visible regions only: previewing a long screenshot must not allocate it again.
+            val tiles by produceState<List<SharePreviewTile>>(emptyList(), images) {
+                value = withContext(Dispatchers.IO) {
+                    images.flatMap { file ->
+                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeFile(file.path, bounds)
+                        (0 until bounds.outHeight step 1600).map { top ->
+                            SharePreviewTile(file, bounds.outWidth, top, minOf(1600, bounds.outHeight - top), top + 1600 >= bounds.outHeight)
+                        }
+                    }
+                }
+            }
+            LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(16.dp)) {
+                items(tiles, key = { "${it.file.absolutePath}:${it.top}" }) { tile ->
+                    val image by produceState<android.graphics.Bitmap?>(null, tile) {
+                        value = withContext(Dispatchers.IO) {
+                            @Suppress("DEPRECATION")
+                            val decoder = checkNotNull(BitmapRegionDecoder.newInstance(tile.file.path, false))
+                            try { decoder.decodeRegion(Rect(0, tile.top, tile.width, tile.top + tile.height), BitmapFactory.Options()) }
+                            finally { decoder.recycle() }
+                        }
+                    }
+                    Box(Modifier.fillMaxWidth().aspectRatio(tile.width.toFloat() / tile.height)) {
+                        image?.let { Image(it.asImageBitmap(), stringResource(R.string.share_image),
+                            Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds) }
+                    }
+                    if (tile.last) Spacer(Modifier.height(16.dp))
+                }
+            }
+            if (hint != null) Text(hint!!, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+            Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(onClick = { saveImages.launch(null) }, enabled = !busy, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.share_save_images)) }
+                Button(onClick = { runExport { openChooser(messageShareIntent(context, images, "image/png", title)) } },
+                    enabled = !busy, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.action_share)) }
+            }
+            if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+    }
+}
+
+private data class SharePreviewTile(val file: File, val width: Int, val top: Int, val height: Int, val last: Boolean)

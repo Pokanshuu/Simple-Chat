@@ -1,0 +1,120 @@
+package com.simplechat.app
+
+import android.app.Instrumentation
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Color
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
+import com.simplechat.app.ui.chat.*
+import com.simplechat.app.ui.markdown.*
+import com.simplechat.app.ui.theme.SimpleChatTheme
+import java.io.File
+import kotlinx.coroutines.*
+
+internal object NativeShareRenderRegression {
+    suspend fun run(instrumentation: Instrumentation, status: (String) -> Unit) {
+        val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        instrumentation.runOnMainSync { activity.setContent { SimpleChatTheme { Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.White)) } } }
+        try {
+            val cutFixture = Bitmap.createBitmap(952, 400, Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(cutFixture)
+            val black = android.graphics.Paint().apply { color = Color.BLACK }
+            canvas.drawRect(0f, 0f, 4f, 400f, black)
+            canvas.drawRect(25f, 360f, 800f, 400f, black)
+            check(safeShareTileEnd(cutFixture) in 350..360) { "Pagination cut through ink or got stuck on a quote border" }
+            cutFixture.recycle()
+            val fonts = loadExportFonts(activity)
+            val renderer = ShareComposeRenderer.create(activity)
+            try {
+                val size = renderer.measure {
+                    CompositionLocalProvider(LocalMarkdownExport provides MarkdownExportOptions(fonts)) {
+                        ExportFormula("\\frac{1}{2}")
+                    }
+                }
+                check(size.height > 45 && size.width == 952) { "Formula looks like raw source or empty content: $size" }
+                val bitmap = renderer.capture(0, size.height)
+                var ink = 0
+                for (y in 0 until bitmap.height) for (x in 0 until bitmap.width) {
+                    val pixel = bitmap.getPixel(x, y)
+                    if (Color.alpha(pixel) > 100 && Color.red(pixel) < 150) ink++
+                }
+                check(ink > 80) { "Native graphics capture is blank: $ink" }
+                File(activity.cacheDir, "share-native-fraction.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                bitmap.recycle()
+                status("native fraction uses loaded KaTeX glyphs and produces a nonempty bounded graphics capture")
+            } finally { renderer.close() }
+
+            val table = "| 项目 | 分式 | 根式 | 矩阵 | 描述 | 最右列 |\n| --- | --- | --- | --- | --- | --- |\n" +
+                "| A | \$\\frac{a+b}{c}\$ | \$\\sqrt{x^2+y^2}\$ | \$\\begin{pmatrix}1&2\\\\3&4\\end{pmatrix}\$ | **完整渲染** | RIGHTMOST |\n" +
+                "| B | \$\\frac{1}{2}\$ | \$\\sqrt{2}\$ | 单元格 | 普通正文 | END |"
+            val body = "# 原生表格与数学公式\n\n$table\n\n" +
+                "\$\$\\int_0^1 x^2\\,dx=\\frac{1}{3}\$\$\n\n" +
+                "\$\$\\sum_{i=1}^{n}i=\\frac{n(n+1)}{2}\$\$\n\n" +
+                "\$\$\\begin{pmatrix}1&2&3\\\\4&5&6\\end{pmatrix}\$\$\n\n后续正文保持正常。\n\n```mermaid\ngraph TD\nA --> B\n```"
+            val document = MessageShareDocument("表格与公式完整导出", messageShareGroups(listOf(
+                UiMessage("q", MessageRole.USER, "请把表格和公式一起导出。"), UiMessage("a", MessageRole.ASSISTANT, body))))
+            val pages = withTimeout(60_000) { exportSharedImages(activity, document) }
+            pages.forEachIndexed { index, page -> page.copyTo(File(activity.cacheDir, "share-native-rich-$index.png"), true) }
+            check(pages.isNotEmpty())
+            status("mixed rich document exported: wide six-column table, math cells, integral, sum and matrix")
+
+            val longTable = "| Row | Description | Last column |\n| --- | --- | --- |\n" +
+                (1..70).joinToString("\n") { "| ROW_$it | 完整行 $it，包含 **粗体** 和 \$\\frac{1}{$it}\$ | LAST_$it |" }
+            val longDocument = MessageShareDocument("长表格分页", messageShareGroups(listOf(UiMessage("long", MessageRole.ASSISTANT, longTable))))
+            val longPages = withTimeout(60_000) { exportSharedImages(activity, longDocument) }
+            check(longPages.size >= 2)
+            longPages.forEachIndexed { index, file ->
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(file.path, options)
+                check(options.outWidth == 1080 && options.outHeight in 300..2400)
+                file.copyTo(File(activity.cacheDir, "share-native-table-$index.png"), true)
+            }
+            status("70-row native table exported across ${longPages.size} bounded PNG pages")
+
+            val longImage = withTimeout(90_000) { exportSharedImages(activity, longDocument, ShareImageMode.LONG) }
+            check(longImage.size < longPages.size)
+            val limit = shareImagePageHeight(ShareImageMode.LONG,
+                (activity.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager).memoryClass)
+            var tall = false
+            longImage.forEachIndexed { index, file ->
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(file.path, bounds)
+                check(bounds.outHeight <= limit)
+                tall = tall || bounds.outHeight > 2400
+                file.copyTo(File(activity.cacheDir, "share-native-long-$index.png"), true)
+            }
+            check(tall)
+            status("long screenshot mode combines the same table into ${longImage.size} image(s), bounded at $limit pixels")
+
+            val overflowTable = "| Row | Formula | End |\n| --- | --- | --- |\n" +
+                (1..180).joinToString("\n") { "| ROW_$it | \$\\frac{1}{$it}\$ | LAST_$it |" }
+            val overflowDocument = MessageShareDocument("长截图自动分页", messageShareGroups(listOf(UiMessage("overflow", MessageRole.ASSISTANT, overflowTable))))
+            val overflow = withTimeout(120_000) { exportSharedImages(activity, overflowDocument, ShareImageMode.LONG) }
+            check(overflow.size > 1)
+            overflow.forEach { file ->
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(file.path, bounds)
+                check(bounds.outHeight <= 2400) { "Long screenshot overflow did not switch to phone-sized pages" }
+            }
+            status("over-limit long screenshot automatically paginates to ${overflow.size} complete images")
+
+            val decor = activity.window.decorView as android.view.ViewGroup
+            val before = withContext(Dispatchers.Main) { decor.childCount }
+            coroutineScope {
+                val interrupted = launch { exportSharedImages(activity, overflowDocument, ShareImageMode.LONG) }
+                delay(80)
+                interrupted.cancelAndJoin()
+            }
+            delay(100)
+            check(withContext(Dispatchers.Main) { decor.childCount } == before) { "Cancelled export leaked its Compose host" }
+            status("cancelling image generation releases the private Compose capture host")
+        } finally { instrumentation.runOnMainSync { activity.finish() } }
+    }
+}
