@@ -47,7 +47,7 @@ Good for:
 - **Automatic reading**: the speaker switch next to New chat reads newly completed replies using the selected voice. Turning it off stops playback immediately.
 - **API profiles**: save independent URLs, models, protocols and encrypted keys; create, copy, rename, delete or switch profiles. Changes save automatically and existing settings are preserved.
 - Message tree organised by `parentId`. Regenerating creates an in-conversation branch; switching versions carries the downstream along instead of deleting history; long-press forks into a new conversation.
-- Context management: CJK-weighted token estimate, usage ring on the input bar, incremental compaction (keeps the last 6 messages in full).
+- Context management: CJK-weighted token estimates, request budget checks, an input usage ring, and compaction in batches (normally keeps the last 6 messages; retains at least the latest turn when recent messages are oversized).
 - Attachments: camera / gallery / files, none of which need runtime permission; images, plain text, docx and PDF. Imported images are stored as files in app-private storage, with only the file name kept in the database. Oversized messages use chunked reads; capacity depends on available device storage and memory. Tapping an image opens a full-screen viewer with swipe between images.
 - **Images are validated before sending**: the real format is detected from the file header, formats the server does not accept are transcoded to JPEG locally, and unreadable images are skipped with a notice instead of breaking the conversation forever.
 - Model capability aware: when the selected model does not accept images, they are skipped with a notice instead of being rejected by the server.

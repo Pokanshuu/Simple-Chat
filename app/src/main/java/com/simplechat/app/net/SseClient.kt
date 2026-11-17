@@ -2,7 +2,6 @@ package com.simplechat.app.net
 
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -11,11 +10,8 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.encodeToStream
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * OpenAI 兼容的 SSE 流式客户端。
@@ -48,8 +44,11 @@ class SseClient(
         apiKey: String,
         request: ChatRequestDto,
         extraHeaders: Map<String, String> = emptyMap(),
+        contextWindow: Int? = null,
     ): Flow<StreamEvent> = flow {
+        validateRequestBudget(estimatedInputTokens(request), request.maxTokens, contextWindow)
         val body = StreamingJsonRequestBody(json, request)
+        val largeRequest = body.contentLength() >= LargeRequestBytes
 
         val builder = Request.Builder()
             .url(url)
@@ -78,7 +77,7 @@ class SseClient(
                         android.util.Log.w(ChatStreamLogTag, "HTTP ${response.code}")
                         emit(
                             StreamEvent.Error(
-                                message = httpErrorText(response.code, serverMessage),
+                                message = httpErrorText(response.code, serverMessage, largeRequest),
                                 code = response.code,
                                 retryable = response.code == 429 || response.code >= 500,
                             ),
@@ -87,17 +86,20 @@ class SseClient(
                     }
 
                     var finished = false
+                    var receivedStop = false
                     while (!finished) {
                         currentCoroutineContext().ensureActive()
 
                         val line = source.readUtf8Line()
                         if (line == null) {
+                            if (!receivedStop) throw java.io.EOFException("Stream ended before completion")
                             finished = true
                         } else {
                             when (val result = parser.parse(line)) {
                                 is SseLineParser.Result.Events -> result.events.forEach {
                                     emit(it)
                                     emittedAny = true
+                                    if (it is StreamEvent.Stopped || it is StreamEvent.Error) receivedStop = true
                                 }
 
                                 SseLineParser.Result.Done -> finished = true
@@ -121,7 +123,7 @@ class SseClient(
                 }
                 // 原始异常进日志（排查要用），界面拿到的是"连接被中断、请重试"这类人话
                 android.util.Log.w(ChatStreamLogTag, "stream interrupted", e)
-                emit(StreamEvent.Error(e.networkText(), retryable = true))
+                emit(StreamEvent.Error(e.networkText(largeRequest && !emittedAny), retryable = true))
                 return@flow
             } finally {
                 handle.cancel()
@@ -129,9 +131,6 @@ class SseClient(
         }
     }.flowOn(Dispatchers.IO)
 
-    private companion object {
-        val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-    }
 }
 
 /** 流式客户端的日志 tag：原始异常与服务端报文都记在这里，界面上只给人话。 */
@@ -144,14 +143,7 @@ internal const val StreamMaxAttempts = 2
 internal const val StreamRetryDelayMs = 600L
 
 /** Serializes directly to Okio instead of duplicating the full request in a UTF-16 String. */
-@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
 internal class StreamingJsonRequestBody(
-    private val json: Json,
-    private val request: ChatRequestDto,
-) : okhttp3.RequestBody() {
-    override fun contentType() = "application/json; charset=utf-8".toMediaType()
-    override fun isOneShot() = true
-    override fun writeTo(sink: okio.BufferedSink) {
-        json.encodeToStream(ChatRequestDto.serializer(), request, sink.outputStream())
-    }
-}
+    json: Json,
+    request: ChatRequestDto,
+) : StreamingRequestBody<ChatRequestDto>(json, ChatRequestDto.serializer(), request)

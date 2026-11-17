@@ -74,6 +74,8 @@ internal class SseLineParser(private val json: Json) {
             )
         }
 
+        chunk.choices.firstOrNull()?.finishReason?.let { events += StreamEvent.Stopped(it) }
+
         return events
     }
 

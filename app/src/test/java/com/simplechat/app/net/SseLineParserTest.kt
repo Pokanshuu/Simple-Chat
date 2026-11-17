@@ -112,9 +112,10 @@ class SseLineParserTest {
     }
 
     @Test
-    fun `finish_reason 单独出现不产生事件`() {
+    fun `finish_reason preserves completion and truncation signals`() {
         val result = events("""data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}""")
-        assertTrue(result.isEmpty())
+        assertEquals(listOf(StreamEvent.Stopped("stop")), result)
+        assertEquals(listOf(StreamEvent.Stopped("length")), events("""data: {"choices":[{"delta":{},"finish_reason":"length"}]}"""))
     }
 
     // ── 健壮性 ───────────────────────────────────────────

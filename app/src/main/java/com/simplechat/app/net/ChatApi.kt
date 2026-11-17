@@ -42,11 +42,13 @@ class ChatApi(
         apiKey: String,
         request: AnthropicRequest,
         extraHeaders: Map<String, String> = emptyMap(),
+        contextWindow: Int? = null,
     ): Flow<StreamEvent> = anthropicApi.streamMessage(
         url = anthropicMessagesUrl(baseUrl),
         apiKey = apiKey,
         request = request,
         extraHeaders = extraHeaders,
+        contextWindow = contextWindow,
     )
 
     /**
@@ -91,6 +93,7 @@ class ChatApi(
             apiKey = apiKey,
             request = request,
             extraHeaders = extraHeaders,
+            contextWindow = model.contextWindow,
         )
     }
 
@@ -139,7 +142,11 @@ class ChatApi(
             .readTimeout(0, TimeUnit.MILLISECONDS)
             .retryOnConnectionFailure(true)
             .addInterceptor { chain ->
-                chain.proceed(
+                val requestBody = chain.request().body
+                val sending = if (requestBody is StreamingRequestBody<*> && requestBody.contentLength() >= LargeRequestBytes) {
+                    chain.withWriteTimeout(LargeRequestWriteTimeoutSeconds, TimeUnit.SECONDS)
+                } else chain
+                sending.proceed(
                     chain.request().newBuilder()
                         .header("User-Agent", USER_AGENT)
                         .build(),

@@ -162,6 +162,7 @@ class ChatViewModel(
         private set
 
     private var compactJob: Job? = null
+    private var compactGeneration = 0L
 
     var presets by mutableStateOf<List<Preset>>(emptyList())
         private set
@@ -826,53 +827,38 @@ class ChatViewModel(
      *
      * 三件事刻意分开：
      * - **不删本地消息** —— 压缩只影响 `buildRequestMessages()` 里挑哪些发出去
-     * - **保留最近 [KEEP_RECENT] 条完整消息** —— 最近的对白是文风与语气的锚，
+     * - **通常保留最近 6 条完整消息** —— 最近的对白是文风与语气的锚，
      *   被摘要成"他们继续交谈"会立刻丢失质感
      * - **摘要可读可改** —— AI 记错人名地名时用户能直接修正（见 [updateCompactionSummary]）
      */
     fun compactContext() {
         if (compacting || isStreaming) return
         val conversationId = currentConversationId ?: return
-
+        val generation = switchGeneration
+        val revision = pathRevision
+        val operation = ++compactGeneration
+        val savedCompaction = compaction
         val existing = validCompaction(messages, compaction)
-
-        /*
-         * **增量滚动压缩**：只总结上次摘要之后的新增部分。
-         *
-         * 每次从头重压一遍的话，早先的情节会被反复摘要 ——
-         * 信息每过一轮就衰减一次，几轮下来人名地名就开始漂。
-         */
         val alreadyCovered = existing
             ?.let { c -> messages.indexOfFirst { it.id == c.throughMessageId } }
             ?: -1
         val candidates = messages
             .filterIndexed { index, _ -> index > alreadyCovered }
-            .filter { !it.streaming && it.content.isNotBlank() }
-
-        if (candidates.size <= KEEP_RECENT) {
-            banner = Res.get(R.string.compact_too_few)
-            return
-        }
-
-        // 保留最后 KEEP_RECENT 条；其余交给模型总结
-        var cutIndex = candidates.size - KEEP_RECENT
-
-        /*
-         * 切割点必须落在**用户消息**上，让保留下来的第一条是 user。
-         * 否则请求会出现"一个没有问题的回答"——服务端多半能接受，
-         * 但语义已经不对，模型容易顺着自说自话。
-         */
-        while (cutIndex > 0 && candidates[cutIndex].role != MessageRole.USER) {
-            cutIndex--
-        }
-        if (cutIndex <= 0) {
-            banner = Res.get(R.string.compact_too_few)
-            return
-        }
-
-        val toSummarize = candidates.take(cutIndex)
-        val throughId = toSummarize.last().id
-        val previousSummary = existing?.summary?.takeIf { it.isNotBlank() }
+            .filter { !it.streaming && (it.content.isNotBlank() || it.attachments.isNotEmpty()) }
+        // Capture configuration once: changing models mid-compaction must not mix endpoints/budgets.
+        val model = settings.model
+        val baseUrl = stored.baseUrl.ifBlank { providerKind.defaultBaseUrl }
+        val apiKey = stored.apiKey
+        val headers = providerKind.headersFor(openCodeSessionId)
+        val extended = apiStyle == ApiStyle.ANTHROPIC
+        val prompts = CompactionPrompts(
+            system = Res.get(R.string.prompt_compact_system),
+            existing = Res.get(R.string.prompt_compact_existing),
+            newMessages = Res.get(R.string.prompt_compact_new),
+            user = Res.get(R.string.prompt_user_prefix),
+            assistant = Res.get(R.string.prompt_ai_prefix),
+            image = Res.get(R.string.prompt_has_image),
+        )
 
         compacting = true
         compactPreview = ""
@@ -880,89 +866,84 @@ class ChatViewModel(
         imageSkipNotice = null
 
         compactJob = viewModelScope.launch {
-            val transcript = buildString {
-                if (previousSummary != null) {
-                    append(Res.get(R.string.prompt_compact_existing))
-                    append(previousSummary)
-                    append(Res.get(R.string.prompt_compact_new))
-                }
-                toSummarize.forEach { message ->
-                    append(Res.get(if (message.role == MessageRole.USER) R.string.prompt_user_prefix else R.string.prompt_ai_prefix))
-                    append(message.content.trim())
-                    // 文本附件的内容要进摘要，否则"我上传的那份设定"会在压缩后凭空消失
-                    message.attachments
-                        .filter { it.kind == Attachment.Kind.TEXT }
-                        .forEach { append("\n").append(it.toPromptBlock()) }
-                    if (message.attachments.any { it.isImage }) append(Res.get(R.string.prompt_has_image))
-                    append("\n\n")
-                }
-            }
-
-            val collected = StringBuilder()
-            var failure: String? = null
-
             try {
-                chatApi.streamChat(
-                    baseUrl = stored.baseUrl.ifBlank { providerKind.defaultBaseUrl },
-                    apiKey = stored.apiKey,
-                    model = settings.model,
-                    messages = listOf(
-                        OutMessageDto(
-                            role = "system",
-                            content = MessageContent.text(Res.get(R.string.prompt_compact_system)),
-                        ),
-                        OutMessageDto(
-                            role = "user",
-                            content = MessageContent.text(transcript),
-                        ),
-                    ),
-                    // 总结不需要思考，也不需要保留已存在的摘要上下文
-                    thinkingEnabled = false,
-                    temperature = 0.3,
-                    extraHeaders = providerKind.headersFor(openCodeSessionId),
-                ).collect { event ->
-                    when (event) {
-                        is StreamEvent.Content -> {
-                            collected.append(event.text)
-                            compactPreview = collected.toString()
+                val result = withContext(Dispatchers.Default) {
+                    val cutIndex = compactionCutIndex(candidates, model.contextWindow / 2)
+                    if (cutIndex <= 0) throw com.simplechat.app.data.AppTextException(R.string.compact_too_few)
+                    val toSummarize = candidates.take(cutIndex)
+                    val summary = compactInBatches(
+                        compactionSegments(toSummarize, existing?.summary, prompts),
+                        prompts, model.contextWindow,
+                    ) { transcript, maxTokens, batch ->
+                        val collected = StringBuilder()
+                        var failure: String? = null
+                        val progress = Res.get(R.string.compact_batch_progress, batch)
+                        withContext(Dispatchers.Main) { compactPreview = progress }
+                        val stream = if (extended) {
+                            chatApi.streamMessage(
+                                baseUrl = baseUrl, apiKey = apiKey,
+                                request = buildAnthropicRequest(
+                                    model = model.id, systemPrompt = prompts.system,
+                                    path = listOf(UiMessage("compact", MessageRole.USER, transcript)),
+                                    searchEnabled = false, thinkingEnabled = false, requestTitle = false,
+                                    latestReminder = null, maxTokens = maxTokens, temperature = 0.3,
+                                    deepSeekExtensions = isOfficialDeepSeekEndpoint(baseUrl),
+                                ),
+                                extraHeaders = headers, contextWindow = model.contextWindow,
+                            )
+                        } else {
+                            chatApi.streamChat(
+                                baseUrl = baseUrl, apiKey = apiKey, model = model,
+                                messages = listOf(
+                                    OutMessageDto("system", MessageContent.text(prompts.system)),
+                                    OutMessageDto("user", MessageContent.text(transcript)),
+                                ),
+                                thinkingEnabled = false, maxTokens = maxTokens,
+                                temperature = 0.3, extraHeaders = headers,
+                            )
                         }
-
-                        // 流内错误对象是**上游网关原文**：先翻成人话，认不出才保留原文
-                        is StreamEvent.Error -> failure = serverErrorText(event.message)
-                        else -> Unit
+                        var previewAt = 0L
+                        stream.collect { event ->
+                            when (event) {
+                                is StreamEvent.Content -> collected.append(event.text)
+                                is StreamEvent.TextDelta -> collected.append(event.text)
+                                is StreamEvent.BlockStart -> (event.block as? ReplyBlock.Text)?.let { collected.append(it.text) }
+                                is StreamEvent.Error -> failure = serverErrorText(event.message)
+                                is StreamEvent.Stopped -> if (event.reason in listOf("length", "max_tokens")) {
+                                    failure = Res.get(R.string.compact_summary_too_large)
+                                }
+                                else -> Unit
+                            }
+                            val now = System.currentTimeMillis()
+                            if (now - previewAt >= 100) {
+                                val preview = "$progress\n\n$collected"
+                                withContext(Dispatchers.Main) { compactPreview = preview }
+                                previewAt = now
+                            }
+                        }
+                        failure?.let { throw IllegalStateException(it) }
+                        collected.toString()
                     }
+                    toSummarize.last().id to summary
                 }
-            } catch (t: kotlinx.coroutines.CancellationException) {
-                throw t
-            } catch (t: Exception) {
-                failure = t.userMessage()
-            }
-
-            val summary = collected.toString().trim()
-            if (failure != null || summary.isEmpty()) {
-                banner = Res.get(R.string.compact_failed_detail, failure ?: Res.get(R.string.error_no_content))
-                compacting = false
-                compactPreview = ""
-                return@launch
-            }
-
-            val entity = CompactionEntity(
-                id = existing?.id ?: UUID.randomUUID().toString(),
-                conversationId = conversationId,
-                throughMessageId = throughId,
-                summary = summary,
-                createdAt = existing?.createdAt ?: System.currentTimeMillis(),
-                updatedAt = System.currentTimeMillis(),
-            )
-            try {
+                // A changed branch/edit invalidates the source snapshot, even if the chat ID matches.
+                if (generation != switchGeneration || revision != pathRevision || savedCompaction != compaction) return@launch
+                val entity = CompactionEntity(
+                    id = existing?.id ?: UUID.randomUUID().toString(),
+                    conversationId = conversationId,
+                    throughMessageId = result.first,
+                    summary = result.second,
+                    createdAt = existing?.createdAt ?: System.currentTimeMillis(),
+                    updatedAt = System.currentTimeMillis(),
+                )
                 repository.saveCompaction(entity)
-                if (conversationId == currentConversationId) compaction = entity
+                if (generation == switchGeneration) compaction = entity
             } catch (error: kotlinx.coroutines.CancellationException) {
                 throw error
             } catch (error: Exception) {
-                if (conversationId == currentConversationId) banner = Res.get(R.string.compact_failed_detail, error.userMessage())
+                if (generation == switchGeneration && operation == compactGeneration) banner = Res.get(R.string.compact_failed_detail, error.userMessage())
             } finally {
-                if (conversationId == currentConversationId) {
+                if (generation == switchGeneration && operation == compactGeneration) {
                     compacting = false
                     compactPreview = ""
                 }
@@ -986,6 +967,7 @@ class ChatViewModel(
     }
 
     fun cancelCompaction() {
+        compactGeneration++
         compactJob?.cancel()
         compactJob = null
         compacting = false
@@ -1513,6 +1495,7 @@ class ChatViewModel(
                         apiKey = stored.apiKey,
                         request = buildAnthropicRequestNow(prefix),
                         extraHeaders = providerKind.headersFor(openCodeSessionId),
+                        contextWindow = settings.model.contextWindow,
                     ).collect { event ->
                         when (event) {
                             is StreamEvent.BlockStart -> {
@@ -2090,9 +2073,6 @@ class ChatViewModel(
          * 吃穿。输入栏上那行数字晚 250ms 更新，用户完全感知不到。
          */
         private const val ContextStatsDebounceMs = 250L
-
-        /** 压缩时保留最近多少条完整消息。 */
-        private const val KEEP_RECENT = 6
 
         /**
          * 压缩用的系统提示词见 `prompt_compact_system`（`strings.xml`，随界面语言）。

@@ -76,13 +76,15 @@
     <string name="error_network_timeout">Connection timed out. Try again shortly</string>
     <string name="error_network_interrupted">The connection was interrupted (server or network hiccup). Please retry</string>
     <string name="error_network_insecure">Secure connection failed. Check your network or certificates</string>
+    <string name="error_context_budget">The estimated input (%1$s tokens) plus the reply allowance (%2$s tokens) exceeds the listed context window (%3$s tokens). Tap the context usage ring by the input box to compact and retry, or shorten the latest message or lower the reply limit.</string>
+    <string name="error_large_request_interrupted">%1$s. This conversation request is large and may also exceed the provider’s context or request size limit. Tap the context usage ring by the input box to compact and retry.</string>
     <string name="error_server_busy">The service is busy or temporarily failing. Try again shortly</string>
     <string name="error_http_status">Server returned HTTP %1$d</string>
     <string name="error_http_unauthorized">Invalid or expired API key. Enter it again in Settings</string>
     <string name="error_http_payment_required">Insufficient balance. Top up and retry</string>
     <string name="error_http_forbidden">This API key has no permission for the request</string>
     <string name="error_http_not_found">Endpoint not found. Check the Base URL and protocol channel</string>
-    <string name="error_http_too_large">The request is too large (images or history). Reduce it and retry</string>
+    <string name="error_http_too_large">The server rejected an oversized request. Tap the context usage ring by the input box to compact history, or reduce attachments in the latest message and retry</string>
     <string name="error_http_rate_limited">Too many requests. Wait a moment and retry</string>
     <string name="error_no_api_key">No API key yet. Fill it in under Settings → API, then retry.</string>
     <string name="error_api_key_chars">The API key contains non-ASCII characters (Chinese, full-width punctuation or line breaks), which cannot be sent in a request header. Re-paste a plain ASCII key under Settings → API → API Key.</string>
@@ -279,7 +281,7 @@
     <string name="models_fetched">Fetched %1$d models</string>
     <string name="models_fetch_failed">Fetch failed: %1$s</string>
     <string name="models_fetch_needs_key">(API key required first)</string>
-    <string name="compact_too_few">Not enough messages to compact yet.</string>
+    <string name="compact_too_few">There are no earlier messages to compact yet. If the latest turn itself is too large, shorten it or use a model with a larger context window.</string>
     <string name="compact_failed">Compaction failed</string>
     <string name="compact_failed_detail">Compaction failed: %1$s</string>
 
@@ -417,7 +419,9 @@
     <string name="compact_redo">Compact again</string>
     <string name="compact_discard">Discard</string>
     <string name="compact_start">Compact context</string>
-    <string name="compact_desc">Summarizes the earlier conversation and keeps the last 6 messages in full.</string>
+    <string name="compact_desc">Summarize earlier messages in batches, normally keeping the latest 6 intact. If recent messages are too large, keep the latest turn.</string>
+    <string name="compact_batch_progress">Compacting batch %1$d…</string>
+    <string name="compact_summary_too_large">The summary is still too long. Use a model with a larger context window or shorten the existing summary and retry.</string>
 
     <!-- Panel 4: chat settings -->
     <string name="input_conversation_name">Conversation name</string>

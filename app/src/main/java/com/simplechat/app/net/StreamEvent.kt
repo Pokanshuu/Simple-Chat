@@ -55,6 +55,6 @@ sealed interface StreamEvent {
     /** 服务端生成的会话标题（仅首轮且请求了 `title.enabled` 时下发）。 */
     data class Title(val text: String) : StreamEvent
 
-    /** 结束原因：`end_turn` / `max_tokens` / `tool_use` / `refusal`。 */
+    /** 两通道的结束原因：`stop` / `length` / `end_turn` / `max_tokens` / `tool_use` / `refusal`。 */
     data class Stopped(val reason: String?) : StreamEvent
 }

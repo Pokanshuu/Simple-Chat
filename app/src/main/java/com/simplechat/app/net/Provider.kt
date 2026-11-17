@@ -48,7 +48,7 @@ data class ModelInfo(
     val displayName: String = id,
     val supportsVision: Boolean = false,
     val supportsThinking: Boolean = false,
-    /** 上下文窗口，用于占用进度条与压缩阈值（§9.1.1③）。 */
+    /** 上下文窗口，用于占用进度条、发送预算与压缩分批（§9.1.1③）。 */
     val contextWindow: Int = DEFAULT_CONTEXT_WINDOW,
 ) {
     companion object {

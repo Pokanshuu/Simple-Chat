@@ -2,6 +2,10 @@ package com.simplechat.app.net.anthropic
 
 import com.simplechat.app.net.cancelWithCoroutine
 import com.simplechat.app.net.readErrorText
+import com.simplechat.app.net.LargeRequestBytes
+import com.simplechat.app.net.StreamingRequestBody
+import com.simplechat.app.net.estimatedInputTokens
+import com.simplechat.app.net.validateRequestBudget
 
 import com.simplechat.app.net.ChatStreamLogTag
 import com.simplechat.app.net.StreamEvent
@@ -11,7 +15,6 @@ import com.simplechat.app.net.httpErrorText
 import com.simplechat.app.net.networkText
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -20,11 +23,8 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.encodeToStream
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * Anthropic 兼容通道的流式客户端（`POST /anthropic/v1/messages`）。
@@ -50,8 +50,11 @@ class AnthropicApi(
         apiKey: String,
         request: AnthropicRequest,
         extraHeaders: Map<String, String> = emptyMap(),
+        contextWindow: Int? = null,
     ): Flow<StreamEvent> = flow {
+        validateRequestBudget(estimatedInputTokens(request), request.maxTokens, contextWindow)
         val body = StreamingAnthropicRequestBody(json, request)
+        val largeRequest = body.contentLength() >= LargeRequestBytes
 
         val builder = Request.Builder().url(url).post(body)
         anthropicHeaders(apiKey, extraHeaders).forEach { (name, value) -> builder.header(name, value) }
@@ -82,7 +85,7 @@ class AnthropicApi(
                         }
                         emit(
                             StreamEvent.Error(
-                                message = httpErrorText(response.code, serverMessage),
+                                message = httpErrorText(response.code, serverMessage, largeRequest),
                                 code = response.code,
                                 retryable = isRetryableStatus(response.code),
                             ),
@@ -91,11 +94,13 @@ class AnthropicApi(
                     }
 
                     var finished = false
+                    var receivedStop = false
                     while (!finished) {
                         currentCoroutineContext().ensureActive()
 
                         val line = source.readUtf8Line()
                         if (line == null) {
+                            if (!receivedStop) throw java.io.EOFException("Stream ended before completion")
                             finished = true
                         } else {
                             when (val result = parser.parse(line)) {
@@ -103,6 +108,7 @@ class AnthropicApi(
                                     result.events.forEach {
                                         emit(it)
                                         emittedAny = true
+                                        if (it is StreamEvent.Stopped || it is StreamEvent.Error) receivedStop = true
                                     }
 
                                 AnthropicStreamParser.Result.Done -> finished = true
@@ -129,7 +135,7 @@ class AnthropicApi(
                     continue
                 }
                 android.util.Log.w(ChatStreamLogTag, "stream interrupted", e)
-                emit(StreamEvent.Error(e.networkText(), retryable = true))
+                emit(StreamEvent.Error(e.networkText(largeRequest && !emittedAny), retryable = true))
                 return@flow
             } finally {
                 handle.cancel()
@@ -137,25 +143,15 @@ class AnthropicApi(
         }
     }.flowOn(Dispatchers.IO)
 
-    private companion object {
-        val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-    }
 }
 
 /** Anthropic 协议版本。原版会校验这个头；DeepSeek 的兼容端点也收。 */
 internal const val AnthropicVersion = "2023-06-01"
 
-@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
 internal class StreamingAnthropicRequestBody(
-    private val json: Json,
-    private val request: AnthropicRequest,
-) : okhttp3.RequestBody() {
-    override fun contentType() = "application/json; charset=utf-8".toMediaType()
-    override fun isOneShot() = true
-    override fun writeTo(sink: okio.BufferedSink) {
-        json.encodeToStream(AnthropicRequest.serializer(), request, sink.outputStream())
-    }
-}
+    json: Json,
+    request: AnthropicRequest,
+) : StreamingRequestBody<AnthropicRequest>(json, AnthropicRequest.serializer(), request)
 
 /**
  * 请求头。

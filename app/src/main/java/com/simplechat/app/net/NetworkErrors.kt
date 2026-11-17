@@ -86,6 +86,7 @@ internal fun providerHintRes(serverMessage: String?): Int? {
         text.containsAny(MODEL_MISSING_KEYWORDS) -> R.string.error_provider_model_not_found
         text.looksLikeQuotaProblem() -> R.string.error_provider_quota
         text.containsAny(RATE_LIMIT_KEYWORDS) -> R.string.error_provider_rate_limit
+        text.containsAny(PAYLOAD_KEYWORDS) -> R.string.error_http_too_large
         text.containsAny(CONTEXT_KEYWORDS) -> R.string.error_provider_context_length
         else -> null
     }
@@ -160,6 +161,24 @@ private val CONTEXT_KEYWORDS = listOf(
     "maximum context",
     "context window",
     "too many tokens",
+    "prompt is too long",
+    "prompt too long",
+    "input is too long",
+    "input too long",
+    "input token limit",
+    "max model len",
+    "上下文长度",
+    "上下文超",
+    "输入过长",
+)
+
+private val PAYLOAD_KEYWORDS = listOf(
+    "request body too large",
+    "request entity too large",
+    "payload too large",
+    "request_too_large",
+    "request too large",
+    "request size exceeds",
 )
 
 /**
@@ -174,14 +193,17 @@ private val CONTEXT_KEYWORDS = listOf(
  *
  * **认不出任何模式时保持原行为**：状态码提示 → 服务端原文 → 带状态码的兜底句。
  */
-internal fun httpErrorText(code: Int, serverMessage: String?): String {
+internal fun httpErrorText(code: Int, serverMessage: String?, largeRequest: Boolean = false): String {
     val raw = serverMessage?.trim()?.takeIf { it.isNotEmpty() }
     val providerRes = providerHintRes(raw)
     if (providerRes == null) {
         // 没认出上游原因 → 一字不改地走老逻辑，避免影响现有表现
-        return httpStatusRes(code)?.let { Res.get(it) }
+        val hint = httpStatusRes(code)?.let { Res.get(it) }
             ?: raw
             ?: Res.get(R.string.error_http_status, code)
+        return if (largeRequest && code in 500..599) {
+            Res.get(R.string.error_large_request_interrupted, hint)
+        } else hint
     }
 
     val statusHint = httpStatusRes(code)?.let { Res.get(it) }
@@ -286,4 +308,13 @@ private val RAW_NETWORK_ERROR_HINTS = listOf(
 )
 
 /** 网络异常落成文字（供流式客户端在 `catch (IOException)` 里用）。 */
-internal fun Throwable.networkText(): String = Res.get(networkFailureRes(this))
+internal fun Throwable.networkText(largeRequestBeforeResponse: Boolean = false): String {
+    val hint = Res.get(networkFailureRes(this))
+    return if (needsLargeRequestHint(this, largeRequestBeforeResponse)) {
+        Res.get(R.string.error_large_request_interrupted, hint)
+    } else hint
+}
+
+internal fun needsLargeRequestHint(error: Throwable, largeRequestBeforeResponse: Boolean): Boolean =
+    largeRequestBeforeResponse && error is IOException &&
+        error !is UnknownHostException && error !is SSLException && error !is java.net.ConnectException

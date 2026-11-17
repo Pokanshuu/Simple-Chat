@@ -29,6 +29,24 @@ import org.junit.Test
  */
 class NetworkErrorsTest {
 
+    @Test fun `long input and payload errors have actionable context hints`() {
+        for (message in listOf("prompt is too long: 150000 tokens", "input too long", "上下文长度超过限制", "input token limit exceeded")) {
+            assertEquals(R.string.error_provider_context_length, providerHintRes(message))
+        }
+        for (message in listOf("Request body too large", "request_too_large", "Payload Too Large", "request size exceeds limit")) {
+            assertEquals(R.string.error_http_too_large, providerHintRes(message))
+        }
+    }
+
+    @Test fun `large request advice is limited to pre response interruption not DNS TLS or offline`() {
+        assertTrue(needsLargeRequestHint(IOException("reset"), true))
+        assertTrue(needsLargeRequestHint(SocketTimeoutException(), true))
+        assertFalse(needsLargeRequestHint(IOException("reset"), false))
+        assertFalse(needsLargeRequestHint(UnknownHostException(), true))
+        assertFalse(needsLargeRequestHint(SSLHandshakeException("certificate"), true))
+        assertFalse(needsLargeRequestHint(java.net.ConnectException(), true))
+    }
+
     @Test
     fun `断网`() {
         assertEquals(R.string.error_network_offline, networkFailureRes(UnknownHostException("api.deepseek.com")))

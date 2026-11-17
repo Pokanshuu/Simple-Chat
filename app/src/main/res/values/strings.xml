@@ -78,13 +78,15 @@
     <string name="error_network_timeout">连接超时，请稍后重试</string>
     <string name="error_network_interrupted">连接被中断（服务端或网络波动），请重试</string>
     <string name="error_network_insecure">安全连接失败，请检查网络环境或证书</string>
+    <string name="error_context_budget">本次输入估算约 %1$s tokens，加上预留回复 %2$s tokens，已超过当前模型标注的 %3$s tokens 上下文窗口。请点输入栏的上下文占用圆环，压缩后重试；也可缩短最新消息或降低回复上限。</string>
+    <string name="error_large_request_interrupted">%1$s。本次对话请求较大，也可能触及服务商的上下文或请求大小限制。请点输入栏的上下文占用圆环，压缩后重试。</string>
     <string name="error_server_busy">服务端繁忙或临时故障，请稍后重试</string>
     <string name="error_http_status">服务端返回 HTTP %1$d</string>
     <string name="error_http_unauthorized">API Key 无效或已过期，请到设置里重新填写</string>
     <string name="error_http_payment_required">账户余额不足，请充值后重试</string>
     <string name="error_http_forbidden">当前 API Key 没有访问权限</string>
     <string name="error_http_not_found">接口不存在，请检查 Base URL 与协议通道</string>
-    <string name="error_http_too_large">这次请求太大（图片或历史过长），请减少内容后重试</string>
+    <string name="error_http_too_large">服务端拒绝了过大的请求，请点输入栏的上下文占用圆环压缩历史，或减少本次消息的附件后重试</string>
     <string name="error_http_rate_limited">请求太频繁，请稍等片刻再试</string>
     <string name="error_no_api_key">尚未配置 API Key。请在设置 → API 配置中填写后重试。</string>
     <string name="error_api_key_chars">API Key 含非 ASCII 字符，请在设置 → API 中重新粘贴。</string>
@@ -284,7 +286,7 @@
     <string name="models_fetched">已获取 %1$d 个模型</string>
     <string name="models_fetch_failed">获取失败：%1$s</string>
     <string name="models_fetch_needs_key">（需先配置 API Key）</string>
-    <string name="compact_too_few">消息还少，暂时不需要压缩。</string>
+    <string name="compact_too_few">暂无可压缩的较早对话。如果最新一轮本身过大，请缩短消息或换用上下文更大的模型。</string>
     <string name="compact_failed">压缩失败</string>
     <string name="compact_failed_detail">压缩失败：%1$s</string>
 
@@ -422,7 +424,9 @@
     <string name="compact_redo">重新压缩</string>
     <string name="compact_discard">放弃</string>
     <string name="compact_start">压缩上下文</string>
-    <string name="compact_desc">总结较早的对话并保留最近 6 条完整消息。</string>
+    <string name="compact_desc">分批总结较早的对话，通常保留最近 6 条完整消息；近期内容过大时缩减到最新一轮。</string>
+    <string name="compact_batch_progress">正在压缩第 %1$d 批…</string>
+    <string name="compact_summary_too_large">摘要仍然过长，请换用上下文更大的模型，或缩短已有摘要后重试</string>
 
     <!-- 面板四：对话设置 -->
     <string name="input_conversation_name">对话名称</string>
