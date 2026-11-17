@@ -263,6 +263,7 @@
 
     <!-- ── Attachments ──────────────────────────────────── -->
     <string name="attach_read_failed">Could not read the attachment</string>
+    <string name="attach_import_partial">%1$d attachments could not be imported: %2$s</string>
     <string name="attach_camera_file_failed">Could not create the camera file</string>
     <string name="attach_default_text_name">Untitled.txt</string>
     <string name="err_image_too_big">Image exceeds 24MB; compress it first</string>

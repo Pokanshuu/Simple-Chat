@@ -268,6 +268,7 @@
 
     <!-- ── 附件 ─────────────────────────────────────────── -->
     <string name="attach_read_failed">附件读取失败</string>
+    <string name="attach_import_partial">有 %1$d 个附件未能导入：%2$s</string>
     <string name="attach_camera_file_failed">无法创建拍照文件</string>
     <string name="attach_default_text_name">未命名.txt</string>
     <string name="err_image_too_big">图片超过 24MB，请先压缩</string>

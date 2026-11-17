@@ -472,14 +472,72 @@ fun ChatScreen(
     //
     // 三个入口都用系统能力，且**都不需要申请任何权限**：
     // - 拍照走 ACTION_IMAGE_CAPTURE + FileProvider（相机 App 自己持有相机权限）
-    // - 图片走 PickVisualMedia（系统相册选择器）
-    // - 文件走 OpenDocument
+    // - 图片走 PickMultipleVisualMedia（系统相册选择器，可多选）
+    // - 文件走 OpenMultipleDocuments（可多选）
     // 刻意不申请 READ_MEDIA_IMAGES 之类的权限 —— 为了一个附件功能
     // 弹一堆系统授权，性价比太差。
 
     /** 附件读取失败/超限时的统一反馈。 */
     fun onImportFailed(message: String?) {
         attachError = message ?: Res.get(R.string.attach_read_failed)
+    }
+
+    /*
+     * 多选之后，"一次选择"不再等于"一个附件"，于是有三件事要在这里说清楚：
+     *
+     * ① **读到一个就贴一个**：十几张图等整批读完才出现，会让人以为没反应；
+     * ② **一个失败不影响其余**：失败的攒到最后报一句，成功的照常留在待发区
+     *    （"选错了 20 个里的 1 个"不该让另外 19 个白读）；
+     * ③ **归属是发起那一刻的会话**：读 PDF 要好几秒，期间完全可能切走 ——
+     *    直接写 `pending` 会把附件塞进**新会话**的待发区。
+     */
+    fun addPending(owner: String, added: List<Attachment>) {
+        if (added.isEmpty()) return
+        if (composerOwner == owner) {
+            pending = pending + added
+        } else {
+            pendingByConversation[owner] = pendingByConversation[owner].orEmpty() + added
+        }
+    }
+
+    /**
+     * 逐条读一批 URI。
+     *
+     * [read] 统一成 `(附件列表, 有损说明)`：图片产出一条、PDF 一页一条、
+     * docx 产出一条 —— 调用方不必为每种来源各写一遍循环与报错。
+     */
+    suspend fun importBatch(
+        owner: String,
+        uris: List<Uri>,
+        read: suspend (Uri) -> Result<Pair<List<Attachment>, String?>>,
+    ) {
+        var failed = 0
+        var firstFailure: Throwable? = null
+        var note: String? = null
+
+        for (uri in uris) {
+            read(uri).onSuccess { (attachments, resultNote) ->
+                addPending(owner, attachments)
+                // 有损提示（如 PDF 只带了前 12 页）留第一条就够了
+                if (note == null) note = resultNote
+            }.onFailure {
+                failed++
+                if (firstFailure == null) firstFailure = it
+            }
+        }
+
+        // 已经切去别的会话就不再打扰：这是"那一批"的事，不该弹到别人头上
+        if (composerOwner != owner) return
+
+        if (failed == 0) {
+            note?.let { attachError = it }
+            return
+        }
+        attachError = if (uris.size == 1) {
+            firstFailure?.userMessage()
+        } else {
+            Res.get(R.string.attach_import_partial, failed, firstFailure?.userMessage().orEmpty())
+        }
     }
 
     /*
@@ -501,7 +559,7 @@ fun ChatScreen(
         }
         scope.launch {
             AttachmentImport.image(context, uri)
-                .onSuccess { pending = pending + it }
+                .onSuccess { addPending(composerKey, listOf(it)) }
                 .onFailure { onImportFailed(it.userMessage()) }
             AttachmentImport.discardCapture(context, uri)
         }
@@ -518,36 +576,35 @@ fun ChatScreen(
     }
 
     val imagePicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickVisualMedia(),
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
+        ActivityResultContracts.PickMultipleVisualMedia(),
+    ) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        val owner = composerKey
         scope.launch {
-            AttachmentImport.image(context, uri)
-                .onSuccess { pending = pending + it }
-                .onFailure { onImportFailed(it.userMessage()) }
+            importBatch(owner, uris) { uri ->
+                AttachmentImport.image(context, uri)
+                    .map { listOf(it) to (null as String?) }
+            }
         }
     }
 
     val filePicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
+        ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        val owner = composerKey
         scope.launch {
             /*
              * 一个入口认三种东西：PDF（渲染成图）、docx（抽文本）、
              * 以及其余一律按纯文本试。格式按**文件头**判定，不看扩展名。
              */
-            AttachmentImport.document(context, uri)
-                .onSuccess { result ->
-                    pending = pending + result.attachments
-                    // 有损的地方要说出来（比如 PDF 只带了前 12 页）
-                    result.note?.let { attachError = it }
-                }
-                .onFailure { onImportFailed(it.userMessage()) }
+            importBatch(owner, uris) { uri ->
+                AttachmentImport.document(context, uri).map { it.attachments to it.note }
+            }
         }
     }
 
-    /** 打开文件选择器。MIME 过滤刻意放到最宽，真正的把关在 `AttachmentImport.text`。 */
+    /** 打开文件选择器（可多选）。MIME 过滤刻意放到最宽，真正的把关在 `AttachmentImport`。 */
     fun pickFile() {
         /*
          * ⚠️ 这里刻意不用 MIME 过滤（传通配），而不是只挑 `text` 那一类。
