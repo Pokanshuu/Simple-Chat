@@ -182,6 +182,7 @@ private fun chatColors(dark: Boolean, accent: AccentColor): ChatColors {
  * 见 [ApplySystemBarAppearance]。
  */
 val LocalIsDarkTheme = staticCompositionLocalOf { false }
+val LocalAccentColor = staticCompositionLocalOf { AccentColor.BLUE }
 
 /**
  * 品牌色色板。
@@ -266,6 +267,7 @@ fun SimpleChatTheme(
     CompositionLocalProvider(
         LocalChatColors provides chatColors(dark, accent),
         LocalIsDarkTheme provides dark,
+        LocalAccentColor provides accent,
         LocalDensity provides Density(
             density = baseDensity.density,
             fontScale = baseDensity.fontScale * fontScale,

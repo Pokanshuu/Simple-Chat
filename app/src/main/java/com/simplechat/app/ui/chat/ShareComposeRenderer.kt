@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
 import com.simplechat.app.ui.theme.SimpleChatTheme
 import com.simplechat.app.ui.theme.ThemeMode
+import com.simplechat.app.ui.theme.AccentColor
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -35,7 +36,8 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /** A one-pixel, non-interactive host. Only records into a private graphics layer; draws no UI. */
-internal class ShareComposeRenderer private constructor(context: Context, private val parent: ViewGroup) {
+internal class ShareComposeRenderer private constructor(context: Context, private val parent: ViewGroup,
+    private val accent: AccentColor) {
     private class Content(val body: @Composable () -> Unit) {
         var size by mutableStateOf(IntSize.Zero)
     }
@@ -62,7 +64,7 @@ internal class ShareComposeRenderer private constructor(context: Context, privat
         parent.addView(host, ViewGroup.LayoutParams(1, 1))
         compose.setContent {
             CompositionLocalProvider(LocalDensity provides Density(2f, 1f)) {
-                SimpleChatTheme(themeMode = ThemeMode.LIGHT) {
+                SimpleChatTheme(themeMode = ThemeMode.LIGHT, accent = accent) {
                     val layer = rememberGraphicsLayer()
                     val item = content
                     key(item) {
@@ -121,7 +123,7 @@ internal class ShareComposeRenderer private constructor(context: Context, privat
     }
 
     companion object {
-        suspend fun create(context: Context): ShareComposeRenderer = suspendCancellableCoroutine { continuation ->
+        suspend fun create(context: Context, accent: AccentColor = AccentColor.BLUE): ShareComposeRenderer = suspendCancellableCoroutine { continuation ->
             val handler = Handler(Looper.getMainLooper())
             val create = Runnable {
                 if (continuation.isActive) {
@@ -129,7 +131,7 @@ internal class ShareComposeRenderer private constructor(context: Context, privat
                         var owner = context
                         while (owner is ContextWrapper && owner !is Activity) owner = owner.baseContext
                         val activity = owner as? Activity ?: error("Image export requires a visible activity")
-                        val renderer = ShareComposeRenderer(activity, activity.window.decorView as ViewGroup)
+                        val renderer = ShareComposeRenderer(activity, activity.window.decorView as ViewGroup, accent)
                         continuation.resume(renderer, onCancellation = { _, resource, _ -> handler.post { resource.closeNow() } })
                     } catch (error: Exception) { continuation.resumeWithException(error) }
                 }

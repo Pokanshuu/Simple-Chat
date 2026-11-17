@@ -181,6 +181,7 @@ internal object MessageShareRegression {
 
             tapResource(R.string.share_image)
             find(context.getString(R.string.share_image_long))
+            tapResource(R.string.share_image_hide_branding)
             screenshot("share-image-options.png")
             tapResource(R.string.share_image_pages)
             tapResource(R.string.share_image_generate)
@@ -189,6 +190,7 @@ internal object MessageShareRegression {
             screenshot("share-image-preview.png")
             tapResource(R.string.action_close)
             tapResource(R.string.share_image)
+            check(nodes().any { it.isCheckable && it.isChecked }) { "Hide-branding option was not retained" }
             tapResource(R.string.share_image_long)
             tapResource(R.string.share_image_generate)
             find(context.getString(R.string.share_image_preview, 1))

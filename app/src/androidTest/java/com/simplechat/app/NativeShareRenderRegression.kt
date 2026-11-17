@@ -14,6 +14,10 @@ import androidx.compose.ui.Modifier
 import com.simplechat.app.ui.chat.*
 import com.simplechat.app.ui.markdown.*
 import com.simplechat.app.ui.theme.SimpleChatTheme
+import com.simplechat.app.ui.theme.AccentColor
+import com.simplechat.app.ui.theme.primary
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.toArgb
 import java.io.File
 import kotlinx.coroutines.*
 
@@ -23,6 +27,44 @@ internal object NativeShareRenderRegression {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
         instrumentation.runOnMainSync { activity.setContent { SimpleChatTheme { Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.White)) } } }
         try {
+            val bubbleDocument = MessageShareDocument("气泡样式", messageShareGroups(listOf(
+                UiMessage("bubble-user", MessageRole.USER, "用户消息靠右显示"),
+                UiMessage("bubble-ai", MessageRole.ASSISTANT, "回复直接显示正文。"))))
+            for (accent in listOf(AccentColor.GREEN, AccentColor.PURPLE)) {
+                val output = exportSharedImages(activity, bubbleDocument, ShareImageMode.LONG, accent).single()
+                val image = checkNotNull(BitmapFactory.decodeFile(output.path))
+                val expected = lerp(androidx.compose.ui.graphics.Color.White, accent.primary(false), .16f).toArgb()
+                var minX = image.width
+                var maxX = 0
+                var minY = image.height
+                for (y in 150 until minOf(400, image.height)) for (x in 64 until image.width - 64) {
+                    if (image.getPixel(x, y) == expected) {
+                        minX = minOf(minX, x); maxX = maxOf(maxX, x); minY = minOf(minY, y)
+                    }
+                }
+                check(minX > image.width / 2 && maxX >= image.width - 67) { "User bubble did not hug right edge: $minX..$maxX" }
+                check(minY < 185) { "User role heading still occupies space before bubble: $minY" }
+                output.copyTo(File(activity.cacheDir, "share-bubble-${accent.name.lowercase()}.png"), true)
+                image.recycle()
+            }
+            status("short user messages hug the right edge with green/purple theme bubble colors and no role heading space")
+            val hiddenFile = exportSharedImages(activity, bubbleDocument, ShareImageMode.LONG,
+                AccentColor.GREEN, hideBranding = true).single()
+            val hidden = checkNotNull(BitmapFactory.decodeFile(hiddenFile.path))
+            val branded = checkNotNull(BitmapFactory.decodeFile(File(activity.cacheDir, "share-bubble-green.png").path))
+            check(hidden.height == branded.height - 89) { "Hidden branding retained header/footer space" }
+            for (y in hidden.height - 35 until hidden.height) for (x in 0 until hidden.width) {
+                check(hidden.getPixel(x, y) == Color.WHITE) { "Branding footer remains visible" }
+            }
+            for (y in 0 until 90) for (x in 0 until hidden.width) {
+                val pixel = hidden.getPixel(x, y)
+                check(!(Color.blue(pixel) > Color.red(pixel) + 50 && Color.blue(pixel) > Color.green(pixel) + 50)) {
+                    "Branding header remains visible"
+                }
+            }
+            hiddenFile.copyTo(File(activity.cacheDir, "share-bubble-no-branding.png"), true)
+            hidden.recycle(); branded.recycle()
+            status("hide-branding removes both brand lines and their vertical spacing, preserving title and messages")
             val cutFixture = Bitmap.createBitmap(952, 400, Bitmap.Config.ARGB_8888)
             val canvas = android.graphics.Canvas(cutFixture)
             val black = android.graphics.Paint().apply { color = Color.BLACK }

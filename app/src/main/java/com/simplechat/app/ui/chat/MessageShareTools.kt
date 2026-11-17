@@ -38,6 +38,7 @@ import com.simplechat.app.data.userMessage
 import com.simplechat.app.ui.common.AppIcons
 import com.simplechat.app.ui.common.IconCircleButton
 import com.simplechat.app.ui.theme.LocalIsDarkTheme
+import com.simplechat.app.ui.theme.LocalAccentColor
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -49,6 +50,7 @@ internal fun MessageShareTools(
     selection: MessageShareSelection, groups: List<MessageShareGroup>, title: String, modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val accent = LocalAccentColor.current
     val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
@@ -58,6 +60,7 @@ internal fun MessageShareTools(
     var preview by remember { mutableStateOf(false) }
     var imageDocument by remember { mutableStateOf<MessageShareDocument?>(null) }
     var imageMode by rememberSaveable { mutableStateOf(ShareImageMode.LONG) }
+    var hideBranding by rememberSaveable { mutableStateOf(false) }
 
     fun runExport(block: suspend () -> Unit) {
         if (busy) return
@@ -161,13 +164,19 @@ internal fun MessageShareTools(
                             }
                         }
                     }
+                    Row(Modifier.fillMaxWidth().clickable { hideBranding = !hideBranding }.padding(top = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = hideBranding, onCheckedChange = { hideBranding = it })
+                        Text(stringResource(R.string.share_image_hide_branding), Modifier.padding(start = 8.dp))
+                    }
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
                     val mode = imageMode
+                    val hide = hideBranding
                     imageDocument = null
-                    runExport { images = exportSharedImages(context, snapshot, mode); preview = true }
+                    runExport { images = exportSharedImages(context, snapshot, mode, accent, hide); preview = true }
                 }) { Text(stringResource(R.string.share_image_generate)) }
             },
             dismissButton = { TextButton(onClick = { imageDocument = null }) { Text(stringResource(R.string.action_cancel)) } },

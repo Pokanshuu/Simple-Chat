@@ -637,6 +637,7 @@
     <string name="share_image_pages">分页图片</string>
     <string name="share_image_pages_hint">分成适合手机阅读的多张图片</string>
     <string name="share_image_generate">生成</string>
+    <string name="share_image_hide_branding">隐藏 SimpleChat 名称</string>
 </resources>
 
 

@@ -637,6 +637,7 @@
     <string name="share_image_pages">Paged images</string>
     <string name="share_image_pages_hint">Multiple images sized for reading on a phone</string>
     <string name="share_image_generate">Generate</string>
+    <string name="share_image_hide_branding">Hide SimpleChat name</string>
 </resources>
 
 

@@ -8,18 +8,22 @@ import android.text.TextPaint
 import android.util.Base64
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.R
 import com.simplechat.app.data.Attachment
 import com.simplechat.app.data.AttachmentFiles
 import com.simplechat.app.ui.markdown.*
 import com.simplechat.app.ui.theme.LocalChatColors
+import com.simplechat.app.ui.theme.AccentColor
+import com.simplechat.app.ui.common.BubbleShapeOut
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -29,17 +33,19 @@ import kotlin.math.ceil
 
 /** Native chat rendering, captured in bounded tiles and assembled into share pages. */
 internal suspend fun exportSharedImages(context: Context, document: MessageShareDocument,
-    mode: ShareImageMode = ShareImageMode.PAGES): List<File> = withContext(Dispatchers.Default) {
+    mode: ShareImageMode = ShareImageMode.PAGES,
+    accent: AccentColor = AccentColor.BLUE,
+    hideBranding: Boolean = false): List<File> = withContext(Dispatchers.Default) {
     val characterCount = document.messages.sumOf { message ->
         message.content.length.toLong() + message.attachments.filterNot { it.isImage }.sumOf { it.data.length.toLong() }
     }
     require(characterCount <= 200_000) { context.getString(R.string.share_image_too_long) }
     val fonts = loadExportFonts(context)
     val directory = shareDirectory(context)
-    val renderer = try { ShareComposeRenderer.create(context) }
+    val renderer = try { ShareComposeRenderer.create(context, accent) }
         catch (error: Throwable) { directory.deleteRecursively(); throw error }
     val memoryClass = (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).memoryClass
-    val writer = ShareImageWriter(context, directory, document.title, shareImagePageHeight(mode, memoryClass), mode == ShareImageMode.LONG)
+    val writer = ShareImageWriter(context, directory, document.title, shareImagePageHeight(mode, memoryClass), mode == ShareImageMode.LONG, hideBranding)
     val result = try {
         suspend fun render(block: ShareRenderBlock, user: Boolean = false) {
             val metrics = ExportTableMetrics()
@@ -54,10 +60,15 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
                             is ShareRenderBlock.Formula -> ExportFormula(block.tex)
                             is ShareRenderBlock.Table -> MarkdownText(block.source)
                             is ShareRenderBlock.Text -> if (block.markdown) MarkdownText(block.source)
-                                else Text(block.source, style = MaterialTheme.typography.bodyLarge,
+                                else if (user) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopEnd) {
+                                    Text(block.source, style = MaterialTheme.typography.bodyLarge,
+                                        color = LocalChatColors.current.onUserBubble,
+                                        modifier = Modifier.widthIn(max = 380.dp)
+                                            .background(LocalChatColors.current.userBubble, BubbleShapeOut)
+                                            .padding(horizontal = 14.dp, vertical = 11.dp))
+                                } else Text(block.source, style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onBackground,
-                                    modifier = Modifier.fillMaxWidth()
-                                        .then(if (user) Modifier.background(LocalChatColors.current.userBubble, RoundedCornerShape(12.dp)).padding(12.dp) else Modifier))
+                                    modifier = Modifier.fillMaxWidth())
                         }
                     }
                 }
@@ -112,7 +123,6 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
             for (message in group.messages) {
                 currentCoroutineContext().ensureActive()
                 val user = message.role == MessageRole.USER
-                writer.role(context.getString(if (user) R.string.export_role_me else R.string.export_role_ai))
                 for (block in shareRenderBlocks(message.content, !user)) render(block, user)
                 for (attachment in message.attachments) {
                     render(ShareRenderBlock.Text(attachment.name, false))
@@ -133,7 +143,7 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
         throw error
     } finally { renderer.close() }
     // Rerender at the ordinary page size so row boundaries and repeated headers remain correct.
-    result ?: exportSharedImages(context, document, ShareImageMode.PAGES)
+    result ?: exportSharedImages(context, document, ShareImageMode.PAGES, accent, hideBranding)
 }
 
 /** Cut only in a blank horizontal band between native text lines, never through glyph ink. */
@@ -160,10 +170,10 @@ private const val CaptureTileHeight = 2048
 private class ShareLongImageOverflow : RuntimeException()
 
 private class ShareImageWriter(private val context: Context, private val directory: File, private val title: String,
-    private val height: Int, private val longScreenshot: Boolean) {
+    private val height: Int, private val longScreenshot: Boolean, private val hideBranding: Boolean) {
     private val width = 1080
     private val margin = 64
-    private val bottom = height - 110
+    private val bottom = height - if (hideBranding) 64 else 110
     private var bitmap: Bitmap? = null
     private lateinit var canvas: Canvas
     private var y = 0
@@ -181,13 +191,16 @@ private class ShareImageWriter(private val context: Context, private val directo
         canvas = Canvas(bitmap!!)
         canvas.drawColor(Color.WHITE)
         paint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        paint.textSize = 26f; paint.color = Color.rgb(77, 107, 254)
-        canvas.drawText("SimpleChat", margin.toFloat(), 60f, paint)
+        if (!hideBranding) {
+            paint.textSize = 26f; paint.color = Color.rgb(77, 107, 254)
+            canvas.drawText("SimpleChat", margin.toFloat(), 60f, paint)
+        }
         paint.textSize = 32f; paint.color = Color.rgb(32, 34, 40)
         val heading = StaticLayout.Builder.obtain(title, 0, title.length, paint, width - margin * 2)
             .setMaxLines(2).setEllipsize(android.text.TextUtils.TruncateAt.END).setIncludePad(false).build()
-        canvas.save(); canvas.translate(margin.toFloat(), 85f); heading.draw(canvas); canvas.restore()
-        y = 85 + heading.height + 36
+        val titleTop = if (hideBranding) 48 else 85
+        canvas.save(); canvas.translate(margin.toFloat(), titleTop.toFloat()); heading.draw(canvas); canvas.restore()
+        y = titleTop + heading.height + 36
         bodyTop = y
     }
     fun space(amount: Int) { y += amount }
@@ -195,13 +208,6 @@ private class ShareImageWriter(private val context: Context, private val directo
     fun nextPage() {
         if (longScreenshot) throw ShareLongImageOverflow()
         flush(); page()
-    }
-    fun role(label: String) {
-        ensureRoom(200)
-        paint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        paint.textSize = 28f; paint.color = Color.rgb(105, 110, 120)
-        canvas.drawText(label, margin.toFloat(), y + 30f, paint)
-        y += 50
     }
     fun append(image: Bitmap, usedHeight: Int) {
         canvas.drawBitmap(image, Rect(0, 0, image.width, usedHeight),
@@ -230,9 +236,11 @@ private class ShareImageWriter(private val context: Context, private val directo
     }
     private fun flush() {
         val current = bitmap ?: return
-        val actualHeight = minOf(height, y + 100).coerceAtLeast(300)
-        paint.color = Color.GRAY; paint.textSize = 23f; paint.typeface = Typeface.DEFAULT
-        canvas.drawText("SimpleChat · ${files.size + 1}", margin.toFloat(), actualHeight - 35f, paint)
+        val actualHeight = minOf(height, y + if (hideBranding) 48 else 100).coerceAtLeast(300)
+        if (!hideBranding) {
+            paint.color = Color.GRAY; paint.textSize = 23f; paint.typeface = Typeface.DEFAULT
+            canvas.drawText("SimpleChat · ${files.size + 1}", margin.toFloat(), actualHeight - 35f, paint)
+        }
         val output = if (actualHeight < height) Bitmap.createBitmap(current, 0, 0, width, actualHeight) else current
         try {
             val file = File(directory, "SimpleChat-${(files.size + 1).toString().padStart(3, '0')}.png")
