@@ -367,6 +367,9 @@ internal fun ConversationRow(
     snippet: String? = null,
     /** 搜索页不支持多选，隐藏该项以免点了没反应。 */
     showMultiSelect: Boolean = true,
+    searchRole: String? = null,
+    searchDate: Long? = null,
+    searchVariant: String? = null,
 ) {
     val colors = LocalChatColors.current
     // 高亮跟着主题色（Material 的 primary 就是设置页里选的品牌色）
@@ -415,7 +418,23 @@ internal fun ConversationRow(
                     modifier = Modifier.size(19.dp),
                 )
             }
-            Column(modifier = Modifier.weight(1f)) {
+            Column(modifier = Modifier.weight(1f).padding(vertical = if (searchDate != null) 10.dp else 0.dp)) {
+                if (searchDate != null) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(
+                            stringResource(when (searchRole?.lowercase()) {
+                                "user" -> R.string.search_role_user
+                                "assistant" -> R.string.search_role_assistant
+                                else -> R.string.search_title_match
+                            }) + (searchVariant?.let { " · $it" } ?: ""),
+                            style = MaterialTheme.typography.labelSmall, color = colors.placeholder,
+                        )
+                        Text(remember(searchDate, java.util.Locale.getDefault()) {
+                            java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(searchDate))
+                        }, style = MaterialTheme.typography.labelSmall, color = colors.placeholder)
+                    }
+                    Spacer(Modifier.size(4.dp))
+                }
                 Text(
                     text = highlightedTitle(conversation.title, highlightQuery, highlightColor),
                     style = MaterialTheme.typography.bodyLarge,
@@ -483,17 +502,14 @@ private fun highlightedTitle(
         append(title)
         return@buildAnnotatedString
     }
-    val start = title.indexOf(query, ignoreCase = true)
-    if (start < 0) {
-        append(title)
-        return@buildAnnotatedString
+    var from = 0
+    while (from < title.length) {
+        val at = title.indexOf(query, from, ignoreCase = true)
+        if (at < 0) { append(title.substring(from)); break }
+        append(title.substring(from, at))
+        withStyle(SpanStyle(color = highlightColor)) { append(title.substring(at, at + query.length)) }
+        from = at + query.length
     }
-    val end = start + query.length
-    append(title.substring(0, start))
-    withStyle(SpanStyle(color = highlightColor)) {
-        append(title.substring(start, end))
-    }
-    append(title.substring(end))
 }
 
 /** 按时间分组。置顶恒在最前。 */

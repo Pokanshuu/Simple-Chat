@@ -174,6 +174,26 @@ class ChatViewModel(
     var isStreaming by mutableStateOf(false)
         private set
 
+    var imageSkipNotice by mutableStateOf<String?>(null)
+        private set
+    private var showImageSkipNotice = true
+    private var skippedNoVision = 0
+    private var skippedUnreadable = 0
+
+    fun dismissImageSkipNotice() { imageSkipNotice = null }
+    fun neverRemindImageSkip() {
+        showImageSkipNotice = false
+        imageSkipNotice = null
+        viewModelScope.launch {
+            try { settingsStore.setShowImageSkipNotice(false) }
+            catch (error: kotlinx.coroutines.CancellationException) { throw error }
+            catch (error: Exception) {
+                showImageSkipNotice = true
+                banner = error.userMessage()
+            }
+        }
+    }
+
     var banner by mutableStateOf<String?>(null)
         private set
 
@@ -384,6 +404,8 @@ class ChatViewModel(
         autoCollapseThinking = value.autoCollapseThinking
         ttsVoiceName = value.ttsVoiceName
         autoReadAloud = value.autoReadAloud
+        showImageSkipNotice = value.showImageSkipNotice
+        if (!showImageSkipNotice) imageSkipNotice = null
         officialTts = if (DeepSeekTts.isOfficialTtsVoiceAvailable(value.providerId, value.apiKey)) {
             DeepSeekTts.Config(value.apiKey)
         } else {
@@ -469,6 +491,7 @@ class ChatViewModel(
     fun openConversation(id: String, targetMessageId: String? = null, query: String = "") {
         if (id == currentConversationId && targetMessageId == null) return
         searchTarget = targetMessageId?.let { SearchTarget(it, query, ++searchRequest) }
+        imageSkipNotice = null
         stop()
         cancelCompaction()
         switchJob?.cancel()
@@ -575,6 +598,7 @@ class ChatViewModel(
         compaction = null
         messages.clear()
         banner = null
+        imageSkipNotice = null
         switching = false
         settings = settings.copy(systemPrompt = "")
     }
@@ -674,6 +698,7 @@ class ChatViewModel(
         }
 
         banner = null
+        imageSkipNotice = null
 
         val requestedGeneration = switchGeneration
         viewModelScope.launch {
@@ -848,6 +873,7 @@ class ChatViewModel(
         compacting = true
         compactPreview = ""
         banner = null
+        imageSkipNotice = null
 
         compactJob = viewModelScope.launch {
             val transcript = buildString {
@@ -1626,6 +1652,7 @@ class ChatViewModel(
      * 所以压缩摘要只能**拼进系统提示词**，不能像 OpenAI 通道那样再塞一条 system 消息。
      */
     private suspend fun buildAnthropicRequestNow(prefix: UiMessage?): AnthropicRequest {
+        skippedNoVision = 0; skippedUnreadable = 0
         val active = validCompaction(messages, compaction)
         val system = buildString {
             append(settings.composedSystemPrompt(presets))
@@ -1839,15 +1866,23 @@ class ChatViewModel(
         if (!settings.model.supportsVision) {
             filtered = attachments.filterNot { it.isImage }
             val dropped = attachments.size - filtered.size
-            if (dropped > 0) banner = Res.get(R.string.images_skipped_no_vision, dropped)
+            skippedNoVision += dropped
         }
         // 字节读回 + 图片按真实内容校正（格式不收的转码、坏图丢掉）。见 ApiImage
         val (prepared, unreadable) = repository.prepareRequestAttachments(filtered)
-        if (unreadable > 0) banner = Res.get(R.string.images_skipped_unreadable, unreadable)
+        skippedUnreadable += unreadable
+        if (showImageSkipNotice) {
+            imageSkipNotice = when {
+                skippedUnreadable > 0 -> Res.get(R.string.images_skipped_unreadable, skippedUnreadable)
+                skippedNoVision > 0 -> Res.get(R.string.images_skipped_no_vision, skippedNoVision)
+                else -> null
+            }
+        }
         return prepared
     }
 
     private suspend fun buildRequestMessages(): List<OutMessageDto> {
+        skippedNoVision = 0; skippedUnreadable = 0
         val request = mutableListOf<OutMessageDto>()
 
         val system = settings.composedSystemPrompt(presets)
@@ -1876,7 +1911,10 @@ class ChatViewModel(
              * 是可能存在的，而部分兼容网关对空 `content` 直接 400 ——
              * 一条空消息不值得让整段历史发不出去（见 `isSendableOutgoing`）。
              */
-            if (!isSendableOutgoing(message)) return@forEach
+            val outgoing = if (message.role == MessageRole.USER && message.attachments.isNotEmpty()) {
+                message.copy(attachments = outgoingAttachments(message.attachments))
+            } else message
+            if (!isSendableOutgoing(outgoing)) return@forEach
             request += OutMessageDto(
                 role = if (message.role == MessageRole.USER) "user" else "assistant",
                 /*
@@ -1889,7 +1927,7 @@ class ChatViewModel(
                 content = if (message.role != MessageRole.USER || message.attachments.isEmpty()) {
                     MessageContent.text(message.content)
                 } else {
-                    userContent(message.content, outgoingAttachments(message.attachments))
+                    userContent(outgoing.content, outgoing.attachments)
                 },
             )
         }

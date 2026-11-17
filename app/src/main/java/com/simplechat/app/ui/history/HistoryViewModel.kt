@@ -19,6 +19,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
@@ -30,10 +31,16 @@ import kotlinx.coroutines.launch
  * 列表数据直接来自 Room 的 `Flow`，因此重命名 / 置顶 / 删除会自动反映到 UI，
  * 不需要手动刷新。
  */
+data class SearchPage(val hits: List<ConversationSearchHit> = emptyList(), val hasMore: Boolean = false)
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class HistoryViewModel(private val repository: ChatRepository) : ViewModel() {
 
     private val queryFlow = MutableStateFlow("")
+    private val searchLimit = MutableStateFlow(100)
+    private var previousSearchQuery = ""
+    fun loadMoreSearchResults() { searchLimit.value += 100 }
+
 
     /** 搜索关键词。空串即全量列表。 */
     var query by mutableStateOf("")
@@ -52,15 +59,23 @@ class HistoryViewModel(private val repository: ChatRepository) : ViewModel() {
      *
      * 关键词为空时直接给空列表、不查库 —— 搜索页在空关键词下本来就只显示一句提示。
      */
-    val searchHits: StateFlow<List<ConversationSearchHit>> = queryFlow
-        .flatMapLatest { keyword ->
+    val searchPage: StateFlow<SearchPage> = combine(queryFlow, searchLimit) { keyword, limit -> keyword to limit }
+        .flatMapLatest { (keyword, limit) ->
+            val changed = previousSearchQuery != keyword
+            previousSearchQuery = keyword
             if (keyword.isBlank()) {
-                flowOf(emptyList())
+                flowOf(SearchPage())
             } else {
-                repository.searchConversations(keyword)
+                kotlinx.coroutines.flow.flow {
+                    if (changed) emit(SearchPage())
+                    kotlinx.coroutines.delay(180)
+                    repository.searchConversations(keyword, limit + 1).collect { hits ->
+                        emit(SearchPage(hits.take(limit), hits.size > limit))
+                    }
+                }
             }
         }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SearchPage())
 
     /** 多选模式。 */
     var selectionMode by mutableStateOf(false)
@@ -70,6 +85,7 @@ class HistoryViewModel(private val repository: ChatRepository) : ViewModel() {
 
     fun updateQuery(value: String) {
         query = value
+        searchLimit.value = 100
         queryFlow.value = value
     }
 

@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -64,6 +65,8 @@ fun ConversationSearchPage(
     onRename: (ConversationEntity) -> Unit,
     onTogglePin: (ConversationEntity) -> Unit,
     onDelete: (ConversationEntity) -> Unit,
+    hasMore: Boolean = false,
+    onLoadMore: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalChatColors.current
@@ -185,7 +188,7 @@ fun ConversationSearchPage(
                     .weight(1f),
                 contentPadding = PaddingValues(top = 4.dp, bottom = 12.dp),
             ) {
-                items(items = hits, key = { it.conversation.id }) { hit ->
+                items(items = hits, key = { it.conversation.id + ":" + (it.messageId ?: "title") }) { hit ->
                     val conversation = hit.conversation
                     ConversationRow(
                         conversation = conversation,
@@ -204,7 +207,15 @@ fun ConversationSearchPage(
                         // 命中正文时补一行片段，能一眼看出"是在哪句话里命中的"
                         snippet = snippetForDisplay(hit.snippet, query),
                         showMultiSelect = false,
+                        searchRole = hit.messageRole,
+                        searchDate = hit.messageCreatedAt ?: conversation.updatedAt,
+                        searchVariant = if (hit.variantCount > 1) "${(hit.variantIndex ?: 0) + 1}/${hit.variantCount}" else null,
                     )
+                }
+                if (hasMore) item {
+                    TextButton(onClick = onLoadMore, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.search_load_more))
+                    }
                 }
             }
         }

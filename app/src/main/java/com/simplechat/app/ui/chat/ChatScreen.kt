@@ -44,6 +44,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -1002,6 +1003,8 @@ fun ChatScreen(
         val target = vm.searchTarget ?: return@LaunchedEffect
         if (vm.switching || target.ready) return@LaunchedEffect
         detached = true
+        focusManager.clearFocus()
+        keyboard?.hide()
         val index = vm.messages.indexOfFirst { it.id == target.messageId }
         if (index >= 0) {
             listState.scrollToItem(index)
@@ -1144,6 +1147,7 @@ fun ChatScreen(
                     MessageList(
                         messages = vm.messages,
                         searchTarget = vm.searchTarget,
+                        searchBottomObstructionPx = inputAreaHeight,
                         onDismissSearch = vm::dismissSearch,
                         listState = listState,
                         /*
@@ -1357,6 +1361,10 @@ fun ChatScreen(
                     .navigationBarsPadding()
                     .imePadding(),
             ) {
+                vm.imageSkipNotice?.let { message ->
+                    BannerBar(message = message, onDismiss = vm::dismissImageSkipNotice,
+                        onNeverRemind = vm::neverRemindImageSkip)
+                }
                 vm.banner?.let { message ->
                     BannerBar(message = message, onDismiss = { vm.dismissBanner() })
                 }
@@ -1794,7 +1802,7 @@ private fun copyToClipboard(context: android.content.Context, text: String) {
 
 /** 顶部错误条。可手动关闭，避免一直占据视线。 */
 @Composable
-private fun BannerBar(message: String, onDismiss: () -> Unit) {
+internal fun BannerBar(message: String, onDismiss: () -> Unit, onNeverRemind: (() -> Unit)? = null) {
     val colors = LocalChatColors.current
     Row(
         modifier = Modifier
@@ -1811,6 +1819,9 @@ private fun BannerBar(message: String, onDismiss: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f),
         )
+        if (onNeverRemind != null) TextButton(onClick = onNeverRemind) {
+            Text(stringResource(R.string.images_never_remind), maxLines = 1)
+        }
         Spacer(Modifier.size(6.dp))
         IconCircleButton(
             icon = AppIcons.Close,

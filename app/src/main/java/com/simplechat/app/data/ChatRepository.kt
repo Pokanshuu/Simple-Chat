@@ -89,8 +89,8 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     fun observeConversation(id: String): Flow<ConversationEntity?> = conversations.observeById(id)
 
     /** 全文搜索：标题或**消息正文**命中。 */
-    fun searchConversations(query: String): Flow<List<ConversationSearchHit>> =
-        conversations.search(query.trim())
+    fun searchConversations(query: String, limit: Int = Int.MAX_VALUE): Flow<List<ConversationSearchHit>> =
+        conversations.search(query.trim(), limit)
 
     fun observePresets(): Flow<List<Preset>> = presets.observeAll().map { list -> list.map { it.toUi() } }
 
@@ -1180,12 +1180,11 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             var dropped = 0
             val prepared = attachments.mapNotNull { attachment ->
                 if (!attachment.isImage) return@mapNotNull attachment
-                val bytes = if (attachment.isStored) {
-                    AttachmentFiles.read(context, attachment.path)
+                val image = if (attachment.isStored) {
+                    ApiImage.prepare { AttachmentFiles.open(context, attachment) }
                 } else {
-                    runCatching { Base64.decode(attachment.data, Base64.NO_WRAP) }.getOrNull()
+                    runCatching { Base64.decode(attachment.data, Base64.NO_WRAP) }.getOrNull()?.let { ApiImage.prepare(it) }
                 }
-                val image = bytes?.let { ApiImage.prepare(it) }
                 if (image == null) {
                     dropped++
                     null

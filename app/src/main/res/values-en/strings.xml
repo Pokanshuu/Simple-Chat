@@ -571,6 +571,12 @@
     <string name="import_fail_space">Not enough storage. Free space and retry incremental import.</string>
     <string name="import_fail_memory">Not enough available memory. Close other apps and retry.</string>
     <string name="import_report_not_saved">The detailed import report could not be saved. Check available storage; the counts above are still valid.</string>
+    <string name="images_never_remind">Don’t remind again</string>
+    <string name="settings_image_skip_notice">Skipped image notices</string>
+    <string name="search_role_user">User message</string>
+    <string name="search_role_assistant">AI reply</string>
+    <string name="search_title_match">Title match</string>
+    <string name="search_load_more">Load more results</string>
 </resources>
 
 

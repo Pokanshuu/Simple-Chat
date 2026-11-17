@@ -76,6 +76,7 @@ data class StoredSettings(
     val apiProfiles: List<ApiProfile> = emptyList(),
     val activeApiProfileId: String = "legacy",
     val autoReadAloud: Boolean = false,
+    val showImageSkipNotice: Boolean = true,
     val reasoningLevelId: String = "OFF",
     val temperature: Float = 1.0f,
     val topP: Float = 1.0f,
@@ -180,6 +181,7 @@ class SettingsStore(
             apiProfiles = profileRows(prefs),
             activeApiProfileId = prefs[Keys.ACTIVE_PROFILE] ?: "legacy",
             autoReadAloud = prefs[Keys.AUTO_READ_ALOUD] ?: false,
+            showImageSkipNotice = prefs[Keys.IMAGE_SKIP_NOTICE] ?: true,
             reasoningLevelId = prefs[Keys.REASONING] ?: StoredSettings().reasoningLevelId,
             temperature = prefs[Keys.TEMPERATURE] ?: StoredSettings().temperature,
             topP = prefs[Keys.TOP_P] ?: StoredSettings().topP,
@@ -349,6 +351,10 @@ class SettingsStore(
     /** Seed the registry in one edit, preserving the existing active configuration and encrypted key. */
     suspend fun migrateApiProfiles() { preferences.edit { ensureProfiles(it) } }
 
+    suspend fun setShowImageSkipNotice(enabled: Boolean) {
+        preferences.edit { it[Keys.IMAGE_SKIP_NOTICE] = enabled }
+    }
+
     suspend fun setAutoReadAloud(enabled: Boolean) {
         preferences.edit { it[Keys.AUTO_READ_ALOUD] = enabled }
     }
@@ -487,6 +493,7 @@ class SettingsStore(
     private object Keys {
         val PROFILES = stringPreferencesKey("api_profiles_v1")
         val ACTIVE_PROFILE = stringPreferencesKey("active_api_profile")
+        val IMAGE_SKIP_NOTICE = booleanPreferencesKey("show_image_skip_notice")
         val AUTO_READ_ALOUD = booleanPreferencesKey("auto_read_aloud")
         val PROVIDER = stringPreferencesKey("provider_id")
         val BASE_URL = stringPreferencesKey("base_url")

@@ -1,5 +1,11 @@
 package com.simplechat.app.ui.chat
 
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.geometry.Rect
+import com.simplechat.app.ui.markdown.LocalSearchViewport
+import com.simplechat.app.ui.markdown.SearchViewport
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -139,6 +145,7 @@ fun MessageList(
     autoCollapseThinking: Boolean = true,
     searchTarget: SearchTarget? = null,
     onDismissSearch: () -> Unit = {},
+    searchBottomObstructionPx: Int = 0,
 ) {
     /*
      * 「谁被碰过」。
@@ -159,10 +166,29 @@ fun MessageList(
             .collect { scrolling -> if (scrolling) peekedId = null }
     }
 
+    var viewport by remember { mutableStateOf(Rect.Zero) }
+    val visibleBounds = Rect(viewport.left, viewport.top, viewport.right,
+        (viewport.bottom - searchBottomObstructionPx).coerceAtLeast(viewport.top))
+    val searchViewport = remember(visibleBounds, listState) {
+        SearchViewport(visibleBounds) { listState.scrollBy(it) }
+    }
+    // Allow first/last hits to reach the upper center. Keep room after fading until a new message/branch arrives.
+    var searchSpacePx by remember(messages.lastOrNull()?.id) { mutableStateOf(0f) }
+    androidx.compose.runtime.SideEffect {
+        if (searchTarget != null) searchSpacePx = visibleBounds.height
+    }
+    val searchSpace = with(LocalDensity.current) { searchSpacePx.toDp() }
+    val searchContentPadding = PaddingValues(
+        start = contentPadding.calculateLeftPadding(androidx.compose.ui.platform.LocalLayoutDirection.current),
+        end = contentPadding.calculateRightPadding(androidx.compose.ui.platform.LocalLayoutDirection.current),
+        top = contentPadding.calculateTopPadding() + searchSpace * 0.38f,
+        bottom = contentPadding.calculateBottomPadding() + searchSpace * 0.62f,
+    )
+    CompositionLocalProvider(LocalSearchViewport provides searchViewport) {
     LazyColumn(
         state = listState,
-        modifier = modifier.fillMaxWidth(),
-        contentPadding = contentPadding,
+        modifier = modifier.fillMaxWidth().onGloballyPositioned { viewport = it.boundsInWindow() },
+        contentPadding = searchContentPadding,
         verticalArrangement = Arrangement.spacedBy(18.dp),
         /*
          * ⚠️ **顶部为原点（对齐官方）。这一行是流式不滑动的根。**
@@ -230,6 +256,7 @@ fun MessageList(
                 onRetry = { onRetry(message) },
             )
         }
+    }
     }
 }
 

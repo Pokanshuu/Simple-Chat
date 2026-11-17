@@ -571,6 +571,12 @@
     <string name="mermaid_loading">图表生成中…</string>
     <string name="settings_export_archive">导出全部对话（ZIP 归档）</string>
     <string name="settings_export_archive_summary">包含所有对话与附件的完整备份，另附每个对话的 Markdown 文稿；可直接用于导入恢复。</string>
+    <string name="images_never_remind">不再提醒</string>
+    <string name="settings_image_skip_notice">图片跳过提醒</string>
+    <string name="search_role_user">用户消息</string>
+    <string name="search_role_assistant">AI 回复</string>
+    <string name="search_title_match">标题匹配</string>
+    <string name="search_load_more">加载更多结果</string>
 </resources>
 
 

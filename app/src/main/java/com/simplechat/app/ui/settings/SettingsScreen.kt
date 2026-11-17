@@ -525,6 +525,7 @@ fun SettingsScreen(
                             onToggleAutoCollapse = {
                                 scope.launch { store.setAutoCollapseThinking(it) }
                             },
+                            onToggleImageSkipNotice = { scope.launch { store.setShowImageSkipNotice(it) } },
                         )
 
                         SettingsPage.DATA -> DataPage(
@@ -873,6 +874,7 @@ private fun RootPage(
     onAccentChange: (AccentColor) -> Unit,
     onLanguageChange: (AppLanguage) -> Unit,
     onToggleAutoCollapse: (Boolean) -> Unit,
+    onToggleImageSkipNotice: (Boolean) -> Unit,
 ) {
     var themeMenuOpen by remember { mutableStateOf(false) }
     var accentMenuOpen by remember { mutableStateOf(false) }
@@ -1032,6 +1034,13 @@ private fun RootPage(
             label = stringResource(R.string.settings_auto_collapse),
             checked = stored.autoCollapseThinking,
             onCheckedChange = onToggleAutoCollapse,
+        )
+        RowDivider()
+        SettingsSwitchRow(
+            icon = AppIcons.Info,
+            label = stringResource(R.string.settings_image_skip_notice),
+            checked = stored.showImageSkipNotice,
+            onCheckedChange = onToggleImageSkipNotice,
         )
 
         RowDivider()

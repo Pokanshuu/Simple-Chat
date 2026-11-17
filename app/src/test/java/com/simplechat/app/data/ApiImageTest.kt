@@ -148,73 +148,11 @@ class ApiImageTest {
         assertTrue(ApiImage.exceedsDimensionLimit(1000, -1))
     }
 
-    // ── prepare 的取舍（JVM 里 BitmapFactory 是 stub，转码必然失败） ──
-
-    @Test
-    fun `小图原样发送，不做有损转码`() {
-        val png = pngOfSize(100, 100) + ByteArray(1024) { it.toByte() }
-        val prepared = ApiImage.prepare(png)!!
-        assertEquals("image/png", prepared.mediaType)
-        assertTrue("小图不该被转码", !prepared.transcoded)
-        assertArrayEquals(png, Base64.getDecoder().decode(prepared.base64))
-    }
-
-    @Test
-    fun `空数据不会变成一张图片`() {
+    @Test fun `header-only files cannot prove pixel data is valid`() {
+        // Android decoding is exercised by the device suite. JVM stubs must never cause passthrough.
+        assertNull(ApiImage.prepare(pngOfSize(100, 100) + ByteArray(1024)))
+        assertNull(ApiImage.prepare(jpegOfSize(800, 600) + ByteArray(512)))
         assertNull(ApiImage.prepare(ByteArray(0)))
-    }
-
-    @Test
-    fun `认不出来的内容转不了码就放弃，而不是发个坏的出去`() {
-        // JVM 里没有 BitmapFactory，转码必然失败 —— 正好验证"失败就返回 null"这条底线
-        assertNull(ApiImage.prepare(ascii("not an image at all")))
-    }
-
-    @Test
-    fun `尺寸超限的合法图片不会被原样透传`() {
-        // 9000×9000 的 PNG 头 + 少量填充：文件只有 ~2KB，旧逻辑会因为"格式合法 + 体积小"
-        // 原样发出去，然后被服务端按尺寸拒 —— 这正是这次要修的 bug。
-        // JVM 里没有 BitmapFactory，转码必然失败，所以这里返回 null（真机上会缩成 1600 的 JPEG）。
-        val huge = pngOfSize(9000, 9000) + ByteArray(2048) { it.toByte() }
-        assertNull(ApiImage.prepare(huge))
-    }
-
-    @Test
-    fun `尺寸超限且体积也超限的图片同样不会原样发`() {
-        // 体积那条阈值挡不住它（>1.5MB 本来就要转码），尺寸那条必须继续挡：转码失败后
-        // 不允许退回"原样发合法格式但超尺寸的图"
-        val huge = pngOfSize(8192, 8192) + ByteArray(1_600_000) { (it * 31).toByte() }
-        assertNull(ApiImage.prepare(huge))
-    }
-
-    @Test
-    fun `头坏掉的合法魔数图片会被丢掉，不会每轮重发`() {
-        // 只有 PNG 签名、IHDR 是乱的：detect 会认成 PNG，但尺寸解不出来 → 当损坏处理。
-        // 旧逻辑会把它原样发出去，服务端 400，而它躺在历史里，每轮都失败。
-        val brokenPng = pngHeader() + ByteArray(4096) { 0x41 }
-        assertNull(ApiImage.prepare(brokenPng))
-    }
-
-    @Test
-    fun `体积大但尺寸合规的图，转码失败时可以原样发`() {
-        // 转码失败时允许原样发的唯一情况：格式合法 + 尺寸已知且合规 + 体积合规。
-        // 能走到这里的合法格式图实际上只有"体积 > 1.5MB 但尺寸合规"这一档
-        // （小图在快路径就返回了）。JVM 里转码必定失败，正好把这条分支钉住。
-        val png = pngOfSize(1600, 900) + ByteArray(1_600_000) { (it * 17).toByte() }
-        val prepared = ApiImage.prepare(png)!!
-        assertEquals("image/png", prepared.mediaType)
-        assertFalse(prepared.transcoded)
-        assertArrayEquals(png, Base64.getDecoder().decode(prepared.base64))
-    }
-
-    @Test
-    fun `JPEG 也按头里的真实尺寸判断`() {
-        val small = jpegOfSize(800, 600) + ByteArray(512) { it.toByte() }
-        val prepared = ApiImage.prepare(small)!!
-        assertEquals("image/jpeg", prepared.mediaType)
-        assertFalse(prepared.transcoded)
-
-        val huge = jpegOfSize(8192, 4321) + ByteArray(512) { it.toByte() }
-        assertNull(ApiImage.prepare(huge))
+        assertNull(ApiImage.prepare(ascii("not an image")))
     }
 }

@@ -22,34 +22,29 @@ interface ConversationDao {
     )
     fun observeAll(): Flow<List<ConversationEntity>>
 
-    /**
-     * 搜索：**标题 或 消息正文**命中。
-     *
-     * 命中正文时顺带带回**最早那条**命中的消息，供结果行显示片段。
-     * `snippet` 是整条正文、不在 SQL 里截断 —— 中文按字节截会切出乱码，
-     * 取窗口的事交给 UI 层（[snippetAround]）。
-     *
-     * 刻意不上 FTS：这个量级（几百个会话）`LIKE` 完全够用，
-     * 而 FTS 要额外的虚表与分词器，中文还会被切坏。
-     */
+    /** One bounded preview per matching message, including inactive variants; title-only hits remain visible. */
     @Query(
         """
         SELECT c.*,
-            (SELECT substr(m.content, max(1, instr(lower(m.content), lower(:query)) - 60), 180) FROM messages m
-             WHERE m.conversationId = c.id AND instr(lower(m.content), lower(:query)) > 0
-             ORDER BY m.createdAt ASC, m.id ASC LIMIT 1) AS snippet,
-            (SELECT m.id FROM messages m
-             WHERE m.conversationId = c.id AND instr(lower(m.content), lower(:query)) > 0
-             ORDER BY m.createdAt ASC, m.id ASC LIMIT 1) AS messageId
+            CASE WHEN m.id IS NULL THEN NULL ELSE
+                substr(m.content, max(1, instr(lower(m.content), lower(:query)) - 60), max(180, length(:query) + 120))
+            END AS snippet,
+            m.id AS messageId, m.role AS messageRole, m.createdAt AS messageCreatedAt,
+            m.variantIndex AS variantIndex,
+            CASE WHEN m.id IS NULL THEN 0 ELSE
+                (SELECT count(*) FROM messages sibling WHERE sibling.conversationId = m.conversationId
+                 AND sibling.parentId = m.parentId)
+            END AS variantCount
         FROM conversations c
-        WHERE instr(lower(c.title), lower(:query)) > 0
-           OR EXISTS (SELECT 1 FROM messages m
-                      WHERE m.conversationId = c.id AND instr(lower(m.content), lower(:query)) > 0)
+        LEFT JOIN messages m ON m.conversationId = c.id AND instr(lower(m.content), lower(:query)) > 0
+        WHERE length(:query) > 0 AND (m.id IS NOT NULL OR instr(lower(c.title), lower(:query)) > 0)
         ORDER BY c.pinned DESC,
-                 CASE WHEN c.pinned THEN c.pinnedAt ELSE c.updatedAt END DESC
+                 CASE WHEN c.pinned THEN c.pinnedAt ELSE c.updatedAt END DESC,
+                 c.id ASC, m.createdAt DESC, m.id ASC
+        LIMIT :limit
         """,
     )
-    fun search(query: String): Flow<List<ConversationSearchHit>>
+    fun search(query: String, limit: Int = Int.MAX_VALUE): Flow<List<ConversationSearchHit>>
 
     @Query("SELECT * FROM conversations WHERE id = :id")
     suspend fun findById(id: String): ConversationEntity?
@@ -131,6 +126,10 @@ data class ConversationSearchHit(
     @Embedded val conversation: ConversationEntity,
     val snippet: String?,
     val messageId: String? = null,
+    val messageRole: String? = null,
+    val messageCreatedAt: Long? = null,
+    val variantIndex: Int? = null,
+    val variantCount: Int = 0,
 )
 
 /** Bounded fields for lossless export of messages larger than CursorWindow. */

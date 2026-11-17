@@ -109,7 +109,7 @@ fun RootScreen() {
     )
 
     val conversations by historyViewModel.conversations.collectAsStateWithLifecycle()
-    val searchHits by historyViewModel.searchHits.collectAsStateWithLifecycle()
+    val searchPage by historyViewModel.searchPage.collectAsStateWithLifecycle()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
 
     /*
@@ -222,7 +222,9 @@ fun RootScreen() {
                 ) { searching ->
                     if (searching) {
                         ConversationSearchPage(
-                            hits = searchHits,
+                            hits = searchPage.hits,
+                            hasMore = searchPage.hasMore,
+                            onLoadMore = historyViewModel::loadMoreSearchResults,
                             currentConversationId = chatViewModel.currentConversationId,
                             query = historyViewModel.query,
                             onQueryChange = { historyViewModel.updateQuery(it) },

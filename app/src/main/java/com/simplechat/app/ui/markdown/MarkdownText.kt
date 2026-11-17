@@ -45,12 +45,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mikepenz.markdown.annotator.annotatorSettings
+import com.mikepenz.markdown.annotator.buildMarkdownAnnotatedString
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import com.mikepenz.markdown.compose.LocalBulletListHandler
 import com.mikepenz.markdown.compose.components.MarkdownComponent
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.MarkdownDivider
-import com.mikepenz.markdown.compose.elements.MarkdownTableBasicText
+import com.mikepenz.markdown.compose.elements.MarkdownText as LibraryMarkdownText
 import com.mikepenz.markdown.compose.elements.highlightedCodeBlock
 import com.mikepenz.markdown.compose.elements.highlightedCodeFence
 import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
@@ -571,7 +575,7 @@ private val spacedHorizontalRule: MarkdownComponent = { _ ->
  * 按内容宽度排、单元格可折行、只有行间横线 —— 这里直接自己排：
  * 列宽按"该列最长单元格文字量"分配（`weight`），每行下面一条 1px 横线。
  *
- * 单元格仍用库的 [MarkdownTableBasicText]：单元格里的行内代码、粗体、图片
+ * 单元格仍用库的 [LibraryMarkdownText]：单元格里的行内代码、粗体、图片
  * 都由它按同一套 annotator 渲染，不必自己再实现一遍。
  */
 private val adaptiveTable: MarkdownComponent = { model ->
@@ -619,12 +623,10 @@ private val adaptiveTable: MarkdownComponent = { model ->
                             .padding(cellPadding(index, cells.size)),
                     ) {
                         SearchMarkdownAnchor(MarkdownComponentModel(model.content, cell, model.typography)) {
-                        MarkdownTableBasicText(
+                        SearchableTableText(
                             content = model.content,
                             cell = cell,
                             style = style.copy(fontWeight = FontWeight.Medium),
-                            maxLines = Int.MAX_VALUE,
-                            overflow = TextOverflow.Clip,
                         )
                         }
                     }
@@ -642,12 +644,10 @@ private val adaptiveTable: MarkdownComponent = { model ->
                             .padding(cellPadding(index, cells.size)),
                     ) {
                         SearchMarkdownAnchor(MarkdownComponentModel(model.content, cell, model.typography)) {
-                        MarkdownTableBasicText(
+                        SearchableTableText(
                             content = model.content,
                             cell = cell,
                             style = style,
-                            maxLines = Int.MAX_VALUE,
-                            overflow = TextOverflow.Clip,
                         )
                         }
                     }
@@ -656,6 +656,18 @@ private val adaptiveTable: MarkdownComponent = { model ->
             MarkdownDivider()
         }
     }
+}
+
+/** Use the same AST annotator as the stock table, with the normal text layout/span callback. */
+@Composable
+private fun SearchableTableText(content: String, cell: ASTNode, style: TextStyle) {
+    val settings = annotatorSettings()
+    val annotated = buildAnnotatedString {
+        pushStyle(style.toSpanStyle())
+        buildMarkdownAnnotatedString(content, cell, settings)
+        pop()
+    }
+    LibraryMarkdownText(content = annotated, node = cell, style = style, sourceContent = content)
 }
 
 /** 单元格原文长度（用于列宽权重）；越界都钳一下，坏数据不该崩在布局里。 */

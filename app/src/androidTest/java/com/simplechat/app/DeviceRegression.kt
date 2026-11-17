@@ -29,11 +29,13 @@ class DeviceRegression : Instrumentation() {
     private var uiOnly = false
     private var featureTests = false
     private var searchTests = false
+    private var hotfixTests = false
     override fun onCreate(arguments: Bundle?) {
         realArchive = arguments?.getString("source")
         uiOnly = arguments?.getString("ui") == "true"
         featureTests = arguments?.getString("features") == "true"
         searchTests = arguments?.getString("search") == "true"
+        hotfixTests = arguments?.getString("hotfix") == "true"
         super.onCreate(arguments)
         start()
     }
@@ -42,7 +44,8 @@ class DeviceRegression : Instrumentation() {
         try {
             runBlocking {
                 val source = realArchive
-                if (searchTests) SearchRenderingRegression.run(this@DeviceRegression, ::passed)
+                if (hotfixTests) HotfixRegression.run(this@DeviceRegression, ::passed)
+                else if (searchTests) SearchRenderingRegression.run(this@DeviceRegression, ::passed)
                 else if (featureTests) {
                     ApiProfileRegression.run(targetContext)
                     passed("legacy API configuration migration, encrypted independent profiles, switch/copy/delete/restart and stale-model protection")

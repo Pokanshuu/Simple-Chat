@@ -9,6 +9,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -38,6 +41,8 @@ internal class SearchHighlightState(val request: Long, val query: String) {
 }
 
 internal val LocalSearchHighlight = compositionLocalOf<SearchHighlightState?> { null }
+internal class SearchViewport(val bounds: Rect, val scrollBy: suspend (Float) -> Float)
+internal val LocalSearchViewport = compositionLocalOf<SearchViewport?> { null }
 private val LocalSearchAnchor = compositionLocalOf<SearchTextAnchor?> { null }
 
 /** Always keep the ordinary message components; only the drawing overlay is transient. */
@@ -88,6 +93,7 @@ internal fun renderedSearchRange(text: String, query: String): IntRange? {
 private class SearchTextAnchor(val state: SearchHighlightState) {
     val requester = BringIntoViewRequester()
     var bounds by mutableStateOf<Rect?>(null)
+    var coordinates: LayoutCoordinates? = null
     fun measured(layout: TextLayoutResult): Path? {
         val range = renderedSearchRange(layout.layoutInput.text.text, state.query) ?: return null
         val path = layout.getPathForRange(range.first, range.last + 1)
@@ -98,15 +104,30 @@ private class SearchTextAnchor(val state: SearchHighlightState) {
 
 @Composable
 private fun LocateSearchAnchor(anchor: SearchTextAnchor) {
-    val margin = with(LocalDensity.current) { 100.dp.toPx() }
-    LaunchedEffect(anchor.state.request, anchor.state.ready, anchor.bounds) {
+    val margin = with(LocalDensity.current) { 20.dp.toPx() }
+    val viewport = LocalSearchViewport.current
+    LaunchedEffect(anchor.state.request, anchor.state.ready, anchor.bounds, viewport?.bounds) {
         val bounds = anchor.bounds ?: return@LaunchedEffect
         val state = anchor.state
-        if (!state.ready || state.located || (state.owner != null && state.owner !== anchor)) return@LaunchedEffect
+        if (!state.ready || (state.owner != null && state.owner !== anchor)) return@LaunchedEffect
         state.owner = anchor
-        withFrameNanos { }
-        // Reserve room for the composer overlay so the keyword stays above the input bar.
-        anchor.requester.bringIntoView(Rect(bounds.left, bounds.top - 24f, bounds.right, bounds.bottom + margin))
+        if (!state.located) {
+            withFrameNanos { }
+            anchor.requester.bringIntoView(bounds)
+        }
+        // BringIntoView only knows the whole LazyColumn. The composer floats over that viewport.
+        // Measure the actual keyword in window coordinates and scroll above the measured overlay.
+        if (viewport != null && viewport.bounds.height > margin * 2) {
+            repeat(3) {
+                withFrameNanos { }
+                val coordinates = anchor.coordinates?.takeIf { it.isAttached } ?: return@repeat
+                val top = coordinates.localToWindow(Offset(bounds.left, bounds.top)).y
+                val bottom = coordinates.localToWindow(Offset(bounds.right, bounds.bottom)).y
+                val targetY = viewport.bounds.top + viewport.bounds.height * 0.38f
+                val delta = (top + bottom) / 2f - targetY
+                if (kotlin.math.abs(delta) > 1f) viewport.scrollBy(delta)
+            }
+        }
         state.located = true
     }
 }
@@ -144,7 +165,7 @@ internal fun SearchMarkdownAnchor(model: MarkdownComponentModel, content: @Compo
     val anchor = remember(state, model.node) { state?.let { SearchTextAnchor(it) } }
     if (!eligible || anchor == null) content()
     else {
-        Box(Modifier.bringIntoViewRequester(anchor.requester)) {
+        Box(Modifier.bringIntoViewRequester(anchor.requester).onGloballyPositioned { anchor.coordinates = it }) {
             CompositionLocalProvider(LocalSearchAnchor provides anchor) { content() }
         }
         LocateSearchAnchor(anchor)
@@ -187,6 +208,7 @@ internal fun rememberSearchTextDecoration(text: String): Pair<Modifier, (TextLay
     val color = MaterialTheme.colorScheme.primary
     val modifier = if (anchor == null || range == null) Modifier else Modifier
         .bringIntoViewRequester(anchor.requester)
+        .onGloballyPositioned { anchor.coordinates = it }
         .drawWithContent {
             val alpha = anchor.state.alpha.value
             path?.takeIf { alpha > 0f }?.let { drawPath(it, color.copy(alpha = 0.30f * alpha)) }
