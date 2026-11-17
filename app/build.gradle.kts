@@ -33,7 +33,7 @@ android {
         applicationId = "com.simplechat.app"
         minSdk = 26
         targetSdk = 37
-        versionCode = 21
+        versionCode = 22
         versionName = "1.1.5"
         testInstrumentationRunner = "com.simplechat.app.DeviceRegression"
         vectorDrawables { useSupportLibrary = true }

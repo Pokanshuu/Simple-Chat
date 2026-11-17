@@ -375,6 +375,8 @@ fun ContextPanelContent(
     onClearCompaction: () -> Unit,
     onUpdateSummary: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /** 服务端回报的**最近一次**请求用量；没发过请求时为 null。 */
+    usage: RequestUsage? = null,
 ) {
     val colors = LocalChatColors.current
 
@@ -447,6 +449,25 @@ fun ContextPanelContent(
             label = stringResource(R.string.stats_total_thinking),
             value = stats.totalThinkingSeconds?.let { stringResource(R.string.stats_seconds, it) } ?: "—",
         )
+
+        /*
+         * 缓存命中率：**服务端回报的真实数字**，只代表最近一次请求。
+         *
+         * 与上面几行的口径不同 —— 那些是本地估算，这一行是服务端说的。所以措辞里
+         * 明确写「最近一次」，避免被读成"这条会话的平均值"。
+         * 服务端没报缓存字段（部分兼容网关）时整行不出现，不显示假的 0%。
+         */
+        usage?.cacheHitRatio?.let { ratio ->
+            StatRow(
+                label = stringResource(R.string.stats_cache_hit),
+                value = stringResource(
+                    R.string.stats_cache_hit_value,
+                    TokenEstimate.format(usage.cacheHitTokens ?: 0),
+                    TokenEstimate.format(usage.promptTokens),
+                    (ratio * 100).roundToInt(),
+                ),
+            )
+        }
 
         Spacer(Modifier.size(16.dp))
         PanelDivider()

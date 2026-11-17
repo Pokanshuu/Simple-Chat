@@ -41,7 +41,6 @@
     <string name="action_close">关闭</string>
     <string name="action_copy">复制</string>
     <string name="action_select_text">选择文本</string>
-    <string name="action_done">完成</string>
     <string name="action_back">返回</string>
     <string name="action_clear">清空</string>
     <string name="action_retry">重试</string>
@@ -389,6 +388,8 @@
     <string name="stats_avg_ttft">平均首字延迟</string>
     <string name="stats_avg_tps">平均生成速度</string>
     <string name="stats_total_thinking">累计思考时长</string>
+    <string name="stats_cache_hit">缓存命中（最近一次）</string>
+    <string name="stats_cache_hit_value">%1$s / %2$s · %3$d%%</string>
     <string name="stats_seconds">%1$d 秒</string>
 
     <!-- 上下文压缩 -->
@@ -424,7 +425,7 @@
     <!-- ==== 来自 g3 组 ==== -->
 <!-- ── 消息列表 / 消息操作（MessageList.kt、MessageEditDialog.kt、MessageIndex.kt） ── -->
     <string name="msg_regenerate">重新生成</string>
-    <string name="msg_select_hint">拖动选择文字</string>
+    <string name="reply_waiting">加载中</string>
     <string name="msg_continue">继续生成</string>
     <string name="msg_fork_from_here">从这里新建对话</string>
     <string name="msg_expand_all">展开全部</string>

@@ -1553,6 +1553,7 @@ fun ChatScreen(
                 ) {
                     ContextPanelContent(
                         stats = vm.contextStats,
+                        usage = vm.lastUsage,
                         compaction = vm.compaction,
                         compacting = vm.compacting,
                         compactPreview = vm.compactPreview,

@@ -1,5 +1,16 @@
 package com.simplechat.app.ui.chat
 
+import android.os.SystemClock
+import android.view.MotionEvent
+import android.view.View
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.text.selection.SelectionState
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.IntOffset
+import kotlinx.coroutines.delay
+import com.simplechat.app.ui.common.rememberPressWindowPosition
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -163,9 +174,36 @@ fun MessageList(
      */
     var peekedId by remember { mutableStateOf<String?>(null) }
 
+    /**
+     * 正在「选择文本」的那一条（null = 没在选）。
+     *
+     * 抬到列表这一层，才接得住**点空白处退出** —— 只挂在单条消息上时，
+     * 点在别处（另一条消息、列表留白）就退不出来。
+     */
+    var selectingId by remember { mutableStateOf<String?>(null) }
+
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }
-            .collect { scrolling -> if (scrolling) peekedId = null }
+            .collect { scrolling ->
+                if (scrolling) {
+                    peekedId = null
+                    selectingId = null
+                }
+            }
+    }
+
+    /*
+     * 选择态下**点一下就退出**。
+     *
+     * 必须带 `onLongPress`（哪怕是空的）：长按正是"起选"的手势，
+     * 不给它一个消费者，一次长按会被当成"点了一下"而立刻把选择态关掉。
+     */
+    val dismissSelectionOnTap = Modifier.pointerInput(selectingId) {
+        if (selectingId == null) return@pointerInput
+        detectTapGestures(
+            onLongPress = { },
+            onTap = { selectingId = null },
+        )
     }
 
     var viewport by remember { mutableStateOf(Rect.Zero) }
@@ -189,7 +227,10 @@ fun MessageList(
     CompositionLocalProvider(LocalSearchViewport provides searchViewport) {
     LazyColumn(
         state = listState,
-        modifier = modifier.fillMaxWidth().onGloballyPositioned { viewport = it.boundsInWindow() },
+        modifier = modifier
+            .fillMaxWidth()
+            .onGloballyPositioned { viewport = it.boundsInWindow() }
+            .then(dismissSelectionOnTap),
         contentPadding = searchContentPadding,
         verticalArrangement = Arrangement.spacedBy(18.dp),
         /*
@@ -223,6 +264,10 @@ fun MessageList(
                 search = searchTarget?.takeIf { it.messageId == message.id },
                 onDismissSearch = onDismissSearch,
                 peeked = peekedId == message.id,
+                selecting = selectingId == message.id,
+                onSelectingChange = { active ->
+                    selectingId = if (active) message.id else selectingId?.takeUnless { it == message.id }
+                },
                 /*
                  * 能不能续写由**位置 + 状态**共同决定（见 `ContinuePolicy`）。
                  * 「最后一条」在这里判最准：列表本身就是活跃路径。
@@ -275,6 +320,9 @@ private fun MessageRow(
     search: SearchTarget?,
     onDismissSearch: () -> Unit,
     peeked: Boolean,
+    /** 这条是否处于「选择文本」态（由列表统一持有，见 `MessageList`）。 */
+    selecting: Boolean,
+    onSelectingChange: (Boolean) -> Unit,
     canContinue: Boolean,
     speakingId: String?,
     readAloudAvailable: Boolean,
@@ -294,13 +342,29 @@ private fun MessageRow(
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     /*
-     * 「选择文本」态（对齐官方长按菜单里的那一项）。
-     *
-     * 不常开是有原因的：`SelectionContainer` 也要用**长按**来起选，和本行的
-     * 「长按出菜单」是同一个手势。所以做成显式的两态 —— 菜单里点一下进入选择态，
-     * 这期间整行的点击/长按让给选区，点「完成」退出。
+     * 「选择文本」= 让这一条的正文变成可选，**不留任何界面痕迹**：
+     * 没有提示条、没有「完成」按钮，点空白处就退出（见 `MessageList` 的
+     * `dismissSelectionOnTap`）。为什么不能常驻：`SelectionContainer` 自己也要用
+     * **长按**起选，而长按是这一条的菜单入口，两者会抢同一个手势。
      */
-    var selecting by remember(message.id) { mutableStateOf(false) }
+    val selectionState = remember(message.id) { SelectionState() }
+    val view = LocalView.current
+    // 长按落点（窗口坐标）：进入选择态后要在这同一个点上合成一次长按，
+    // 让选区**从用户按下去的地方**开始，而不是"先进入模式，再自己长按一次"。
+    val (windowPressPosition, windowPressListener) = rememberPressWindowPosition()
+
+    LaunchedEffect(selecting) {
+        if (!selecting) {
+            selectionState.clear()
+            return@LaunchedEffect
+        }
+        val point = windowPressPosition() ?: return@LaunchedEffect
+        // 等这一帧把 SelectionContainer 真正挂上（菜单的关闭动画也在同一帧里），再注入
+        withFrameNanos { }
+        withFrameNanos { }
+        delay(SelectionStartDelayMs)
+        startSelectionAt(view, point)
+    }
     val isUser = message.role == MessageRole.USER
     // 流式未结束时不对这条给出编辑/删除入口，避免和落库打架
     val actionable = !message.streaming
@@ -322,7 +386,7 @@ private fun MessageRow(
             }
             AppMenuItem(stringResource(R.string.action_select_text), AppIcons.TextSelect) {
                 menuOpen = false
-                selecting = true
+                onSelectingChange(true)
             }
             if (!isUser) {
                 AppMenuItem(stringResource(R.string.msg_regenerate), AppIcons.Refresh) {
@@ -356,7 +420,7 @@ private fun MessageRow(
     }
 
     SearchHighlightHost(search, onDismissSearch) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.fillMaxWidth().then(windowPressListener)) {
         if (message.content.length > LARGE_MESSAGE_CHARS || (message.reasoning?.length ?: 0) > LARGE_MESSAGE_CHARS) {
             Column(Modifier.then(pressListener).combinedClickable(
                 enabled = actionable && !selecting,
@@ -369,7 +433,7 @@ private fun MessageRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 CompositionLocalProvider(LocalSearchHighlight provides null) { PagedMessageBody(it) }
             }
-            SelectableText(selecting) { PagedMessageBody(message.content, markdown = !isUser) }
+            SelectableText(selecting, selectionState) { PagedMessageBody(message.content, markdown = !isUser) }
             message.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             menu()
             }
@@ -379,6 +443,7 @@ private fun MessageRow(
                 message = message,
                 interactive = actionable && !selecting,
                 selecting = selecting,
+                selectionState = selectionState,
                 // 点一下就进「修改输入」（对齐官方入口习惯）
                 onClick = onEdit,
                 onLongClick = { menuOpen = true },
@@ -392,6 +457,7 @@ private fun MessageRow(
                 message = message,
                 interactive = actionable && !selecting,
                 selecting = selecting,
+                selectionState = selectionState,
                 autoCollapseThinking = autoCollapseThinking,
                 // 点一下 = 看这条是谁写的、占多少 token（再点收起）
                 onClick = onTogglePeek,
@@ -403,12 +469,6 @@ private fun MessageRow(
                 // 与用户气泡同一条补偿：展开思考内容时"上方固定、向下展开"
                 onFoldToggle = onFoldToggle,
             )
-        }
-
-        // 选择态提示条：告诉用户现在是"在选字"，并给一个明确的出口
-        if (selecting) {
-            Spacer(Modifier.size(MessageGap))
-            SelectionHintBar(onDone = { selecting = false })
         }
 
         /*
@@ -467,6 +527,7 @@ fun UserBubble(
     interactive: Boolean = true,
     /** 「选择文本」态：正文外包一层 `SelectionContainer`（见 `MessageRow`）。 */
     selecting: Boolean = false,
+    selectionState: SelectionState = remember { SelectionState() },
     onClick: () -> Unit = {},
     onLongClick: () -> Unit = {},
     onOpenImage: (Attachment) -> Unit = {},
@@ -629,7 +690,7 @@ fun UserBubble(
                                  *
                                  * 平时不套：那样长按会被选区抢走，而本行的长按是**菜单**。
                                  */
-                                SelectableText(selecting) {
+                                SelectableText(selecting, selectionState) {
                                     if (expanded) {
                                         /*
                                          * 展开态：切成多块。
@@ -720,6 +781,7 @@ fun AssistantBlock(
     interactive: Boolean = true,
     /** 「选择文本」态：正文外包一层 `SelectionContainer`（见 `MessageRow`）。 */
     selecting: Boolean = false,
+    selectionState: SelectionState = remember { SelectionState() },
     onClick: () -> Unit = {},
     onLongClick: () -> Unit = {},
     onOpenImage: (Attachment) -> Unit = {},
@@ -798,6 +860,18 @@ fun AssistantBlock(
             )
             .padding(2.dp),
     ) {
+        /*
+         * 首 token 还没到：正文、思考、时间线**全空**。
+         *
+         * 这一段在长上下文 + 思考型模型上能走十几秒，原先界面上什么都没有 ——
+         * 用户看到的只是"消息发出去后一片空白"。给一个和思考栏同形状的
+         * 「加载中…」过渡，第一段内容一出现就自动让位。
+         */
+        if (message.streaming && answer.isBlank() && !hasReasoning && timeline == null) {
+            WaitingIndicator()
+            Spacer(Modifier.size(MessageGap))
+        }
+
         if (timeline != null) {
             if (timeline.hasSteps) {
                 TimelinePanel(
@@ -841,7 +915,7 @@ fun AssistantBlock(
          * 流式的开销靠两道闸压住：上游按固定节奏采样（见 `MarkdownText`），
          * 下游逐块渲染、只有尾块重解析（见 `MarkdownTextBlocks`）。
          */
-        SelectableText(selecting) {
+        SelectableText(selecting, selectionState) {
             MarkdownWithMath(
                 content = answer,
                 streaming = message.streaming,
@@ -959,21 +1033,14 @@ private fun MessageActions(
 
         /*
          * 中间这块是**弹性空白**：碰一下消息时模型名 · token 数出现在这，
-         * 不碰就留空 —— 而右边的刷新按钮因此永远钉在同一处，不会随元信息出现而左右横跳。
+         * 不碰就留空 —— 而右边的刷新按钮因此永远钉在同一处。
          *
-         * `weight(1f)`（而不是原来的 `fill = false`）是关键：只有**占满**剩余宽度，
-         * 后面的刷新按钮才会被推到行尾。
+         * ⚠️ 权重必须挂在**普通 Box** 上，不能挂在 `AnimatedVisibility` 上：
+         * 后者在没有内容时（peeked = false）不占位，刷新按钮就会滑到按钮旁边，
+         * 表现是"只有显示模型信息时才居右"。
          */
-        AnimatedVisibility(
-            visible = peeked,
-            enter = fadeIn(tween(160)),
-            exit = fadeOut(tween(120)),
-            modifier = Modifier.weight(1f),
-        ) {
-            MessageMeta(
-                message = message,
-                modifier = Modifier.padding(start = ActionGap + 8.dp),
-            )
+        Box(modifier = Modifier.weight(1f)) {
+            MessageMetaSlot(peeked = peeked, message = message)
         }
 
         if (message.role == MessageRole.ASSISTANT) {
@@ -983,38 +1050,82 @@ private fun MessageActions(
 }
 
 /**
+ * 弹性空白里的元信息（模型名 · token 数）。
+ *
+ * 单独抽成 Composable 而不是内联：内联时它处在 `RowScope` 里，
+ * `AnimatedVisibility` 会解析成 **`RowScope` 的扩展**（要求有剩余宽度才看得见），
+ * 而这里要的是顶层版本 —— 放进自己的作用域，解析结果就确定了。
+ */
+@Composable
+private fun MessageMetaSlot(peeked: Boolean, message: UiMessage) {
+    AnimatedVisibility(
+        visible = peeked,
+        enter = fadeIn(tween(160)),
+        exit = fadeOut(tween(120)),
+    ) {
+        MessageMeta(
+            message = message,
+            modifier = Modifier.padding(start = ActionGap + 8.dp),
+        )
+    }
+}
+
+/**
  * 「选择文本」态的内容包装。
  *
  * 只在用户从长按菜单里**明确进入**选择态时才套 `SelectionContainer`：
  * 平时套着的话，长按会被选区抢走，而长按是这条消息的菜单入口。
+ *
+ * [state] 由外层持有 —— 进入选择态时要用它做一次 `clear()`，
+ * 这样点空白处退出时选区不会残留在下一次。
  */
 @Composable
-private fun SelectableText(selecting: Boolean, content: @Composable () -> Unit) {
-    if (selecting) SelectionContainer { content() } else content()
+private fun SelectableText(
+    selecting: Boolean,
+    state: SelectionState,
+    content: @Composable () -> Unit,
+) {
+    if (selecting) SelectionContainer(state = state) { content() } else content()
 }
 
-/** 选择态提示条：一句说明 + 明确的出口。 */
-@Composable
-private fun SelectionHintBar(onDone: () -> Unit) {
-    val colors = LocalChatColors.current
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.End,
-    ) {
-        Text(
-            text = stringResource(R.string.msg_select_hint),
-            style = MaterialTheme.typography.labelSmall,
-            color = colors.placeholder,
-        )
-        Spacer(Modifier.size(8.dp))
-        CapsuleButton(
-            text = stringResource(R.string.action_done),
-            onClick = onDone,
-            leadingIcon = AppIcons.Check,
-        )
-    }
+/**
+ * 在 [windowPoint] 处**合成一次长按**，让选区从用户按下去的地方开始。
+ *
+ * 为什么要合成：Compose 没有"按坐标设置选区"的公开接口 —— `SelectionState`
+ * 只接受**全局字符偏移**（多段文本还要自己算累计长度），而这里只知道手指落在
+ * 屏幕上的哪个点。与其把一套排版几何抄一遍，不如把同一个点上的长按重放一次：
+ * 命中测试、行内定位、选区手柄全都走系统原本那条路。
+ *
+ * 时长 ≥ 系统的长按阈值，否则会被判成"点了一下"（那会把选择态立刻关掉）。
+ * 注入的事件只发给本进程的 Compose 视图，不经过窗口路由，也不影响其他 App。
+ */
+private fun startSelectionAt(view: View, windowPoint: IntOffset) {
+    if (!view.isShown) return
+    val origin = IntArray(2)
+    view.getLocationInWindow(origin)
+    val x = (windowPoint.x - origin[0]).toFloat()
+    val y = (windowPoint.y - origin[1]).toFloat()
+    val downTime = SystemClock.uptimeMillis()
+    val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0)
+    view.dispatchTouchEvent(down)
+    down.recycle()
+    view.postDelayed({
+        val up = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0)
+        view.dispatchTouchEvent(up)
+        up.recycle()
+    }, SyntheticHoldMs)
 }
+
+/** 合成长按的按住时长：系统长按阈值约 500ms，留一点余量。 */
+private const val SyntheticHoldMs = 560L
+
+/**
+ * 进入选择态后、注入长按前的等待。
+ *
+ * 要盖住两件事：`SelectionContainer` 得先挂上，菜单的**关闭动画**（140ms）也得走完 ——
+ * 菜单还是个 focusable 的独立窗口，没关干净时注入的按下有可能被它吃掉。
+ */
+private const val SelectionStartDelayMs = 220L
 
 /**
  * 「这条是谁写的、占多少 token」。

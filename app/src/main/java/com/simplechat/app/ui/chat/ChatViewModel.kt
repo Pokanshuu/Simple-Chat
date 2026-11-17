@@ -498,6 +498,8 @@ class ChatViewModel(
 
         val generation = ++switchGeneration
         currentConversationId = id
+        // 换会话 = 换一轮上下文：上一轮的用量与缓存命中率不再适用
+        lastUsage = null
         // 标题立刻开始观察；下面那句清空只是防止旧标题残留一帧
         observeTitle(id)
         switching = true
@@ -1006,6 +1008,32 @@ class ChatViewModel(
     var contextStats by mutableStateOf(emptyContextStats())
         private set
 
+    /**
+     * **最近一次请求**的真实用量（服务端在流末尾回报的，不是本地估算）。
+     *
+     * 只保留最近一次：缓存命中率说的是"这一轮的前缀有没有被复用"，
+     * 跨轮聚合反而会把它稀释成一个看不出变化的平均数。
+     * 切换会话时清空 —— 新会话还没发过请求，显示上一轮的数字是错的。
+     */
+    var lastUsage by mutableStateOf<RequestUsage?>(null)
+        private set
+
+    /**
+     * 记录用量。
+     *
+     * 两个通道都是一条流里**分两次**报的（Anthropic：`message_start` 只有输入侧、
+     * `message_delta` 只有输出侧；OpenAI 通道有些网关也会拆开），所以这里做合并：
+     * 有值就覆盖、没值就沿用上一次，缺字段不能把已有数据冲成 0。
+     */
+    private fun recordUsage(event: StreamEvent.Usage) {
+        val previous = lastUsage
+        lastUsage = RequestUsage(
+            promptTokens = event.promptTokens.takeIf { it > 0 } ?: previous?.promptTokens ?: 0,
+            completionTokens = maxOf(event.completionTokens, previous?.completionTokens ?: 0),
+            cacheHitTokens = event.cacheHitTokens ?: previous?.cacheHitTokens,
+        )
+    }
+
     private fun emptyContextStats() = ContextStats(
         usedTokens = 0,
         windowTokens = settings.model.contextWindow,
@@ -1465,7 +1493,7 @@ class ChatViewModel(
                                 dirty = true
                             }
 
-                            is StreamEvent.Usage -> Unit
+                            is StreamEvent.Usage -> recordUsage(event)
 
                             StreamEvent.Done -> Unit
 
@@ -1517,7 +1545,9 @@ class ChatViewModel(
                                 dirty = true
                             }
 
-                            is StreamEvent.Usage -> Unit // 后续接入用量与成本展示
+                            /* 有些网关把用量放在流末尾单独一帧 —— 这里如实收下，
+                               缓存命中率就是从这里来的（见 recordUsage）。 */
+                            is StreamEvent.Usage -> recordUsage(event)
 
                             StreamEvent.Done -> Unit
 

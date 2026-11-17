@@ -1,5 +1,11 @@
 package com.simplechat.app.ui.chat
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
@@ -10,9 +16,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.R
@@ -81,6 +92,63 @@ internal fun ThinkingHeader(
                 modifier = Modifier.size(16.dp),
             )
         }
+    }
+}
+
+/**
+ * 「加载中」占位 —— 首 token 还没到、正文一片空白时的过渡。
+ *
+ * 为什么需要它：请求发出到第一个 token 之间，界面原先**什么都没有**。
+ * 思考型模型在长上下文里这一段可以走十几秒，用户看到的就是"点了发送，然后一片空白"，
+ * 很像是没发出去。
+ *
+ * 形状刻意和 [ThinkingHeader] 一致（同样的图标位、同样的 `processText` 色、
+ * 同样的左缘对齐）：从"加载中"切到"正在思考"时，视觉上是**同一行在换字**，
+ * 而不是凭空冒出一个新控件。
+ */
+@Composable
+internal fun WaitingIndicator(modifier: Modifier = Modifier) {
+    val colors = LocalChatColors.current
+    val transition = rememberInfiniteTransition(label = "waitingFirstToken")
+    val rotation by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)),
+        label = "waitingRotation",
+    )
+    val dots by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 4f,
+        animationSpec = infiniteRepeatable(tween(1200, easing = LinearEasing)),
+        label = "waitingDots",
+    )
+
+    Row(
+        modifier = modifier
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            // 与思考栏同一条补偿：让图标左缘对齐正文左边界
+            .offset(x = (-8).dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Canvas(modifier = Modifier.size(15.dp)) {
+            val stroke = 2.dp.toPx()
+            drawArc(
+                color = colors.processText,
+                startAngle = rotation,
+                sweepAngle = 250f,
+                useCenter = false,
+                style = Stroke(width = stroke, cap = StrokeCap.Round),
+                topLeft = Offset(stroke / 2f, stroke / 2f),
+                size = Size(size.width - stroke, size.height - stroke),
+            )
+        }
+        Text(
+            // 省略号按秒循环出现：三个点，一格一个
+            text = Res.get(R.string.reply_waiting) + ".".repeat(dots.toInt().coerceIn(0, 3)),
+            style = MaterialTheme.typography.titleSmall,
+            color = colors.processText,
+        )
     }
 }
 

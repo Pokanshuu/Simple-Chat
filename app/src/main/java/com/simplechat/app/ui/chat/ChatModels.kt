@@ -128,6 +128,33 @@ data class ConversationSettings(
 }
 
 /**
+ * **服务端回报**的一次请求用量（不是本地估算）。
+ *
+ * 与 [ContextStats] 的分工：
+ * - [ContextStats] 是"这条会话大概占了多少上下文"的**本地估算**，请求前就能算；
+ * - 这里是服务端在流末尾回的真实数字，只有发过请求才有，也只代表**最近一次**请求。
+ *
+ * `cacheHitTokens` 是 prompt 缓存命中的部分：DeepSeek 的 `prompt_cache_hit_tokens`、
+ * Anthropic 的 `cache_read_input_tokens`。命中率高说明前缀被服务端缓存复用，
+ * 同样的上下文更便宜也更快；它对"长会话 + 固定系统提示词"这种用法最有参考价值。
+ */
+@Immutable
+data class RequestUsage(
+    /** 输入侧 token（**含**缓存命中部分）。 */
+    val promptTokens: Int,
+    /** 输出侧 token。 */
+    val completionTokens: Int,
+    /** 缓存命中的输入 token；服务端没报这个字段时为 null。 */
+    val cacheHitTokens: Int? = null,
+) {
+    /** 缓存命中率（0..1）；服务端没报缓存信息时为 null。 */
+    val cacheHitRatio: Float?
+        get() = cacheHitTokens?.let { hit ->
+            if (promptTokens > 0) (hit.toFloat() / promptTokens).coerceIn(0f, 1f) else null
+        }
+}
+
+/**
  * 当前会话的上下文占用与性能统计。
  *
  * 所有 token 数都是**本地估算**（见 `TokenEstimate`），用于给出量级感，

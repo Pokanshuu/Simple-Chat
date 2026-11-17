@@ -39,7 +39,6 @@
     <string name="action_close">Close</string>
     <string name="action_copy">Copy</string>
     <string name="action_select_text">Select text</string>
-    <string name="action_done">Done</string>
     <string name="action_back">Back</string>
     <string name="action_clear">Clear</string>
     <string name="action_retry">Retry</string>
@@ -384,6 +383,8 @@
     <string name="stats_avg_ttft">Average time to first token</string>
     <string name="stats_avg_tps">Average generation speed</string>
     <string name="stats_total_thinking">Total thinking time</string>
+    <string name="stats_cache_hit">Prompt cache hit (latest)</string>
+    <string name="stats_cache_hit_value">%1$s / %2$s · %3$d%%</string>
     <string name="stats_seconds">%1$d seconds</string>
 
     <!-- Context compaction -->
@@ -420,7 +421,7 @@
     <!-- ==== from group g3 ==== -->
 <!-- ── Message list / message actions ─────────────────────── -->
     <string name="msg_regenerate">Regenerate</string>
-    <string name="msg_select_hint">Drag to select text</string>
+    <string name="reply_waiting">Loading</string>
     <string name="msg_continue">Continue generating</string>
     <string name="msg_fork_from_here">Start a new chat from here</string>
     <string name="msg_expand_all">Expand all</string>

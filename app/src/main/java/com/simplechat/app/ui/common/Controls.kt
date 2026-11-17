@@ -51,6 +51,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -801,6 +803,47 @@ fun rememberPressPosition(): Pair<() -> IntOffset, Modifier> {
             }
         }
     }
+
+    return ({ position.value }) to listener
+}
+
+/**
+ * 记录最近一次按下的**窗口坐标**（px），**不消费事件**。
+ *
+ * 与 [rememberPressPosition] 的分工：
+ * - 那个给的是"相对当前节点"的坐标 —— 菜单要跟手弹出，用的是锚点坐标系；
+ * - 这里给的是**绝对位置**：「选择文本」要在这同一个点上合成一次长按，
+ *   而注入触摸事件用的是窗口坐标系。
+ *
+ * 用 `PointerEventPass.Initial` 在 Main 之前读一眼就走，不 `consume()`，
+ * 因此点击、水波纹、长按、选区都照常工作。
+ *
+ * @return `first` 取当前落点（还没按过时为 null），`second` 是必须挂到目标节点上的 Modifier
+ */
+@Composable
+fun rememberPressWindowPosition(): Pair<() -> IntOffset?, Modifier> {
+    val coordinates = remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val position = remember { mutableStateOf<IntOffset?>(null) }
+
+    val listener = Modifier
+        .onGloballyPositioned { coordinates.value = it }
+        .pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    val change = event.changes.firstOrNull() ?: continue
+                    if (change.pressed && !change.previousPressed) {
+                        val node = coordinates.value
+                        position.value = if (node != null && node.isAttached) {
+                            val inWindow = node.localToWindow(change.position)
+                            IntOffset(inWindow.x.roundToInt(), inWindow.y.roundToInt())
+                        } else {
+                            null
+                        }
+                    }
+                }
+            }
+        }
 
     return ({ position.value }) to listener
 }
