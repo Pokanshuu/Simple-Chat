@@ -66,6 +66,15 @@ private val DrawerInset = Space.Screen
 private val DrawerTextInset = Space.Screen + Space.Inline
 
 /**
+ * 会话行的最小高度：原来 46dp，**收到 80%（≈37dp）**。
+ *
+ * 抽屉里一行只有一句标题，46dp 的节奏在一屏里只能放下八九条；
+ * 收 20% 之后同屏多出两三条，且标题仍是 bodyLarge、不挤压字距。
+ * 搜索页那些带日期 / 片段的行本来就被内容撑得更高，这个下限只是兜底。
+ */
+private val RowMinHeight = 46.dp * 0.8f
+
+/**
  * 侧拉会话列表。
  *
  * 结构（对齐 DeepSeek 抽屉）：
@@ -405,8 +414,8 @@ internal fun ConversationRow(
                     },
                 )
                 .padding(horizontal = 12.dp, vertical = 2.dp)
-                // 单行时保持 46dp 的节奏；带片段时（搜索页）让它长高
-                .heightIn(min = 46.dp),
+                // 单行时保持固定的行高节奏；带片段时（搜索页）让它长高
+                .heightIn(min = RowMinHeight),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {

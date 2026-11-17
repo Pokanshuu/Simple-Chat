@@ -24,6 +24,15 @@ val keystoreProperties = Properties().apply {
 }
 val hasReleaseSigning = keystorePropertiesFile.exists()
 
+/**
+ * 版本号只写在这一处：`defaultConfig` 从这里取值，APK 文件名也用它。
+ *
+ * 以前 `versionName` 一个字面量、发布页上的文件名手动改，两边天然会漂；
+ * 现在改一次，包名与「关于」页（读 `BuildConfig.VERSION_NAME`）同时跟上。
+ */
+val appVersionCode = 23
+val appVersionName = "1.1.5"
+
 android {
     namespace = "com.simplechat.app"
     compileSdk = 37
@@ -33,8 +42,8 @@ android {
         applicationId = "com.simplechat.app"
         minSdk = 26
         targetSdk = 37
-        versionCode = 22
-        versionName = "1.1.5"
+        versionCode = appVersionCode
+        versionName = appVersionName
         testInstrumentationRunner = "com.simplechat.app.DeviceRegression"
         vectorDrawables { useSupportLibrary = true }
     }
@@ -95,6 +104,22 @@ android {
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
+    }
+}
+
+/**
+ * 产物直接带名字与版本：`SimpleChat-1.1.5-release.apk`。
+ *
+ * 默认的 `app-release.apk` 每次下载都撞名，上传 Release 时还得手动改一次；
+ * 这里让它与 GitHub 附件同名（`SimpleChat-<版本>-release.apk`），
+ * debug 同理是 `SimpleChat-<版本>-debug.apk`。
+ */
+androidComponents {
+    onVariants { variant ->
+        val buildType = variant.buildType ?: "unknown"
+        variant.outputs.forEach { output ->
+            output.outputFileName.set("SimpleChat-$appVersionName-$buildType.apk")
+        }
     }
 }
 
