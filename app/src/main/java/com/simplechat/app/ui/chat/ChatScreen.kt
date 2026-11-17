@@ -674,6 +674,7 @@ fun ChatScreen(
      * 绝不订阅内容变化 —— 那才是之前那个每 80ms 转一圈的死循环。
      */
     var detached by remember { mutableStateOf(false) }
+    SideEffect { if (vm.searchTarget != null) detached = true }
 
     /*
      * 「别跟底」的状态。
@@ -747,7 +748,7 @@ fun ChatScreen(
              * `pathRebuilding` / `switchingConversation` 期间让位 ——
              * 那两种是**故意**要把视口挪到别处去的，别和它们抢。
              */
-            if (!detached && !pathRebuilding && !switchingConversation &&
+            if (!detached && vm.searchTarget == null && !vm.switching && !pathRebuilding && !switchingConversation &&
                 !listState.isScrollInProgress && listState.canScrollForward
             ) {
                 // 向底部**逼近**一帧，不是一把跳过去 —— 见 ScrollToBottom.followBottom
@@ -818,7 +819,7 @@ fun ChatScreen(
     SideEffect {
         lastPadPx = padPx
         // 首次测量只记基线（0 → 实测值那一跳不是键盘引起的）
-        if (padDelta == 0) return@SideEffect
+        if (padDelta == 0 || detached || vm.searchTarget != null || vm.switching || switchingConversation) return@SideEffect
         /*
          * ★ 顶部为原点：底部留白变化**不推**内容。
          *
@@ -829,7 +830,12 @@ fun ChatScreen(
          * `isAtBottom()` 在这里读到的是**上一次布局**的结果 = 变化前的状态，正是要的。
          */
         if (listState.isAtBottom()) {
-            scope.launch { listState.scrollToBottom() }
+            val owner = vm.currentConversationId
+            scope.launch {
+                if (owner == vm.currentConversationId && !detached && vm.searchTarget == null && !vm.switching) {
+                    listState.scrollToBottom()
+                }
+            }
         }
     }
 
@@ -933,6 +939,7 @@ fun ChatScreen(
 
     LaunchedEffect(vm.currentConversationId) {
         val id = vm.currentConversationId
+        val enteredFromSearch = vm.searchTarget != null
         val fromAnotherConversation = previousConversationId != null
         previousConversationId = id
 
@@ -967,7 +974,7 @@ fun ChatScreen(
              */
             dissolve.snapTo(0f)
             awaitLoaded()
-            if (vm.searchTarget != null) {
+            if (enteredFromSearch || vm.searchTarget != null) {
                 dissolve.snapTo(1f)
                 return@LaunchedEffect
             }
@@ -986,6 +993,7 @@ fun ChatScreen(
                 // 长消息的文字布局还会再长几帧（实测差了一整截）。
                 var stable = 0
                 while (stable < 3) {
+                    if (vm.searchTarget != null) break
                     listState.scrollToBottom()
                     withFrameNanos { }
                     stable = if (listState.isAtBottom()) stable + 1 else 0

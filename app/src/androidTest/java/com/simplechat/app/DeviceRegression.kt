@@ -30,12 +30,14 @@ class DeviceRegression : Instrumentation() {
     private var featureTests = false
     private var searchTests = false
     private var hotfixTests = false
+    private var navigationTests = false
     override fun onCreate(arguments: Bundle?) {
         realArchive = arguments?.getString("source")
         uiOnly = arguments?.getString("ui") == "true"
         featureTests = arguments?.getString("features") == "true"
         searchTests = arguments?.getString("search") == "true"
         hotfixTests = arguments?.getString("hotfix") == "true"
+        navigationTests = arguments?.getString("navigation") == "true"
         super.onCreate(arguments)
         start()
     }
@@ -44,7 +46,11 @@ class DeviceRegression : Instrumentation() {
         try {
             runBlocking {
                 val source = realArchive
-                if (hotfixTests) HotfixRegression.run(this@DeviceRegression, ::passed)
+                if (navigationTests) {
+                    SearchNavigationRegression.run(this@DeviceRegression, ::passed, com.simplechat.app.ui.theme.ThemeMode.LIGHT)
+                    SearchNavigationRegression.run(this@DeviceRegression, ::passed, com.simplechat.app.ui.theme.ThemeMode.DARK)
+                }
+                else if (hotfixTests) HotfixRegression.run(this@DeviceRegression, ::passed)
                 else if (searchTests) SearchRenderingRegression.run(this@DeviceRegression, ::passed)
                 else if (featureTests) {
                     ApiProfileRegression.run(targetContext)

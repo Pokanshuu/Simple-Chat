@@ -41,6 +41,8 @@ internal class SearchHighlightState(val request: Long, val query: String) {
 }
 
 internal val LocalSearchHighlight = compositionLocalOf<SearchHighlightState?> { null }
+/** Optional diagnostics for device rendering tests; observes the real animation without changing its timing. */
+internal val LocalSearchHighlightObserver = staticCompositionLocalOf<((SearchHighlightState?) -> Unit)?> { null }
 internal class SearchViewport(val bounds: Rect, val scrollBy: suspend (Float) -> Float)
 internal val LocalSearchViewport = compositionLocalOf<SearchViewport?> { null }
 private val LocalSearchAnchor = compositionLocalOf<SearchTextAnchor?> { null }
@@ -55,9 +57,11 @@ internal fun SearchHighlightHost(target: SearchTarget?, onFinished: () -> Unit, 
         target?.let { SearchHighlightState(it.request, it.query) } ?: retained.value
     }
     val finish by rememberUpdatedState(onFinished)
+    val observer = LocalSearchHighlightObserver.current
     SideEffect {
         retained.value = state
         state?.ready = target?.ready == true
+        observer?.invoke(state)
     }
     LaunchedEffect(state, target?.ready) {
         if (state == null) return@LaunchedEffect

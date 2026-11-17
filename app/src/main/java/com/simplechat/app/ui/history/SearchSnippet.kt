@@ -1,5 +1,9 @@
 package com.simplechat.app.ui.history
 
+/** A result identifies one message; title-only matches have a separate conversation-scoped key. */
+internal val com.simplechat.app.db.ConversationSearchHit.searchResultKey: String
+    get() = "${conversation.id}:${messageId ?: "title"}"
+
 /**
  * 从消息正文里取一段**围绕关键词**的窗口，给搜索结果行用。
  *

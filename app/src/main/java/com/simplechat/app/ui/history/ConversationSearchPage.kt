@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -37,6 +39,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -57,7 +60,6 @@ import com.simplechat.app.ui.theme.LocalChatColors
 @Composable
 fun ConversationSearchPage(
     hits: List<ConversationSearchHit>,
-    currentConversationId: String?,
     query: String,
     onQueryChange: (String) -> Unit,
     onBack: () -> Unit,
@@ -67,13 +69,17 @@ fun ConversationSearchPage(
     onDelete: (ConversationEntity) -> Unit,
     hasMore: Boolean = false,
     onLoadMore: () -> Unit = {},
+    listState: LazyListState = rememberLazyListState(),
+    autoFocus: Boolean = true,
+    selectedResultKey: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalChatColors.current
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+    val focus = LocalFocusManager.current
 
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    LaunchedEffect(autoFocus) { if (autoFocus) focusRequester.requestFocus() }
 
     Column(
         modifier = modifier
@@ -183,19 +189,21 @@ fun ConversationSearchPage(
             }
         } else {
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
                 contentPadding = PaddingValues(top = 4.dp, bottom = 12.dp),
             ) {
-                items(items = hits, key = { it.conversation.id + ":" + (it.messageId ?: "title") }) { hit ->
+                items(items = hits, key = { it.searchResultKey }) { hit ->
                     val conversation = hit.conversation
                     ConversationRow(
                         conversation = conversation,
-                        current = conversation.id == currentConversationId,
+                        current = hit.searchResultKey == selectedResultKey,
                         selectionMode = false,
                         selected = false,
                         onClick = {
+                            focus.clearFocus()
                             keyboard?.hide()
                             onClick(hit)
                         },

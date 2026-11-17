@@ -16,6 +16,8 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.ui.chat.*
+import com.simplechat.app.ui.markdown.LocalSearchHighlightObserver
+import com.simplechat.app.ui.markdown.SearchHighlightState
 import com.simplechat.app.ui.theme.SimpleChatTheme
 import com.simplechat.app.ui.theme.ThemeMode
 import java.io.File
@@ -54,16 +56,19 @@ internal object SearchRenderingRegression {
                 val target = mutableStateOf<SearchTarget?>(SearchTarget(message.id, query, ++request, ready = true))
                 var finished = false
                 var obstruction = 0
+                val highlightState = java.util.concurrent.atomic.AtomicReference<SearchHighlightState?>()
                 instrumentation.runOnMainSync {
                     activity.setContent {
                         SimpleChatTheme(themeMode = theme) {
                             var overlayHeight by remember { mutableIntStateOf(0) }
                             val overlayPadding = with(LocalDensity.current) { overlayHeight.toDp() }
                             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                                CompositionLocalProvider(LocalSearchHighlightObserver provides { highlightState.set(it) }) {
                                 MessageList(listOf(message), Modifier.fillMaxSize(), listState = rememberLazyListState(),
                                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = overlayPadding + 16.dp),
                                     searchTarget = target.value, searchBottomObstructionPx = overlayHeight,
                                     onDismissSearch = { target.value = null; finished = true })
+                                }
                                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                                     .height(if (theme == ThemeMode.DARK) 220.dp else 340.dp)
                                     .onSizeChanged { overlayHeight = it.height; obstruction = it.height }
@@ -72,15 +77,19 @@ internal object SearchRenderingRegression {
                         }
                     }
                 }
-                instrumentation.waitForIdleSync()
                 suspend fun hit(): AccessibilityNodeInfo? = nodes().firstOrNull { it.text?.contains(query) == true && it.isVisibleToUser }
-                withTimeout(10_000) { while (hit() == null) delay(80) }
-                delay(400)
+                // waitForIdleSync can outlast a short animation; observe the actual alpha, then
+                // capture before doing accessibility traversal or writing PNGs.
+                withTimeout(10_000) {
+                    while (!kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        highlightState.get()?.let { it.located && it.alpha.value >= .95f } == true
+                    }) delay(15)
+                }
+                val highlighted = checkNotNull(automation.takeScreenshot())
                 val before = Rect().also { checkNotNull(hit()).getBoundsInScreen(it) }
                 check(before.top >= 0 && before.height() > 0)
                 val text = nodes().mapNotNull { it.text?.toString() }
                 check(text.none { it.contains("原文模式") || it.contains("Return to normal view") || (role == MessageRole.ASSISTANT && it.contains("**$query**")) })
-                val highlighted = checkNotNull(automation.takeScreenshot())
                 highlighted.let { bitmap ->
                     File(instrumentation.targetContext.cacheDir, "search-${theme.name.lowercase()}-$name-highlight.png").outputStream().use {
                         bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)

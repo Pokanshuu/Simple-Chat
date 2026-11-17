@@ -18,6 +18,7 @@ import com.simplechat.app.net.anthropic.AnthropicApi
 import com.simplechat.app.ui.chat.*
 import com.simplechat.app.ui.history.*
 import com.simplechat.app.ui.theme.SimpleChatTheme
+import com.simplechat.app.ui.theme.ThemeMode
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.*
@@ -187,9 +188,49 @@ internal object HotfixRegression {
             check(repo.searchConversations("needle", 2).first().size == 2)
             check(repo.searchConversations("").first().isEmpty())
             var clicked: String? = null
-            instrumentation.runOnMainSync { activity.setContent { SimpleChatTheme {
-                ConversationSearchPage(hits, null, "needle", {}, {}, { clicked = it.messageId }, {}, {}, {})
-            } } }
+            open(cid)
+            for (theme in listOf(ThemeMode.LIGHT, ThemeMode.DARK)) {
+                val selection = mutableStateOf<String?>(null)
+                instrumentation.runOnMainSync { activity.setContent { SimpleChatTheme(themeMode = theme) {
+                    ConversationSearchPage(hits, "needle", {}, {}, {
+                        clicked = it.messageId; selection.value = it.searchResultKey
+                    }, {}, {}, {}, selectedResultKey = selection.value)
+                } } }
+                instrumentation.waitForIdleSync(); delay(250)
+                val bitmap = checkNotNull(automation.takeScreenshot())
+                val rows = nodes().filter { it.text?.toString() == "Search window" && it.isVisibleToUser }
+                check(rows.size == 3)
+                rows.forEach { titleNode ->
+                    var row: AccessibilityNodeInfo? = titleNode
+                    while (row != null && !row.isClickable) row = row.parent
+                    val bounds = Rect().also { checkNotNull(row).getBoundsInScreen(it) }
+                    // No pointer/touch has entered the list: all result backgrounds match the page.
+                    val outside = bitmap.getPixel(2, bounds.centerY())
+                    val inside = bitmap.getPixel(bounds.right - 24, bounds.centerY())
+                    check(outside == inside) { "Idle search result has selection background: $theme" }
+                }
+                File(instrumentation.targetContext.cacheDir, "search-idle-${theme.name.lowercase()}.png").outputStream().use {
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
+                }
+                bitmap.recycle()
+                val selectedHit = hits.first { it.messageId == a }
+                instrumentation.runOnMainSync { selection.value = selectedHit.searchResultKey }
+                instrumentation.waitForIdleSync(); delay(200)
+                val selectedImage = checkNotNull(automation.takeScreenshot())
+                var colored = 0
+                nodes().filter { it.text?.toString() == "Search window" && it.isVisibleToUser }.forEach { titleNode ->
+                    var row: AccessibilityNodeInfo? = titleNode
+                    while (row != null && !row.isClickable) row = row.parent
+                    val bounds = Rect().also { checkNotNull(row).getBoundsInScreen(it) }
+                    if (selectedImage.getPixel(2, bounds.centerY()) != selectedImage.getPixel(bounds.right - 24, bounds.centerY())) colored++
+                }
+                check(colored == 1) { "Selected $colored search rows, expected exactly one: $theme" }
+                File(instrumentation.targetContext.cacheDir, "search-selected-${theme.name.lowercase()}.png").outputStream().use {
+                    selectedImage.compress(Bitmap.CompressFormat.PNG, 100, it)
+                }
+                selectedImage.recycle()
+            }
+            status("search row backgrounds in light/dark: initially none selected; exactly one message selected among three hits from the same conversation")
             instrumentation.waitForIdleSync(); delay(300)
             val texts = nodes().mapNotNull { it.text?.toString() }
             check(texts.any { it.contains(Res.get(R.string.search_role_user)) })
