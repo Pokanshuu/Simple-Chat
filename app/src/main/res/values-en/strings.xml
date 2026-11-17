@@ -114,6 +114,7 @@
     <string name="settings_group_account">Account</string>
     <string name="settings_group_personal">Personal</string>
     <string name="settings_group_backup">Backup</string>
+    <string name="settings_group_diagnostics">Diagnostics</string>
     <string name="settings_group_reset">Reset</string>
     <string name="settings_group_service">Service</string>
     <string name="settings_group_auth">Auth</string>

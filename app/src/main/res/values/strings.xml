@@ -116,6 +116,7 @@
     <string name="settings_group_account">账户</string>
     <string name="settings_group_personal">个性化</string>
     <string name="settings_group_backup">备份</string>
+    <string name="settings_group_diagnostics">诊断</string>
     <string name="settings_group_reset">重置</string>
     <string name="settings_group_service">服务</string>
     <string name="settings_group_auth">鉴权</string>

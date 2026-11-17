@@ -185,10 +185,10 @@ fun MessageList(
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }
             .collect { scrolling ->
-                if (scrolling) {
-                    peekedId = null
-                    selectingId = null
-                }
+                // 只有"碰一下看元信息"是即时的：手指一动就收起。
+                // ⚠️ **选择文本不能跟着滚动静默退出**：选到一半往上翻一屏看上文是常规操作，
+                // 一滚就丢选区等于把"选完再复制"这条路堵死。
+                if (scrolling) peekedId = null
             }
     }
 

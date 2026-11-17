@@ -1240,20 +1240,6 @@ private fun DataPage(
             // 导入期间不能重复点：同一份包并发解析会把内存和数据库都顶爆
             enabled = !reading && progress == null && exportProgress == null,
         )
-        RowDivider()
-        SettingsActionRow(
-            label = stringResource(R.string.import_report_export),
-            hint = stringResource(R.string.import_report_hint),
-            onClick = onExportReport,
-            enabled = !reading && progress == null && exportProgress == null,
-        )
-        RowDivider()
-        SettingsActionRow(
-            label = stringResource(R.string.crash_report_export),
-            hint = stringResource(R.string.crash_report_hint),
-            onClick = onExportCrash,
-            enabled = !reading && progress == null && exportProgress == null,
-        )
     }
 
     /*
@@ -1308,6 +1294,28 @@ private fun DataPage(
                 )
             }
         }
+    }
+
+    /*
+     * 诊断：导入对账报告与崩溃诊断都是"出了问题才用"的东西，和日常的备份 / 导入
+     * 不是同一类操作。混在备份卡片里，看起来会像"又一个常规导出"。
+     */
+    SettingsSectionLabel(stringResource(R.string.settings_group_diagnostics))
+
+    SettingsCard {
+        SettingsActionRow(
+            label = stringResource(R.string.import_report_export),
+            hint = stringResource(R.string.import_report_hint),
+            onClick = onExportReport,
+            enabled = !reading && progress == null && exportProgress == null,
+        )
+        RowDivider()
+        SettingsActionRow(
+            label = stringResource(R.string.crash_report_export),
+            hint = stringResource(R.string.crash_report_hint),
+            onClick = onExportCrash,
+            enabled = !reading && progress == null && exportProgress == null,
+        )
     }
 
     SettingsSectionLabel(stringResource(R.string.settings_group_reset))
