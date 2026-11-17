@@ -17,8 +17,11 @@
 
 | 目标 | 产物 |
 |---|---|
-| debug | `app/build/outputs/apk/debug/`（未混淆） |
-| release | `app/build/outputs/apk/release/app-release.apk`（R8 优化并签名） |
+| debug | `app/build/outputs/apk/debug/SimpleChat-<版本>-debug.apk`（未混淆） |
+| release | `app/build/outputs/apk/release/SimpleChat-<版本>-release.apk`（R8 优化并签名） |
+
+> 文件名由 `app/build.gradle.kts` 的 `androidComponents.onVariants` 生成，
+> 版本号来自同一处的 `appVersionName` —— 与 Release 附件同名，发版不用手动改。
 
 发版流程（详见下方 §20）：
 

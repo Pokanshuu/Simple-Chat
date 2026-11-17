@@ -31,3 +31,9 @@
 - **开源许可清单。** 「关于 → 开源许可」逐条列出随包分发的第三方组件：名称与版本、许可证、版权所有、项目主页、许可证全文链接。
 
 本版 versionCode 递增至 23。
+
+## 产物与校验
+
+- `SimpleChat-1.1.5-release.apk`（4,106,425 B，versionCode 23）
+- SHA-256：`c7a0ecd043a7b9c8b67d5583fa8ac17f499d7f07c9a6371486959fa96cb2c253`
+- 同目录附带 `SimpleChat-1.1.5-release.apk.sha256`
