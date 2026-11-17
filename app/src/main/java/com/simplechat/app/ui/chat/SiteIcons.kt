@@ -101,7 +101,13 @@ private object SiteIconCache {
                 val body = response.body
                 if (!response.isSuccessful) return null
                 if (body.contentLength() > MaxBytes) return null
-                body.source().readByteArray().takeIf { it.size <= MaxBytes }
+                // Unknown/chunked lengths must be bounded while reading, not afterwards.
+                val buffer = okio.Buffer()
+                val source = body.source()
+                while (buffer.size <= MaxBytes) {
+                    if (source.read(buffer, minOf(8192L, MaxBytes + 1L - buffer.size)) < 0) break
+                }
+                if (buffer.size > MaxBytes) null else buffer.readByteArray()
             }
         }.getOrNull()
     }

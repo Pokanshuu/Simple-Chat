@@ -18,7 +18,6 @@ import android.view.ViewConfiguration
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.ui.Modifier
 import androidx.core.content.FileProvider
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
@@ -126,7 +125,8 @@ internal object MessageShareRegression {
             withContext(Dispatchers.Main) { vm.openConversation(cid) }
             withTimeout(10000) { while (withContext(Dispatchers.Main) { vm.switching || vm.messages.size != 8 }) delay(30) }
             instrumentation.runOnMainSync {
-                activity.setContent { SimpleChatTheme(themeMode = ThemeMode.DARK) { ChatScreen(vm, {}, {}, Modifier.fillMaxSize().systemBarsPadding()) } }
+                // Match MainActivity's edge-to-edge host: the production top bars own their insets.
+                activity.setContent { SimpleChatTheme(themeMode = ThemeMode.DARK) { ChatScreen(vm, {}, {}, Modifier.fillMaxSize()) } }
             }
             find("回答 4")
             // Keep a real draft through entering and leaving share mode.
@@ -137,6 +137,14 @@ internal object MessageShareRegression {
             touch("回答 4", long = true)
             tapResource(R.string.action_share)
             count(1)
+            @Suppress("DEPRECATION")
+            val statusBottom = activity.window.decorView.rootWindowInsets.systemWindowInsetTop
+            check(statusBottom > 0) { "Status bar must be visible for the inset regression" }
+            for (label in listOf(R.string.share_select_all, R.string.share_exit)) {
+                val bounds = Rect().also { find(context.getString(label)).getBoundsInScreen(it) }
+                check(bounds.top >= statusBottom) { "Share top control overlaps status bar: $bounds, inset=$statusBottom" }
+            }
+            status("edge-to-edge share header keeps Select all and Close below the visible status bar")
             check(nodes().none { it.isEditable })
             touch("问题 4")
             count(0)

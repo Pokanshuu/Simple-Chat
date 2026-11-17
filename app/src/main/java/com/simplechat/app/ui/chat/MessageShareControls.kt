@@ -66,8 +66,12 @@ internal fun ShareSelectableRow(
                 val change = event.changes.firstOrNull { it.id == down.id } ?: break
                 if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) dragged = true
                 if (change.changedToUpIgnoreConsumed()) {
-                    change.consume()
-                    if (!dragged && !multiple && enabled && change.uptimeMillis - down.uptimeMillis < viewConfiguration.longPressTimeoutMillis) toggle()
+                    // A consumed drag release cancels LazyColumn's fling. Only intercept taps;
+                    // scrolling must receive its original UP to retain release velocity.
+                    if (!dragged && !multiple) {
+                        change.consume()
+                        if (enabled && change.uptimeMillis - down.uptimeMillis < viewConfiguration.longPressTimeoutMillis) toggle()
+                    }
                     break
                 }
             }
@@ -81,7 +85,7 @@ internal fun ShareSelectableRow(
 @Composable
 internal fun MessageShareTopBar(selection: MessageShareSelection, groups: List<MessageShareGroup>, onClose: () -> Unit) {
     val available = groups.filter { it.available }
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f).clip(CircleShape).clickable { selection.toggleAll(groups) }.padding(vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             ShareCheck(available.isNotEmpty() && available.all { it.id in selection.selectedIds }, available.isNotEmpty())

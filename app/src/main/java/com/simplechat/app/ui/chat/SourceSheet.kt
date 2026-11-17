@@ -82,6 +82,7 @@ fun SourceSheet(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(max = maxHeight)
                     .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
                     .background(colors.card)
                     // 吞掉卡片内的点击，避免落到外面的关闭层上
@@ -134,7 +135,7 @@ fun SourceSheet(
                 } else {
                     Column(
                         modifier = Modifier
-                            .heightIn(max = maxHeight)
+                            .weight(1f, fill = false)
                             .verticalScroll(rememberScrollState()),
                     ) {
                         sources.forEach { source ->
@@ -160,27 +161,35 @@ private fun SourceRow(source: SourceRef, expanded: Boolean, onClick: () -> Unit)
     ) {
         // ── 站点行：图标 · 站点名 · 日期 ·（右侧）编号 ──────
         Row(
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(7.dp),
         ) {
             SiteIcon(source = source, size = 16.dp)
-            Text(
-                text = source.siteName.ifBlank { hostOf(source.url) },
-                style = MaterialTheme.typography.labelMedium,
-                color = colors.processText,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            source.pageAge?.takeIf { it.isNotBlank() }?.let { age ->
+            // Metadata keeps its natural spacing inside a full-width weighted slot;
+            // the citation badge is anchored independently at the row's trailing edge.
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
                 Text(
-                    text = "· " + age.take(10),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = colors.placeholder,
+                    text = source.siteName.ifBlank { hostOf(source.url) },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colors.processText,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
+                source.pageAge?.takeIf { it.isNotBlank() }?.let { age ->
+                    Text(
+                        text = "· " + age.take(10),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.placeholder,
+                        maxLines = 1,
+                    )
+                }
             }
-            Spacer(Modifier.weight(1f))
             // 编号：与正文角标一一对应
             Text(
                 text = source.index.toString(),
@@ -197,7 +206,7 @@ private fun SourceRow(source: SourceRef, expanded: Boolean, onClick: () -> Unit)
             text = source.title.ifBlank { source.url },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface,
-            maxLines = if (expanded) 4 else 2,
+            maxLines = if (expanded) Int.MAX_VALUE else 2,
             overflow = TextOverflow.Ellipsis,
         )
         source.snippet?.takeIf { it.isNotBlank() }?.let { snippet ->
@@ -206,7 +215,7 @@ private fun SourceRow(source: SourceRef, expanded: Boolean, onClick: () -> Unit)
                 text = snippet,
                 style = MaterialTheme.typography.labelMedium,
                 color = colors.placeholder,
-                maxLines = if (expanded) 12 else 2,
+                maxLines = if (expanded) Int.MAX_VALUE else 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
