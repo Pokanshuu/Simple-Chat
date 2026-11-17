@@ -674,6 +674,12 @@ fun ChatScreen(
      * 绝不订阅内容变化 —— 那才是之前那个每 80ms 转一圈的死循环。
      */
     var detached by remember { mutableStateOf(false) }
+    var searchPlacementReset by remember(vm.currentConversationId) { androidx.compose.runtime.mutableLongStateOf(0L) }
+    fun resumeFollowing() {
+        vm.dismissSearch()
+        searchPlacementReset++
+        detached = false
+    }
     SideEffect { if (vm.searchTarget != null) detached = true }
 
     /*
@@ -709,7 +715,7 @@ fun ChatScreen(
                 is DragInteraction.Stop, is DragInteraction.Cancel -> {
                     // 等这一次手势（含惯性滑动）彻底停下，再看落点是不是底部
                     snapshotFlow { listState.isScrollInProgress }.first { !it }
-                    if (listState.isAtBottom()) detached = false
+                    if (listState.isAtBottom()) resumeFollowing()
                 }
                 else -> Unit
             }
@@ -1085,7 +1091,7 @@ fun ChatScreen(
      */
     fun requestResend(target: UiMessage, text: String, attachments: List<Attachment>, onPersisted: () -> Unit = {}) {
         // 编辑并重发 = 从这条起重建路径，下游换成一条空的流式回复 → 同「重新生成」，不锚
-        detached = false
+        resumeFollowing()
         vm.editMessage(target, text, resend = true, attachments = attachments, onPersisted = onPersisted)
     }
 
@@ -1117,7 +1123,7 @@ fun ChatScreen(
                 onNewConversation()
                 panel = InputPanelState.NONE
                 // 新对话 = "我要看新的"，恢复跟随
-                detached = false
+                resumeFollowing()
             },
             // 点顶栏任意处也收键盘
             modifier = Modifier.dismissKeyboardOnTouch(),
@@ -1156,6 +1162,7 @@ fun ChatScreen(
                         messages = vm.messages,
                         searchTarget = vm.searchTarget,
                         searchBottomObstructionPx = inputAreaHeight,
+                        searchPlacementReset = searchPlacementReset,
                         onDismissSearch = vm::dismissSearch,
                         listState = listState,
                         /*
@@ -1195,7 +1202,7 @@ fun ChatScreen(
                              * 而用户按「重新生成」就是想**看新回复**，跟到底部才对。
                              * （对照：「切版本」是看已完成的兄弟版本，那里才锚。）
                              */
-                            detached = false
+                            resumeFollowing()
                             vm.regenerate(message)
                         },
                         onContinue = { message ->
@@ -1203,7 +1210,7 @@ fun ChatScreen(
                              * 续写**跟底**：新内容接在这条末尾，用户按它就是想看接下来写什么。
                              * 与「重新生成」同一个判断（那条把内容清空，锚不住）。
                              */
-                            detached = false
+                            resumeFollowing()
                             vm.continueMessage(message)
                         },
                         // 朗读暂时下线（见 ReadAloudEnabled）：开关关着时按钮不出现、
@@ -1240,7 +1247,7 @@ fun ChatScreen(
                         },
                         onRetry = { message ->
                             // 同「重新生成」：换成一条空的流式回复 → 不锚，跟到底部看它写
-                            detached = false
+                            resumeFollowing()
                             vm.retryMessage(message)
                         },
                     )
@@ -1300,8 +1307,12 @@ fun ChatScreen(
                 generating = vm.isStreaming,
                 onClick = {
                     // 用户显式要"看最新的" —— 这是少数几个该主动滚动的地方之一
-                    detached = false
-                    scope.launch { listState.scrollToBottom() }
+                    resumeFollowing()
+                    scope.launch {
+                        // Remove the search-only padding before computing the normal content bottom.
+                        withFrameNanos { }
+                        listState.scrollToBottom()
+                    }
                 },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -1471,7 +1482,7 @@ fun ChatScreen(
                              * 回复的结尾（实测就是这个 bug）。
                              * 交给上面那个"条数变化才滚"的 effect —— 等它真的进列表再滚。
                              */
-                            detached = false
+                            resumeFollowing()
                             if (target != null) {
                                 // 输入栏的发送键就是「保存并发送」，不再让用户做二次选择
                                 requestResend(target, submitted, attached, clearPersistedInput)

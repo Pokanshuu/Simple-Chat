@@ -146,6 +146,7 @@ fun MessageList(
     searchTarget: SearchTarget? = null,
     onDismissSearch: () -> Unit = {},
     searchBottomObstructionPx: Int = 0,
+    searchPlacementReset: Long = 0,
 ) {
     /*
      * 「谁被碰过」。
@@ -173,7 +174,7 @@ fun MessageList(
         SearchViewport(visibleBounds) { listState.scrollBy(it) }
     }
     // Allow first/last hits to reach the upper center. Keep room after fading until a new message/branch arrives.
-    var searchSpacePx by remember(messages.lastOrNull()?.id) { mutableStateOf(0f) }
+    var searchSpacePx by remember(messages.lastOrNull()?.id, searchPlacementReset) { mutableStateOf(0f) }
     androidx.compose.runtime.SideEffect {
         if (searchTarget != null) searchSpacePx = visibleBounds.height
     }

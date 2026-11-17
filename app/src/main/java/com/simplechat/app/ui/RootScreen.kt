@@ -11,6 +11,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -35,6 +37,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -45,6 +51,7 @@ import com.simplechat.app.R
 import com.simplechat.app.db.ConversationEntity
 import com.simplechat.app.ui.chat.ChatScreen
 import com.simplechat.app.ui.chat.ChatViewModel
+import com.simplechat.app.ui.chat.HorizontalScrollRegions
 import com.simplechat.app.ui.common.AppConfirmDialog
 import com.simplechat.app.ui.common.AppShadow
 import com.simplechat.app.ui.common.AppTextInputDialog
@@ -127,6 +134,8 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
     var openingSearchResult by remember { mutableStateOf(false) }
     var selectedSearchResultKey by rememberSaveable { mutableStateOf<String?>(null) }
     val searchListState = rememberLazyListState()
+    var horizontalRegionPressed by remember { mutableStateOf(false) }
+    var drawerOrigin by remember { mutableStateOf(Offset.Zero) }
 
     var renameTarget by remember { mutableStateOf<ConversationEntity?>(null) }
     var deleteTarget by remember { mutableStateOf<ConversationEntity?>(null) }
@@ -192,9 +201,20 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
     val sheetShape = RoundedCornerShape(topEnd = sheetCorner, bottomEnd = sheetCorner)
 
     ModalNavigationDrawer(
+        modifier = Modifier.onGloballyPositioned { drawerOrigin = it.boundsInRoot().topLeft }
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    horizontalRegionPressed = HorizontalScrollRegions.any { it.contains(drawerOrigin + down.position) }
+                    try {
+                        do { val event = awaitPointerEvent(PointerEventPass.Initial) }
+                        while (event.changes.any { it.pressed })
+                    } finally { horizontalRegionPressed = false }
+                }
+            },
         drawerState = drawerState,
         // 撑满时禁止拖动：那时它已经不是"抽屉"了，往左拖会把它拖成一个奇怪的宽度
-        gesturesEnabled = route == Route.CHAT && (!searchMode || (readingSearchResult && !drawerState.isOpen)),
+        gesturesEnabled = !horizontalRegionPressed && route == Route.CHAT && (!searchMode || (readingSearchResult && !drawerState.isOpen)),
         // 遮罩由下面 content 里的显式 scrim 画，内置 scrim 关掉，避免双层遮罩。
         scrimColor = Color.Transparent,
         drawerContent = {

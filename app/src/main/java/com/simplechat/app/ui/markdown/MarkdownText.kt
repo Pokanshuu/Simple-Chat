@@ -3,6 +3,9 @@ package com.simplechat.app.ui.markdown
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import com.simplechat.app.ui.chat.preferHorizontalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -35,6 +39,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
@@ -567,93 +574,51 @@ private val spacedHorizontalRule: MarkdownComponent = { _ ->
     }
 }
 
-/**
- * 表格：对齐官方的"无卡片、只有行间横线、按内容分列宽、允许换行"。
- *
- * 库的默认表格是**等宽列 + 整块圆角底色 + 单元格只排一行**：两列表格会被拉成
- * 两个 120dp 的大格子（中间空一大片），长内容又被省略号吃掉。官方 Web 端是
- * 按内容宽度排、单元格可折行、只有行间横线 —— 这里直接自己排：
- * 列宽按"该列最长单元格文字量"分配（`weight`），每行下面一条 1px 横线。
- *
- * 单元格仍用库的 [LibraryMarkdownText]：单元格里的行内代码、粗体、图片
- * 都由它按同一套 annotator 渲染，不必自己再实现一遍。
- */
+/** Content-sized columns share one horizontal scroller, so headers and body remain aligned. */
 private val adaptiveTable: MarkdownComponent = { model ->
     val style = model.typography.table
     val header = remember(model.node) { model.node.findChildOfType(HEADER) }
     val rows = remember(model.node) { model.node.children.filter { it.type == ROW } }
-
-    /** 每列的权重：取该列所有单元格里最长的文字量（1..24），窄屏下按比例分配。 */
-    val weights = remember(model.content, model.node) {
-        val columnCount = maxOf(
-            header?.children?.count { it.type == CELL } ?: 0,
-            rows.maxOfOrNull { row -> row.children.count { it.type == CELL } } ?: 0,
-        )
-        val longest = IntArray(columnCount) { 1 }
-        fun scan(row: ASTNode) {
+    val density = LocalDensity.current
+    val measurer = rememberTextMeasurer()
+    val columnWidths = remember(model.content, model.node, style, density) {
+        val tableRows = listOfNotNull(header) + rows
+        val columnCount = tableRows.maxOfOrNull { row -> row.children.count { it.type == CELL } } ?: 0
+        val widths = FloatArray(columnCount) { with(density) { 88.dp.toPx() } }
+        tableRows.forEach { row ->
             row.children.filter { it.type == CELL }.forEachIndexed { index, cell ->
-                if (index < columnCount) {
-                    longest[index] = maxOf(longest[index], cellTextLength(model.content, cell))
-                }
+                // Width sampling is bounded; rendering below still includes the entire cell.
+                val raw = model.content.substring(cell.startOffset, cell.endOffset).take(256)
+                val measured = measurer.measure(text = raw, style = style.copy(fontWeight = FontWeight.Medium),
+                    softWrap = false, constraints = Constraints(maxWidth = with(density) { 320.dp.roundToPx() }))
+                val longest = (0 until measured.lineCount).maxOfOrNull { measured.getLineRight(it) } ?: 0f
+                widths[index] = maxOf(widths[index], (longest + with(density) { 24.dp.toPx() })
+                    .coerceAtMost(with(density) { 320.dp.toPx() }))
             }
         }
-        header?.let(::scan)
-        rows.forEach(::scan)
-        longest.map { it.coerceIn(1, 24).toFloat() }
+        widths.map { with(density) { it.toDp() } }
     }
-
-    fun weightOf(index: Int): Float = weights.getOrElse(index) { 1f }
-
-    /** 单元格内边距：官方 `th/td:first-child { padding-left: 0 }`、最后一列右侧也不留 —— 表格与正文左右对齐。 */
-    fun cellPadding(index: Int, count: Int): PaddingValues = PaddingValues(
-        start = if (index == 0) 0.dp else 10.dp,
-        end = if (index == count - 1) 0.dp else 10.dp,
-        top = 10.dp,
-        bottom = 10.dp,
-    )
-
-    Column(Modifier.fillMaxWidth()) {
-        if (header != null) {
-            val cells = header.children.filter { it.type == CELL }
-            Row(Modifier.fillMaxWidth()) {
-                cells.forEachIndexed { index, cell ->
-                    Box(
-                        Modifier
-                            .weight(weightOf(index))
-                            .padding(cellPadding(index, cells.size)),
-                    ) {
-                        SearchMarkdownAnchor(MarkdownComponentModel(model.content, cell, model.typography)) {
-                        SearchableTableText(
-                            content = model.content,
-                            cell = cell,
-                            style = style.copy(fontWeight = FontWeight.Medium),
-                        )
+    val totalWidth = columnWidths.fold(0.dp) { sum, width -> sum + width }
+    Box(Modifier.fillMaxWidth().preferHorizontalScroll().horizontalScroll(rememberScrollState())) {
+        Column(Modifier.width(totalWidth)) {
+            @Composable fun TableRow(row: ASTNode, heading: Boolean) {
+                val cells = row.children.filter { it.type == CELL }
+                Row {
+                    columnWidths.forEachIndexed { index, width ->
+                        Box(Modifier.width(width).padding(horizontal = 12.dp, vertical = 10.dp)) {
+                            cells.getOrNull(index)?.let { cell ->
+                                SearchMarkdownAnchor(MarkdownComponentModel(model.content, cell, model.typography)) {
+                                    SearchableTableText(model.content, cell,
+                                        if (heading) style.copy(fontWeight = FontWeight.Medium) else style)
+                                }
+                            }
                         }
                     }
                 }
+                MarkdownDivider()
             }
-            MarkdownDivider()
-        }
-        rows.forEach { row ->
-            val cells = row.children.filter { it.type == CELL }
-            Row(Modifier.fillMaxWidth()) {
-                cells.forEachIndexed { index, cell ->
-                    Box(
-                        Modifier
-                            .weight(weightOf(index))
-                            .padding(cellPadding(index, cells.size)),
-                    ) {
-                        SearchMarkdownAnchor(MarkdownComponentModel(model.content, cell, model.typography)) {
-                        SearchableTableText(
-                            content = model.content,
-                            cell = cell,
-                            style = style,
-                        )
-                        }
-                    }
-                }
-            }
-            MarkdownDivider()
+            header?.let { TableRow(it, true) }
+            rows.forEach { TableRow(it, false) }
         }
     }
 }
@@ -668,13 +633,6 @@ private fun SearchableTableText(content: String, cell: ASTNode, style: TextStyle
         pop()
     }
     LibraryMarkdownText(content = annotated, node = cell, style = style, sourceContent = content)
-}
-
-/** 单元格原文长度（用于列宽权重）；越界都钳一下，坏数据不该崩在布局里。 */
-private fun cellTextLength(content: String, cell: ASTNode): Int {
-    val start = cell.startOffset.coerceIn(0, content.length)
-    val end = cell.endOffset.coerceIn(start, content.length)
-    return content.substring(start, end).trim().length.coerceAtLeast(1)
 }
 
 /**
