@@ -1,6 +1,6 @@
 # SimpleChat
 
-> A lightweight, natively fast AI chat client for Android. Built with Jetpack Compose; the R8-minified release APK is about 3.8 MB.
+> An Android AI chat client built with Jetpack Compose, with long conversations, local history, and content export.
 
 **[中文](README.md) | English**
 
@@ -52,9 +52,11 @@ Good for:
 - **Images are validated before sending**: the real format is detected from the file header, formats the server does not accept are transcoded to JPEG locally, and unreadable images are skipped with a notice instead of breaking the conversation forever.
 - Model capability aware: when the selected model does not accept images, they are skipped with a notice instead of being rejected by the server.
 - Data out: JSON backup, **ZIP archive** (backup plus a Markdown document per conversation) and Markdown export; imports this app's backups, ZIP archives, Chatbox backups and DeepSeek official exports (deepseek_data-*.zip), with three import modes: add new only, overwrite same name, or keep both. Import results are reconciled item by item (how many in the archive, how many imported, which ones failed and why), so nothing disappears silently.
-- Search: full-text over titles and bodies, with hit snippets in the results.
+- Sharing: select question-and-answer groups and export a long image, paginated images, or Markdown. Copy text or use Android sharing. Image exports retain tables and math.
+- Attachments support selecting multiple images or files. Items are imported in order, and a failed item does not remove successful imports.
+- Search: full-text over titles and bodies, with hit snippets and an option to include inactive branches.
 - Long messages: collapsed past 10 lines, whole message stays tappable once expanded.
-- Appearance: dark mode, accent colours, font scale, follow the system.
+- Settings: Appearance groups theme, accent color, and font size. Conversation groups thinking-panel behavior and search scope.
 - Languages: interface, prompts and export templates in Chinese and English, switchable in settings (follow system / Simplified Chinese / English); typography is tiered per language (justified for Chinese, left-aligned for Western text).
 
 ## Not included
