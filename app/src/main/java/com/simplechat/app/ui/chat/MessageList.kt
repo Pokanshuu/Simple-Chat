@@ -3,7 +3,12 @@ package com.simplechat.app.ui.chat
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.text.selection.SelectionState
 import androidx.compose.runtime.withFrameNanos
@@ -186,24 +191,66 @@ fun MessageList(
         snapshotFlow { listState.isScrollInProgress }
             .collect { scrolling ->
                 // 只有"碰一下看元信息"是即时的：手指一动就收起。
-                // ⚠️ **选择文本不能跟着滚动静默退出**：选到一半往上翻一屏看上文是常规操作，
-                // 一滚就丢选区等于把"选完再复制"这条路堵死。
                 if (scrolling) peekedId = null
+                /*
+                 * 滚动也要收掉选择态。
+                 *
+                 * 本来想让它"滚了也不退"（翻上去看上文再复制），但 `SelectionContainer`
+                 * 在第一次触摸落下时就把选区清了 —— 顺序是：手指按下 → 框架清选区 →
+                 * 我们的手势才认出这是拖动。于是滚完之后选区已经没了、`selectingId`
+                 * 还在，长按菜单被 `interactive = false` 挡住，又回到"退不出去"的老问题。
+                 * 与其留一个看不见的模式，不如跟着框架一起收。
+                 */
+                if (scrolling && selectingId != null) selectingId = null
             }
     }
-
     /*
-     * 选择态下**点一下就退出**。
+     * 选择态下**点一下就退出**（滑动不算）。
      *
-     * 必须带 `onLongPress`（哪怕是空的）：长按正是"起选"的手势，
-     * 不给它一个消费者，一次长按会被当成"点了一下"而立刻把选择态关掉。
+     * ⚠️ 这里不能再用 `detectTapGestures`：它等的是"未被消费的 down"，
+     * 而这一条自己的 `SelectionContainer`、别的消息的 `combinedClickable`
+     * 都会先把 down 消费掉 —— 结果点哪儿都退不出，选择态一直留着，
+     * 连长按菜单都被 `interactive = false` 挡住（实测：选完点旁边一段，
+     * 选区消失了，但再长按弹不出菜单）。
+     *
+     * 改成在 **Initial 阶段**旁观：不消费 down（否则手柄拖不动），
+     * 只记录"按下 → 位移未过 touchSlop → 抬起"，抬手时才消费 up ——
+     * 被点的那条因此不会顺带触发"编辑 / 看元信息"。
      */
     val dismissSelectionOnTap = Modifier.pointerInput(selectingId) {
         if (selectingId == null) return@pointerInput
-        detectTapGestures(
-            onLongPress = { },
-            onTap = { selectingId = null },
-        )
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            var up: PointerInputChange? = null
+            var dragged = false
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                if (change.positionChange().getDistance() > viewConfiguration.touchSlop) {
+                    dragged = true
+                    break
+                }
+                if (change.changedToUp()) {
+                    up = change
+                    break
+                }
+            }
+            /*
+             * 只认「轻点」：按下到抬起短于长按阈值。
+             *
+             * 两个必须排除的按住：
+             * 1. 长按照样要弹菜单 —— 不能把长按当点击；
+             * 2. 进入选择态时注入的那次合成按住是 560ms（`SyntheticHoldMs`），
+             *    不排除的话它会被自己当成"点了一下"，选区刚出来就被自己关掉。
+             */
+            val tap = up != null && !dragged &&
+                (up.uptimeMillis - down.uptimeMillis) < viewConfiguration.longPressTimeoutMillis
+            if (tap) {
+                // 退出选择态本身就是这次点击的结果，不能再让被点的那条跟着响应
+                up?.consume()
+                selectingId = null
+            }
+        }
     }
 
     var viewport by remember { mutableStateOf(Rect.Zero) }
