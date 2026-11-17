@@ -223,8 +223,8 @@
     <string name="about_licenses">Open-source licenses</string>
     <string name="licenses_count">%1$d components</string>
     <string name="licenses_third_party">Third-party components</string>
-    <string name="licenses_reference_title">References (no code bundled)</string>
-    <string name="credit_deepseek_demo">DeepSeek Chat Demo (MIT) — referenced for the archive format and flow of DeepSeek chat-history import.</string>
+    <string name="licenses_reference_title">References</string>
+    <string name="credit_deepseek_demo">DeepSeek Chat Demo — chat history import</string>
     <string name="license_version">Version</string>
     <string name="license_type">License</string>
     <string name="license_copyright">Copyright</string>

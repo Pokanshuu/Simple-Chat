@@ -1883,6 +1883,10 @@ private fun AboutPage(onOpenLicenses: () -> Unit) {
         InfoRow(label = stringResource(R.string.about_version), value = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
         RowDivider(inset = 16.dp)
         InfoRow(label = stringResource(R.string.about_package), value = BuildConfig.APPLICATION_ID)
+        RowDivider(inset = 16.dp)
+        InfoRow(label = stringResource(R.string.license_type), value = APP_LICENSE)
+        RowDivider(inset = 16.dp)
+        InfoRow(label = stringResource(R.string.license_copyright), value = APP_COPYRIGHT)
     }
 
     /*
@@ -2049,19 +2053,17 @@ private fun LicensesPage() {
         }
     }
 
-    if (referenceCredits.isNotEmpty()) {
-        Spacer(Modifier.size(16.dp))
-        SettingsSectionLabel(stringResource(R.string.licenses_reference_title))
-        SettingsCard {
-            referenceCredits.forEachIndexed { index, textRes ->
-                if (index > 0) RowDivider(inset = 16.dp)
-                Text(
-                    text = stringResource(textRes),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.processText,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-                )
-            }
+    SettingsSectionLabel(stringResource(R.string.licenses_reference_title))
+
+    SettingsCard {
+        referenceCredits.forEachIndexed { index, textRes ->
+            if (index > 0) RowDivider(inset = 16.dp)
+            Text(
+                text = stringResource(textRes),
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.processText,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+            )
         }
     }
 

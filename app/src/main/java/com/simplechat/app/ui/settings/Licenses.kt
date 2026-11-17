@@ -41,6 +41,20 @@ internal fun licenseTextUrl(license: String): String = when (license) {
     else -> "https://spdx.org/licenses/"
 }
 
+/** 本应用自己的许可与版权。 */
+internal const val APP_LICENSE = "MIT"
+internal const val APP_COPYRIGHT = "Copyright © 2026 Pokanshu"
+
+/**
+ * 参考实现（**未随包分发代码**，仅作署名）。
+ *
+ * 只留 DeepSeek Chat Demo，并写明**参考的是哪一部分**（聊天记录导入），
+ * 避免笼统的「参考了某项目」变成模糊的版权主张。
+ */
+internal val referenceCredits: List<Int> = listOf(
+    R.string.credit_deepseek_demo,
+)
+
 /**
  * 随包分发的第三方组件。
  *
@@ -138,15 +152,4 @@ internal val thirdPartyLicenses: List<LicenseEntry> = listOf(
         copyright = "Copyright © 2014-2024 Knut Sveidqvist",
         projectUrl = "https://mermaid.js.org",
     ),
-)
-
-/**
- * 参考实现（**未随包分发任何代码**，仅作署名）。
- *
- * 只留 DeepSeek Chat Demo，且写明**参考的是哪一部分**（聊天记录导入的归档格式与流程），
- * 避免笼统的"参考了某项目"变成模糊的版权主张。
- * 刻意不列 URL：代码没有进来，给一个可能失效的地址反而会变成错误信息。
- */
-internal val referenceCredits: List<Int> = listOf(
-    R.string.credit_deepseek_demo,
 )
