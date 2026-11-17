@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -292,6 +293,14 @@ private fun MessageRow(
     onFoldToggle: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    /*
+     * 「选择文本」态（对齐官方长按菜单里的那一项）。
+     *
+     * 不常开是有原因的：`SelectionContainer` 也要用**长按**来起选，和本行的
+     * 「长按出菜单」是同一个手势。所以做成显式的两态 —— 菜单里点一下进入选择态，
+     * 这期间整行的点击/长按让给选区，点「完成」退出。
+     */
+    var selecting by remember(message.id) { mutableStateOf(false) }
     val isUser = message.role == MessageRole.USER
     // 流式未结束时不对这条给出编辑/删除入口，避免和落库打架
     val actionable = !message.streaming
@@ -310,6 +319,10 @@ private fun MessageRow(
             AppMenuItem(stringResource(R.string.action_copy), AppIcons.Copy) {
                 menuOpen = false
                 onCopy()
+            }
+            AppMenuItem(stringResource(R.string.action_select_text), AppIcons.TextSelect) {
+                menuOpen = false
+                selecting = true
             }
             if (!isUser) {
                 AppMenuItem(stringResource(R.string.msg_regenerate), AppIcons.Refresh) {
@@ -346,7 +359,7 @@ private fun MessageRow(
     Column(modifier = Modifier.fillMaxWidth()) {
         if (message.content.length > LARGE_MESSAGE_CHARS || (message.reasoning?.length ?: 0) > LARGE_MESSAGE_CHARS) {
             Column(Modifier.then(pressListener).combinedClickable(
-                enabled = actionable,
+                enabled = actionable && !selecting,
                 onClick = if (isUser) onEdit else onTogglePeek,
                 onLongClick = { menuOpen = true },
             )) {
@@ -356,7 +369,7 @@ private fun MessageRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 CompositionLocalProvider(LocalSearchHighlight provides null) { PagedMessageBody(it) }
             }
-            PagedMessageBody(message.content, markdown = !isUser)
+            SelectableText(selecting) { PagedMessageBody(message.content, markdown = !isUser) }
             message.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             menu()
             }
@@ -364,7 +377,8 @@ private fun MessageRow(
         else when (message.role) {
             MessageRole.USER -> UserBubble(
                 message = message,
-                interactive = actionable,
+                interactive = actionable && !selecting,
+                selecting = selecting,
                 // 点一下就进「修改输入」（对齐官方入口习惯）
                 onClick = onEdit,
                 onLongClick = { menuOpen = true },
@@ -376,7 +390,8 @@ private fun MessageRow(
 
             MessageRole.ASSISTANT -> AssistantBlock(
                 message = message,
-                interactive = actionable,
+                interactive = actionable && !selecting,
+                selecting = selecting,
                 autoCollapseThinking = autoCollapseThinking,
                 // 点一下 = 看这条是谁写的、占多少 token（再点收起）
                 onClick = onTogglePeek,
@@ -388,6 +403,12 @@ private fun MessageRow(
                 // 与用户气泡同一条补偿：展开思考内容时"上方固定、向下展开"
                 onFoldToggle = onFoldToggle,
             )
+        }
+
+        // 选择态提示条：告诉用户现在是"在选字"，并给一个明确的出口
+        if (selecting) {
+            Spacer(Modifier.size(MessageGap))
+            SelectionHintBar(onDone = { selecting = false })
         }
 
         /*
@@ -444,6 +465,8 @@ fun UserBubble(
     message: UiMessage,
     modifier: Modifier = Modifier,
     interactive: Boolean = true,
+    /** 「选择文本」态：正文外包一层 `SelectionContainer`（见 `MessageRow`）。 */
+    selecting: Boolean = false,
     onClick: () -> Unit = {},
     onLongClick: () -> Unit = {},
     onOpenImage: (Attachment) -> Unit = {},
@@ -600,41 +623,49 @@ fun UserBubble(
                                     },
                                 ),
                             ) {
-                                if (expanded) {
-                                    /*
-                                     * 展开态：切成多块。
-                                     * 外面套一个**无间距**的 Column —— 外层那个
-                                     * `spacedBy(8.dp)` 是给"附件 ↔ 正文"用的，
-                                     * 块之间加间距会凭空多出一堆空行。
-                                     */
-                                    chunks.forEach { chunk ->
-                                        val (searchModifier, onSearchLayout) = rememberSearchTextDecoration(chunk)
+                                /*
+                                 * 选择态：正文外面套一层 `SelectionContainer`，长按即可起选、
+                                 * 拖动拉选区，系统工具栏自带复制 / 全选。
+                                 *
+                                 * 平时不套：那样长按会被选区抢走，而本行的长按是**菜单**。
+                                 */
+                                SelectableText(selecting) {
+                                    if (expanded) {
+                                        /*
+                                         * 展开态：切成多块。
+                                         * 外面套一个**无间距**的 Column —— 外层那个
+                                         * `spacedBy(8.dp)` 是给"附件 ↔ 正文"用的，
+                                         * 块之间加间距会凭空多出一堆空行。
+                                         */
+                                        chunks.forEach { chunk ->
+                                            val (searchModifier, onSearchLayout) = rememberSearchTextDecoration(chunk)
+                                            Text(
+                                                text = chunk,
+                                                modifier = searchModifier,
+                                                onTextLayout = onSearchLayout,
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                color = colors.onUserBubble,
+                                            )
+                                        }
+                                    } else {
+                                        /*
+                                         * ⚠️ 收起态这个 `Text` **必须始终被组合**。
+                                         *
+                                         * 它的 `onTextLayout` 是唯一能判定"是否超行"的
+                                         * 信号源。先前把它放在 `if (folded)` 里，
+                                         * 而 `folded` 初始为 false —— 于是这个 Text
+                                         * 永远不会被组合、`folded` 永远是 false，
+                                         * 折叠功能**从来没生效过**（一个自锁的死循环）。
+                                         */
                                         Text(
-                                            text = chunk,
-                                            modifier = searchModifier,
-                                            onTextLayout = onSearchLayout,
+                                            text = message.content,
                                             style = MaterialTheme.typography.bodyLarge,
                                             color = colors.onUserBubble,
+                                            maxLines = UserBubbleCollapsedLines,
+                                            overflow = TextOverflow.Clip,
+                                            onTextLayout = { folded = it.didOverflowHeight },
                                         )
                                     }
-                                } else {
-                                    /*
-                                     * ⚠️ 收起态这个 `Text` **必须始终被组合**。
-                                     *
-                                     * 它的 `onTextLayout` 是唯一能判定"是否超行"的
-                                     * 信号源。先前把它放在 `if (folded)` 里，
-                                     * 而 `folded` 初始为 false —— 于是这个 Text
-                                     * 永远不会被组合、`folded` 永远是 false，
-                                     * 折叠功能**从来没生效过**（一个自锁的死循环）。
-                                     */
-                                    Text(
-                                        text = message.content,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = colors.onUserBubble,
-                                        maxLines = UserBubbleCollapsedLines,
-                                        overflow = TextOverflow.Clip,
-                                        onTextLayout = { folded = it.didOverflowHeight },
-                                    )
                                 }
                             }
 
@@ -687,6 +718,8 @@ fun AssistantBlock(
     message: UiMessage,
     modifier: Modifier = Modifier,
     interactive: Boolean = true,
+    /** 「选择文本」态：正文外包一层 `SelectionContainer`（见 `MessageRow`）。 */
+    selecting: Boolean = false,
     onClick: () -> Unit = {},
     onLongClick: () -> Unit = {},
     onOpenImage: (Attachment) -> Unit = {},
@@ -808,10 +841,12 @@ fun AssistantBlock(
          * 流式的开销靠两道闸压住：上游按固定节奏采样（见 `MarkdownText`），
          * 下游逐块渲染、只有尾块重解析（见 `MarkdownTextBlocks`）。
          */
-        MarkdownWithMath(
-            content = answer,
-            streaming = message.streaming,
-        )
+        SelectableText(selecting) {
+            MarkdownWithMath(
+                content = answer,
+                streaming = message.streaming,
+            )
+        }
 
         // 正文下方的来源条：与正文角标同一套编号，两条路都能点开
         if (timeline != null && timeline.sources.isNotEmpty()) {
@@ -859,7 +894,7 @@ fun AssistantBlock(
     }
 }
 
-/** 消息下方操作栏：复制 / 重新生成 / 编辑 / 删除，以及版本切换器。 */
+/** 消息下方操作栏：复制 / 续写 / 朗读 / 编辑 / 删除，以及版本切换器。 */
 @Composable
 private fun MessageActions(
     message: UiMessage,
@@ -882,6 +917,9 @@ private fun MessageActions(
      *
      * 先前的毛病是版本切换器用 26dp/14dp、操作图标用 30dp/16dp，
      * 同一行里两种大小并排，chevron 明显小一圈、还挤在一起。
+     *
+     * ★ 「重新生成」放在**行尾最右**（对齐官方：其余操作靠左，刷新单独压右边）。
+     * 位置本身就是语义：它是对整条回复的动作，不是"又一个编辑按钮"。
      */
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -900,8 +938,7 @@ private fun MessageActions(
 
         ActionIcon(AppIcons.Copy, stringResource(R.string.action_copy), onCopy, colors)
         if (message.role == MessageRole.ASSISTANT) {
-            ActionIcon(AppIcons.Refresh, stringResource(R.string.msg_regenerate), onRegenerate, colors)
-            // 续写紧挨着「重新生成」：两者是同一件事的两个方向（重来 / 接着写）
+            // 续写紧挨着「重新生成」原本的位置，两者是同一件事的两个方向（重来 / 接着写）
             if (canContinue) {
                 ActionIcon(AppIcons.Play, stringResource(R.string.msg_continue), onContinue, colors)
             }
@@ -921,23 +958,61 @@ private fun MessageActions(
         ActionIcon(AppIcons.Trash, stringResource(R.string.action_delete), onDelete, colors)
 
         /*
-         * 模型名 · token 数 —— **碰一下才出现，就在按钮旁边**。
+         * 中间这块是**弹性空白**：碰一下消息时模型名 · token 数出现在这，
+         * 不碰就留空 —— 而右边的刷新按钮因此永远钉在同一处，不会随元信息出现而左右横跳。
          *
-         * 用 `weight(1f, fill = false)` 而不是加一个 Spacer：
-         * 让它在按钮之后的**剩余宽度**里取，长模型名会自动省略号，
-         * 而不是把按钮挤出屏幕。
+         * `weight(1f)`（而不是原来的 `fill = false`）是关键：只有**占满**剩余宽度，
+         * 后面的刷新按钮才会被推到行尾。
          */
         AnimatedVisibility(
             visible = peeked,
             enter = fadeIn(tween(160)),
             exit = fadeOut(tween(120)),
-            modifier = Modifier.weight(1f, fill = false),
+            modifier = Modifier.weight(1f),
         ) {
             MessageMeta(
                 message = message,
                 modifier = Modifier.padding(start = ActionGap + 8.dp),
             )
         }
+
+        if (message.role == MessageRole.ASSISTANT) {
+            ActionIcon(AppIcons.Refresh, stringResource(R.string.msg_regenerate), onRegenerate, colors)
+        }
+    }
+}
+
+/**
+ * 「选择文本」态的内容包装。
+ *
+ * 只在用户从长按菜单里**明确进入**选择态时才套 `SelectionContainer`：
+ * 平时套着的话，长按会被选区抢走，而长按是这条消息的菜单入口。
+ */
+@Composable
+private fun SelectableText(selecting: Boolean, content: @Composable () -> Unit) {
+    if (selecting) SelectionContainer { content() } else content()
+}
+
+/** 选择态提示条：一句说明 + 明确的出口。 */
+@Composable
+private fun SelectionHintBar(onDone: () -> Unit) {
+    val colors = LocalChatColors.current
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.End,
+    ) {
+        Text(
+            text = stringResource(R.string.msg_select_hint),
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.placeholder,
+        )
+        Spacer(Modifier.size(8.dp))
+        CapsuleButton(
+            text = stringResource(R.string.action_done),
+            onClick = onDone,
+            leadingIcon = AppIcons.Check,
+        )
     }
 }
 

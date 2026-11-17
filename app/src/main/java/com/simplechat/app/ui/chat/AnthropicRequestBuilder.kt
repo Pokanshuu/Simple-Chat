@@ -68,14 +68,7 @@ internal fun buildAnthropicRequest(
 ): AnthropicRequest {
     val messages = mutableListOf<AnthropicMessageParam>()
 
-    path.forEachIndexed { index, message ->
-        // 提醒快照只挂在本轮提问之前，且**只有扩展协议有**这个角色
-        if (deepSeekExtensions && index == path.lastIndex && latestReminder != null) {
-            messages += AnthropicMessageParam(
-                role = AnthropicMessageParam.RoleReminder,
-                content = JsonPrimitive(latestReminder),
-            )
-        }
+    path.forEach { message ->
         if (message.role == MessageRole.USER) {
             messages += userParam(message)
         } else {
@@ -104,6 +97,34 @@ internal fun buildAnthropicRequest(
             messages += AnthropicMessageParam(
                 role = AnthropicMessageParam.RoleAssistant,
                 content = JsonArray(content),
+            )
+        }
+    }
+
+    /*
+     * ★ **提醒必须紧挨着一条 `user`，而且要在它前面。**
+     *
+     * 服务端对 `latest_reminder` 有一条硬校验（真机 400 原文）：
+     * `messages.N: a 'latest_reminder' message must be immediately followed by a 'user' message`。
+     *
+     * 先前是"插在路径最后一条之前" —— 只要最后一条是 assistant 就踩线：
+     * 「编辑 AI 回复 → 保存并发送」正是这种形状（新回复是流式的、不在路径里，
+     * 路径以被编辑的那条 assistant 结尾），于是这条路径上必 400。
+     *
+     * 也不能简单地"插到最末"：末尾是 assistant 时，提醒后面还是没有 user。
+     * 唯一对所有形状都成立的位置是：**最后一条 user 前面**。
+     * 一条 user 都没有（理论上到不了这里，前面会抛 `error_no_sendable_messages`）
+     * 就不发提醒 —— 少一条时间信息远好过整轮 400。
+     */
+    if (deepSeekExtensions && latestReminder != null) {
+        val anchor = messages.indexOfLast { it.role == AnthropicMessageParam.RoleUser }
+        if (anchor >= 0) {
+            messages.add(
+                anchor,
+                AnthropicMessageParam(
+                    role = AnthropicMessageParam.RoleReminder,
+                    content = JsonPrimitive(latestReminder),
+                ),
             )
         }
     }
@@ -408,7 +429,9 @@ internal const val ReadLinkKind = "read_link"
  * - 空消息丢掉（空白正文 / 空块数组都会 400）；
  * - **同角色相邻两条合并**（正文用空行连接，块数组则拼起来）；
  * - 开头的 `assistant` 丢掉（第一条必须是 user）；
- * - `latest_reminder` 是扩展角色，原样保留（只有官方目标会走这里）。
+ * - `latest_reminder` 是扩展角色，原样保留 —— 但**只在它后面紧跟 user 时**保留：
+ *   服务端会硬校验这一条（`a 'latest_reminder' message must be immediately followed
+ *   by a 'user' message`），合并 / 丢空消息之后落单的提醒宁可丢掉，也不能发出去换 400。
  *
  * 纯函数，有单测。只影响请求，不碰本地数据。
  */
@@ -430,11 +453,16 @@ internal fun sanitizeTurns(messages: List<AnthropicMessageParam>): List<Anthropi
             out += message
         }
     }
-    // 第一条必须是 user：导入数据 / 删过消息的历史可能以 assistant 开头
-    while (out.isNotEmpty() && out.first().role == AnthropicMessageParam.RoleAssistant) {
-        out.removeAt(0)
+    /*
+     * 提醒角色还有一条硬约束：**后面必须紧跟一条 user**。
+     * 上面丢空消息之后，提醒可能落到末尾、或落到一条 assistant 前面 —— 都是 400。
+     */
+    val kept = out.filterIndexed { index, message ->
+        message.role != AnthropicMessageParam.RoleReminder ||
+            out.getOrNull(index + 1)?.role == AnthropicMessageParam.RoleUser
     }
-    return out
+    // 第一条必须是 user：导入数据 / 删过消息的历史可能以 assistant 开头
+    return kept.dropWhile { it.role == AnthropicMessageParam.RoleAssistant }
 }
 
 /** 这条消息有没有可发的内容（空字符串 / 空白文本块 / 空数组都算没有）。 */

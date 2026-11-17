@@ -317,6 +317,27 @@ interface MessageDao {
     )
 
     /**
+     * 「保存」编辑后的消息：**原地**换掉正文（可连同附件与内容块）。
+     *
+     * 用户对「保存」的理解就是"改这条"，而不是"再长出一条" —— 早先走的是
+     * "新增版本"（`addActiveVariant`），于是只改个错别字也会冒出一组 `‹ 1/2 ›`，
+     * 并且新版本没有子树：会话下半段当场消失，看起来就像"保存把我后面的聊天删了"。
+     *
+     * `timeline` 必须一起写：扩展通道的界面与请求都读它（见 `rewriteTimelineText`），
+     * 只改 `content` 会得到"保存了却没变"。
+     *
+     * 状态 / 用时统计 / 思考内容都不动：保存改的是文字，不是这次请求的结果。
+     */
+    @Query(
+        """
+        UPDATE messages
+        SET content = :content, attachments = :attachments, timeline = :timeline
+        WHERE id = :id
+        """,
+    )
+    suspend fun editContent(id: String, content: String, attachments: String?, timeline: String?)
+
+    /**
      * 把卡在 `STREAMING` 的消息判为中断。
      *
      * 进程被杀 / 崩溃时，最后那条 assistant 会永远停在 STREAMING ——

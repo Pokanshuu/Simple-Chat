@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import com.simplechat.app.R
 import com.simplechat.app.ui.common.ContainerShape
+import com.simplechat.app.ui.common.layeredShadow
 import com.simplechat.app.data.TokenEstimate
 import com.simplechat.app.db.CompactionEntity
 import com.simplechat.app.net.ModelInfo
@@ -92,12 +93,13 @@ fun InputPanel(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
-                .shadow(
-                    elevation = elevation,
+                .layeredShadow(
                     shape = shape,
-                    clip = false,
-                    ambientColor = AppShadow.PanelAmbient,
-                    spotColor = AppShadow.PanelSpot,
+                    elevation = elevation,
+                    ambient = AppShadow.PanelAmbient,
+                    spot = AppShadow.PanelSpot,
+                    contactElevation = elevation / 4,
+                    contactColor = AppShadow.PanelContactColor,
                 )
                 .clip(shape)
                 .background(colors.card)

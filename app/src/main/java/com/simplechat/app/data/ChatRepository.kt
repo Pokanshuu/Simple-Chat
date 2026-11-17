@@ -585,8 +585,11 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     /**
      * 在 [parentId] 下追加一个新版本并立即激活它。
      *
-     * 「重新生成」与「编辑」都走这里。旧版本**连同它的子树**原样留着 ——
+     * 「重新生成」与「编辑后重发」都走这里。旧版本**连同它的子树**原样留着 ——
      * 这就是"分支"：切回去的时候，旧分支的下游也一起回来。
+     *
+     * ⚠️ 单纯的「保存」**不走这里**（那是原地改文字，见 [editMessageInPlace]）：
+     * 只改个错别字不该长出一条新分支，更不该让会话下半段当场消失。
      */
     suspend fun addActiveVariant(
         conversationId: String,
@@ -620,6 +623,37 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             stopReason = null,
         )
         toUiWithCounts(conversationId, entity.copy(ttftMs = ttftMs, tps = tps, thinkingMs = thinkingMs))
+    }
+
+    /**
+     * 「保存」编辑后的回复：**原地**改文字，不新增版本。
+     *
+     * 与 [addActiveVariant] 是两种语义，不能混：
+     * - 这里 = 用户只是在改这条（错别字、语气、删掉一段），旧文本不需要留着；
+     * - 那边 = 换一份新的回答（重新生成 / 编辑后继续生成），旧的那份要能切回去。
+     *
+     * 原地改还有一个必须做对的副作用：`timeline` 里的正文块要一起换，否则
+     * 扩展通道的界面与请求都还在用旧文本（见 `rewriteTimelineText`）。
+     * 传 `timeline = null` 表示这条本来就没有内容块（OpenAI 通道 / 老数据）。
+     */
+    suspend fun editMessageInPlace(
+        id: String,
+        content: String,
+        attachments: List<Attachment> = emptyList(),
+        timeline: List<ReplyBlock> = emptyList(),
+    ) = db.withTransaction {
+        messages.editContent(
+            id = id,
+            content = content,
+            attachments = Attachments.encode(attachments),
+            timeline = ReplyBlocks.encode(timeline),
+        )
+        // 落盘附件的引用登记：改了附件也要保证删会话时能一起清干净
+        val conversationId = messages.exportHeader(id)?.conversationId
+        val refs = attachments.mapNotNull { it.path }.distinct()
+        if (conversationId != null && refs.isNotEmpty()) {
+            attachmentRefs.upsertAll(refs.map { AttachmentRefEntity(path = it, conversationId = conversationId) })
+        }
     }
 
     /** 某个父亲下、指定版本号对应的消息 id（切版本时用）。 */

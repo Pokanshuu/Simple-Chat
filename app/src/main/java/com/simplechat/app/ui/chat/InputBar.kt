@@ -61,9 +61,9 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.withTimeoutOrNull
 import com.simplechat.app.R
 import com.simplechat.app.ui.common.ContainerShape
+import com.simplechat.app.ui.common.layeredShadow
 import com.simplechat.app.ui.common.AppIcons
 import com.simplechat.app.ui.common.AppShadow
-import com.simplechat.app.ui.common.ContainerShape
 import com.simplechat.app.data.TokenEstimate
 import com.simplechat.app.data.Res
 import com.simplechat.app.ui.common.IconCircleButton
@@ -191,13 +191,15 @@ fun InputBar(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                // 与菜单同一个投影族：先 shadow 再 clip，投影才不会被自家圆角裁掉
-                .shadow(
-                    elevation = shadowElevation,
+                // 与菜单同一个投影族：先 shadow 再 clip，投影才不会被自家圆角裁掉。
+                // 双层（宽 + 贴边）—— 单层只有一种扩散，大面板的边缘会发虚。
+                .layeredShadow(
                     shape = ContainerShape,
-                    clip = false,
-                    ambientColor = AppShadow.PanelAmbient,
-                    spotColor = AppShadow.PanelSpot,
+                    elevation = shadowElevation,
+                    ambient = AppShadow.PanelAmbient,
+                    spot = AppShadow.PanelSpot,
+                    contactElevation = shadowElevation / 4,
+                    contactColor = AppShadow.PanelContactColor,
                 )
                 .clip(shape)
                 .background(colors.card)

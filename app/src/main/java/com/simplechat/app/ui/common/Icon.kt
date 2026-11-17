@@ -1221,4 +1221,31 @@ object AppIcons {
             }
         }
     }
+
+    /**
+     * 选择文本。
+     *
+     * Lucide 的 `text-select` 是**虚线框 + I 形光标**：虚框表示"进入选择态"，
+     * I 字是光标本身。24×24 里虚框贴边、光标居中，缩到 16dp 也认得出。
+     */
+    val TextSelect: ImageVector by lazy {
+        vector("TextSelect") {
+            stroke {
+                // 虚线框的四个角（每段拐一个 3f 圆角，其余边留空 = 虚线感）
+                moveTo(9f, 3f); horizontalLineTo(6f)
+                arcToRelative(3f, 3f, 0f, false, false, -3f, 3f)
+                moveTo(3f, 14f); verticalLineTo(18f)
+                arcToRelative(3f, 3f, 0f, false, false, 3f, 3f)
+                moveTo(14f, 21f); horizontalLineTo(18f)
+                arcToRelative(3f, 3f, 0f, false, false, 3f, -3f)
+                moveTo(21f, 10f); verticalLineTo(6f)
+                arcToRelative(3f, 3f, 0f, false, false, -3f, -3f)
+                horizontalLineTo(15f)
+                // 中间的 I 形光标
+                moveTo(9f, 8f); horizontalLineTo(15f)
+                moveTo(9f, 16f); horizontalLineTo(15f)
+                moveTo(12f, 8f); verticalLineTo(16f)
+            }
+        }
+    }
 }

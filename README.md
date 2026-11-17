@@ -4,7 +4,7 @@
 
 **中文 | [English](README.en.md)**
 
-[![Version](https://img.shields.io/badge/version-1.1.4-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
+[![Version](https://img.shields.io/badge/version-1.1.5-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## 简介
@@ -179,7 +179,7 @@ app/src/main/java/com/simplechat/app/
 
 ## 文档
 
-设计文档、实现记录与变更记录见 [`docs/README.md`](docs/README.md)，代码注释中的 `§` 编号对应这些文档。历史记录保留当时的版本与验证边界；当前发布说明见 [`RELEASE_NOTES_v1.1.4.md`](RELEASE_NOTES_v1.1.4.md)。
+设计文档、实现记录与变更记录见 [`docs/README.md`](docs/README.md)，代码注释中的 `§` 编号对应这些文档。历史记录保留当时的版本与验证边界；当前发布说明见 [`RELEASE_NOTES_v1.1.5.md`](RELEASE_NOTES_v1.1.5.md)。
 
 相关入口：
 

@@ -94,4 +94,25 @@ class PcmWriterTest {
         assertArrayEquals(source, recorder.bytes())
         assertTrue("应当多次调用直到写完", calls > 1)
     }
+
+    /**
+     * 收尾时要靠这个计数判断"还有多少帧没播"（见 `SpeechOutput.awaitPlaybackEnd`），
+     * 所以它必须与**真正写进轨道**的字节数一致：半个采样（carry）不算、WAV 头不算。
+     */
+    @Test
+    fun `已写入字节数与实际写入轨道的字节数一致`() {
+        val header = ByteArray(44).apply {
+            this[0] = 'R'.code.toByte(); this[1] = 'I'.code.toByte()
+            this[2] = 'F'.code.toByte(); this[3] = 'F'.code.toByte()
+            this[8] = 'W'.code.toByte(); this[9] = 'A'.code.toByte()
+            this[10] = 'V'.code.toByte(); this[11] = 'E'.code.toByte()
+        }
+        val body = pcm(1001) // 奇数长度：最后一个字节留在 carry 里，不算写过
+        val recorder = Recorder()
+        val writer = PcmWriter { buffer, offset, length -> recorder.write(buffer, offset, length) }
+        val stream = header + body
+        writer.write(stream, stream.size)
+        assertEquals(1000L, writer.bytesWritten)
+        assertEquals(recorder.bytes().size.toLong(), writer.bytesWritten)
+    }
 }

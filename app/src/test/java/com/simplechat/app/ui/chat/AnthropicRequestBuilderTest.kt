@@ -4,6 +4,7 @@ import com.simplechat.app.data.Attachment
 import com.simplechat.app.net.ReplyBlock
 import com.simplechat.app.net.anthropic.AnthropicMessageParam
 import com.simplechat.app.net.anthropic.AnthropicTool
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
@@ -129,6 +130,48 @@ class AnthropicRequestBuilderTest {
     fun `没有提醒时不插空消息`() {
         val request = build(listOf(user("你好")))
         assertEquals(1, request.messages.size)
+    }
+
+    /**
+     * 真机 400 原文：
+     * `messages.9: a 'latest_reminder' message must be immediately followed by a 'user' message`。
+     *
+     * 「编辑 AI 回复 → 保存并发送」正是这条路径：新回复还在流式、不在路径里，
+     * 路径以**被编辑的那条 assistant** 结尾，而提醒原先插在"路径最后一条之前"——
+     * 于是提醒后面跟的是 assistant，服务端直接拒。
+     */
+    @Test
+    fun `路径以 assistant 结尾时提醒仍然紧跟 user`() {
+        val request = build(
+            listOf(user("问"), assistant("被改过的回答")),
+            reminder = "2026-11-14,星期六,杭州,Android,中文",
+        )
+        val roles = request.messages.map { it.role }
+        assertEquals(listOf(AnthropicMessageParam.RoleReminder, "user", "assistant"), roles)
+    }
+
+    @Test
+    fun `续写时提醒落在最后一条 user 前面`() {
+        val prefix = assistant("写到一半", timeline = listOf(ReplyBlock.Text("写到一半")))
+        val request = build(
+            listOf(user("写故事")),
+            reminder = "2026-11-14,星期六,杭州",
+            prefix = prefix,
+        )
+        val roles = request.messages.map { it.role }
+        assertEquals(listOf(AnthropicMessageParam.RoleReminder, "user", "assistant"), roles)
+    }
+
+    @Test
+    fun `落单的提醒会被整理掉`() {
+        // 提醒后面只剩 assistant（合并 / 丢空消息之后可能出现）：留着就是 400
+        val kept = sanitizeTurns(
+            listOf(
+                AnthropicMessageParam(AnthropicMessageParam.RoleReminder, JsonPrimitive("提醒")),
+                AnthropicMessageParam(AnthropicMessageParam.RoleAssistant, JsonArray(emptyList())),
+            ),
+        )
+        assertTrue(kept.none { it.role == AnthropicMessageParam.RoleReminder })
     }
 
     // ── 用户消息与附件 ────────────────────────────────────

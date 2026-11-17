@@ -583,8 +583,8 @@ fun CapsuleButton(
 /** 菜单宽度。**固定值** —— 宽度随内容浮动会让同一组件在每处长不一样。 */
 val MenuWidth = 208.dp
 
-/** 菜单项固定行高。 */
-private val MenuItemHeight = 44.dp
+/** 菜单项固定行高。46dp：离 48dp 的触控下限只差一点，视觉上又不至于太松散。 */
+private val MenuItemHeight = 46.dp
 
 /** 菜单与锚点的间隙。 */
 private val MenuGap = 8.dp
@@ -595,7 +595,7 @@ private val MenuGap = 8.dp
  * `Popup` 的窗口尺寸就是内容尺寸，阴影画在内容之外的部分会被直接裁掉 ——
  * 表现是浮层边缘"阴影断了"。预留一圈后阴影才能自然扩散。
  */
-private val MenuShadowBleed = 26.dp
+private val MenuShadowBleed = 30.dp
 
 /**
  * 投影规格。**两档，全应用统一**。
@@ -618,10 +618,57 @@ object AppShadow {
     val PanelSpot = Color.Black.copy(alpha = 0.14f)
 
     /** 浮层（菜单）与抽屉：需要明确"浮起来"。 */
-    val RaisedElevation = 14.dp
-    val RaisedAmbient = Color.Black.copy(alpha = 0.16f)
-    val RaisedSpot = Color.Black.copy(alpha = 0.22f)
+    val RaisedElevation = 16.dp
+    val RaisedAmbient = Color.Black.copy(alpha = 0.18f)
+    val RaisedSpot = Color.Black.copy(alpha = 0.26f)
+
+    /**
+     * 贴边那一层的厚度。
+     *
+     * 单层大投影的问题是**边界发虚**：卡片像悬在半空、边缘糊掉，
+     * 深色背景上尤其明显。再叠一层很薄的窄投影，边缘立刻"落地"，
+     * 而远处那片淡阴影照旧化开 —— 这才是卡片浮起来的样子。
+     */
+    val ContactElevation = 3.dp
+    val ContactColor = Color.Black.copy(alpha = 0.10f)
+
+    /** 输入栏的贴边层更薄：它比菜单大得多，同一厚度会显脏。 */
+    val PanelContactElevation = 2.dp
+    val PanelContactColor = Color.Black.copy(alpha = 0.07f)
 }
+
+/**
+ * **双层**投影：远处化开 + 贴边收拢。
+ *
+ * 为什么要两层：`Modifier.shadow` 一次只能给一种扩散。只给大范围 → 边缘发虚
+ * （卡片像飘着）；只给贴边 → 没有"浮起来"的距离感。两层叠起来，
+ * 宽的那层负责氛围、窄的那层负责边界。
+ *
+ * 顺序要紧：**先宽后窄**、且都在 `background` 之前 —— 阴影永远垫在卡片底下。
+ * `clip = false` 也是必须的，否则投影会被自家圆角裁掉一圈。
+ */
+fun Modifier.layeredShadow(
+    shape: androidx.compose.ui.graphics.Shape,
+    elevation: Dp,
+    ambient: Color,
+    spot: Color,
+    contactElevation: Dp,
+    contactColor: Color,
+): Modifier = this
+    .shadow(
+        elevation = elevation,
+        shape = shape,
+        clip = false,
+        ambientColor = ambient,
+        spotColor = spot,
+    )
+    .shadow(
+        elevation = contactElevation,
+        shape = shape,
+        clip = false,
+        ambientColor = contactColor,
+        spotColor = contactColor,
+    )
 
 /**
  * 菜单定位。两条规则，按触发方式区分：
@@ -871,12 +918,13 @@ fun AppMenu(
                         if (touchPoint != null && aboveAnchor[0]) 1f else 0f,
                     )
                 }
-                .shadow(
-                    elevation = AppShadow.RaisedElevation,
+                .layeredShadow(
                     shape = MenuShape,
-                    clip = false,
-                    ambientColor = AppShadow.RaisedAmbient,
-                    spotColor = AppShadow.RaisedSpot,
+                    elevation = AppShadow.RaisedElevation,
+                    ambient = AppShadow.RaisedAmbient,
+                    spot = AppShadow.RaisedSpot,
+                    contactElevation = AppShadow.ContactElevation,
+                    contactColor = AppShadow.ContactColor,
                 )
                 .clip(MenuShape)
                 .background(colors.menuBackground)

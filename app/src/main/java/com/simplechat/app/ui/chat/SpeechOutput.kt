@@ -363,7 +363,21 @@ class SpeechOutputController(private val context: Context) {
                     }
                     // 短句可能连预滚量都凑不满：流结束时把剩下的放出来，别憋着不响。
                     // 用户按了停止就不该再开嗓（否则停了还会冒出一截声音）。
-                    if (generation == playbackGeneration && !stopRequested) gate.finish()
+                    if (generation == playbackGeneration && !stopRequested) {
+                        gate.finish()
+                        /*
+                         * ★ **写完不等于播完。**
+                         *
+                         * `AudioTrack.write` 只是把数据塞进缓冲（这里整整 1 秒 / 48000 字节），
+                         * `finally` 里紧接着 `pause()` + `flush()` + `release()` 会把还没播出去的
+                         * 尾巴一起丢掉 —— 用户听到的就是"最后几个字读不到"。
+                         * 所以在收尾之前等播放头追上已写入的帧数（见 [awaitPlaybackEnd]）。
+                         */
+                        awaitPlaybackEnd(
+                            track = created,
+                            writtenFrames = writer.bytesWritten / DeepSeekTts.BYTES_PER_FRAME,
+                        )
+                    }
                     logPlayback(created, createdAt, firstPcmAt)
                 } catch (cancelled: CancellationException) {
                     // 用户停止 / 被新的朗读顶掉：不是错误
@@ -382,6 +396,41 @@ class SpeechOutputController(private val context: Context) {
                 failure?.let { error = it }
             }
         }
+    }
+
+    /**
+     * 等轨道把**缓冲区里剩下的音频**播完。
+     *
+     * ### 为什么要等
+     *
+     * `AudioTrack.write` 返回只代表"数据进了缓冲"，不代表"已经播出来"。
+     * 轨道缓冲是 1 秒（24 kHz × 2 B），流结束后立刻 `pause()` / `flush()` / `release()`
+     * 会把这段还没播的尾巴整段丢掉 —— 真机反馈的"朗读提前截断、最后几个字听不到"
+     * 就是这一处（一句话末尾一秒 ≈ 三四个汉字）。
+     *
+     * ### 判据
+     *
+     * `playbackHeadPosition` 是"已经播出去的帧数"，让它追上"已经交给轨道的帧数"
+     * 就说明缓冲空了。轮询间隔 20ms 足够细（人耳感知不到），也不会把 IO 线程占满。
+     *
+     * 超时兜底：设备欠载 / 调度异常时不能把 IO 线程永远挂在这里 —— 那时这一秒
+     * 本来也播不出来，记一行日志就好。用户按了停止则立即返回（停止就该立刻没声）。
+     */
+    private fun awaitPlaybackEnd(track: AudioTrack, writtenFrames: Long) {
+        var played = runCatching { track.playbackHeadPosition.toLong() and UnsignedIntMask }
+            .getOrNull() ?: return
+        var remaining = pendingPlaybackFrames(writtenFrames, played)
+        if (remaining <= 0L) return
+        val deadline = SystemClock.elapsedRealtime() + drainBudgetMs(remaining)
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (stopRequested) return
+            played = runCatching { track.playbackHeadPosition.toLong() and UnsignedIntMask }
+                .getOrNull() ?: return
+            remaining = pendingPlaybackFrames(writtenFrames, played)
+            if (remaining <= 0L) return
+            SystemClock.sleep(PlaybackPollMs)
+        }
+        Log.w(TtsLogTag, "官方朗读收尾超时：仍有 $remaining 帧（约 ${remaining * 1000 / DeepSeekTts.SAMPLE_RATE}ms）未播完")
     }
 
     /**
@@ -558,8 +607,36 @@ class SpeechOutputController(private val context: Context) {
          * 出来就是"炸麦雪花杂音"。攒够半秒再 `play()`，轨道一开声就有数据。
          */
         const val PreRollBytes = 24_000
+
+        /** `playbackHeadPosition` 是 32 位无符号帧计数，读成 Long 时要按无符号解释。 */
+        const val UnsignedIntMask = 0xFFFF_FFFFL
+
+        /** 收尾轮询间隔：20ms 内播出的音频还不到人耳能分辨的一小段。 */
+        const val PlaybackPollMs = 20L
+
+        /** 收尾预算的余量：算出来的时长之外再给一点，避免临界值上误报超时。 */
+        const val DrainGraceMs = 1_000L
     }
 }
+
+/**
+ * 缓冲里**还没播出去**的帧数。
+ *
+ * `writtenFrames` = 已经交给 `AudioTrack` 的帧数，`playedFrames` = 播放头位置。
+ * 差值就是还在缓冲里排队的那一段 —— 朗读收尾要等的正是它（见 `awaitPlaybackEnd`）。
+ * 纯函数，有单测（`SpeechDrainTest`）。
+ */
+internal fun pendingPlaybackFrames(writtenFrames: Long, playedFrames: Long): Long =
+    (writtenFrames - playedFrames).coerceAtLeast(0L)
+
+/**
+ * 等这一小段播完最多要多久：按采样率换算，再给 1 秒余量。
+ *
+ * 只用于**收尾**（此时几乎全部音频已经播完），所以它是个几百毫秒到一秒级的数；
+ * 用它去等整段朗读会等上几分钟 —— 那是 `AudioTrack.write` 的阻塞行为，不是这里的事。
+ */
+internal fun drainBudgetMs(remainingFrames: Long): Long =
+    remainingFrames * 1000 / DeepSeekTts.SAMPLE_RATE + 1_000L
 
 /**
  * PCM 写入器：保证写进 `AudioTrack` 的永远是**完整的 16 bit 帧**。
@@ -580,6 +657,14 @@ internal class PcmWriter(
     private var carry: Int = -1
 
     private var headerChecked = false
+
+    /**
+     * 已经交给 `AudioTrack` 的**字节数**（完整帧，含 carry 拼出来的那半个采样）。
+     *
+     * 朗读收尾要用它算"还有多少帧没播"：写完不代表播完，见 `awaitPlaybackEnd`。
+     */
+    var bytesWritten: Long = 0L
+        private set
 
     fun write(buffer: ByteArray, length: Int) {
         var offset = 0
@@ -612,6 +697,7 @@ internal class PcmWriter(
             if (written <= 0) throw IOException("AudioTrack.write returned $written")
             done += written
         }
+        bytesWritten += length
     }
 
     private fun isRiffWave(buffer: ByteArray): Boolean =

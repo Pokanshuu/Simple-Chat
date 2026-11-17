@@ -38,6 +38,8 @@
     <string name="action_edit">Edit</string>
     <string name="action_close">Close</string>
     <string name="action_copy">Copy</string>
+    <string name="action_select_text">Select text</string>
+    <string name="action_done">Done</string>
     <string name="action_back">Back</string>
     <string name="action_clear">Clear</string>
     <string name="action_retry">Retry</string>
@@ -418,6 +420,7 @@
     <!-- ==== from group g3 ==== -->
 <!-- ── Message list / message actions ─────────────────────── -->
     <string name="msg_regenerate">Regenerate</string>
+    <string name="msg_select_hint">Drag to select text</string>
     <string name="msg_continue">Continue generating</string>
     <string name="msg_fork_from_here">Start a new chat from here</string>
     <string name="msg_expand_all">Expand all</string>

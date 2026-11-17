@@ -1163,11 +1163,16 @@ class ChatViewModel(
     /**
      * 编辑一条消息。
      *
-     * 新版本挂在**原消息的父亲**下，成为它的**兄弟**：
-     * 旧的那条连同它**整棵子树**原样留着，切回去就能看到。
+     * 两个出口，两条完全不同的路：
      *
-     * - [resend] = false：只换文字，新兄弟没有子树 → 路径在此结束
-     * - [resend] = true：换文字后在新兄弟下再生成一条回复
+     * - **[resend] = false（「保存」）**：**原地**改这一条的文字，不新增版本、不碰下游。
+     *   用户改个错别字不该冒出 `‹ 1/2 ›`，更不该让会话下半段当场消失 ——
+     *   早先这里和「保存并发送」共用 `addActiveVariant`，于是"保存"也长出一条
+     *   没有子树的新分支，看起来就是"保存把后面的聊天删了"。
+     *
+     * - **[resend] = true（「保存并发送」）**：新版本挂在**原消息的父亲**下，成为它的
+     *   **兄弟**；旧的那条连同它**整棵子树**原样留着，切回去就能看到。
+     *   然后在新兄弟下再生成一条回复（分支 + 继续往下）。
      *
      * **两种角色都不删任何东西。** 这正是换成树模型换来的东西。
      */
@@ -1183,6 +1188,26 @@ class ChatViewModel(
             if (!sendMutex.tryLock()) return@launch
             try {
             if (generation != switchGeneration || conversationId != currentConversationId) return@launch
+            if (!resend) {
+                /*
+                 * 「保存」：原地换文字。
+                 *
+                 * `timeline` 必须跟着换 —— 扩展通道的界面和请求都读它，只改 `content`
+                 * 会出现"保存了却没变"（OpenAI 通道生效、Anthropic 通道不生效）。
+                 * 思考 / 搜索 / 读链接块保持原序，它们描述的是这段答案的来历。
+                 */
+                repository.editMessageInPlace(
+                    id = target.id,
+                    content = text,
+                    attachments = kept,
+                    timeline = rewriteTimelineText(target.timeline, text),
+                )
+                if (generation != switchGeneration || conversationId != currentConversationId) return@launch
+                onPersisted()
+                reloadPath(conversationId)
+                repository.touchConversation(conversationId)
+                return@launch
+            }
             val fresh = repository.addActiveVariant(
                 conversationId = conversationId,
                 parentId = target.parentId,
@@ -1193,26 +1218,21 @@ class ChatViewModel(
                  * 用户只想改个错别字，回头发现图没了，而且旧版本也翻不回来。
                  */
                 attachments = kept,
-                // 仅改文字时保留思考内容；重发时旧思考已与新回复无关
-                reasoning = target.reasoning.takeIf { !resend && target.role == MessageRole.ASSISTANT },
+                // 重发时旧思考已与新回复无关（新回复会重新思考）
+                reasoning = null,
             )
             if (generation != switchGeneration || conversationId != currentConversationId) return@launch
             onPersisted()
 
-            val replyId = if (resend) {
-                // 回复挂在**新的**这条下面
-                repository.beginAssistantMessage(
-                    conversationId = conversationId,
-                    parentId = fresh.id,
-                    model = settings.model.id,
-                )
-            } else {
-                null
-            }
+            // 回复挂在**新的**这条下面
+            val replyId = repository.beginAssistantMessage(
+                conversationId = conversationId,
+                parentId = fresh.id,
+                model = settings.model.id,
+            )
 
             reloadPath(conversationId)
-            replyId?.let { startStream(conversationId, it) }
-            if (replyId == null) repository.touchConversation(conversationId)
+            startStream(conversationId, replyId)
             } catch (error: kotlinx.coroutines.CancellationException) {
                 throw error
             } catch (error: Exception) {
