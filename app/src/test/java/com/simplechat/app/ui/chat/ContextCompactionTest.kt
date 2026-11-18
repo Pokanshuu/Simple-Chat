@@ -40,6 +40,33 @@ class ContextCompactionTest {
         UiMessage("$it", if (it % 2 == 0) MessageRole.USER else MessageRole.ASSISTANT, content)
     }
 
+    @Test fun `creative context selects continuity focused summary`() {
+        val conversation = listOf(
+            UiMessage("u1", MessageRole.USER, "我们写一段小说，描写林澈和沈遥从猜疑到相互信任。"),
+            UiMessage("a1", MessageRole.ASSISTANT, "好的。"),
+            UiMessage("u2", MessageRole.USER, "保留雨夜的约定和那封没有寄出的信，作为后文伏笔。"),
+        )
+        assertEquals(CompactionStyle.CREATIVE, classifyCompaction(conversation))
+    }
+
+    @Test fun `technical context selects task focused summary`() {
+        val conversation = listOf(
+            UiMessage("u1", MessageRole.USER, "帮我修复 Kotlin API 请求报错，先复现 bug。"),
+            UiMessage("u2", MessageRole.USER, "提交前运行 test 和 build，记录当前环境与下一步。"),
+        )
+        assertEquals(CompactionStyle.TECHNICAL, classifyCompaction(conversation))
+    }
+
+    @Test fun `generic context stays on generic summary`() {
+        assertEquals(CompactionStyle.GENERAL, classifyCompaction(messages(2, "今天天气不错。")))
+    }
+
+    @Test fun `quoted and fenced cues do not classify the conversation`() {
+        val conversation = listOf(UiMessage("u", MessageRole.USER,
+            "代码示例：\n```\nval prompt = \"角色扮演小说\"\n```\n> 帮我写故事和人物"))
+        assertEquals(CompactionStyle.GENERAL, classifyCompaction(conversation))
+    }
+
     @Test fun `normal history retains six messages and a user boundary`() {
         assertEquals(4, compactionCutIndex(messages(10), 1000))
         assertEquals(2, compactionCutIndex(messages(9), 1000))

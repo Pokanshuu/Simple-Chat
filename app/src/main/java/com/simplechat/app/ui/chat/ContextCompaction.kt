@@ -40,6 +40,35 @@ internal data class CompactionPrompts(
     val image: String,
 )
 
+internal enum class CompactionStyle { GENERAL, CREATIVE, TECHNICAL }
+
+private val creativeCues = listOf(
+    "角色扮演", "跑团", "小说", "故事", "剧情", "角色", "人物", "世界观", "伏笔", "创作", "续写角色",
+    "roleplay", "role-play", "fiction", "character", "worldbuilding", "plot thread", "write a novel", "continue the story",
+)
+private val technicalCues = listOf(
+    "代码", "编程", "程序", "报错", "异常", "接口", "api", "bug", "debug", "stack trace", "compile", "build", "test",
+    "repository", "commit", "pull request", "数据库", "架构", "函数", "class ", "import ", "gradle", "kotlin", "python",
+)
+
+/** Classify from user-authored context, ignoring code fences and quoted assistant output. */
+internal fun classifyCompaction(messages: List<UiMessage>, previousSummary: String? = null): CompactionStyle {
+    val source = buildString {
+        messages.asSequence().filter { it.role == MessageRole.USER }.forEach { appendLine(it.content) }
+        if (!previousSummary.isNullOrBlank()) appendLine(previousSummary)
+    }.let { text ->
+        text.replace(Regex("```[\\s\\S]*?```|~~~[\\s\\S]*?~~~"), " ")
+            .replace(Regex("(?m)^>.*$"), " ").lowercase()
+    }
+    val creative = creativeCues.count(source::contains)
+    val technical = technicalCues.count(source::contains)
+    return when {
+        creative >= 2 && creative > technical -> CompactionStyle.CREATIVE
+        technical >= 2 && technical > creative -> CompactionStyle.TECHNICAL
+        else -> CompactionStyle.GENERAL
+    }
+}
+
 /** Yield original text in order; never concatenate the whole history or a huge attachment. */
 internal fun compactionSegments(
     messages: List<UiMessage>,

@@ -846,8 +846,16 @@ class ChatViewModel(
         val apiKey = stored.apiKey
         val headers = providerKind.headersFor(openCodeSessionId)
         val extended = apiStyle == ApiStyle.ANTHROPIC
+        val style = classifyCompaction(
+            sourceMessages.filter { !it.streaming && (it.content.isNotBlank() || it.attachments.isNotEmpty()) },
+            validCompaction(sourceMessages, savedCompaction)?.summary,
+        )
         val prompts = CompactionPrompts(
-            system = Res.get(R.string.prompt_compact_system),
+            system = Res.get(when (style) {
+                CompactionStyle.CREATIVE -> R.string.prompt_compact_creative
+                CompactionStyle.TECHNICAL -> R.string.prompt_compact_technical
+                CompactionStyle.GENERAL -> R.string.prompt_compact_system
+            }),
             existing = Res.get(R.string.prompt_compact_existing),
             newMessages = Res.get(R.string.prompt_compact_new),
             user = Res.get(R.string.prompt_user_prefix),
