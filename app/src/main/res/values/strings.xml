@@ -665,6 +665,8 @@
     <string name="onboarding_import">选择备份文件</string>
     <string name="onboarding_imported">备份导入完成</string>
     <string name="onboarding_import_mode_hint">选择导入方式</string>
+    <string name="onboarding_import_confirm">开始导入</string>
+    <string name="onboarding_cancel">取消</string>
     <string name="onboarding_theme_title">选择您喜欢的颜色</string>
     <string name="onboarding_start">开始聊天吧</string>
 </resources>

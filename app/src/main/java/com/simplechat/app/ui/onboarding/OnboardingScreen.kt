@@ -35,8 +35,8 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -64,6 +64,7 @@ import com.simplechat.app.ui.theme.LocalChatColors
 import com.simplechat.app.ui.theme.primary
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -80,11 +81,13 @@ fun OnboardingScreen(settingsStore: SettingsStore, chatApi: ChatApi, repository:
     var selectedModel by remember { mutableStateOf("deepseek-v4-flash") }
     var selectedTheme by remember { mutableStateOf(AccentColor.BLUE) }
     var busy by remember { mutableStateOf(false) }
-    var progress by remember { mutableFloatStateOf(0f) }
+    val progressFlow = remember { MutableStateFlow<Float?>(null) }
+    val progress by progressFlow.collectAsState()
     var error by remember { mutableStateOf<String?>(null) }
     var imported by remember { mutableStateOf(false) }
     var pendingFile by remember { mutableStateOf<File?>(null) }
     var showImportModes by remember { mutableStateOf(false) }
+    var selectedImportMode by remember { mutableStateOf(ImportMode.MERGE) }
     val colors = LocalChatColors.current
 
     suspend fun finish() {
@@ -130,46 +133,48 @@ fun OnboardingScreen(settingsStore: SettingsStore, chatApi: ChatApi, repository:
         }
     }
 
+    fun startImport(mode: ImportMode) {
+        showImportModes = false
+        scope.launch {
+            val file = pendingFile
+            pendingFile = null
+            if (file == null) { busy = false; return@launch }
+            progressFlow.value = 0f
+            try {
+                withContext(Dispatchers.IO) {
+                    repository.importExternal(file, context.cacheDir, mode) { progressFlow.value = it }
+                }
+                imported = true
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { error = e.message ?: context.getString(R.string.error_import_failed, "") }
+            finally { file.delete(); busy = false }
+        }
+    }
+
     if (showImportModes) {
         AlertDialog(
             onDismissRequest = { showImportModes = false; pendingFile?.delete(); pendingFile = null; busy = false },
             title = { Text(context.getString(R.string.import_mode_title)) },
-            text = { Text(context.getString(R.string.onboarding_import_mode_hint)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    showImportModes = false
-                    scope.launch {
-                        val file = pendingFile
-                        pendingFile = null
-                        if (file == null) { busy = false; return@launch }
-                        try {
-                            withContext(Dispatchers.IO) {
-                                repository.importExternal(file, context.cacheDir, ImportMode.MERGE) { progress = it }
-                            }
-                            imported = true
-                        } catch (e: CancellationException) { throw e }
-                        catch (e: Exception) { error = e.message ?: context.getString(R.string.error_import_failed, "") }
-                        finally { file.delete(); busy = false }
+            text = {
+                Column {
+                    listOf(
+                        ImportMode.MERGE to R.string.import_mode_merge,
+                        ImportMode.REPLACE_SAME to R.string.import_mode_replace_same,
+                        ImportMode.RENAME to R.string.import_mode_rename,
+                    ).forEach { (mode, label) ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable { selectedImportMode = mode },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = selectedImportMode == mode, onClick = { selectedImportMode = mode })
+                            Text(context.getString(label))
+                        }
                     }
-                }) { Text(context.getString(R.string.import_mode_merge)) }
+                }
             },
+            confirmButton = { TextButton(onClick = { startImport(selectedImportMode) }) { Text(context.getString(R.string.onboarding_import_confirm)) } },
             dismissButton = {
-                TextButton(onClick = {
-                    showImportModes = false
-                    scope.launch {
-                        val file = pendingFile
-                        pendingFile = null
-                        if (file == null) { busy = false; return@launch }
-                        try {
-                            withContext(Dispatchers.IO) {
-                                repository.importExternal(file, context.cacheDir, ImportMode.REPLACE_SAME) { progress = it }
-                            }
-                            imported = true
-                        } catch (e: CancellationException) { throw e }
-                        catch (e: Exception) { error = e.message ?: context.getString(R.string.error_import_failed, "") }
-                        finally { file.delete(); busy = false }
-                    }
-                }) { Text(context.getString(R.string.import_mode_replace_same)) }
+                TextButton(onClick = { showImportModes = false; pendingFile?.delete(); pendingFile = null; busy = false }) { Text(context.getString(R.string.onboarding_cancel)) }
             },
         )
     }
@@ -227,7 +232,7 @@ fun OnboardingScreen(settingsStore: SettingsStore, chatApi: ChatApi, repository:
                         Spacer(Modifier.height(18.dp))
                         CapsuleButton(if (imported) context.getString(R.string.onboarding_imported) else context.getString(R.string.onboarding_import), onClick = { importLauncher.launch(arrayOf("*/*")) }, enabled = !busy)
                         if (busy) {
-                            if (progress > 0f) LinearProgressIndicator(progress = { progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+                            if ((progress ?: 0f) > 0f) LinearProgressIndicator(progress = { (progress ?: 0f).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
                             else CircularProgressIndicator()
                         }
                         if (error != null) Text(error.orEmpty(), color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)

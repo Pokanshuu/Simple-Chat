@@ -666,6 +666,8 @@
     <string name="onboarding_import">Choose a backup file</string>
     <string name="onboarding_imported">Backup imported</string>
     <string name="onboarding_import_mode_hint">Choose how to import</string>
+    <string name="onboarding_import_confirm">Import</string>
+    <string name="onboarding_cancel">Cancel</string>
     <string name="onboarding_theme_title">Choose your preferred color</string>
     <string name="onboarding_start">Start chatting</string>
 </resources>
