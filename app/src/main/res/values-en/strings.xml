@@ -652,7 +652,7 @@
     <string name="onboarding_key_title">Enter your DeepSeek API key</string>
     <string name="onboarding_key_privacy">Your API key is encrypted and stored on this device. It is never sent to SimpleChat.</string>
     <string name="onboarding_get_key">No API key? Get one</string>
-    <string name="onboarding_later">Enter later or configure another API</string>
+    <string name="onboarding_later">Later, or use another API</string>
     <string name="onboarding_next">Next</string>
     <string name="onboarding_skip">Skip</string>
     <string name="onboarding_key_invalid">Check that the key starts with sk- and contains only English characters</string>
@@ -668,8 +668,19 @@
     <string name="onboarding_import_mode_hint">Choose how to import</string>
     <string name="onboarding_import_confirm">Import</string>
     <string name="onboarding_cancel">Cancel</string>
-    <string name="onboarding_theme_title">Choose your preferred color</string>
+    <string name="onboarding_theme_title">Choose an accent color</string>
     <string name="onboarding_start">Start chatting</string>
+    <string name="onboarding_begin">Get started</string>
+    <string name="onboarding_welcome_hint">Finish a few basic settings and start chatting</string>
+    <string name="onboarding_step">Step %1$d of %2$d</string>
+    <string name="onboarding_key_label">DeepSeek API key</string>
+    <string name="onboarding_verify">Verify and continue</string>
+    <string name="onboarding_verifying">Verifying…</string>
+    <string name="onboarding_model_pro_name">Pro</string>
+    <string name="onboarding_model_flash_name">Flash</string>
+    <string name="onboarding_import_again">Import another backup</string>
+    <string name="onboarding_import_reading">Reading file…</string>
+    <string name="onboarding_import_progress">Importing… %1$d%%</string>
 </resources>
 
 

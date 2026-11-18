@@ -667,8 +667,19 @@
     <string name="onboarding_import_mode_hint">选择导入方式</string>
     <string name="onboarding_import_confirm">开始导入</string>
     <string name="onboarding_cancel">取消</string>
-    <string name="onboarding_theme_title">选择您喜欢的颜色</string>
+    <string name="onboarding_theme_title">选择主题色</string>
     <string name="onboarding_start">开始聊天吧</string>
+    <string name="onboarding_begin">开始设置</string>
+    <string name="onboarding_welcome_hint">完成几项基础设置后即可开始对话</string>
+    <string name="onboarding_step">第 %1$d 步，共 %2$d 步</string>
+    <string name="onboarding_key_label">DeepSeek API Key</string>
+    <string name="onboarding_verify">验证并继续</string>
+    <string name="onboarding_verifying">正在验证…</string>
+    <string name="onboarding_model_pro_name">Pro</string>
+    <string name="onboarding_model_flash_name">Flash</string>
+    <string name="onboarding_import_again">导入其他备份</string>
+    <string name="onboarding_import_reading">正在读取文件…</string>
+    <string name="onboarding_import_progress">正在导入… %1$d%%</string>
 </resources>
 
 
