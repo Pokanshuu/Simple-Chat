@@ -14,7 +14,7 @@ An Android AI chat client aimed at long-form, continuous creative writing. It ta
 Good for:
 
 - long-form writing, world building, role-play
-- long multi-turn conversations that need context usage tracking and compaction
+- long multi-turn conversations that need context tracking and compaction
 - self-hosted or local OpenAI-compatible services
 
 ## Contents
@@ -37,7 +37,6 @@ Good for:
 
 - Independent Search / Fetch and Files API settings, with custom URLs, paths and encrypted keys or chat-key reuse. Supports DeepSeek-compatible protocols.
 - Long user inputs and text attachments can be uploaded once and reused by file ID. Original messages stay local. This reduces transfer size; file content still uses model context and input tokens. See the [tool API guide](docs/23-独立工具API与长文本文件传输.md).
-- Resumable hierarchical compaction reduces batch size when a request exceeds server limits. Only a loading state is shown during compaction; the complete summary is available after success.
 - DeepSeek v3 compatible export includes a native extension to retain existing backup data. Previous JSON and ZIP formats remain supported.
 - Inline LaTeX flows with Markdown text, quotes and lists. Double-tap an AI reply to select text; the long-press menu remains available.
 
@@ -53,7 +52,10 @@ Good for:
 - **Automatic reading**: the speaker switch next to New chat reads newly completed replies using the selected voice. Turning it off stops playback immediately.
 - **API profiles**: save independent URLs, models, protocols and encrypted keys; create, copy, rename, delete or switch profiles. Changes save automatically and existing settings are preserved.
 - Message tree organised by `parentId`. Regenerating creates an in-conversation branch; switching versions carries the downstream along instead of deleting history; long-press forks into a new conversation.
-- Context management: CJK-weighted token estimates, request budget checks, an input usage ring, and compaction in batches (normally keeps the last 6 messages; retains at least the latest turn when recent messages are oversized).
+- **Context management**: Estimate usage and check the budget before sending. Compaction keeps recent turns intact
+  and leaves local messages unchanged. Build 28 uses resumable batches. The unpublished source changes try one request
+  for all eligible history when the budget allows, with summary guidance for creative, technical, or general
+  conversations. See [context compaction and recovery](docs/22-上下文压缩与恢复.md).
 - Attachments: camera / gallery / files, none of which need runtime permission; images, plain text, docx and PDF. Imported images are stored as files in app-private storage, with only the file name kept in the database. Oversized messages use chunked reads; capacity depends on available device storage and memory. Tapping an image opens a full-screen viewer with swipe between images.
 - **Images are validated before sending**: the real format is detected from the file header, formats the server does not accept are transcoded to JPEG locally, and unreadable images are skipped with a notice instead of breaking the conversation forever.
 - Model capability aware: when the selected model does not accept images, they are skipped with a notice instead of being rejected by the server.
