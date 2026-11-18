@@ -152,11 +152,58 @@ internal suspend fun compactInBatches(
     onProgress: suspend (CompactionProgress) -> Unit = {},
     pause: suspend (Long) -> Unit = { delay(it) },
     attemptTimeoutMillis: (Int) -> Long = { if (it <= 4_000) 45_000L else 90_000L },
+    preferWhole: Boolean = false,
     summarize: suspend (transcript: String, maxTokens: Int, batch: Int) -> String,
 ): String {
     require(contextWindow > 0)
     var state = checkpoint.copy(requestWindow = minOf(contextWindow, checkpoint.requestWindow))
     val overhead = conservativeCompactionTokens(prompts.system) + 128L
+    suspend fun requestSummary(input: String, outputTokens: Int, batch: Int): String {
+        val candidate = withTimeoutOrNull(attemptTimeoutMillis(input.length)) {
+            summarize(input, outputTokens, batch)
+        }?.trim() ?: throw CompactionRequestFailure(CompactionFailureKind.TIMEOUT)
+        currentCoroutineContext().ensureActive()
+        if (candidate.isEmpty()) throw CompactionRequestFailure(CompactionFailureKind.EMPTY)
+        if (candidate.length > 64_000 || conservativeCompactionTokens(candidate) > state.requestWindow / 3) {
+            throw CompactionRequestFailure(CompactionFailureKind.TRUNCATED)
+        }
+        return candidate
+    }
+
+    if (preferWhole && state.level == 0 && state.offset == 0L && state.completedBatches == 0 &&
+        state.summaries.isEmpty() && checkpoint.requestWindow == Int.MAX_VALUE
+    ) {
+        val maxWholeChars = 1_500_000
+        val totalChars = segments.sumOf { currentCoroutineContext().ensureActive(); it.length.toLong() }
+        // Small transcripts already use one request in the normal batch path.
+        if (totalChars in 1..maxWholeChars.toLong()) {
+            val input = segments.joinToString("")
+            val inputTokens = conservativeCompactionTokens(input)
+            val outputTokens = minOf(4096L, inputTokens.coerceAtLeast(256), state.requestWindow / 8L).toInt()
+            val available = state.requestWindow * 3L / 4 - overhead - outputTokens
+            if (outputTokens > 0 && inputTokens <= available &&
+                (input.length > state.chunkChars || outputTokens > 2048)
+            ) {
+                val progress = CompactionProgress(0, 1, 0, totalChars)
+                onProgress(progress)
+                val whole = try {
+                    requestSummary(input, outputTokens, 1)
+                } catch (failure: CompactionRequestFailure) {
+                    when (failure.kind) {
+                        CompactionFailureKind.INPUT_LIMIT, CompactionFailureKind.TIMEOUT,
+                        CompactionFailureKind.TRUNCATED, CompactionFailureKind.EMPTY -> {
+                            onProgress(progress.copy(recovery = failure.kind))
+                            state = state.copy(requestWindow = minOf(state.requestWindow, failure.inputLimit ?: state.requestWindow))
+                            onCheckpoint(state)
+                            null
+                        }
+                        else -> throw failure
+                    }
+                }
+                if (whole != null && (totalChars <= 1024 || whole.length.toLong() + 2 < totalChars)) return whole
+            }
+        }
+    }
     while (state.level <= 12) {
         currentCoroutineContext().ensureActive()
         val source = if (state.level == 0) segments else state.sources.asSequence().flatMap { sequenceOf(it, "\n\n") }
@@ -182,15 +229,7 @@ internal suspend fun compactInBatches(
                     val progress = CompactionProgress(state.level, state.completedBatches + 1, state.offset, totalChars)
                     onProgress(progress)
                     val summary = try {
-                        val candidate = withTimeoutOrNull(attemptTimeoutMillis(end)) {
-                            summarize(input, outputTokens, progress.batch)
-                        }?.trim() ?: throw CompactionRequestFailure(CompactionFailureKind.TIMEOUT)
-                        currentCoroutineContext().ensureActive()
-                        if (candidate.isEmpty()) throw CompactionRequestFailure(CompactionFailureKind.EMPTY)
-                        if (candidate.length > 64_000 || conservativeCompactionTokens(candidate) > state.requestWindow / 3) {
-                            throw CompactionRequestFailure(CompactionFailureKind.TRUNCATED)
-                        }
-                        candidate
+                        requestSummary(input, outputTokens, progress.batch)
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Exception) {

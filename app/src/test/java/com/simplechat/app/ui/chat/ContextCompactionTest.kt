@@ -110,6 +110,55 @@ class ContextCompactionTest {
         }
     }
 
+    @Test fun `fresh history that fits is summarized in one request`() = runBlocking {
+        val source = "开场" + "中".repeat(60_000) + "结尾"
+        var calls = 0
+        val result = compactInBatches(sequenceOf(source), prompts, 1_000_000, preferWhole = true) { input, budget, _ ->
+            calls++
+            assertEquals(source, input)
+            assertEquals(4096, budget)
+            "complete recap"
+        }
+        assertEquals("complete recap", result)
+        assertEquals(1, calls)
+    }
+
+    @Test fun `whole request fallback covers complete source without repeating on resume`() = runBlocking {
+        val source = "中文😀".repeat(18_000)
+        for (kind in listOf(CompactionFailureKind.INPUT_LIMIT, CompactionFailureKind.TIMEOUT,
+            CompactionFailureKind.EMPTY, CompactionFailureKind.TRUNCATED)) {
+            var checkpoint = CompactionCheckpoint()
+            var level = 0
+            val accepted = StringBuilder()
+            var wholeCalls = 0
+            try {
+                compactInBatches(sequenceOf(source), prompts, 1_000_000, preferWhole = true,
+                    onCheckpoint = { checkpoint = it }, onProgress = { level = it.level }, pause = {}) { input, _, _ ->
+                    if (input == source) {
+                        wholeCalls++
+                        throw CompactionRequestFailure(kind, inputLimit = if (kind == CompactionFailureKind.INPUT_LIMIT) 32_768 else null)
+                    }
+                    if (accepted.isNotEmpty()) throw CompactionRequestFailure(CompactionFailureKind.PERMANENT)
+                    accepted.append(input)
+                    "first recap"
+                }
+                fail("Expected an interrupted fallback")
+            } catch (error: CompactionRequestFailure) {
+                assertEquals(CompactionFailureKind.PERMANENT, error.kind)
+            }
+            assertEquals(1, wholeCalls)
+            assertTrue(checkpoint.offset > 0)
+            val result = compactInBatches(sequenceOf(source), prompts, 1_000_000, checkpoint,
+                preferWhole = true, onProgress = { level = it.level }) { input, _, _ ->
+                assertNotEquals(source, input)
+                if (level == 0) accepted.append(input)
+                "complete recap"
+            }
+            assertEquals("complete recap", result)
+            assertEquals(source, accepted.toString())
+        }
+    }
+
     @Test fun `every request fits and hierarchical merge includes all leaf summaries in order`() = runBlocking {
         val transcript = "中".repeat(150_000) + "END"
         var consumed = 0

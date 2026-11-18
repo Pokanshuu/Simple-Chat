@@ -846,16 +846,13 @@ class ChatViewModel(
         val apiKey = stored.apiKey
         val headers = providerKind.headersFor(openCodeSessionId)
         val extended = apiStyle == ApiStyle.ANTHROPIC
-        val style = classifyCompaction(
-            sourceMessages.filter { !it.streaming && (it.content.isNotBlank() || it.attachments.isNotEmpty()) },
-            validCompaction(sourceMessages, savedCompaction)?.summary,
-        )
-        val prompts = CompactionPrompts(
-            system = Res.get(when (style) {
-                CompactionStyle.CREATIVE -> R.string.prompt_compact_creative
-                CompactionStyle.TECHNICAL -> R.string.prompt_compact_technical
-                CompactionStyle.GENERAL -> R.string.prompt_compact_system
-            }),
+        val promptsByStyle = CompactionStyle.entries.associateWith { style -> Res.get(when (style) {
+            CompactionStyle.CREATIVE -> R.string.prompt_compact_creative
+            CompactionStyle.TECHNICAL -> R.string.prompt_compact_technical
+            CompactionStyle.GENERAL -> R.string.prompt_compact_system
+        }) }
+        val basePrompts = CompactionPrompts(
+            system = promptsByStyle.getValue(CompactionStyle.GENERAL),
             existing = Res.get(R.string.prompt_compact_existing),
             newMessages = Res.get(R.string.prompt_compact_new),
             user = Res.get(R.string.prompt_user_prefix),
@@ -879,6 +876,8 @@ class ChatViewModel(
                         if (existing != null) R.string.compact_no_new_history else R.string.compact_too_few,
                     )
                     val toSummarize = candidates.take(cutIndex)
+                    val style = classifyCompaction(toSummarize, existing?.summary)
+                    val prompts = basePrompts.copy(system = promptsByStyle.getValue(style))
                     val segments = compactionSegments(toSummarize, existing?.summary, prompts)
                     val fingerprint = compactionFingerprint(sequenceOf(
                         "hierarchical-compaction-v1", conversationId, model.id, model.contextWindow.toString(),
@@ -889,6 +888,7 @@ class ChatViewModel(
                         ?: CompactionCheckpoint(fingerprint = fingerprint)
                     val summary = compactInBatches(
                         segments, prompts, model.contextWindow, checkpoint,
+                        preferWhole = true,
                         onCheckpoint = { repository.saveCompactionCheckpoint(conversationId, it) },
                         onProgress = {
                             // Log only operational metadata, never conversation content or credentials.
