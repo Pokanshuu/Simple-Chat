@@ -30,7 +30,10 @@ interface ConversationDao {
                 substr(m.content, max(1, instr(lower(m.content), lower(:query)) - 60), max(180, length(:query) + 120))
             END AS snippet,
             m.id AS messageId, m.role AS messageRole, m.createdAt AS messageCreatedAt,
-            m.variantIndex AS variantIndex,
+            CASE WHEN m.id IS NOT NULL THEN
+                (SELECT count(*) FROM messages sibling WHERE sibling.conversationId = m.conversationId
+                 AND sibling.parentId = m.parentId AND sibling.variantIndex < m.variantIndex)
+            END AS variantIndex,
             CASE WHEN m.id IS NULL THEN 0 ELSE
                 (SELECT count(*) FROM messages sibling WHERE sibling.conversationId = m.conversationId
                  AND sibling.parentId = m.parentId)
@@ -188,8 +191,8 @@ interface MessageDao {
      * 刻意**不**用 `getAllFor`：附件列里可能躺着几百 KB 的图片 base64，
      * 而数版本号只需要这一个字段。这个方法会在每次追加消息时被调用。
      */
-    @Query("SELECT parentId FROM messages WHERE conversationId = :conversationId")
-    suspend fun parentIds(conversationId: String): List<String>
+    @Query("SELECT id FROM messages WHERE conversationId = :conversationId AND parentId = :parentId ORDER BY variantIndex")
+    suspend fun siblingIds(conversationId: String, parentId: String): List<String>
 
     @Query("SELECT * FROM messages WHERE id = :id")
     suspend fun findById(id: String): MessageEntity?

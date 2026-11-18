@@ -238,6 +238,50 @@ class DeviceRegression : Instrumentation() {
             val sentAfterCompact = captured.last()["messages"]!!.jsonArray
             check(sentAfterCompact.any { it.jsonObject["content"]?.toString()?.contains("AFTER_COMPACT_DEVICE") == true })
             passed("context compaction followed by send retains the new user prompt in the real serialized request")
+            for (role in listOf(MessageRole.USER, MessageRole.ASSISTANT)) {
+                val branchId = repository.createConversation(ConversationMode.CREATIVE, "DEEPSEEK", "deepseek-flash", title = "Branch deletion")
+                val parent = if (role == MessageRole.USER) MessageEntity.ROOT_PARENT
+                    else repository.appendUserMessage(branchId, "parent").id
+                val branches = (1..4).map { number ->
+                    val branch = repository.addActiveVariant(branchId, parent, role, "branch-test $number")
+                    val childRole = if (role == MessageRole.USER) MessageRole.ASSISTANT else MessageRole.USER
+                    val child = repository.addActiveVariant(branchId, branch.id, childRole, "child $number")
+                    branch.id to child.id
+                }
+                suspend fun awaitBranch(index: Int, position: Int, count: Int) {
+                    withTimeout(4_000) {
+                        while (!withContext(Dispatchers.Main) {
+                            val active = vm.messages.firstOrNull { it.id == branches[index].first }
+                            active?.variantIndex == position && active.variantCount == count &&
+                                vm.messages.lastOrNull()?.id == branches[index].second
+                        }) delay(20)
+                    }
+                }
+                suspend fun switchTo(position: Int) = withContext(Dispatchers.Main) {
+                    vm.switchVariant(vm.messages.single { it.parentId == parent }, position)
+                }
+                withContext(Dispatchers.Main) { vm.openConversation(branchId) }
+                awaitBranch(3, 3, 4)
+                switchTo(2)
+                awaitBranch(2, 2, 4)
+                withContext(Dispatchers.Main) { vm.deleteMessage(vm.messages.single { it.parentId == parent }) }
+                awaitBranch(3, 2, 3)
+                switchTo(1)
+                awaitBranch(1, 1, 3)
+                switchTo(0)
+                awaitBranch(0, 0, 3)
+                withContext(Dispatchers.Main) { vm.deleteMessage(vm.messages.single { it.parentId == parent }) }
+                awaitBranch(3, 1, 2)
+                switchTo(0)
+                awaitBranch(1, 0, 2)
+                switchTo(1)
+                awaitBranch(3, 1, 2)
+                val hits = db.conversationDao().search("branch-test").first().filter { it.conversation.id == branchId }
+                check(hits.map { it.variantIndex }.sortedBy { it } == listOf(0, 1))
+                val newBranch = repository.addActiveVariant(branchId, parent, role, "new after deletion")
+                check(newBranch.variantIndex == 2 && newBranch.variantCount == 3)
+            }
+            passed("delete middle and first versions, switch both ways, and retain surviving subtrees and search positions")
             withContext(Dispatchers.Main) { vm.newConversation() }
             DataIntegrityRegression.run(ctx, context.assets, repository, db)
             passed("same-title imports, global ID collision rollback, preset links, shared fork images, huge edits and schema 8-to-9 migration")

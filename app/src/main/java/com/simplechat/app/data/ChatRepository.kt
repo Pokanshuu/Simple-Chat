@@ -335,7 +335,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         if (light.isEmpty()) return emptyList()
         val pathIds = MessageTree.activePathIds(light)
         if (pathIds.isEmpty()) return emptyList()
-        val counts = MessageTree.siblingCountsOf(light.map { it.parentId })
+        val siblings = light.groupBy { it.parentId }.mapValues { (_, group) -> group.sortedBy { it.variantIndex }.map { it.id } }
         /*
          * 映射放到后台线程。
          *
@@ -347,7 +347,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             val byId = loadMessagesByIds(pathIds).associateBy { it.id }
             pathIds.mapNotNull { id ->
                 val entity = byId[id] ?: return@mapNotNull null
-                entity.toUi().copy(variantCount = counts[entity.parentId] ?: 1)
+                entity.toUiWithPosition(siblings.getValue(entity.parentId))
             }
         }
     }
@@ -364,9 +364,9 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     private suspend fun loadActivePathFull(conversationId: String): List<UiMessage> {
         val all = loadMessagesSafely(conversationId)
         return withContext(Dispatchers.Default) {
-            val counts = MessageTree.siblingCounts(all)
+            val siblings = all.groupBy { it.parentId }.mapValues { (_, group) -> group.sortedBy { it.variantIndex }.map { it.id } }
             MessageTree.activePath(all).map { entity ->
-                entity.toUi().copy(variantCount = counts[entity.parentId] ?: 1)
+                entity.toUiWithPosition(siblings.getValue(entity.parentId))
             }
         }
     }
@@ -438,11 +438,12 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         return entity
     }
 
-    /** 把实体包成 UI 模型，δ 补上兄弟数。 */
-    private suspend fun toUiWithCounts(conversationId: String, entity: MessageEntity): UiMessage {
-        val count = MessageTree.siblingCountsOf(messages.parentIds(conversationId))[entity.parentId] ?: 1
-        return entity.toUi().copy(variantCount = count)
-    }
+    /** The stored order can have gaps after deletions or imports. UI arrows use positions. */
+    private fun MessageEntity.toUiWithPosition(siblingIds: List<String>): UiMessage =
+        toUi().copy(variantIndex = siblingIds.indexOf(id).coerceAtLeast(0), variantCount = siblingIds.size.coerceAtLeast(1))
+
+    private suspend fun toUiWithCounts(conversationId: String, entity: MessageEntity): UiMessage =
+        entity.toUiWithPosition(messages.siblingIds(conversationId, entity.parentId))
 
     /**
      * 追加一条用户消息，返回它本身。
@@ -566,23 +567,26 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
      * 删完若父节点下再没有 active 的兄弟，让最后一个兄弟接管，
      * 免得路径断在半途、后面全部不显示。
      */
-    suspend fun deleteMessage(messageId: String) {
-        val node = messages.exportHeader(messageId) ?: return
-        val all = loadMessagesSafely(node.conversationId)
-        messages.deleteByIds(MessageTree.subtreeIds(all, messageId))
-
-        val remaining = loadMessagesSafely(node.conversationId)
-        val siblings = remaining.filter { it.parentId == node.parentId }
-        if (siblings.isNotEmpty() && siblings.none { it.active }) {
-            MessageTree.lastSibling(remaining, node.parentId)?.let {
+    suspend fun deleteMessage(messageId: String) = db.withTransaction {
+        val node = messages.exportHeader(messageId) ?: return@withTransaction
+        val tree = messages.getLightFor(node.conversationId)
+        MessageTree.subtreeLightIds(tree, messageId).chunked(MessageQueryChunk).forEach { ids ->
+            messages.deleteByIds(ids)
+        }
+        val siblings = tree.filter { it.parentId == node.parentId && it.id != messageId }
+        if (siblings.none { it.active }) {
+            siblings.maxByOrNull { it.variantIndex }?.let {
                 messages.activate(it.id, node.conversationId, node.parentId)
             }
         }
     }
 
-    /** 切到某个版本。同一个父亲下只有它会 `active = 1`。 */
-    suspend fun activateVariant(messageId: String, conversationId: String, parentId: String) =
-        messages.activate(messageId, conversationId, parentId)
+    /** Resolve the position and activate it in the same transaction. */
+    suspend fun activateVariantAt(conversationId: String, parentId: String, position: Int): Boolean = db.withTransaction {
+        val id = messages.siblingIds(conversationId, parentId).getOrNull(position) ?: return@withTransaction false
+        messages.activate(id, conversationId, parentId)
+        true
+    }
 
     /**
      * 在 [parentId] 下追加一个新版本并立即激活它。
@@ -660,22 +664,12 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         }
     }
 
-    /** 某个父亲下、指定版本号对应的消息 id（切版本时用）。 */
-    suspend fun messageIdAt(
-        conversationId: String,
-        parentId: String,
-        variantIndex: Int,
-    ): String? = messages.getLightFor(conversationId)
-        .firstOrNull { it.parentId == parentId && it.variantIndex == variantIndex }
-        ?.id
-
     /** 串行读取某个父亲下当前激活的版本。 */
     suspend fun activeMessageAt(conversationId: String, parentId: String): UiMessage? {
         // 同样走兜底：这条路径也在"点开会话"的链路上，超大行一样会崩
         val all = loadMessagesSafely(conversationId)
         val node = all.firstOrNull { it.parentId == parentId && it.active } ?: return null
-        val count = MessageTree.siblingCounts(all)[parentId] ?: 1
-        return node.toUi().copy(variantCount = count)
+        return toUiWithCounts(conversationId, node)
     }
 
     // ── 预设 ──────────────────────────────────────────────

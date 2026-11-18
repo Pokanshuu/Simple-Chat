@@ -78,7 +78,7 @@ import com.mikepenz.markdown.model.parseMarkdown
 import com.simplechat.app.R
 import com.simplechat.app.data.LocaleHelper
 import com.simplechat.app.ui.common.AppIcons
-import com.simplechat.app.ui.common.IconCircleButton
+import com.simplechat.app.ui.common.CopyIconButton
 import com.simplechat.app.ui.theme.CodeTextStyle
 import com.simplechat.app.ui.theme.LocalChatColors
 import com.simplechat.app.ui.theme.markdownBodyStyle
@@ -810,16 +810,6 @@ private fun fenceTextOf(model: MarkdownComponentModel): String {
 private fun CodeHeader(language: String, code: String, lineCount: Int) {
     val colors = LocalChatColors.current
     val context = LocalContext.current
-    var copied by remember { mutableStateOf(false) }
-
-    // 1.5 秒后把「已复制」恢复成复制图标，避免一直挂着一个完成态
-    LaunchedEffect(copied) {
-        if (copied) {
-            delay(1500)
-            copied = false
-        }
-    }
-
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -843,17 +833,9 @@ private fun CodeHeader(language: String, code: String, lineCount: Int) {
                 .weight(1f)
                 .padding(start = 6.dp),
         )
-        IconCircleButton(
-            icon = if (copied) AppIcons.Check else AppIcons.Copy,
-            contentDescription = stringResource(if (copied) R.string.md_copied else R.string.md_copy_code),
-            onClick = {
-                copyToClipboard(context, code)
-                copied = true
-            },
-            size = 28.dp,
-            iconSize = 14.dp,
-            tint = if (copied) MaterialTheme.colorScheme.primary else colors.processText,
-        )
+        CopyIconButton(28.dp, 14.dp, colors.processText, stringResource(R.string.md_copy_code)) {
+            copyToClipboard(context, code)
+        }
     }
 }
 

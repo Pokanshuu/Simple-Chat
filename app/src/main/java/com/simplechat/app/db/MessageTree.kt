@@ -86,7 +86,14 @@ object MessageTree {
      * 留着一个"没有前文的下文"没有任何意义。
      */
     fun subtreeIds(all: List<MessageEntity>, rootId: String): List<String> {
-        val childrenByParent = all.groupBy { it.parentId }
+        return collectSubtreeIds(all, rootId, MessageEntity::parentId, MessageEntity::id)
+    }
+
+    internal fun subtreeLightIds(all: List<MessageLight>, rootId: String): List<String> =
+        collectSubtreeIds(all, rootId, MessageLight::parentId, MessageLight::id)
+
+    private fun <T> collectSubtreeIds(all: List<T>, rootId: String, parentId: (T) -> String, nodeId: (T) -> String): List<String> {
+        val childrenByParent = all.groupBy(parentId)
         val out = ArrayList<String>()
         val seen = HashSet<String>()
         val stack = ArrayDeque<String>().apply { addLast(rootId) }
@@ -95,7 +102,7 @@ object MessageTree {
             val id = stack.removeLast()
             if (!seen.add(id)) continue
             out += id
-            childrenByParent[id]?.forEach { stack.addLast(it.id) }
+            childrenByParent[id]?.forEach { stack.addLast(nodeId(it)) }
         }
         return out
     }

@@ -361,10 +361,12 @@ class ChatViewModel(
          * 放在前面会读到还没赋值的委托（真机表现为启动即 NPE）。
          */
         viewModelScope.launch {
+            var weights = emptyMap<String, MessageWeight>()
             snapshotFlow { StatsInput(messages.toList(), settings, presets, compaction) }
                 .collectLatest { input ->
                     delay(ContextStatsDebounceMs)
-                    val stats = withContext(Dispatchers.Default) { computeContextStats(input) }
+                    val (stats, currentWeights) = withContext(Dispatchers.Default) { computeContextStats(input, weights) }
+                    weights = currentWeights
                     contextStats = stats
                 }
         }
@@ -1083,7 +1085,9 @@ class ChatViewModel(
         val compaction: CompactionEntity?,
     )
 
-    private fun computeContextStats(input: StatsInput): ContextStats {
+    private data class MessageWeight(val text: String, val weight: Long)
+
+    private fun computeContextStats(input: StatsInput, previous: Map<String, MessageWeight>): Pair<ContextStats, Map<String, MessageWeight>> {
         val messages = input.messages
         val settings = input.settings
         val presets = input.presets
@@ -1092,38 +1096,35 @@ class ChatViewModel(
         // —— 实际会发给 API 的部分 ——
         val system = settings.composedSystemPrompt(presets)
         val outgoing = orderedOutgoingMessages(messages, active)
-        val inContext = buildList {
-            if (system.isNotBlank()) add(system)
-            if (active != null && active.summary.isNotBlank()) add(active.summary)
-            outgoing.forEach { add(it.content) }
+        val weights = messages.asSequence().filter { !it.streaming }.associate { message ->
+            val cached = previous[message.id]?.takeIf { it.text === message.content }
+            message.id to (cached ?: MessageWeight(message.content, TokenEstimate.weight(message.content)))
         }
-        // 附件也要算进去：图片按每张上限 1024、文本附件按字数（见 RequestContent）
+        val summaryWeight = active?.let { TokenEstimate.weight(it.summary) } ?: 0L
+        val usedWeight = TokenEstimate.weight(system) + summaryWeight + outgoing.sumOf { weights.getValue(it.id).weight }
         val attachmentTokens = outgoing.sumOf { attachmentTokenEstimate(it.attachments) }
-
-        // —— 本地全部内容（含被压缩掉的）——
-        val allTexts = messages.filter { !it.streaming }.map { it.content }
 
         val ttfts = messages.mapNotNull { it.ttftMs }
         val tpsList = messages.mapNotNull { it.tps }
         val thinking = messages.mapNotNull { it.reasoningSeconds }
 
         return ContextStats(
-            usedTokens = TokenEstimate.ofAll(inContext) + attachmentTokens,
+            usedTokens = TokenEstimate.fromWeight(usedWeight) + attachmentTokens,
             windowTokens = settings.model.contextWindow,
             messageCount = messages.size,
-            totalTokens = TokenEstimate.ofAll(allTexts),
+            totalTokens = TokenEstimate.fromWeight(weights.values.sumOf { it.weight }),
             compactedTokenSaving = run {
                 if (active == null) return@run 0
                 val cut = messages.indexOfFirst { it.id == active.throughMessageId }
                 if (cut < 0) return@run 0
-                TokenEstimate.ofAll(messages.take(cut + 1).map { it.content }) -
-                    TokenEstimate.of(active.summary)
+                TokenEstimate.fromWeight(messages.take(cut + 1).sumOf { weights[it.id]?.weight ?: TokenEstimate.weight(it.content) }) -
+                    TokenEstimate.fromWeight(summaryWeight)
             },
             avgTtftMs = ttfts.takeIf { it.isNotEmpty() }?.average()?.toLong(),
             avgTps = tpsList.takeIf { it.isNotEmpty() }?.average()?.toFloat(),
             totalThinkingSeconds = thinking.takeIf { it.isNotEmpty() }?.sum(),
             hasCompaction = active != null,
-        )
+        ) to weights
     }
 
     // ── 消息操作：重新生成 / 重试 / 编辑 / 删除 / 切版本 ──────────
@@ -1361,10 +1362,7 @@ class ChatViewModel(
         if (compacting) cancelCompaction()
 
         viewModelScope.launch {
-            val id = repository.messageIdAt(conversationId, target.parentId, variantIndex)
-                ?: return@launch
-            repository.activateVariant(id, conversationId, target.parentId)
-            reloadPath(conversationId)
+            if (repository.activateVariantAt(conversationId, target.parentId, variantIndex)) reloadPath(conversationId)
         }
     }
 

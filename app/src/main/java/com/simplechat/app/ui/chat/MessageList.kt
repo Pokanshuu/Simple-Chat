@@ -81,6 +81,7 @@ import com.simplechat.app.ui.common.AppMenu
 import com.simplechat.app.ui.common.AppMenuDivider
 import com.simplechat.app.ui.common.AppMenuItem
 import com.simplechat.app.ui.common.CapsuleButton
+import com.simplechat.app.ui.common.CopyIconButton
 import com.simplechat.app.ui.common.IconCircleButton
 import com.simplechat.app.ui.common.SoftShape
 import com.simplechat.app.ui.common.rememberPressPosition
@@ -1076,7 +1077,7 @@ private fun MessageActions(
             Spacer(Modifier.size(ActionGap))
         }
 
-        ActionIcon(AppIcons.Copy, stringResource(R.string.action_copy), onCopy, colors)
+        CopyIconButton(ActionButtonSize, ActionIconSize, colors.processText, stringResource(R.string.action_copy), onCopy)
         if (message.role == MessageRole.ASSISTANT) {
             // 续写紧挨着「重新生成」原本的位置，两者是同一件事的两个方向（重来 / 接着写）
             if (canContinue) {

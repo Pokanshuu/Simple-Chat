@@ -1,5 +1,8 @@
 package com.simplechat.app.ui.common
 
+import com.simplechat.app.R
+import androidx.compose.ui.res.stringResource
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -58,6 +61,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import kotlinx.coroutines.delay
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -490,6 +496,7 @@ fun IconCircleButton(
     shape: Shape = CircleShape,
     /** 宽。默认与 [size] 相同（正方形/圆）；胶囊形要显式给一个更宽的值。 */
     width: Dp = size,
+    animateIcon: Boolean = false,
 ) {
     val colors = LocalChatColors.current
     val resolvedTint = tint ?: when {
@@ -516,13 +523,43 @@ fun IconCircleButton(
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = resolvedTint,
-            modifier = Modifier.size(iconSize),
-        )
+        if (animateIcon) {
+            Crossfade(
+                targetState = icon,
+                modifier = Modifier.size(iconSize).semantics {
+                    if (contentDescription != null) this.contentDescription = contentDescription
+                },
+                animationSpec = tween(160),
+                label = "icon",
+            ) { current -> Icon(current, null, tint = resolvedTint, modifier = Modifier.size(iconSize)) }
+        } else {
+            Icon(icon, contentDescription, tint = resolvedTint, modifier = Modifier.size(iconSize))
+        }
     }
+}
+
+@Composable
+internal fun CopyIconButton(size: Dp, iconSize: Dp, tint: Color, description: String, onCopy: () -> Unit) {
+    var feedback by remember { mutableIntStateOf(0) }
+    LaunchedEffect(feedback) {
+        if (feedback != 0) {
+            delay(1500)
+            feedback = 0
+        }
+    }
+    val copied = feedback != 0
+    IconCircleButton(
+        icon = if (copied) AppIcons.Check else AppIcons.Copy,
+        contentDescription = if (copied) stringResource(R.string.md_copied) else description,
+        onClick = {
+            onCopy()
+            feedback++
+        },
+        size = size,
+        iconSize = iconSize,
+        tint = if (copied) MaterialTheme.colorScheme.primary else tint,
+        animateIcon = true,
+    )
 }
 
 /**

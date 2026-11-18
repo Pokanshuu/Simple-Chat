@@ -18,40 +18,20 @@ import kotlin.math.roundToInt
  */
 object TokenEstimate {
 
-    /** 非 CJK 的每 token 字符数。 */
-    private const val CHARS_PER_TOKEN_LATIN = 4.0
-
-    /** CJK 的每 token 字符数。 */
-    private const val CHARS_PER_TOKEN_CJK = 1.5
-
-    fun of(text: String): Int {
-        if (text.isEmpty()) return 0
-
+    // Use twelfths to combine cached text weights without rounding each message separately.
+    internal fun weight(text: String): Long {
         var cjk = 0
-        var other = 0
-        for (ch in text) {
-            if (isCjk(ch)) cjk++ else other++
-        }
-
-        val tokens = cjk / CHARS_PER_TOKEN_CJK + other / CHARS_PER_TOKEN_LATIN
-        // 至少 1 —— 一个非空字符串不可能对应 0 个 token
-        return tokens.roundToInt().coerceAtLeast(1)
+        for (ch in text) if (isCjk(ch)) cjk++
+        return 8L * cjk + 3L * (text.length - cjk)
     }
+
+    internal fun fromWeight(weight: Long): Int = if (weight == 0L) 0
+        else (weight / 12.0).roundToInt().coerceAtLeast(1)
+
+    fun of(text: String): Int = fromWeight(weight(text))
 
     /** 多段文本的合计，避免逐段取整带来的累计误差。 */
-    fun ofAll(texts: Iterable<String>): Int {
-        var cjk = 0
-        var other = 0
-        for (text in texts) {
-            for (ch in text) {
-                if (isCjk(ch)) cjk++ else other++
-            }
-        }
-        if (cjk == 0 && other == 0) return 0
-        return (cjk / CHARS_PER_TOKEN_CJK + other / CHARS_PER_TOKEN_LATIN)
-            .roundToInt()
-            .coerceAtLeast(1)
-    }
+    fun ofAll(texts: Iterable<String>): Int = fromWeight(texts.sumOf(::weight))
 
     fun ofAll(vararg texts: String): Int = ofAll(texts.asIterable())
 
