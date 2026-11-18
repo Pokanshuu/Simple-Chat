@@ -53,6 +53,11 @@ internal fun splitMath(content: String): List<ContentSegment> {
     }
 
     while (i < content.length) {
+        if (content.startsWith("\\$", i)) {
+            buffer.append(content, i, i + 2)
+            i += 2
+            continue
+        }
         // ── 围栏代码块：整块跳过，里面的 $ 不算公式 ──
         if (content.startsWith("```", i) || content.startsWith("~~~", i)) {
             val marker = content.substring(i, i + 3)

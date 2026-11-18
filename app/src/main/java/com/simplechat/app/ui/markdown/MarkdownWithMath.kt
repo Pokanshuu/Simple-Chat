@@ -36,11 +36,8 @@ import com.simplechat.app.ui.theme.LocalIsDarkTheme
  * 每个公式一个 WebView 实例，在长消息列表里滚动会明显掉帧 —— 而那正是本项目
  * 要解决的第一个问题（见 PRD「轻量流畅是第一要义」）。原生 Canvas 渲染没有这层开销。
  *
- * ### 代价：行内公式不跟着文字走
- * 公式是独立的一块，行内公式也会**独自占一行**。这是"不引 WebView"必然的取舍：
- * 要做到真正的行内混排，得把公式排版成一段 `AnnotatedString` 并塞进
- * Markdown 渲染器的内联流里，那是另一个量级的工程。对长文创作来说，
- * 公式偶尔出现，独占一行读得懂；而 WebView 卡顿是每一条消息都要付的代价。
+ * 行内公式由 Markdown 的 AnnotatedString 与原生 InlineTextContent 连续排版，
+ * 保留引用、列表、标题和标点。只有显式行间公式作为独立公式块渲染。
  */
 @Composable
 fun MarkdownWithMath(
@@ -52,9 +49,9 @@ fun MarkdownWithMath(
     val segments = remember(content) { splitMath(content) }
 
     // 没有公式：直接走原来的路径，一个字节的额外开销都没有
-    if (segments.size == 1 && segments.first() is ContentSegment.Text) {
+    if (segments.none { it is ContentSegment.Formula && it.display }) {
         MarkdownText(
-            content = (segments.first() as ContentSegment.Text).text,
+            content = content,
             modifier = modifier,
             streaming = streaming,
         )
@@ -79,7 +76,8 @@ fun MarkdownWithMath(
     }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        segments.forEach { segment ->
+        val grouped = remember(content) { displayMathSegments(content) }
+        grouped.forEach { segment ->
             when (segment) {
                 is ContentSegment.Text -> MarkdownText(
                     content = segment.text,

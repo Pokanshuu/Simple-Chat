@@ -30,7 +30,7 @@ internal object SearchRenderingRegression {
         val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
         suspend fun nodes(): List<AccessibilityNodeInfo> {
-            automation.clearCache()
+            runCatching { automation.clearCache() }
             var root = automation.rootInActiveWindow
             repeat(20) { if (root == null) { delay(100); root = automation.rootInActiveWindow } }
             val result = mutableListOf<AccessibilityNodeInfo>()

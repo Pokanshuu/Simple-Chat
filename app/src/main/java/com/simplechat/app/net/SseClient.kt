@@ -80,6 +80,7 @@ class SseClient(
                                 message = httpErrorText(response.code, serverMessage, largeRequest),
                                 code = response.code,
                                 retryable = response.code == 429 || response.code >= 500,
+                                rawMessage = serverMessage,
                             ),
                         )
                         return@use

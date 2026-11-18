@@ -201,6 +201,7 @@ fun ChatScreen(
 
     /** 附件相关的报错。与网络错误分开 —— 后者是 vm.banner，语义不同。 */
     var attachError by remember { mutableStateOf<String?>(null) }
+    var fileUploads by remember { mutableStateOf(0) }
 
     /*
      * ── 语音输入 / 朗读 ──────────────────────────────────
@@ -593,14 +594,20 @@ fun ChatScreen(
     ) { uris ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
         val owner = composerKey
+        val source = vm.attachmentSettings
         scope.launch {
+            if (source.filesApi.enabled) fileUploads++
+            try {
             /*
              * 一个入口认三种东西：PDF（渲染成图）、docx（抽文本）、
              * 以及其余一律按纯文本试。格式按**文件头**判定，不看扩展名。
              */
             importBatch(owner, uris) { uri ->
-                AttachmentImport.document(context, uri).map { it.attachments to it.note }
+                val imported = if (source.filesApi.enabled) com.simplechat.app.data.RemoteFileImport.document(context, uri, source)
+                    else AttachmentImport.document(context, uri)
+                imported.map { it.attachments to it.note }
             }
+            } finally { if (source.filesApi.enabled) fileUploads-- }
         }
     }
 
@@ -1473,6 +1480,12 @@ fun ChatScreen(
                 attachError?.let { message ->
                     BannerBar(message = message, onDismiss = { attachError = null })
                 }
+                if (fileUploads > 0) Row(verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text(stringResource(R.string.service_uploading), modifier = Modifier.padding(start = 8.dp),
+                        style = MaterialTheme.typography.labelMedium)
+                }
 
                 speechError?.let { message ->
                     BannerBar(message = message, onDismiss = { speechError = null })
@@ -1638,7 +1651,6 @@ fun ChatScreen(
                         usage = vm.lastUsage,
                         compaction = vm.compaction,
                         compacting = vm.compacting,
-                        compactPreview = vm.compactPreview,
                         onCompact = { vm.compactContext() },
                         onCancelCompact = { vm.cancelCompaction() },
                         onClearCompaction = { vm.clearCompaction() },

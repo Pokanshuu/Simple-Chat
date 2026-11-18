@@ -21,7 +21,7 @@ internal fun shareRenderBlocks(text: String, markdown: Boolean): List<ShareRende
     if (!markdown) return boundedShareChunks(text).map { ShareRenderBlock.Text(it, false) }
     val result = mutableListOf<ShareRenderBlock>()
     fun prose(source: String) {
-        splitMath(source).forEach { segment ->
+        com.simplechat.app.ui.markdown.displayMathSegments(source).forEach { segment ->
             when (segment) {
                 is ContentSegment.Formula -> result += ShareRenderBlock.Formula(segment.tex)
                 is ContentSegment.Text -> {

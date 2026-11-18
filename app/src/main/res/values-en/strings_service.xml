@@ -1,0 +1,35 @@
+<resources>
+    <string name="settings_export_deepseek">Export DeepSeek-compatible backup</string>
+    <string name="settings_export_deepseek_hint">Official v3 ZIP structure with a full SimpleChat extension preserving branches, attachments, sources and presets. Existing backup formats remain available.</string>
+    <string name="service_uploaded">Uploaded to Files API</string>
+    <string name="service_text_threshold">Long text threshold (characters)</string>
+    <string name="service_threshold_invalid">Enter a character count between 4,000 and 1,000,000. The default is 16,000.</string>
+    <string name="service_uploading">Uploading and parsing files…</string>
+    <string name="service_long_text_prompt">The complete user input for this turn is in message.txt. Read it and respond to the user request in the file.</string>
+    <string name="service_group">Independent tool APIs</string>
+    <string name="service_search_title">Search and Fetch API</string>
+    <string name="service_files_title">Files API</string>
+    <string name="service_enabled">Enabled</string>
+    <string name="service_disabled">Disabled</string>
+    <string name="service_search_hint">Supports the DeepSeek Search / Fetch protocol. When web search is on, search results are provided before generating an answer. Web links in the question are also read. Verify untrusted web content and sources. Search and Fetch may incur separate charges.</string>
+    <string name="service_files_hint">When enabled, the file picker uploads originals and references their file IDs. The image picker still uses local compression. Supports DeepSeek /files and compatible services. Files and chat must use the same service and account. For DeepSeek, use deepseek-flash. Files remain on the server and parsing may incur charges, even if you cancel waiting after upload.</string>
+    <string name="service_base_hint">Leave blank to follow the chat URL, or enter a DeepSeek or compatible service URL. Paths are appended to this URL. Reuse the chat key only with a trusted service that accepts it.</string>
+    <string name="service_reuse_key">Reuse chat API key</string>
+    <string name="service_custom_key">Independent API key</string>
+    <string name="service_key_hint">Leave blank to keep the saved key. Keys are encrypted at rest.</string>
+    <string name="service_path">Endpoint path</string>
+    <string name="service_fetch_path">Fetch path</string>
+    <string name="service_count">Search results (1–50)</string>
+    <string name="service_purpose">Document parsing (text, spreadsheets and ebooks use user_data)</string>
+    <string name="service_text_only">Text only</string>
+    <string name="service_rich_layout">Text and figures</string>
+    <string name="service_invalid_url">Invalid URL or path. Use an HTTP(S) URL and a path starting with /, without credentials, query parameters or relative segments.</string>
+    <string name="service_key_missing">The tool API has no key. Open Settings → API configuration and enter an independent key or enable reuse of the chat key.</string>
+    <string name="service_count_invalid">Enter a search result count between 1 and 50.</string>
+    <string name="service_bad_response">The tool API returned an unsupported response. Check its endpoint path and DeepSeek compatibility, or retry later.</string>
+    <string name="service_file_too_large">The file exceeds %1$d MiB. Split or compress it and try again.</string>
+    <string name="service_file_format">Unable to parse the file. Use a supported format, remove password protection, or convert it to PDF, DOCX or plain text.</string>
+    <string name="service_file_expired">The file is missing, expired or inaccessible to this account. Switch to its original service and account, or remove and upload the attachment again.</string>
+    <string name="service_file_endpoint_mismatch">This attachment belongs to a different file service. Switch back, or remove it and upload it to the current service.</string>
+    <string name="error_http_bad_request">The API rejected the request parameters. Check the model capabilities, endpoint path and file format, then retry.</string>
+</resources>

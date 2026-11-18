@@ -58,7 +58,11 @@ data class AnthropicRequest(
     val temperature: Double? = null,
     @SerialName("top_p") val topP: Double? = null,
     val stream: Boolean = true,
+    @SerialName("output_config") val outputConfig: AnthropicOutputConfig? = null,
 )
+
+@Serializable
+data class AnthropicOutputConfig(val effort: String)
 
 /** 原版 Anthropic 协议要求的默认值。 */
 object AnthropicRequestDefaults {

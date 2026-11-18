@@ -2,6 +2,8 @@ package com.simplechat.app.ui.chat
 
 import com.simplechat.app.data.Attachment
 import com.simplechat.app.data.AppTextException
+import com.simplechat.app.data.CompactionCheckpoint
+import com.simplechat.app.net.StreamEvent
 import com.simplechat.app.net.ChatRequestDto
 import com.simplechat.app.net.MessageContent
 import com.simplechat.app.net.OutMessageDto
@@ -13,6 +15,26 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ContextCompactionTest {
+    @Test fun `remote file with local original contributes complete text to compaction`() {
+        val original = "首段" + "完整原文".repeat(20_000) + "末段"
+        val remote = Attachment(Attachment.Kind.TEXT, "source.txt", data = original, fileId = "file-api-1")
+        val input = UiMessage("file", MessageRole.USER, "question", attachments = listOf(remote))
+        val material = compactionSegments(listOf(input), null, prompts).joinToString("")
+        assertTrue(material.contains(original))
+        assertFalse(material.contains("file-api-1"))
+    }
+
+    @Test fun `missing files are reported together before yielding any compression material`() {
+        val available = UiMessage("text", MessageRole.USER, "available".repeat(40_000))
+        val missing = UiMessage("files", MessageRole.USER, "read attachments", attachments = listOf(
+            Attachment(Attachment.Kind.TEXT, "report.pdf", data = "", fileId = "file-api-1"),
+            Attachment(Attachment.Kind.TEXT, "slides.pptx", data = "", fileId = "file-api-2")))
+        val source = compactionSegments(listOf(available, missing), "old summary", prompts).iterator()
+        try { source.hasNext(); fail("Missing files must be detected before first batch") }
+        catch (error: AppTextException) {
+            assertEquals("report.pdf、slides.pptx", error.text.args.single())
+        }
+    }
     private val prompts = CompactionPrompts("Summarize", "[Summary]\n", "\n[New]\n", "User: ", "AI: ", "[Image]")
     private fun messages(count: Int, content: String = "short") = (0 until count).map {
         UiMessage("$it", if (it % 2 == 0) MessageRole.USER else MessageRole.ASSISTANT, content)
@@ -50,39 +72,69 @@ class ContextCompactionTest {
         assertEquals(listOf("a", "😀", "z"), boundedCompactionChunks(sequenceOf("a😀z"), 2).toList())
     }
 
-    @Test fun `every rolling request fits and carries previous batch summary`() = runBlocking {
+    @Test fun `attachments without readable content are never silently marked as summarized`() {
+        val message = UiMessage("file", MessageRole.USER, "read this file",
+            attachments = listOf(Attachment(Attachment.Kind.TEXT, "remote.pdf", data = "")))
+        try {
+            compactionSegments(listOf(message), null, prompts).toList()
+            fail("A file reference must not be treated as an empty document")
+        } catch (error: AppTextException) {
+            assertEquals(com.simplechat.app.R.string.compact_attachment_unavailable, error.text.resId)
+        }
+    }
+
+    @Test fun `every request fits and hierarchical merge includes all leaf summaries in order`() = runBlocking {
         val transcript = "中".repeat(150_000) + "END"
-        var previous = ""
         var consumed = 0
-        var batches = 0
-        val result = compactInBatches(sequenceOf(transcript), prompts, 8192) { input, maxTokens, batch ->
-            val prefix = if (previous.isEmpty()) "" else prompts.existing + previous + prompts.newMessages
-            assertTrue(input.startsWith(prefix))
-            val chunk = input.removePrefix(prefix)
-            assertEquals(transcript.substring(consumed, consumed + chunk.length), chunk)
-            consumed += chunk.length
+        var level = 0
+        val leaves = mutableListOf<String>()
+        val result = compactInBatches(sequenceOf(transcript), prompts, 8192,
+            onProgress = { level = it.level }) { input, maxTokens, batch ->
             val request = ChatRequestDto("model", listOf(
                 OutMessageDto("system", MessageContent.text(prompts.system)),
                 OutMessageDto("user", MessageContent.text(input)),
             ), true, maxTokens = maxTokens)
             validateRequestBudget(estimatedInputTokens(request), maxTokens, 8192)
-            batches = batch
-            "summary-$batch".also { previous = it }
+            if (level == 0) {
+                assertEquals(transcript.substring(consumed, consumed + input.length), input)
+                consumed += input.length
+                "summary-$batch".also { leaves += it }
+            } else {
+                assertEquals(leaves.joinToString("") { "$it\n\n" }, input)
+                "complete-summary"
+            }
         }
-        assertTrue(batches > 1)
+        assertTrue(leaves.size > 1)
         assertEquals(transcript.length, consumed)
-        assertEquals(previous, result)
+        assertEquals("complete-summary", result)
     }
 
-    @Test fun `failure never returns a partial summary`() = runBlocking {
+    @Test fun `failure saves completed batches and restart resumes without skipping or repeating input`() = runBlocking {
+        val source = "中".repeat(40_000)
+        var checkpoint = CompactionCheckpoint()
         var calls = 0
+        val accepted = StringBuilder()
         try {
-            compactInBatches(sequenceOf("x".repeat(40_000)), prompts, 8192) { _, _, _ ->
-                if (++calls == 2) throw IOException("interrupted")
+            compactInBatches(sequenceOf(source), prompts, 8192,
+                onCheckpoint = { checkpoint = it }, pause = {}) { input, _, _ ->
+                if (++calls >= 2) throw IOException("interrupted")
+                accepted.append(input)
                 "first-summary"
             }
             fail("A failed batch must not yield a replacement summary")
-        } catch (_: IOException) { assertEquals(2, calls) }
+        } catch (error: CompactionRequestFailure) {
+            assertEquals(CompactionFailureKind.TRANSIENT, error.kind)
+            assertEquals(4, calls)
+        }
+        assertEquals(1, checkpoint.summaries.size)
+        assertEquals(accepted.length.toLong(), checkpoint.offset)
+        var level = 0
+        compactInBatches(sequenceOf(source), prompts, 8192, checkpoint,
+            onProgress = { level = it.level }) { input, _, _ ->
+            if (level == 0) accepted.append(input)
+            "summary"
+        }
+        assertEquals(source, accepted.toString())
     }
 
     @Test fun `cancellation stops before requesting another batch`() = runBlocking {
@@ -105,7 +157,117 @@ class ContextCompactionTest {
             try {
                 compactInBatches(sequenceOf("source"), prompts, 8192) { _, _, _ -> summary }
                 fail("Expected invalid summary error")
-            } catch (_: AppTextException) { }
+            } catch (_: CompactionRequestFailure) { }
         }
+    }
+
+    @Test fun `1M model recovers from the reported 32768 request limit without losing any source`() = runBlocking {
+        val source = "中文😀".repeat(280_000) + "LAST"
+        val accepted = StringBuilder()
+        var level = 0
+        var rejected = 0
+        var checkpoint = CompactionCheckpoint()
+        val result = compactInBatches(sequenceOf(source), prompts, 1_000_000,
+            onCheckpoint = { checkpoint = it }, onProgress = { level = it.level }) { input, _, _ ->
+            if (input.length > 40_000) {
+                rejected++
+                throw compactionFailure(StreamEvent.Error("localized", 400, rawMessage =
+                    "user input too long, 32942 tokens exceeds max 32768 tokens (request_id: example)"))
+            }
+            assertFalse(Character.isHighSurrogate(input.last()))
+            assertFalse(Character.isLowSurrogate(input.first()))
+            if (level == 0) accepted.append(input)
+            "summary"
+        }
+        assertEquals("summary", result)
+        assertEquals(1, rejected)
+        assertEquals(32_768, checkpoint.requestWindow)
+        assertEquals(source, accepted.toString())
+    }
+
+    @Test fun `unknown request limits shrink adaptively and remain bounded`() = runBlocking {
+        var calls = 0
+        try {
+            compactInBatches(sequenceOf("x".repeat(100_000)), prompts, 1_000_000) { _, _, _ ->
+                calls++
+                throw compactionFailure(StreamEvent.Error("payload too large", 413))
+            }
+            fail("The operation must stop after bounded recovery")
+        } catch (error: CompactionRequestFailure) {
+            assertEquals(CompactionFailureKind.INPUT_LIMIT, error.kind)
+            assertEquals(9, calls)
+        }
+    }
+
+    @Test fun `truncated response gets a larger output budget before retrying`() = runBlocking {
+        val budgets = mutableListOf<Int>()
+        val result = compactInBatches(sequenceOf("source"), prompts, 32_768) { _, budget, _ ->
+            budgets += budget
+            if (budgets.size == 1) throw CompactionRequestFailure(CompactionFailureKind.TRUNCATED)
+            "complete"
+        }
+        assertEquals(listOf(2048, 4096), budgets)
+        assertEquals("complete", result)
+    }
+
+    @Test fun `authentication errors stop immediately without resizing or retrying`() = runBlocking {
+        var calls = 0
+        try {
+            compactInBatches(sequenceOf("source"), prompts, 8192, pause = {}) { _, _, _ ->
+                calls++
+                throw compactionFailure(StreamEvent.Error("invalid api key", 401))
+            }
+            fail("Authentication failure must be surfaced")
+        } catch (error: CompactionRequestFailure) {
+            assertEquals(CompactionFailureKind.PERMANENT, error.kind)
+            assertEquals(1, calls)
+        }
+    }
+
+    @Test fun `non shrinking summaries stop instead of looping or discarding source`() = runBlocking {
+        var checkpoint = CompactionCheckpoint()
+        try {
+            compactInBatches(sequenceOf("x".repeat(60_000)), prompts, 1_000_000,
+                onCheckpoint = { checkpoint = it }) { input, _, _ -> input }
+            fail("An expanding merge cannot converge")
+        } catch (error: AppTextException) {
+            assertEquals(com.simplechat.app.R.string.compact_no_progress, error.text.resId)
+        }
+        assertEquals(0L, checkpoint.offset)
+        assertTrue(checkpoint.summaries.isEmpty())
+        var calls = 0
+        val retried = compactInBatches(sequenceOf("x".repeat(60_000)), prompts, 1_000_000, checkpoint) { _, _, _ ->
+            calls++
+            "small summary"
+        }
+        assertEquals("small summary", retried)
+        assertTrue(calls > 0)
+    }
+
+    @Test fun `cancellation during retry backoff does not start another request`() = runBlocking {
+        val waiting = CompletableDeferred<Unit>()
+        var calls = 0
+        val job = launch {
+            compactInBatches(sequenceOf("source"), prompts, 8192,
+                pause = { waiting.complete(Unit); awaitCancellation() }) { _, _, _ ->
+                calls++
+                throw IOException("interrupted")
+            }
+        }
+        waiting.await()
+        job.cancelAndJoin()
+        assertEquals(1, calls)
+    }
+
+    @Test fun `checkpoint write failure cannot retry or double count an accepted request`() = runBlocking {
+        var calls = 0
+        try {
+            compactInBatches(sequenceOf("source"), prompts, 8192,
+                onCheckpoint = { throw IOException("disk full") }, pause = {}) { _, _, _ ->
+                calls++
+                "summary"
+            }
+            fail("Checkpoint failure should reach the caller")
+        } catch (_: IOException) { assertEquals(1, calls) }
     }
 }

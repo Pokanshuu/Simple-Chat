@@ -67,7 +67,7 @@ internal object MessageShareRegression {
         }
         instrumentation.addMonitor(monitor)
         suspend fun nodes(): List<AccessibilityNodeInfo> {
-            if (android.os.Build.VERSION.SDK_INT >= 33) automation.clearCache()
+            if (android.os.Build.VERSION.SDK_INT >= 33) runCatching { automation.clearCache() }
             val list = mutableListOf<AccessibilityNodeInfo>()
             fun visit(node: AccessibilityNodeInfo) {
                 if (android.os.Build.VERSION.SDK_INT < 33) node.refresh()

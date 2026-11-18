@@ -24,6 +24,8 @@ sealed interface StreamEvent {
         val message: String,
         val code: Int? = null,
         val retryable: Boolean = false,
+        /** Preserve provider diagnostics for recovery without parsing translated UI text. */
+        val rawMessage: String? = null,
     ) : StreamEvent
 
     // ── 以下是 Anthropic 兼容通道的**块级**事件 ─────────────────────────

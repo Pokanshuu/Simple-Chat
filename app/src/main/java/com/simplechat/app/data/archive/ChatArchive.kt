@@ -125,13 +125,17 @@ object ChatArchive {
      */
     internal fun readBackupJson(readEntry: (String) -> ByteArray?): BackupFile? {
         val manifestBytes = readEntry(MANIFEST) ?: return null
-        val format = runCatching {
+        val metadata = runCatching {
             json.parseToJsonElement(manifestBytes.decodeToString())
-                .jsonObject["format"]?.jsonPrimitive?.content
+                .jsonObject
         }.getOrNull()
-        if (format != FORMAT) return null
+        val format = metadata?.get("format")?.jsonPrimitive?.content
+        val deepSeekExtension = metadata?.get("export_format_version")?.toString() == "3" &&
+            metadata["simplechat_extension_version"]?.toString() == "1" &&
+            metadata["simplechat_backup"]?.jsonPrimitive?.content == DeepSeekArchive.EXTENSION
+        if (format != FORMAT && !deepSeekExtension) return null
 
-        val backupBytes = readEntry(BACKUP) ?: return null
+        val backupBytes = readEntry(if (deepSeekExtension) DeepSeekArchive.EXTENSION else BACKUP) ?: return null
         return runCatching {
             json.decodeFromString<BackupFile>(backupBytes.decodeToString())
         }.getOrNull()

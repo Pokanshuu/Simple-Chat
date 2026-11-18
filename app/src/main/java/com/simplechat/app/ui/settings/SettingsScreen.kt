@@ -157,6 +157,7 @@ private sealed interface SettingsDialog {
     /** 手动填写模型 id：端点没实现 `/models`、或列表里没有目标模型时的出口。 */
     data object ModelManual : SettingsDialog
     data object ApiKey : SettingsDialog
+    data class Service(val files: Boolean) : SettingsDialog
     data class ApiProfileName(val profile: ApiProfile? = null, val copyCurrent: Boolean = false) : SettingsDialog
     data class DeleteApiProfile(val profile: ApiProfile) : SettingsDialog
     data object DeleteAll : SettingsDialog
@@ -471,6 +472,12 @@ fun SettingsScreen(
     fun startArchiveExport() = prepareExport("zip", { archiveLauncher.launch(it) }) { file ->
         stageArchive(file) { repository.exportArchive(it) { p -> archiveProgress.value = p } }
     }
+    fun startDeepSeekExport() = prepareExport("zip", { archiveLauncher.launch(it) }) { file ->
+        repository.exportDeepSeekArchive(file) { p -> archiveProgress.value = p }
+        java.util.zip.ZipFile(file).use { zip ->
+            check(zip.getEntry("manifest.json") != null && zip.getEntry("chat_session_index.json") != null && zip.getEntry("user.json") != null)
+        }
+    }
     // ── 页面 ──────────────────────────────────────────────
 
     Column(
@@ -566,6 +573,7 @@ fun SettingsScreen(
                             exportSaving = archiveSaving,
                             onExport = { startExport() },
                             onExportArchive = { startArchiveExport() },
+                            onExportDeepSeek = { startDeepSeekExport() },
                             onExportReport = { startReportExport() },
                             onExportCrash = { startCrashExport() },
                             onImport = {
@@ -670,6 +678,7 @@ fun SettingsScreen(
     // 先收进局部变量：dialog 是委托属性，直接 when(dialog) 无法智能转换
     val activeDialog = dialog
     when (activeDialog) {
+        is SettingsDialog.Service -> ServiceApiDialog(activeDialog.files, stored, store) { dialog = null }
         SettingsDialog.Provider -> ChoiceDialog(
             title = stringResource(R.string.label_provider),
             options = ProviderKind.entries.map { it to it.displayName },
@@ -1351,6 +1360,7 @@ private fun DataPage(
     exportSaving: Boolean = false,
     onExport: () -> Unit,
     onExportArchive: () -> Unit,
+    onExportDeepSeek: () -> Unit,
     onExportReport: () -> Unit,
     onExportCrash: () -> Unit,
     onImport: () -> Unit,
@@ -1370,6 +1380,13 @@ private fun DataPage(
             label = stringResource(R.string.settings_export_archive),
             hint = stringResource(R.string.settings_export_archive_summary),
             onClick = onExportArchive,
+            enabled = !reading && progress == null && exportProgress == null,
+        )
+        RowDivider()
+        SettingsActionRow(
+            label = stringResource(R.string.settings_export_deepseek),
+            hint = stringResource(R.string.settings_export_deepseek_hint),
+            onClick = onExportDeepSeek,
             enabled = !reading && progress == null && exportProgress == null,
         )
         RowDivider()
@@ -1507,6 +1524,16 @@ private fun ApiPage(
     Text(stringResource(R.string.api_profiles_hint), style = MaterialTheme.typography.labelSmall,
         color = colors.placeholder, modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp))
     profileError?.let { Text(it, color = colors.danger, style = MaterialTheme.typography.labelMedium) }
+    SettingsSectionLabel(stringResource(R.string.service_group))
+    SettingsCard {
+        SettingsNavRow(null, stringResource(R.string.service_search_title),
+            stringResource(if (stored.searchApi.enabled) R.string.service_enabled else R.string.service_disabled),
+            { onPick(SettingsDialog.Service(false)) })
+        RowDivider(inset = 16.dp)
+        SettingsNavRow(null, stringResource(R.string.service_files_title),
+            stringResource(if (stored.filesApi.enabled) R.string.service_enabled else R.string.service_disabled),
+            { onPick(SettingsDialog.Service(true)) })
+    }
 
     SettingsSectionLabel(stringResource(R.string.settings_group_service))
 

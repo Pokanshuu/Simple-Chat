@@ -86,6 +86,7 @@ class AppTextException(val text: AppText) : IllegalArgumentException("AppText(#$
  * - 其它异常保留 `message`：那多半是我们自己的解析/断言错误，排查时要原文。
  */
 fun Throwable.userMessage(): String = when (this) {
+    is com.simplechat.app.net.ServiceApi.HttpFailure -> com.simplechat.app.net.httpErrorText(status, detail)
     is AppTextException -> text.resolve()
     /*
      * OkHttp 对非法请求头抛的是 `IllegalArgumentException`：

@@ -369,7 +369,6 @@ fun ContextPanelContent(
     stats: ContextStats,
     compaction: CompactionEntity?,
     compacting: Boolean,
-    compactPreview: String,
     onCompact: () -> Unit,
     onCancelCompact: () -> Unit,
     onClearCompaction: () -> Unit,
@@ -477,7 +476,6 @@ fun ContextPanelContent(
         CompactionSection(
             compaction = compaction,
             compacting = compacting,
-            compactPreview = compactPreview,
             onCompact = onCompact,
             onCancelCompact = onCancelCompact,
             onClearCompaction = onClearCompaction,
@@ -536,10 +534,9 @@ private fun StatRow(label: String, value: String) {
 }
 
 @Composable
-private fun CompactionSection(
+internal fun CompactionSection(
     compaction: CompactionEntity?,
     compacting: Boolean,
-    compactPreview: String,
     onCompact: () -> Unit,
     onCancelCompact: () -> Unit,
     onClearCompaction: () -> Unit,
@@ -547,7 +544,7 @@ private fun CompactionSection(
 ) {
     val colors = LocalChatColors.current
     var editing by remember { mutableStateOf(false) }
-    var draft by remember(compaction?.id) { mutableStateOf(compaction?.summary.orEmpty()) }
+    var draft by remember(compaction?.id, compaction?.summary) { mutableStateOf(compaction?.summary.orEmpty()) }
 
     PanelSectionTitle(text = stringResource(R.string.compact_title))
 
@@ -568,6 +565,11 @@ private fun CompactionSection(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                androidx.compose.material3.CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                )
+                Spacer(Modifier.size(10.dp))
                 Text(
                     text = stringResource(R.string.compact_running),
                     style = MaterialTheme.typography.labelMedium,
@@ -575,10 +577,6 @@ private fun CompactionSection(
                     modifier = Modifier.weight(1f),
                 )
                 CapsuleButton(text = stringResource(R.string.action_cancel), onClick = onCancelCompact)
-            }
-            if (compactPreview.isNotBlank()) {
-                Spacer(Modifier.size(8.dp))
-                ReadOnlyBox(text = compactPreview, maxHeight = 160.dp)
             }
         }
 

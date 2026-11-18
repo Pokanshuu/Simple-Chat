@@ -65,6 +65,7 @@ internal fun buildAnthropicRequest(
     /** 采样参数。原版 Anthropic 在开启思考时不允许设置温度，装配层会置空。 */
     temperature: Double? = null,
     topP: Double? = null,
+    reasoningEffort: String? = null,
 ): AnthropicRequest {
     val messages = mutableListOf<AnthropicMessageParam>()
 
@@ -198,6 +199,8 @@ internal fun buildAnthropicRequest(
         // 原版 Anthropic 不允许同时改 temperature 与 top_p；这里只发 temperature
         temperature = if (!deepSeekExtensions && !thinkingEnabled) temperature ?: 1.0 else null,
         topP = if (deepSeekExtensions) topP else null,
+        outputConfig = if (deepSeekExtensions && thinkingEnabled && reasoningEffort != null)
+            com.simplechat.app.net.anthropic.AnthropicOutputConfig(reasoningEffort) else null,
     )
 }
 
@@ -232,7 +235,8 @@ private fun userParam(message: UiMessage): AnthropicMessageParam {
      * 少一张图 < 整个会话发不出去。
      */
     val images = message.attachments.filter { it.isImage && it.data.isNotBlank() }
-    if (images.isEmpty()) {
+    val files = message.attachments.filter { !it.fileId.isNullOrBlank() }
+    if (images.isEmpty() && files.isEmpty()) {
         return AnthropicMessageParam(
             role = AnthropicMessageParam.RoleUser,
             content = JsonPrimitive(text),
@@ -241,6 +245,10 @@ private fun userParam(message: UiMessage): AnthropicMessageParam {
     return AnthropicMessageParam(
         role = AnthropicMessageParam.RoleUser,
         content = buildJsonArray {
+            files.forEach { file -> addJsonObject {
+                put("type", if (file.remoteImage) "image" else "document")
+                put("source", buildJsonObject { put("type", "file"); put("file_id", file.fileId) })
+            } }
             // 先图后文：块数组是有序的，图片放在问题前面才符合"这是我看的资料"的语序
             images.forEach { image ->
                 addJsonObject {
@@ -268,7 +276,7 @@ private fun userParam(message: UiMessage): AnthropicMessageParam {
 
 /** 正文 + 文本附件拼成的一段话（附件用定界块，模型才分得清哪段是资料）。 */
 private fun bodyText(message: UiMessage): String {
-    val textFiles = message.attachments.filter { it.kind == Attachment.Kind.TEXT }
+    val textFiles = message.attachments.filter { it.kind == Attachment.Kind.TEXT && it.fileId == null }
     if (textFiles.isEmpty()) return message.content
     return buildString {
         append(message.content)

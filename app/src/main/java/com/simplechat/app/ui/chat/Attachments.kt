@@ -258,7 +258,8 @@ private fun FileChip(spec: Attachment, onClick: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = stringResource(R.string.attach_char_count, spec.data.length),
+                text = if (spec.fileId != null) stringResource(R.string.service_uploaded)
+                    else stringResource(R.string.attach_char_count, spec.data.length),
                 style = MaterialTheme.typography.labelSmall,
                 color = colors.placeholder,
                 maxLines = 1,

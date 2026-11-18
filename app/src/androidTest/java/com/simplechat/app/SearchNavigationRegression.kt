@@ -56,7 +56,7 @@ internal object SearchNavigationRegression {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
         val automation = instrumentation.uiAutomation
         suspend fun nodes(): List<AccessibilityNodeInfo> {
-            automation.clearCache()
+            runCatching { automation.clearCache() }
             val all = mutableListOf<AccessibilityNodeInfo>()
             fun visit(node: AccessibilityNodeInfo) { all += node; for (i in 0 until node.childCount) node.getChild(i)?.let(::visit) }
             automation.rootInActiveWindow?.let(::visit)

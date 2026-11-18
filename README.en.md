@@ -4,7 +4,7 @@
 
 **[中文](README.md) | English**
 
-[![Version](https://img.shields.io/badge/version-1.1.5-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
+[![Version](https://img.shields.io/badge/version-1.1.6--pre-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## Introduction
@@ -34,6 +34,12 @@ Good for:
 - [License](#license)
 
 ## Features
+
+- Independent Search / Fetch and Files API settings, with custom URLs, paths and encrypted keys or chat-key reuse. Supports DeepSeek-compatible protocols.
+- Long user inputs and text attachments can be uploaded once and reused by file ID. Original messages stay local. This reduces transfer size; file content still uses model context and input tokens. See the [tool API guide](docs/23-独立工具API与长文本文件传输.md).
+- Resumable hierarchical compaction reduces batch size when a request exceeds server limits. Only a loading state is shown during compaction; the complete summary is available after success.
+- DeepSeek v3 compatible export includes a native extension to retain existing backup data. Previous JSON and ZIP formats remain supported.
+- Inline LaTeX flows with Markdown text, quotes and lists. Double-tap an AI reply to select text; the long-press menu remains available.
 
 - Multiple providers: any OpenAI-compatible endpoint, with built-in presets for DeepSeek and OpenCode Go.
 - **Two protocol channels**: the official DeepSeek endpoint can use the **Anthropic-compatible** extended channel (web search / link reading / citations / server-side titles / time-and-place reminder), while every other endpoint stays on OpenAI-compatible. Both coexist and can be pinned manually.

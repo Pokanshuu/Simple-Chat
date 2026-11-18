@@ -67,7 +67,7 @@ internal object LargeMessageUiRegression {
             instrumentation.waitForIdleSync()
             delay(1200)
             suspend fun nodes(): List<AccessibilityNodeInfo> {
-                automation.clearCache()
+                runCatching { automation.clearCache() }
                 var root = automation.rootInActiveWindow
                 repeat(20) {
                     if (root == null) { delay(250); root = automation.rootInActiveWindow }

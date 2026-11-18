@@ -43,6 +43,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * 落库前的归一：空文本返回 `null`（= 删行、不留空壳），超长**截尾**到
@@ -75,6 +77,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     private val compactionDao = db.compactionDao()
     private val drafts = db.draftDao()
     private val attachmentRefs = db.attachmentRefDao()
+    private val compactionCheckpoints = CompactionCheckpointStore(File(context.noBackupFilesDir, "compaction"))
 
     // ── 会话列表 ──────────────────────────────────────────
 
@@ -200,6 +203,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         files.distinct().forEach { path ->
             if (!attachmentRefs.containsPath(path) && !messages.referencesAttachment(path)) AttachmentFiles.delete(context, path)
         }
+        ids.forEach { deleteCompactionCheckpoint(it) }
     }
 
     /**
@@ -749,6 +753,23 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
 
     suspend fun deleteCompaction(id: String) = compactionDao.delete(id)
 
+    internal suspend fun loadCompactionCheckpoint(id: String, fingerprint: String): CompactionCheckpoint? =
+        withContext(Dispatchers.IO) { compactionCheckpoints.load(id, fingerprint) }
+
+    internal suspend fun saveCompactionCheckpoint(id: String, state: CompactionCheckpoint) = withContext(Dispatchers.IO) {
+        // A full disk must not invalidate a completed API response or the active summary.
+        try {
+            compactionCheckpoints.save(id, state)
+        } catch (error: Exception) {
+            currentCoroutineContext().ensureActive()
+            android.util.Log.w("SimpleChat/Compaction", "Checkpoint could not be saved (${error.javaClass.simpleName})")
+        }
+    }
+
+    internal suspend fun deleteCompactionCheckpoint(id: String) = withContext(Dispatchers.IO) {
+        compactionCheckpoints.delete(id)
+    }
+
     // ── 未发送的输入草稿 ──────────────────────────────────
 
     /**
@@ -807,6 +828,8 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             attachmentRefs.clearEverything()
         }
         files.forEach { AttachmentFiles.delete(context, it) }
+        withContext(Dispatchers.IO) { compactionCheckpoints.clear() }
+        withContext(Dispatchers.IO) { File(context.filesDir, "file-api-cache").deleteRecursively() }
     }
 
     suspend fun conversationCount(): Int = conversations.count()
@@ -848,6 +871,33 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             val row = checkNotNull(conversations.findById(conversationId)) { "Conversation no longer exists" }
             val ids = MessageTree.activePathIds(messages.getLightFor(conversationId))
             file.writer(Charsets.UTF_8).buffered().use { writeConversationMarkdown(row, ids, it) }
+        }
+    }
+
+    suspend fun exportDeepSeekArchive(file: File, onProgress: (Float) -> Unit = {}) = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            val rows = conversations.getAllRaw()
+            val headers = rows.map { it.toBackup(emptyList(), getEnabledPresetIds(it.id)) }
+            val sessions = headers.map { com.simplechat.app.data.archive.DeepSeekArchive.Session(it, messages.getLightFor(it.id)) }
+            val presetRows = presets.getAll().map { it.toBackup() }
+            val total = rows.sumOf { messages.countFor(it.id) }.coerceAtLeast(1)
+            var written = 0
+            file.outputStream().buffered().use { output ->
+                com.simplechat.app.data.archive.DeepSeekArchive.writeTo(output, sessions,
+                    attachmentSource = { AttachmentFiles.open(context, it) },
+                    readMessage = { readMessageForExport(it).toBackup() },
+                ) { native ->
+                    writeBackupStream(native.writer(Charsets.UTF_8).buffered(), System.currentTimeMillis(), headers, presetRows,
+                        attachmentSource = { AttachmentFiles.open(context, it) }) { id, sink ->
+                        for (messageId in messages.idsFor(id)) {
+                            currentCoroutineContext().ensureActive()
+                            sink(readMessageForExport(messageId).toBackup())
+                            onProgress(0.5f * ++written / total)
+                        }
+                    }
+                }
+            }
+            onProgress(1f)
         }
     }
 
@@ -1102,6 +1152,17 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         }
         if (isZip) ZipFile(file).use { zip ->
             val manifest = zip.getEntry(ChatArchive.MANIFEST)
+            if (manifest != null && manifest.size in 1..65_536) {
+                val metadata = runCatching { backupJson.parseToJsonElement(zip.getInputStream(manifest).reader(Charsets.UTF_8).use { it.readText() })
+                    .jsonObject }.getOrNull()
+                if (metadata?.get("export_format_version")?.toString() == "3" &&
+                    metadata["simplechat_extension_version"]?.toString() == "1" &&
+                    metadata["simplechat_backup"]?.jsonPrimitive?.content == com.simplechat.app.data.archive.DeepSeekArchive.EXTENSION) {
+                    val backup = zip.getEntry(com.simplechat.app.data.archive.DeepSeekArchive.EXTENSION)
+                        ?: throw AppTextException(R.string.err_archive_damaged)
+                    return importOwnStream({ zip.getInputStream(backup).reader(Charsets.UTF_8) }, scratchDir, mode, onProgress)
+                }
+            }
             val own = manifest != null && manifest.size in 1..65_536 &&
                 runCatching { OwnBackupStream.format { zip.getInputStream(manifest).reader(Charsets.UTF_8) } }.getOrNull() == ChatArchive.FORMAT
             if (own) {
@@ -1233,6 +1294,11 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             prepared to dropped
         }
     }
+
+    private val fileApiTextCache by lazy { FileApiTextCache(context) }
+
+    internal suspend fun prepareLongTextForRequest(text: String, attachments: List<Attachment>, settings: StoredSettings) =
+        fileApiTextCache.prepare(text, attachments, settings)
 
     /**
      * 导出的前置处理：把落盘附件的字节读回 base64。
@@ -1665,6 +1731,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     private suspend fun deleteConversationRecords(id: String) {
         conversations.delete(id)
         drafts.clearAll(listOf(id))
+        deleteCompactionCheckpoint(id)
     }
 
     private companion object {

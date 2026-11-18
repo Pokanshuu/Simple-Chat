@@ -4,6 +4,9 @@ import com.simplechat.app.data.Attachment
 import com.simplechat.app.net.ImageInput
 import com.simplechat.app.net.MessageContent
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
  * 组装一条 **user** 消息的 `content`。
@@ -33,7 +36,8 @@ import kotlinx.serialization.json.JsonElement
 fun userContent(text: String, attachments: List<Attachment>): JsonElement {
     if (attachments.isEmpty()) return MessageContent.text(text)
 
-    val textFiles = attachments.filter { it.kind == Attachment.Kind.TEXT }
+    val textFiles = attachments.filter { it.kind == Attachment.Kind.TEXT && it.fileId == null }
+    val files = attachments.filter { !it.fileId.isNullOrBlank() }
     // 只发有内容的图片：落盘附件的 data 要靠 `prepareRequestAttachments` 读回，
     // 万一漏了那一步，空 base64 发上去只会 400（见 AnthropicRequestBuilder 的同一条注释）
     val images = attachments.filter { it.isImage && it.data.isNotBlank() }
@@ -47,6 +51,11 @@ fun userContent(text: String, attachments: List<Attachment>): JsonElement {
         }
     }.trim()
 
+    if (files.isNotEmpty()) return JsonArray(buildList {
+        if (body.isNotBlank()) add(buildJsonObject { put("type", "text"); put("text", body) })
+        files.forEach { file -> add(buildJsonObject { put("type", "file"); put("file_id", file.fileId) }) }
+        if (images.isNotEmpty()) addAll(MessageContent.withImages("", images.map { ImageInput(it.toDataUrl(), ImageDetail) }) as JsonArray)
+    })
     if (images.isEmpty()) return MessageContent.text(body)
 
     return MessageContent.withImages(
@@ -96,6 +105,7 @@ internal fun isSendableOutgoing(message: UiMessage): Boolean =
     message.content.isNotBlank() ||
         message.attachments.any { attachment ->
             when {
+                !attachment.fileId.isNullOrBlank() -> true
                 attachment.kind == Attachment.Kind.TEXT -> attachment.data.isNotBlank()
                 attachment.isImage -> attachment.data.isNotBlank()
                 else -> false

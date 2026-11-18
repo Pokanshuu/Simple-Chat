@@ -16,6 +16,8 @@ import com.simplechat.app.data.ApiKey
 import com.simplechat.app.data.BackgroundGeneration
 import com.simplechat.app.data.Attachment
 import com.simplechat.app.data.ChatRepository
+import com.simplechat.app.data.CompactionCheckpoint
+import com.simplechat.app.data.compactionFingerprint
 import com.simplechat.app.ui.markdown.warmMarkdownCache
 import kotlinx.coroutines.Dispatchers
 import com.simplechat.app.data.Res
@@ -157,10 +159,6 @@ class ChatViewModel(
     var compacting by mutableStateOf(false)
         private set
 
-    /** 压缩过程中的流式预览，让用户看到"它在写什么"。 */
-    var compactPreview by mutableStateOf("")
-        private set
-
     private var compactJob: Job? = null
     private var compactGeneration = 0L
 
@@ -257,7 +255,8 @@ class ChatViewModel(
      * 搜索走的是扩展通道的工具（`deepseek_web_search`），OpenAI 兼容通道没有等价入口。
      * 所以通道不支持时干脆不显示，而不是留一个按下去什么都不发生的开关。
      */
-    val supportsWebSearch: Boolean get() = apiStyle == ApiStyle.ANTHROPIC
+    val supportsWebSearch: Boolean get() = stored.supportsWebSearch
+    val attachmentSettings: StoredSettings get() = stored
 
     /** 智能搜索开关：这一轮要不要向服务端声明 `deepseek_web_search`。 */
     var webSearch by mutableStateOf(false)
@@ -702,6 +701,7 @@ class ChatViewModel(
             return
         }
 
+        if (compacting) cancelCompaction()
         banner = null
         imageSkipNotice = null
 
@@ -832,7 +832,7 @@ class ChatViewModel(
      * - **摘要可读可改** —— AI 记错人名地名时用户能直接修正（见 [updateCompactionSummary]）
      */
     fun compactContext() {
-        if (compacting || isStreaming) return
+        if (compacting || isStreaming || switching) return
         val conversationId = currentConversationId ?: return
         val generation = switchGeneration
         val revision = pathRevision
@@ -861,7 +861,6 @@ class ChatViewModel(
         )
 
         compacting = true
-        compactPreview = ""
         banner = null
         imageSkipNotice = null
 
@@ -869,16 +868,25 @@ class ChatViewModel(
             try {
                 val result = withContext(Dispatchers.Default) {
                     val cutIndex = compactionCutIndex(candidates, model.contextWindow / 2)
-                    if (cutIndex <= 0) throw com.simplechat.app.data.AppTextException(R.string.compact_too_few)
+                    if (cutIndex <= 0 && existing == null) throw com.simplechat.app.data.AppTextException(R.string.compact_too_few)
                     val toSummarize = candidates.take(cutIndex)
+                    val segments = compactionSegments(toSummarize, existing?.summary, prompts)
+                    val fingerprint = compactionFingerprint(sequenceOf(
+                        "hierarchical-compaction-v1", conversationId, model.id, model.contextWindow.toString(),
+                        baseUrl, apiKey, extended.toString(), headers.toSortedMap().toString(), prompts.system,
+                        existing?.throughMessageId.orEmpty(),
+                    ) + toSummarize.asSequence().map { it.id } + segments)
+                    val checkpoint = repository.loadCompactionCheckpoint(conversationId, fingerprint)
+                        ?: CompactionCheckpoint(fingerprint = fingerprint)
                     val summary = compactInBatches(
-                        compactionSegments(toSummarize, existing?.summary, prompts),
-                        prompts, model.contextWindow,
-                    ) { transcript, maxTokens, batch ->
-                        val collected = StringBuilder()
-                        var failure: String? = null
-                        val progress = Res.get(R.string.compact_batch_progress, batch)
-                        withContext(Dispatchers.Main) { compactPreview = progress }
+                        segments, prompts, model.contextWindow, checkpoint,
+                        onCheckpoint = { repository.saveCompactionCheckpoint(conversationId, it) },
+                        onProgress = {
+                            // Log only operational metadata, never conversation content or credentials.
+                            android.util.Log.i("SimpleChat/Compaction",
+                                "Level=${it.level} batch=${it.batch} chars=${it.processedChars}/${it.totalChars} recovery=${it.recovery}")
+                        },
+                    ) { transcript, maxTokens, _ ->
                         val stream = if (extended) {
                             chatApi.streamMessage(
                                 baseUrl = baseUrl, apiKey = apiKey,
@@ -888,7 +896,7 @@ class ChatViewModel(
                                     searchEnabled = false, thinkingEnabled = false, requestTitle = false,
                                     latestReminder = null, maxTokens = maxTokens, temperature = 0.3,
                                     deepSeekExtensions = isOfficialDeepSeekEndpoint(baseUrl),
-                                ),
+                                ).copy(tools = emptyList()),
                                 extraHeaders = headers, contextWindow = model.contextWindow,
                             )
                         } else {
@@ -902,32 +910,12 @@ class ChatViewModel(
                                 temperature = 0.3, extraHeaders = headers,
                             )
                         }
-                        var previewAt = 0L
-                        stream.collect { event ->
-                            when (event) {
-                                is StreamEvent.Content -> collected.append(event.text)
-                                is StreamEvent.TextDelta -> collected.append(event.text)
-                                is StreamEvent.BlockStart -> (event.block as? ReplyBlock.Text)?.let { collected.append(it.text) }
-                                is StreamEvent.Error -> failure = serverErrorText(event.message)
-                                is StreamEvent.Stopped -> if (event.reason in listOf("length", "max_tokens")) {
-                                    failure = Res.get(R.string.compact_summary_too_large)
-                                }
-                                else -> Unit
-                            }
-                            val now = System.currentTimeMillis()
-                            if (now - previewAt >= 100) {
-                                val preview = "$progress\n\n$collected"
-                                withContext(Dispatchers.Main) { compactPreview = preview }
-                                previewAt = now
-                            }
-                        }
-                        failure?.let { throw IllegalStateException(it) }
-                        collected.toString()
+                        collectCompactionSummary(stream)
                     }
-                    toSummarize.last().id to summary
+                    (toSummarize.lastOrNull()?.id ?: checkNotNull(existing).throughMessageId) to summary
                 }
                 // A changed branch/edit invalidates the source snapshot, even if the chat ID matches.
-                if (generation != switchGeneration || revision != pathRevision || savedCompaction != compaction) return@launch
+                if (generation != switchGeneration || revision != pathRevision || savedCompaction != compaction || operation != compactGeneration) return@launch
                 val entity = CompactionEntity(
                     id = existing?.id ?: UUID.randomUUID().toString(),
                     conversationId = conversationId,
@@ -937,15 +925,25 @@ class ChatViewModel(
                     updatedAt = System.currentTimeMillis(),
                 )
                 repository.saveCompaction(entity)
-                if (generation == switchGeneration) compaction = entity
+                if (generation == switchGeneration && revision == pathRevision && operation == compactGeneration && savedCompaction == compaction) compaction = entity
+                repository.deleteCompactionCheckpoint(conversationId)
             } catch (error: kotlinx.coroutines.CancellationException) {
                 throw error
             } catch (error: Exception) {
-                if (generation == switchGeneration && operation == compactGeneration) banner = Res.get(R.string.compact_failed_detail, error.userMessage())
+                if (generation == switchGeneration && operation == compactGeneration) {
+                    val detail = if (error is CompactionRequestFailure) when (error.kind) {
+                        CompactionFailureKind.INPUT_LIMIT -> Res.get(R.string.compact_input_rejected)
+                        CompactionFailureKind.TRANSIENT -> Res.get(R.string.compact_interrupted)
+                        CompactionFailureKind.TRUNCATED, CompactionFailureKind.EMPTY -> Res.get(R.string.compact_incomplete)
+                        CompactionFailureKind.PERMANENT -> error.event?.let {
+                            if (it.rawMessage != null || it.code != null) it.message else serverErrorText(it.message)
+                        } ?: Res.get(R.string.compact_incomplete)
+                    } else error.userMessage()
+                    banner = Res.get(R.string.compact_failed_detail, detail)
+                }
             } finally {
                 if (generation == switchGeneration && operation == compactGeneration) {
                     compacting = false
-                    compactPreview = ""
                 }
             }
         }
@@ -954,13 +952,18 @@ class ChatViewModel(
     /** 放弃压缩，恢复发送全部消息。**本地消息一条都没少。** */
     fun clearCompaction() {
         val active = compaction ?: return
+        cancelCompaction()
         compaction = null
-        viewModelScope.launch { repository.deleteCompaction(active.id) }
+        viewModelScope.launch {
+            repository.deleteCompaction(active.id)
+            repository.deleteCompactionCheckpoint(active.conversationId)
+        }
     }
 
     /** 手工修正摘要（AI 记错人名地名时用）。 */
     fun updateCompactionSummary(text: String) {
         val active = compaction ?: return
+        cancelCompaction()
         val updated = active.copy(summary = text.trim(), updatedAt = System.currentTimeMillis())
         compaction = updated
         viewModelScope.launch { repository.saveCompaction(updated) }
@@ -971,7 +974,6 @@ class ChatViewModel(
         compactJob?.cancel()
         compactJob = null
         compacting = false
-        compactPreview = ""
     }
 
     // ── 上下文统计 ────────────────────────────────────────
@@ -1124,6 +1126,7 @@ class ChatViewModel(
         val conversationId = currentConversationId ?: return
         val index = messages.indexOfFirst { it.id == target.id }
         if (index < 0) return
+        if (compacting) cancelCompaction()
 
         viewModelScope.launch {
             // 挂在**被重新生成那条的父亲**下 → 成为它的兄弟，旧回答留着
@@ -1157,6 +1160,7 @@ class ChatViewModel(
         val index = messages.indexOfFirst { it.id == target.id }
         if (index < 0) return
         if (!canContinueReply(target, isLastOnPath = index == messages.lastIndex)) return
+        if (compacting) cancelCompaction()
 
         viewModelScope.launch {
             switchJob?.join()
@@ -1194,6 +1198,7 @@ class ChatViewModel(
         val kept = attachments ?: target.attachments
         if (text.isEmpty() && kept.isEmpty()) return
         val conversationId = currentConversationId ?: return
+        if (compacting) cancelCompaction()
 
         val generation = switchGeneration
         viewModelScope.launch {
@@ -1283,6 +1288,7 @@ class ChatViewModel(
     fun deleteMessage(target: UiMessage) {
         if (isStreaming) return
         val conversationId = currentConversationId ?: return
+        if (compacting) cancelCompaction()
         viewModelScope.launch {
             repository.deleteMessage(target.id)
             reloadPath(conversationId)
@@ -1316,6 +1322,7 @@ class ChatViewModel(
         if (isStreaming) return
         val conversationId = currentConversationId ?: return
         if (variantIndex !in 0 until target.variantCount) return
+        if (compacting) cancelCompaction()
 
         viewModelScope.launch {
             val id = repository.messageIdAt(conversationId, target.parentId, variantIndex)
@@ -1424,12 +1431,14 @@ class ChatViewModel(
             // 续写：以已有块开局，新内容往后面接（见 ReplyAccumulator.seed）
             if (accumulator != null && prefix != null) accumulator.seed(prefix.timeline)
             var timeline: List<ReplyBlock> = prefix?.timeline.orEmpty()
+            var research = com.simplechat.app.net.SearchAugmentation()
             var dirty = false
 
             fun publishBuffered() {
                 if (reasonBuf.isNotEmpty()) { reasoningText += reasonBuf.toString(); reasonBuf.clear() }
                 if (contentBuf.isNotEmpty()) { contentText += contentBuf.toString(); contentBuf.clear() }
-                patch(replyId) { it.copy(reasoning = reasoningText.ifEmpty { null }, content = contentText) }
+                if (research.blocks.isNotEmpty()) timeline = research.replyBlocks(reasoningText, contentText)
+                patch(replyId) { it.copy(reasoning = reasoningText.ifEmpty { null }, content = contentText, timeline = timeline) }
             }
 
             /** 正文（或正文块）一出现 = 思维链已经写完，思考栏当场收口。 */
@@ -1489,12 +1498,21 @@ class ChatViewModel(
             var serverTitle: String? = null
 
             try {
+                if (webSearch && stored.searchApi.enabled) {
+                    val question = messages.lastOrNull { it.role == MessageRole.USER }?.content.orEmpty()
+                    research = com.simplechat.app.net.searchAugmentation(stored, question)
+                    timeline = timeline + research.blocks
+                    if (accumulator != null) accumulator.seed(timeline)
+                    patch(replyId) { it.copy(timeline = timeline) }
+                }
                 if (accumulator != null) {
                     chatApi.streamMessage(
                         baseUrl = stored.baseUrl.ifBlank { providerKind.defaultBaseUrl },
                         apiKey = stored.apiKey,
-                        request = buildAnthropicRequestNow(prefix),
-                        extraHeaders = providerKind.headersFor(openCodeSessionId),
+                        request = buildAnthropicRequestNow(prefix, research.context),
+                        extraHeaders = providerKind.headersFor(openCodeSessionId) +
+                            if (stored.filesApi.enabled || messages.any { message -> message.attachments.any { it.fileId != null } })
+                                mapOf("anthropic-beta" to "files-api-2025-04-14") else emptyMap(),
                         contextWindow = settings.model.contextWindow,
                     ).collect { event ->
                         when (event) {
@@ -1534,7 +1552,7 @@ class ChatViewModel(
 
                             // 流内错误对象是**上游网关原文**（如 `No available channel …`）：
                             // 先翻成人话，认不出才保留原文（见 `serverErrorText`）
-                            is StreamEvent.Error -> failure = serverErrorText(event.message)
+                            is StreamEvent.Error -> failure = if (event.code != null) event.message else serverErrorText(event.message)
 
                             // 块通道不该出现这两类增量；出现了说明通道配错，忽略
                             is StreamEvent.Content, is StreamEvent.Reasoning -> Unit
@@ -1545,7 +1563,7 @@ class ChatViewModel(
                         baseUrl = stored.baseUrl.ifBlank { providerKind.defaultBaseUrl },
                         apiKey = stored.apiKey,
                         model = settings.model,
-                        messages = buildRequestMessages(),
+                        messages = buildRequestMessages(research.context),
                         thinkingEnabled = settings.reasoningLevel.enabled,
                         reasoningEffort = settings.reasoningEffort,
                         maxTokens = settings.maxTokens,
@@ -1588,7 +1606,7 @@ class ChatViewModel(
 
                             // 流内错误对象是**上游网关原文**（如 `No available channel …`）：
                             // 先翻成人话，认不出才保留原文（见 `serverErrorText`）
-                            is StreamEvent.Error -> failure = serverErrorText(event.message)
+                            is StreamEvent.Error -> failure = if (event.code != null) event.message else serverErrorText(event.message)
 
                             // 块级事件只属于 Anthropic 通道；这条路径上忽略
                             else -> Unit
@@ -1738,11 +1756,12 @@ class ChatViewModel(
      * 与 [`buildRequestMessages`] 的差别不只是协议：扩展通道的 `system` 只有一个字符串，
      * 所以压缩摘要只能**拼进系统提示词**，不能像 OpenAI 通道那样再塞一条 system 消息。
      */
-    private suspend fun buildAnthropicRequestNow(prefix: UiMessage?): AnthropicRequest {
+    private suspend fun buildAnthropicRequestNow(prefix: UiMessage?, research: String = ""): AnthropicRequest {
         skippedNoVision = 0; skippedUnreadable = 0
         val active = validCompaction(messages, compaction)
         val system = buildString {
             append(settings.composedSystemPrompt(presets))
+            if (research.isNotBlank()) appendLine().appendLine(research)
             if (active != null && active.summary.isNotBlank()) {
                 if (isNotEmpty()) appendLine().appendLine()
                 append(Res.get(R.string.prompt_recap_intro))
@@ -1767,8 +1786,7 @@ class ChatViewModel(
              * `unsupported image`，而且每一轮都复现（v1.1.2 的真实事故）。
              */
             .map { message ->
-                if (message.attachments.isEmpty()) message
-                else message.copy(attachments = outgoingAttachments(message.attachments))
+                if (message.role != MessageRole.USER) message else prepareOutgoingUser(message)
             }
 
         /*
@@ -1783,7 +1801,8 @@ class ChatViewModel(
             model = settings.model.id,
             systemPrompt = system,
             path = path,
-            searchEnabled = webSearch,
+            searchEnabled = webSearch && !stored.searchApi.enabled,
+            reasoningEffort = settings.reasoningEffort,
             thinkingEnabled = settings.thinkingEnabled,
             requestTitle = requestTitle,
             latestReminder = latestReminder(),
@@ -1949,6 +1968,14 @@ class ChatViewModel(
      */
     private suspend fun outgoingAttachments(attachments: List<Attachment>): List<Attachment> {
         if (attachments.isEmpty()) return attachments
+        attachments.filter { it.fileId != null }.forEach { file ->
+            val endpoint = stored.filesApi.endpoint(stored.baseUrl, stored.filesApi.filesPath)
+            val chatHost = java.net.URI(stored.baseUrl).host
+            val fileHost = java.net.URI(endpoint).host
+            val account = com.simplechat.app.data.FileApiTextCache.fingerprint(stored.filesApi.key(stored.apiKey))
+            if (file.fileEndpoint != endpoint || chatHost != fileHost || file.fileAccount != account)
+                throw com.simplechat.app.data.AppTextException(R.string.service_file_endpoint_mismatch)
+        }
         var filtered = attachments
         if (!settings.model.supportsVision) {
             filtered = attachments.filterNot { it.isImage }
@@ -1968,9 +1995,15 @@ class ChatViewModel(
         return prepared
     }
 
-    private suspend fun buildRequestMessages(): List<OutMessageDto> {
+    private suspend fun prepareOutgoingUser(message: UiMessage): UiMessage {
+        val (text, attachments) = repository.prepareLongTextForRequest(message.content, message.attachments, stored)
+        return message.copy(content = text, attachments = outgoingAttachments(attachments))
+    }
+
+    private suspend fun buildRequestMessages(research: String = ""): List<OutMessageDto> {
         skippedNoVision = 0; skippedUnreadable = 0
         val request = mutableListOf<OutMessageDto>()
+        if (research.isNotBlank()) request += OutMessageDto("system", MessageContent.text(research))
 
         val system = settings.composedSystemPrompt(presets)
         if (system.isNotBlank()) {
@@ -1998,8 +2031,8 @@ class ChatViewModel(
              * 是可能存在的，而部分兼容网关对空 `content` 直接 400 ——
              * 一条空消息不值得让整段历史发不出去（见 `isSendableOutgoing`）。
              */
-            val outgoing = if (message.role == MessageRole.USER && message.attachments.isNotEmpty()) {
-                message.copy(attachments = outgoingAttachments(message.attachments))
+            val outgoing = if (message.role == MessageRole.USER) {
+                prepareOutgoingUser(message)
             } else message
             if (!isSendableOutgoing(outgoing)) return@forEach
             request += OutMessageDto(
@@ -2011,8 +2044,8 @@ class ChatViewModel(
                  * assistant 消息即使历史里挂着附件也只发正文：图片放进 assistant
                  * 在协议里是不合法的（会 400），而 AI 回复本来也不该带图。
                  */
-                content = if (message.role != MessageRole.USER || message.attachments.isEmpty()) {
-                    MessageContent.text(message.content)
+                content = if (message.role != MessageRole.USER || outgoing.attachments.isEmpty()) {
+                    MessageContent.text(outgoing.content)
                 } else {
                     userContent(outgoing.content, outgoing.attachments)
                 },

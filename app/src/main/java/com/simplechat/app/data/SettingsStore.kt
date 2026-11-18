@@ -75,6 +75,8 @@ data class StoredSettings(
     val apiKey: String = "",
     val apiProfiles: List<ApiProfile> = emptyList(),
     val activeApiProfileId: String = "legacy",
+    val searchApi: ServiceApiConfig = ServiceApiConfig(),
+    val filesApi: ServiceApiConfig = ServiceApiConfig(),
     val autoReadAloud: Boolean = false,
     val showImageSkipNotice: Boolean = true,
     /** Include messages from inactive conversation branches in global search. */
@@ -158,7 +160,7 @@ data class StoredSettings(
         )
 
     /** 当前通道是否支持联网搜索。 */
-    val supportsWebSearch: Boolean get() = resolvedApiStyle == ApiStyle.ANTHROPIC
+    val supportsWebSearch: Boolean get() = searchApi.enabled || resolvedApiStyle == ApiStyle.ANTHROPIC
 }
 
 /**
@@ -182,6 +184,8 @@ class SettingsStore(
             apiKey = readApiKey(prefs),
             apiProfiles = profileRows(prefs),
             activeApiProfileId = prefs[Keys.ACTIVE_PROFILE] ?: "legacy",
+            searchApi = readService(prefs, Keys.SEARCH_API),
+            filesApi = readService(prefs, Keys.FILES_API),
             autoReadAloud = prefs[Keys.AUTO_READ_ALOUD] ?: false,
             showImageSkipNotice = prefs[Keys.IMAGE_SKIP_NOTICE] ?: true,
             searchInactiveBranches = prefs[Keys.SEARCH_INACTIVE_BRANCHES]
@@ -335,6 +339,25 @@ class SettingsStore(
         editApi { it[Keys.WEB_SEARCH] = enabled }
     }
 
+    private fun readService(prefs: Preferences, key: Preferences.Key<String>): ServiceApiConfig =
+        prefs[key]?.let { apiProfileJson.decodeFromString<ServiceApiConfig>(it) } ?: ServiceApiConfig()
+
+    suspend fun setServiceApi(files: Boolean, config: ServiceApiConfig, expectedProfileId: String) {
+        config.endpoint("https://api.deepseek.com", if (files) config.filesPath else config.searchPath)
+        if (!files) config.endpoint("https://api.deepseek.com", config.fetchPath)
+        require(config.count in 1..50)
+        require(config.longTextChars in 4_000..1_000_000)
+        require(config.purpose in listOf("user_data", "text_recognition", "rich_layout_recognition"))
+        editApi(expectedProfileId) { it[if (files) Keys.FILES_API else Keys.SEARCH_API] = apiProfileJson.encodeToString(config) }
+    }
+
+    fun encryptServiceKey(key: String): String {
+        val normalized = ApiKey.normalize(key)
+        if (!ApiKey.isHeaderSafe(normalized)) throw AppTextException(com.simplechat.app.R.string.error_api_key_chars)
+        return SecretBox.encrypt(normalized)
+            ?: throw AppTextException(com.simplechat.app.R.string.api_profile_save_failed)
+    }
+
     suspend fun setLocationRegion(region: String) {
         // 存**洗过**的值：逗号会把时间地点提醒的五个字段挤成六段（见 normalizeRegion）
         preferences.edit { it[Keys.LOCATION] = normalizeRegion(region) }
@@ -388,6 +411,8 @@ class SettingsStore(
         temperature = prefs[Keys.TEMPERATURE] ?: 1f, topP = prefs[Keys.TOP_P] ?: 1f,
         maxTokens = prefs[Keys.MAX_TOKENS] ?: 0, webSearch = prefs[Keys.WEB_SEARCH] ?: false,
         lastUsedAt = lastUsedAt,
+        searchApi = readService(prefs, Keys.SEARCH_API),
+        filesApi = readService(prefs, Keys.FILES_API),
     )
 
     private fun ensureProfiles(prefs: MutablePreferences): List<ApiProfile> {
@@ -431,6 +456,8 @@ class SettingsStore(
         prefs[Keys.TOP_P] = profile.topP
         prefs[Keys.MAX_TOKENS] = profile.maxTokens
         prefs[Keys.WEB_SEARCH] = profile.webSearch
+        prefs[Keys.SEARCH_API] = apiProfileJson.encodeToString(profile.searchApi)
+        prefs[Keys.FILES_API] = apiProfileJson.encodeToString(profile.filesApi)
     }
 
     suspend fun selectApiProfile(id: String) {
@@ -503,6 +530,8 @@ class SettingsStore(
 
     private object Keys {
         val PROFILES = stringPreferencesKey("api_profiles_v1")
+        val SEARCH_API = stringPreferencesKey("search_api_config")
+        val FILES_API = stringPreferencesKey("files_api_config")
         val ACTIVE_PROFILE = stringPreferencesKey("active_api_profile")
         val IMAGE_SKIP_NOTICE = booleanPreferencesKey("show_image_skip_notice")
         val SEARCH_INACTIVE_BRANCHES = booleanPreferencesKey("search_inactive_branches")

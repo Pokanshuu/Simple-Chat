@@ -44,6 +44,12 @@ data class Attachment(
      * 新字段带默认值，老数据读进来是 null —— JSON 列自描述，**不需要数据库迁移**。
      */
     val path: String? = null,
+    /** Remote references are account-bound; endpoint is retained to prevent cross-provider reuse. */
+    val fileId: String? = null,
+    val fileEndpoint: String? = null,
+    val fileAccount: String? = null,
+    val originalTextChars: Int = 0,
+    val remoteImage: Boolean = false,
 ) {
     enum class Kind { IMAGE, TEXT }
 

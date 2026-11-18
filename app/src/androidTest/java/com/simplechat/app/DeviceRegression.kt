@@ -35,6 +35,9 @@ class DeviceRegression : Instrumentation() {
     private var shareTests = false
     private var nativeShareTests = false
     private var releaseUiTests = false
+    private var compactionTests = false
+    private var serviceTests = false
+    private var mathTests = false
     override fun onCreate(arguments: Bundle?) {
         realArchive = arguments?.getString("source")
         uiOnly = arguments?.getString("ui") == "true"
@@ -46,6 +49,9 @@ class DeviceRegression : Instrumentation() {
         shareTests = arguments?.getString("share") == "true"
         nativeShareTests = arguments?.getString("nativeShare") == "true"
         releaseUiTests = arguments?.getString("releaseUi") == "true"
+        compactionTests = arguments?.getString("compaction") == "true"
+        serviceTests = arguments?.getString("services") == "true"
+        mathTests = arguments?.getString("math") == "true"
         super.onCreate(arguments)
         start()
     }
@@ -54,7 +60,14 @@ class DeviceRegression : Instrumentation() {
         try {
             runBlocking {
                 val source = realArchive
-                if (releaseUiTests) ReleaseUiRegression.run(this@DeviceRegression, ::passed)
+                if (mathTests) MathLayoutRegression.run(this@DeviceRegression, ::passed)
+                else if (serviceTests) {
+                    ServiceApiRegression.run(targetContext, ::passed)
+                    ServiceConfigUiRegression.run(this@DeviceRegression, ::passed)
+                    BackupCompatibilityRegression.run(targetContext, ::passed)
+                }
+                else if (compactionTests) CompactionRegression.run(this@DeviceRegression, ::passed)
+                else if (releaseUiTests) ReleaseUiRegression.run(this@DeviceRegression, ::passed)
                 else if (nativeShareTests) NativeShareRenderRegression.run(this@DeviceRegression, ::passed)
                 else if (shareTests) MessageShareRegression.run(this@DeviceRegression, ::passed)
                 else if (selectionTests) TextSelectionRegression.run(this@DeviceRegression, ::passed)

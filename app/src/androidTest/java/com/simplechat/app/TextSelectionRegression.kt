@@ -55,9 +55,10 @@ internal object TextSelectionRegression {
         val messages = mutableStateOf(emptyList<UiMessage>())
 
         suspend fun nodes(): List<AccessibilityNodeInfo> {
-            automation.clearCache()
+            runCatching { automation.clearCache() }
             val result = mutableListOf<AccessibilityNodeInfo>()
             fun visit(node: AccessibilityNodeInfo) {
+                node.refresh()
                 result += node
                 for (i in 0 until node.childCount) node.getChild(i)?.let(::visit)
             }
@@ -150,6 +151,23 @@ internal object TextSelectionRegression {
             instrumentation.waitForIdleSync()
             findText("Outside selection")
             reset(MessageRole.ASSISTANT, richText)
+            val doubleRect = Rect().also { findText("Anchor").getBoundsInScreen(it) }
+            val tappedAt = SystemClock.uptimeMillis()
+            val dx = doubleRect.left + 35f
+            val dy = doubleRect.top + 25f
+            send(MotionEvent.ACTION_DOWN, dx, dy, tappedAt)
+            delay(40); send(MotionEvent.ACTION_UP, dx, dy, tappedAt)
+            delay(65)
+            val secondDown = SystemClock.uptimeMillis()
+            send(MotionEvent.ACTION_DOWN, dx, dy, secondDown)
+            delay(40); send(MotionEvent.ACTION_UP, dx, dy, secondDown)
+            check(withTimeoutOrNull(3000) { while (selected().isEmpty()) delay(15); true } == true) { "Double-tap did not enter selection" }
+            check(selected().joinToString("").contains("Anchor"))
+            val doubleElapsed = SystemClock.uptimeMillis() - secondDown - 40
+            check(doubleElapsed < 1000) { "Double-tap startup took $doubleElapsed ms" }
+            status("double-tap selects the touched word using measured layout: $doubleElapsed ms after second tap")
+            withContext(Dispatchers.Main) { selection.dismiss() }
+            delay(200)
             enter()
             check(selected().joinToString("").contains("Anchor")) { "Selection did not start at the original press" }
             val original = anchors()
@@ -254,7 +272,13 @@ internal object TextSelectionRegression {
                     press(bounds.exactCenterX(), bounds.exactCenterY())
                     delay(300)
                 }
-                if (name == "paged") tapText(instrumentation.targetContext.getString(R.string.page_next))
+                if (name == "paged") {
+                    val next = findText(instrumentation.targetContext.getString(R.string.page_next))
+                    var button: AccessibilityNodeInfo? = next
+                    while (button != null && !button.isClickable) button = button.parent
+                    check(button?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true)
+                    delay(400)
+                }
                 enter()
                 if (name == "expanded-user") {
                     withContext(Dispatchers.Main) { selection.nativeState!!.selectAll() }

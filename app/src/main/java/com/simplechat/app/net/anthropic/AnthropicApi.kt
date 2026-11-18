@@ -88,6 +88,7 @@ class AnthropicApi(
                                 message = httpErrorText(response.code, serverMessage, largeRequest),
                                 code = response.code,
                                 retryable = isRetryableStatus(response.code),
+                                rawMessage = serverMessage,
                             ),
                         )
                         return@use

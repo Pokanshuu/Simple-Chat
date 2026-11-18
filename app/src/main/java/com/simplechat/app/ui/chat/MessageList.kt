@@ -359,6 +359,8 @@ private fun MessageRow(
      * **长按**起选，而长按是这一条的菜单入口，两者会抢同一个手势。
      */
     val selectionState = remember(message.id) { SelectionState() }
+    val selectionHits = remember(message.id) { com.simplechat.app.ui.markdown.SelectionTextHits() }
+    var selectionFromMenu by remember(message.id) { mutableStateOf(false) }
     val view = LocalView.current
     val viewConfiguration = LocalViewConfiguration.current
     val onSelectionChange by rememberUpdatedState(onSelectingChange)
@@ -385,9 +387,10 @@ private fun MessageRow(
         }
         // 等这一帧把 SelectionContainer 真正挂上（菜单的关闭动画也在同一帧里），再注入
         withFrameNanos { }
-        withFrameNanos { }
-        delay(SelectionStartDelayMs)
-        startSelectionAt(view, point, viewConfiguration.longPressTimeoutMillis + 60L)
+        if (selectionFromMenu) delay(SelectionMenuDismissDelayMs)
+        if (!selectionHits.selectAt(point, selectionState)) {
+            startSelectionAt(view, point, viewConfiguration.longPressTimeoutMillis + 60L)
+        }
         if (selectionState.selectedTexts.isEmpty()) onSelectionChange(null)
     }
     LaunchedEffect(selecting, selectionState) {
@@ -420,6 +423,7 @@ private fun MessageRow(
             }
             AppMenuItem(stringResource(R.string.action_select_text), AppIcons.TextSelect) {
                 menuOpen = false
+                selectionFromMenu = true
                 onSelectingChange(selectionState)
             }
             if (onShare != null) AppMenuItem(stringResource(R.string.action_share), AppIcons.Share) {
@@ -457,6 +461,7 @@ private fun MessageRow(
         }
     }
 
+    CompositionLocalProvider(com.simplechat.app.ui.markdown.LocalSelectionTextHits provides selectionHits) {
     SearchHighlightHost(search, onDismissSearch) {
     Column(modifier = Modifier.fillMaxWidth().then(windowPressListener)) {
         if (message.content.length > LARGE_MESSAGE_CHARS || (message.reasoning?.length ?: 0) > LARGE_MESSAGE_CHARS) {
@@ -464,6 +469,7 @@ private fun MessageRow(
                 enabled = actionable && !selectionActive,
                 onClick = if (isUser) onEdit else onTogglePeek,
                 onLongClick = { menuOpen = true },
+                onDoubleClick = if (isUser) null else ({ selectionFromMenu = false; onSelectingChange(selectionState) }),
             )) {
             if (message.attachments.isNotEmpty()) MessageAttachments(message.attachments, onOpenImage)
             message.reasoning?.takeIf { it.isNotEmpty() }?.let {
@@ -500,6 +506,7 @@ private fun MessageRow(
                 // 点一下 = 看这条是谁写的、占多少 token（再点收起）
                 onClick = onTogglePeek,
                 onLongClick = { menuOpen = true },
+                onDoubleClick = { selectionFromMenu = false; onSelectingChange(selectionState) },
                 onOpenImage = onOpenImage,
                 onRetry = onRetry,
                 menu = menu,
@@ -545,6 +552,7 @@ private fun MessageRow(
                 onVariantChange = onVariantChange,
             )
         }
+    }
     }
     }
 }
@@ -826,6 +834,7 @@ fun AssistantBlock(
     selectionState: SelectionState = remember { SelectionState() },
     onClick: () -> Unit = {},
     onLongClick: () -> Unit = {},
+    onDoubleClick: (() -> Unit)? = null,
     onOpenImage: (Attachment) -> Unit = {},
     onRetry: () -> Unit = {},
     menu: @Composable () -> Unit = {},
@@ -899,6 +908,7 @@ fun AssistantBlock(
                 enabled = interactive,
                 onClick = onClick,
                 onLongClick = onLongClick,
+                onDoubleClick = onDoubleClick,
             )
             .padding(2.dp),
     ) {
@@ -1187,7 +1197,7 @@ private suspend fun startSelectionAt(view: View, windowPoint: IntOffset, holdMil
  * 要盖住两件事：`SelectionContainer` 得先挂上，菜单的**关闭动画**（140ms）也得走完 ——
  * 菜单还是个 focusable 的独立窗口，没关干净时注入的按下有可能被它吃掉。
  */
-private const val SelectionStartDelayMs = 220L
+private const val SelectionMenuDismissDelayMs = 160L
 
 /**
  * 「这条是谁写的、占多少 token」。

@@ -86,7 +86,7 @@ internal object HotfixRegression {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
         val automation = instrumentation.uiAutomation
         suspend fun nodes(): List<AccessibilityNodeInfo> {
-            automation.clearCache()
+            runCatching { automation.clearCache() }
             val all = mutableListOf<AccessibilityNodeInfo>()
             fun walk(n: AccessibilityNodeInfo) { all += n; for (i in 0 until n.childCount) n.getChild(i)?.let(::walk) }
             automation.rootInActiveWindow?.let(::walk)

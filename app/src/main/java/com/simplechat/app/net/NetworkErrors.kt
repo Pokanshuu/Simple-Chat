@@ -49,6 +49,10 @@ internal fun networkFailureRes(error: Throwable): Int = when (error) {
 /** 常见的 HTTP 状态码给一句人话；没覆盖到返回 null（交给服务端文案 / 兜底句）。 */
 @StringRes
 internal fun httpStatusRes(code: Int): Int? = when (code) {
+    400, 422 -> R.string.error_http_bad_request
+    408 -> R.string.error_network_timeout
+    415 -> R.string.service_file_format
+    410 -> R.string.service_file_expired
     401 -> R.string.error_http_unauthorized
     402 -> R.string.error_http_payment_required
     403 -> R.string.error_http_forbidden
@@ -81,6 +85,9 @@ internal fun providerHintRes(serverMessage: String?): Int? {
     val text = serverMessage?.trim()?.lowercase()
     if (text.isNullOrEmpty()) return null
     return when {
+        text.contains("file") && text.containsAny(listOf("not found", "expired", "does not exist")) -> R.string.service_file_expired
+        text.containsAny(listOf("unsupported file", "password-protected", "failed to parse", "file format")) -> R.string.service_file_format
+        text.containsAny(listOf("purpose", "invalid_request_error")) -> R.string.error_http_bad_request
         text.containsAny(AUTH_KEYWORDS) -> R.string.error_provider_auth
         text.containsAny(NO_CHANNEL_KEYWORDS) -> R.string.error_provider_no_channel
         text.containsAny(MODEL_MISSING_KEYWORDS) -> R.string.error_provider_model_not_found

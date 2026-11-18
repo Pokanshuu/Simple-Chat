@@ -32,7 +32,7 @@ internal object ReleaseUiRegression {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
         val automation = instrumentation.uiAutomation
         fun nodes(): List<AccessibilityNodeInfo> {
-            if (android.os.Build.VERSION.SDK_INT >= 33) automation.clearCache()
+            if (android.os.Build.VERSION.SDK_INT >= 33) runCatching { automation.clearCache() }
             val out = mutableListOf<AccessibilityNodeInfo>()
             fun visit(node: AccessibilityNodeInfo) {
                 if (android.os.Build.VERSION.SDK_INT < 33) node.refresh()

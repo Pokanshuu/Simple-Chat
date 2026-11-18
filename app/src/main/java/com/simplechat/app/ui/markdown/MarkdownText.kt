@@ -245,7 +245,7 @@ private fun markdownStateOf(text: String): State {
 internal fun warmMarkdownCache(content: String) {
     if (content.isEmpty()) return
     val normalized = normalizeListIndent(normalizeSoftBreaks(normalizeHtml(content)))
-    splitMarkdownBlocks(normalized).forEach { markdownStateOf(it.text) }
+    splitMarkdownBlocks(normalized).forEach { markdownStateOf(inlineMathDocument(it.text).markdown) }
 }
 
 /**
@@ -276,7 +276,9 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
     val bodyStyle = markdownBodyStyle(LocaleHelper.isCjkUi(LocalContext.current))
 
     // 同步解析（见 MarkdownStateCache 的说明）：高度第一次测量就是真实的。
-    val state = remember(text) { markdownStateOf(text) }
+    val math = remember(text) { inlineMathDocument(text) }
+    val state = remember(math.markdown) { markdownStateOf(math.markdown) }
+    val inlineMath = if (math.formulas.isNotEmpty()) rememberInlineMath(math) else null
 
     /*
      * 符号与引用条的颜色跟主题走，**字号/行高必须与正文一致**：
@@ -295,7 +297,8 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
     val extendedSpans = markdownExtendedSpans {
         val searchPainter = rememberSearchSpanPainter()
         val citationPainter = rememberCitationChipPainter()
-        remember(searchPainter, citationPainter) {
+        val selectionPainter = rememberSelectionLayoutPainter()
+        remember(searchPainter, citationPainter, selectionPainter) {
                 val backgroundPainter = RoundedCornerSpanPainter(
                     cornerRadius = 3.sp,
                     /*
@@ -309,7 +312,7 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
                     topMargin = 5.sp,
                     bottomMargin = 5.sp,
                 )
-            ExtendedSpans(*listOfNotNull(backgroundPainter, citationPainter, searchPainter).toTypedArray())
+            ExtendedSpans(*listOfNotNull(backgroundPainter, citationPainter, searchPainter, selectionPainter).toTypedArray())
         }
     }
 
@@ -360,6 +363,9 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
             tableCornerSize = 0.dp,
         ),
         extendedSpans = extendedSpans,
+        annotator = inlineMath?.first ?: com.mikepenz.markdown.model.markdownAnnotator(),
+        inlineContent = inlineMath?.second ?: com.mikepenz.markdown.model.markdownInlineContent(),
+        animations = com.mikepenz.markdown.model.markdownAnimations { this },
         typography = markdownTypography(
             h1 = MarkdownHeadingStyles[0],
             h2 = MarkdownHeadingStyles[1],
@@ -382,15 +388,16 @@ private fun MarkdownBlockView(text: String, modifier: Modifier) {
             // 下划线常驻会让中文正文里到处是"着重线"，很吵。
             textLink = TextLinkStyles(style = SpanStyle(color = scheme.primary)),
         ),
-        components = rememberSearchableMarkdownComponents(markdownComponents(
+        components = selectionMeasuredComponents(rememberSearchableMarkdownComponents(markdownComponents(
             codeFence = collapsibleCodeFence,
             codeBlock = highlightedCodeBlock,
             table = adaptiveTable,
+            blockQuote = continuousMarkdownQuote,
             unorderedList = markdownBulletList,
             orderedList = markdownOrderedList,
             checkbox = taskCheckbox,
             horizontalRule = spacedHorizontalRule,
-        )),
+        ))),
     )
     }
 }
@@ -480,6 +487,8 @@ private const val RevealRatio = 0.3f
  */
 @Composable
 private fun rememberSmoothReveal(streaming: Boolean, value: String): String {
+    // Edits and page switches replace completed text too. They must never retain a prior page.
+    if (!streaming) return value
     var shown by remember { mutableStateOf(value) }
     val latest by rememberUpdatedState(value)
     var cooldownMs by remember { mutableLongStateOf(0L) }
