@@ -102,34 +102,6 @@ internal fun buildAnthropicRequest(
     }
 
     /*
-     * ★ **提醒必须紧挨着一条 `user`，而且要在它前面。**
-     *
-     * 服务端对 `latest_reminder` 有一条硬校验（真机 400 原文）：
-     * `messages.N: a 'latest_reminder' message must be immediately followed by a 'user' message`。
-     *
-     * 先前是"插在路径最后一条之前" —— 只要最后一条是 assistant 就踩线：
-     * 「编辑 AI 回复 → 保存并发送」正是这种形状（新回复是流式的、不在路径里，
-     * 路径以被编辑的那条 assistant 结尾），于是这条路径上必 400。
-     *
-     * 也不能简单地"插到最末"：末尾是 assistant 时，提醒后面还是没有 user。
-     * 唯一对所有形状都成立的位置是：**最后一条 user 前面**。
-     * 一条 user 都没有（理论上到不了这里，前面会抛 `error_no_sendable_messages`）
-     * 就不发提醒 —— 少一条时间信息远好过整轮 400。
-     */
-    if (deepSeekExtensions && latestReminder != null) {
-        val anchor = messages.indexOfLast { it.role == AnthropicMessageParam.RoleUser }
-        if (anchor >= 0) {
-            messages.add(
-                anchor,
-                AnthropicMessageParam(
-                    role = AnthropicMessageParam.RoleReminder,
-                    content = JsonPrimitive(latestReminder),
-                ),
-            )
-        }
-    }
-
-    /*
      * 原版 Anthropic 的硬约束（DeepSeek 扩展不适用）：
      * - `max_tokens` 必填；
      * - 开启思考时 `thinking.budget_tokens` 必填（≥1024）且**必须小于** `max_tokens`；
@@ -164,15 +136,33 @@ internal fun buildAnthropicRequest(
      * 所以发之前按严格规则整理一遍：同角色合并（正文用空行连接）、丢掉开头的
      * assistant、丢掉空消息。**只改发给服务端的这一份，本地消息一条不动。**
      */
-    val sanitizedMessages = sanitizeTurns(messages)
-    val effectiveSystem = systemPrompt.trim().let {
-        if (deepSeekExtensions && it.isBlank()) DefaultSystemPrompt else it
+    val outgoingMessages = sanitizeTurns(messages).toMutableList()
+    // Add metadata after merging consecutive user turns. Otherwise a reminder would
+    // split them when the previous send failed, preventing the merge.
+    val reminder = latestReminder?.takeIf { deepSeekExtensions && it.isNotBlank() }
+    val reminderAnchor = if (reminder == null) -1 else outgoingMessages.indexOfLast {
+        it.role == AnthropicMessageParam.RoleUser
+    }
+    // A compacted history may start with the current question. Keep its first role standard.
+    if (reminderAnchor > 0 && reminder != null) {
+        outgoingMessages.add(reminderAnchor, AnthropicMessageParam(
+            role = AnthropicMessageParam.RoleReminder,
+            content = JsonPrimitive(reminder),
+        ))
+    }
+    val effectiveSystem = buildString {
+        val configured = systemPrompt.trim()
+        append(if (deepSeekExtensions && configured.isBlank()) DefaultSystemPrompt else configured)
+        if (reminderAnchor == 0 && reminder != null) {
+            append("\n\nCurrent chat metadata (date, weekday, location, platform, language): ")
+            append(reminder)
+        }
     }
 
     return AnthropicRequest(
         model = model,
         system = effectiveSystem,
-        messages = sanitizedMessages,
+        messages = outgoingMessages,
         thinking = when {
             deepSeekExtensions && thinkingEnabled -> AnthropicThinking.Enabled
             deepSeekExtensions -> AnthropicThinking.Disabled
@@ -192,7 +182,7 @@ internal fun buildAnthropicRequest(
             emptyList()
         },
         title = if (deepSeekExtensions && requestTitle &&
-            titleFitsInline(effectiveSystem, sanitizedMessages)
+            titleFitsInline(effectiveSystem, outgoingMessages)
         ) AnthropicTitle() else null,
         maxTokens = effectiveMaxTokens,
         // 原版 Anthropic 不允许同时改 temperature 与 top_p；这里只发 temperature

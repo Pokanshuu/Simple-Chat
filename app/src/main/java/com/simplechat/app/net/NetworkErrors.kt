@@ -95,10 +95,14 @@ internal fun providerHintRes(serverMessage: String?): Int? {
         text.containsAny(RATE_LIMIT_KEYWORDS) -> R.string.error_provider_rate_limit
         text.containsAny(PAYLOAD_KEYWORDS) -> R.string.error_http_too_large
         text.containsAny(CONTEXT_KEYWORDS) -> R.string.error_provider_context_length
+        isEmptyMessagesRejection(text) -> R.string.error_provider_empty_messages
         text.contains("invalid_request_error") -> R.string.error_http_bad_request
         else -> null
     }
 }
+
+internal fun isEmptyMessagesRejection(message: String?): Boolean =
+    message?.lowercase()?.contains("messages: at least one message is required") == true
 
 private fun String.containsAny(keywords: List<String>): Boolean = keywords.any { contains(it) }
 

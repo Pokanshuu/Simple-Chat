@@ -12,6 +12,7 @@ import com.simplechat.app.net.StreamEvent
 import com.simplechat.app.net.StreamMaxAttempts
 import com.simplechat.app.net.StreamRetryDelayMs
 import com.simplechat.app.net.httpErrorText
+import com.simplechat.app.net.isEmptyMessagesRejection
 import com.simplechat.app.net.networkText
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +62,14 @@ class AnthropicApi(
         anthropicHeaders(apiKey, extraHeaders).forEach { (name, value) -> builder.header(name, value) }
         val httpRequest = builder.build()
 
+        fun logEmptyMessagesRejection(message: String?) {
+            if (!isEmptyMessagesRejection(message)) return
+            android.util.Log.w(ChatStreamLogTag, "Messages rejected: count=${request.messages.size} " +
+                "users=${request.messages.count { it.role == AnthropicMessageParam.RoleUser }} " +
+                "firstRole=${request.messages.firstOrNull()?.role} systemChars=${request.system.length} " +
+                "requestBytes=${body.contentLength()}")
+        }
+
         var attempt = 0
         var emittedAny = false
         while (true) {
@@ -74,6 +83,7 @@ class AnthropicApi(
                     if (!response.isSuccessful || source == null) {
                         val raw = runCatching { response.body.readErrorText() }.getOrNull()
                         val serverMessage = parser.parseErrorMessage(raw)
+                        logEmptyMessagesRejection(serverMessage)
                         android.util.Log.w(ChatStreamLogTag, "HTTP ${response.code}")
                         /*
                          * 429 / 5xx 且**一个字都还没发出去** → 重发一次。
@@ -108,6 +118,7 @@ class AnthropicApi(
                             when (val result = parser.parse(line)) {
                                 is AnthropicStreamParser.Result.Events ->
                                     result.events.forEach {
+                                        if (it is StreamEvent.Error) logEmptyMessagesRejection(it.message)
                                         emit(it)
                                         emittedAny = true
                                         if (it is StreamEvent.Stopped || it is StreamEvent.Error) receivedStop = true

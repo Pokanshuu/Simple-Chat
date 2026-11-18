@@ -164,17 +164,18 @@ class AnthropicRequestBuilderTest {
      * 于是提醒后面跟的是 assistant，服务端直接拒。
      */
     @Test
-    fun `路径以 assistant 结尾时提醒仍然紧跟 user`() {
+    fun `只有一轮问答时提醒放入系统提示`() {
         val request = build(
             listOf(user("问"), assistant("被改过的回答")),
             reminder = "2026-11-14,星期六,杭州,Android,中文",
         )
         val roles = request.messages.map { it.role }
-        assertEquals(listOf(AnthropicMessageParam.RoleReminder, "user", "assistant"), roles)
+        assertEquals(listOf("user", "assistant"), roles)
+        assertTrue(request.system.contains("2026-11-14,星期六,杭州"))
     }
 
     @Test
-    fun `续写时提醒落在最后一条 user 前面`() {
+    fun `续写时提醒不会挤到第一条用户消息前`() {
         val prefix = assistant("写到一半", timeline = listOf(ReplyBlock.Text("写到一半")))
         val request = build(
             listOf(user("写故事")),
@@ -182,7 +183,8 @@ class AnthropicRequestBuilderTest {
             prefix = prefix,
         )
         val roles = request.messages.map { it.role }
-        assertEquals(listOf(AnthropicMessageParam.RoleReminder, "user", "assistant"), roles)
+        assertEquals(listOf("user", "assistant"), roles)
+        assertTrue(request.system.contains("2026-11-14,星期六,杭州"))
     }
 
     @Test

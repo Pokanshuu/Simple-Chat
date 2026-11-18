@@ -28,6 +28,7 @@
     <string name="error_provider_model_not_found">服务商没有这个模型，请换模型或核对 Base URL</string>
 
     <!-- 上下文超限（context length / maximum context / context window） -->
+    <string name="error_provider_empty_messages">服务商未识别到对话消息。若重试仍失败，可在 API 设置中切换兼容端口后重试</string>
     <string name="error_provider_context_length">本轮内容超出模型上下文上限，请压缩上下文或减少附件</string>
 
     <!-- 诊断信息：原文放在全角括号里，跟在提示句后面；%1$s 由代码截断到 300 字符 -->

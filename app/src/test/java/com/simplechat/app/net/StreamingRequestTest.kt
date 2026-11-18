@@ -1,5 +1,6 @@
 package com.simplechat.app.net
 
+import com.simplechat.app.db.CompactionEntity
 import com.simplechat.app.net.anthropic.StreamingAnthropicRequestBody
 import com.simplechat.app.ui.chat.*
 import okio.Buffer
@@ -9,6 +10,9 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.toList
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -27,13 +31,31 @@ class StreamingRequestTest {
     @Test
     fun `Anthropic streaming JSON contains the post compaction prompt`() {
         val json = ChatApi.defaultJson()
-        val request = buildAnthropicRequest("model", "summary", listOf(UiMessage("u", MessageRole.USER, "1")),
-            searchEnabled = false, thinkingEnabled = false, requestTitle = false, latestReminder = null)
-        val buffer = Buffer()
-        val body = StreamingAnthropicRequestBody(json, request)
-        body.writeTo(buffer)
-        assertEquals(buffer.size, body.contentLength())
-        assertEquals(json.encodeToString(com.simplechat.app.net.anthropic.AnthropicRequest.serializer(), request), buffer.readUtf8())
+        val compacted = CompactionEntity("c", "conv", "a1", "保留的前情摘要", 0, 0)
+        val history = listOf(
+            UiMessage("u1", MessageRole.USER, "已压缩的旧问题"),
+            UiMessage("a1", MessageRole.ASSISTANT, "已压缩的旧回复"),
+            UiMessage("u2", MessageRole.USER, "您好"),
+        )
+        val failedReply = UiMessage("a2", MessageRole.ASSISTANT, "", status = MessageStatus.ERROR)
+        val nextQuestion = UiMessage("u3", MessageRole.USER, "继续")
+        for ((path, expected) in listOf(history to "您好", (history + failedReply + nextQuestion) to "您好\n\n继续")) {
+            val request = buildAnthropicRequest("model", compacted.summary, orderedOutgoingMessages(path, compacted),
+                searchEnabled = false, thinkingEnabled = false, requestTitle = false,
+                latestReminder = "2026-11-19,星期四,杭州,App,中文")
+            val buffer = Buffer()
+            val body = StreamingAnthropicRequestBody(json, request)
+            body.writeTo(buffer)
+            assertEquals(buffer.size, body.contentLength())
+            val wire = json.parseToJsonElement(buffer.readUtf8()).jsonObject
+            val messages = wire.getValue("messages").jsonArray
+            assertEquals(1, messages.size)
+            assertEquals("user", messages.single().jsonObject.getValue("role").jsonPrimitive.content)
+            assertEquals(expected, messages.single().jsonObject.getValue("content").jsonPrimitive.content)
+            val system = wire.getValue("system").jsonPrimitive.content
+            assertTrue(system.contains(compacted.summary))
+            assertTrue(system.contains("2026-11-19,星期四,杭州,App,中文"))
+        }
     }
 
     @Test
