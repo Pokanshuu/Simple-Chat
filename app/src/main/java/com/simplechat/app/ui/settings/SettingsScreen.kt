@@ -235,6 +235,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
     val editingSettings = editingProfile?.let { profile ->
         stored.copy(providerId = profile.providerId, baseUrl = profile.baseUrl,
             modelId = profile.modelId, apiStyleId = profile.apiStyleId, modelIds = profile.modelIds,
+            modelContextWindows = profile.modelContextWindows,
             webSearch = profile.webSearch, searchApi = profile.searchApi)
     }
     var savingService by remember { mutableStateOf(false) }
@@ -665,23 +666,23 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                                 val source = editingProfile
                                 scope.launch {
                                     try {
-                                    val result = container.chatApi.fetchModels(
+                                    val result = container.chatApi.fetchModelCatalog(
                                         baseUrl = source.baseUrl.ifBlank { provider.defaultBaseUrl },
                                         apiKey = store.readApiKeyForProfile(source.id),
                                     )
                                     // 拉到的列表**必须落库**：它就是「模型」选择器的数据源，
                                     // 早先只报了个条数、列表丢掉，于是自定义端点明明"连接成功"，
                                     // 点开「模型」却是一个只有标题的白框。
-                                    result.onSuccess { ids ->
+                                    result.onSuccess { catalog ->
                                         store.updateApiProfile(source.id) {
                                             if (it.baseUrl == source.baseUrl && it.providerId == source.providerId &&
-                                                it.apiKeyEncrypted == source.apiKeyEncrypted) it.copy(modelIds = ids) else it
+                                                it.apiKeyEncrypted == source.apiKeyEncrypted) it.copy(modelIds = catalog.ids, modelContextWindows = catalog.contextWindows) else it
                                         }
                                     }
                                     if (page == SettingsPage.API_PROFILE && editingProfileId == source.id &&
                                         stored.apiProfiles.any { it.id == source.id && it.baseUrl == source.baseUrl &&
                                             it.providerId == source.providerId && it.apiKeyEncrypted == source.apiKeyEncrypted }) testResult = result.fold(
-                                        onSuccess = { Res.get(R.string.api_test_ok, it.size) },
+                                        onSuccess = { Res.get(R.string.api_test_ok, it.ids.size) },
                                         onFailure = { Res.get(R.string.api_test_failed, it.userMessage()) },
                                     )
                                     } catch (error: CancellationException) { throw error }
@@ -773,7 +774,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
             onDismiss = { dialog = null },
             onSelect = { picked ->
                 dialog = null
-                editProfile { if (it.providerId == picked.name) it else it.copy(providerId = picked.name, baseUrl = picked.defaultBaseUrl, modelId = picked.defaultModel, modelIds = emptyList()) }
+                editProfile { if (it.providerId == picked.name) it else it.copy(providerId = picked.name, baseUrl = picked.defaultBaseUrl, modelId = picked.defaultModel, modelIds = emptyList(), modelContextWindows = emptyMap()) }
             },
         )
 
@@ -816,7 +817,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
             onDismiss = { dialog = null },
             onConfirm = { value ->
                 dialog = null
-                editProfile { if (it.baseUrl == value.trim()) it else it.copy(baseUrl = value.trim(), modelIds = emptyList()) }
+                editProfile { if (it.baseUrl == value.trim()) it else it.copy(baseUrl = value.trim(), modelIds = emptyList(), modelContextWindows = emptyMap()) }
             },
         )
 
@@ -828,7 +829,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
              * 于是「测试连接」显示"可用模型 45 个"、点开「模型」却什么都没有 ——
              * 拉取结果根本没进界面。
              */
-            val models = ModelCatalog.pickerModels(provider, profileSettings.modelIds)
+            val models = ModelCatalog.pickerModels(provider, profileSettings.modelIds, profileSettings.modelContextWindows)
             ChoiceDialog(
                 title = stringResource(R.string.label_model),
                 options = models.map { it to it.displayName },
@@ -885,7 +886,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
             onConfirm = { value ->
                 dialog = null
                 keyDialogValue = ""
-                editProfile { it.copy(apiKeyEncrypted = if (ApiKey.normalize(value).isEmpty()) "" else store.encryptServiceKey(value), modelIds = emptyList()) }
+                editProfile { it.copy(apiKeyEncrypted = if (ApiKey.normalize(value).isEmpty()) "" else store.encryptServiceKey(value), modelIds = emptyList(), modelContextWindows = emptyMap()) }
             },
         )
 

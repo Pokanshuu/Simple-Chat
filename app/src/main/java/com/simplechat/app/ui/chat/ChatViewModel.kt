@@ -333,6 +333,7 @@ class ChatViewModel(
 
     /** 上一次见到的远端模型列表（落库的那份），同理只用来比较。 */
     private var previousModelIds: List<String> = emptyList()
+    private var previousModelContextWindows: Map<String, Int> = emptyMap()
 
     private val providerKind: ProviderKind
         get() = runCatching { ProviderKind.valueOf(stored.providerId) }
@@ -395,11 +396,12 @@ class ChatViewModel(
          * 一进设置、或重启一次，列表就空了。
          */
         val endpointChanged = kind != previousProviderKind || value.baseUrl != previousBaseUrl
-        if (endpointChanged || value.modelIds != previousModelIds) {
+        if (endpointChanged || value.modelIds != previousModelIds || value.modelContextWindows != previousModelContextWindows) {
             previousProviderKind = kind
             previousBaseUrl = value.baseUrl
             previousModelIds = value.modelIds
-            models = ModelCatalog.pickerModels(kind, value.modelIds)
+            previousModelContextWindows = value.modelContextWindows
+            models = ModelCatalog.pickerModels(kind, value.modelIds, value.modelContextWindows)
             // 端点换了，上一轮的"已拉取 N 个"不再成立；只是列表更新则保留提示
             if (endpointChanged) modelHint = null
         }
@@ -416,7 +418,7 @@ class ChatViewModel(
             null
         }
         settings = settings.copy(
-            model = ModelCatalog.find(kind, value.modelId),
+            model = ModelCatalog.find(kind, value.modelId, value.modelContextWindows),
             reasoningLevel = runCatching { ReasoningLevel.valueOf(value.reasoningLevelId) }
                 .getOrDefault(ReasoningLevel.OFF),
             temperature = value.temperature,
@@ -658,25 +660,33 @@ class ChatViewModel(
         refreshingModels = true
         modelHint = null
         val source = stored
+        val profile = source.apiProfiles.firstOrNull { it.id == source.activeApiProfileId }
         viewModelScope.launch {
-            val result = chatApi.fetchModels(
+            val result = chatApi.fetchModelCatalog(
                 baseUrl = source.baseUrl.ifBlank { providerKind.defaultBaseUrl },
                 apiKey = source.apiKey,
             )
-            if (stored.activeApiProfileId != source.activeApiProfileId || stored.baseUrl != source.baseUrl) {
+            if (stored.activeApiProfileId != source.activeApiProfileId || stored.baseUrl != source.baseUrl ||
+                stored.providerId != source.providerId || stored.apiKey != source.apiKey) {
                 refreshingModels = false
                 return@launch
             }
-            result.onSuccess { ids ->
-                models = ModelCatalog.pickerModels(providerKind, ids)
-                modelHint = Res.get(R.string.models_fetched, ids.size)
+            result.onSuccess { catalog ->
+                modelHint = Res.get(R.string.models_fetched, catalog.ids.size)
             }
             result.onFailure { error ->
                 modelHint = Res.get(R.string.models_fetch_failed, error.userMessage()) +
                     if (!stored.hasKey) Res.get(R.string.models_fetch_needs_key) else ""
             }
             // 落库：设置页的「模型」选择器读的是这份，重启后也还在
-            result.getOrNull()?.let { settingsStore.setModelIds(it, source.activeApiProfileId, source.baseUrl) }
+            result.getOrNull()?.let { catalog ->
+                settingsStore.updateApiProfile(source.activeApiProfileId) { current ->
+                    if (profile != null && current.baseUrl == profile.baseUrl && current.providerId == profile.providerId &&
+                        current.apiKeyEncrypted == profile.apiKeyEncrypted) {
+                        current.copy(modelIds = catalog.ids, modelContextWindows = catalog.contextWindows)
+                    } else current
+                }
+            }
             refreshingModels = false
         }
     }

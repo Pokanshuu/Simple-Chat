@@ -106,6 +106,9 @@ class ChatApi(
      * 失败不抛异常，由调用方决定提示方式。
      */
     suspend fun fetchModels(baseUrl: String, apiKey: String): Result<List<String>> =
+        fetchModelCatalog(baseUrl, apiKey).map { it.ids }
+
+    internal suspend fun fetchModelCatalog(baseUrl: String, apiKey: String): Result<RemoteModelCatalog> =
         withContext(Dispatchers.IO) {
             runCatching {
                 val builder = Request.Builder().url(modelsUrl(baseUrl)).get()
@@ -117,9 +120,7 @@ class ChatApi(
                         error("HTTP ${response.code}")
                     }
                     val text = response.body?.string().orEmpty()
-                    json.decodeFromString(ModelListDto.serializer(), text)
-                        .data
-                        .map { it.id }
+                    parseRemoteModelCatalog(json, text)
                 }
             }
         }

@@ -140,6 +140,7 @@ data class StoredSettings(
      * 端点（服务商 / Base URL）一换就清空，见 [SettingsStore.setProvider]。
      */
     val modelIds: List<String> = emptyList(),
+    val modelContextWindows: Map<String, Int> = emptyMap(),
     val onboardingComplete: Boolean = false,
 
 ) {
@@ -210,6 +211,7 @@ class SettingsStore(
             ttsVoiceName = prefs[Keys.TTS_VOICE] ?: StoredSettings().ttsVoiceName,
             ttsVoiceLabel = prefs[Keys.TTS_VOICE_LABEL] ?: StoredSettings().ttsVoiceLabel,
             modelIds = ModelIdList.decode(prefs[Keys.MODEL_IDS]),
+            modelContextWindows = readModelContextWindows(prefs),
             onboardingComplete = prefs[Keys.ONBOARDING_COMPLETE] ?: false,
 
         )
@@ -220,7 +222,7 @@ class SettingsStore(
             // 换了端点，旧端点拉到的模型列表就不再成立
             val endpointChanged = prefs[Keys.PROVIDER] != providerId ||
                 prefs[Keys.BASE_URL] != baseUrl.trim()
-            if (endpointChanged) prefs.remove(Keys.MODEL_IDS)
+            if (endpointChanged) clearModelCatalog(prefs)
             prefs[Keys.PROVIDER] = providerId
             prefs[Keys.BASE_URL] = baseUrl.trim()
             prefs[Keys.MODEL] = modelId
@@ -231,7 +233,7 @@ class SettingsStore(
         val trimmed = baseUrl.trim()
         editApi { prefs ->
             // 只改大小写 / 前后空格不算换端点；真的改了才丢掉旧列表
-            if (prefs[Keys.BASE_URL].orEmpty().trim() != trimmed) prefs.remove(Keys.MODEL_IDS)
+            if (prefs[Keys.BASE_URL].orEmpty().trim() != trimmed) clearModelCatalog(prefs)
             prefs[Keys.BASE_URL] = trimmed
         }
     }
@@ -240,17 +242,14 @@ class SettingsStore(
         editApi(expectedProfileId) { it[Keys.MODEL] = modelId }
     }
 
-    /** 记下这个端点 `GET /models` 返回的 id（测试连接 / 对话面板刷新时调用）。 */
-    suspend fun setModelIds(ids: List<String>, expectedProfileId: String? = null, expectedBaseUrl: String? = null) {
-        editApi(expectedProfileId) { prefs ->
-            if (expectedBaseUrl != null && prefs[Keys.BASE_URL] != expectedBaseUrl) return@editApi
-            val encoded = ModelIdList.encode(ids)
-            if (encoded.isEmpty()) {
-                prefs.remove(Keys.MODEL_IDS)
-            } else {
-                prefs[Keys.MODEL_IDS] = encoded
-            }
-        }
+    private fun readModelContextWindows(prefs: Preferences): Map<String, Int> =
+        prefs[Keys.MODEL_CONTEXT_WINDOWS]?.let { raw ->
+            runCatching { apiProfileJson.decodeFromString<Map<String, Int>>(raw) }.getOrNull()
+        }.orEmpty()
+
+    private fun clearModelCatalog(prefs: MutablePreferences) {
+        prefs.remove(Keys.MODEL_IDS)
+        prefs.remove(Keys.MODEL_CONTEXT_WINDOWS)
     }
 
     suspend fun setApiKey(apiKey: String) {
@@ -260,7 +259,7 @@ class SettingsStore(
         val trimmed = ApiKey.normalize(apiKey)
         editApi { prefs ->
             // Different credentials at the same URL can expose a different model catalog.
-            prefs.remove(Keys.MODEL_IDS)
+            clearModelCatalog(prefs)
             if (trimmed.isEmpty()) {
                 prefs.remove(Keys.API_KEY_ENC)
             } else {
@@ -421,6 +420,7 @@ class SettingsStore(
         apiKeyEncrypted = prefs[Keys.API_KEY_ENC].orEmpty(),
         apiStyleId = prefs[Keys.API_STYLE] ?: "AUTO",
         modelIds = ModelIdList.decode(prefs[Keys.MODEL_IDS]),
+        modelContextWindows = readModelContextWindows(prefs),
         reasoningLevelId = prefs[Keys.REASONING] ?: "OFF",
         temperature = prefs[Keys.TEMPERATURE] ?: 1f, topP = prefs[Keys.TOP_P] ?: 1f,
         maxTokens = prefs[Keys.MAX_TOKENS] ?: 0, webSearch = prefs[Keys.WEB_SEARCH] ?: false,
@@ -465,6 +465,8 @@ class SettingsStore(
         prefs.remove(Keys.API_KEY)
         prefs[Keys.API_STYLE] = profile.apiStyleId
         prefs[Keys.MODEL_IDS] = ModelIdList.encode(profile.modelIds)
+        if (profile.modelContextWindows.isEmpty()) prefs.remove(Keys.MODEL_CONTEXT_WINDOWS)
+        else prefs[Keys.MODEL_CONTEXT_WINDOWS] = apiProfileJson.encodeToString(profile.modelContextWindows)
         prefs[Keys.REASONING] = profile.reasoningLevelId
         prefs[Keys.TEMPERATURE] = profile.temperature
         prefs[Keys.TOP_P] = profile.topP
@@ -601,6 +603,7 @@ class SettingsStore(
 
         /** 当前端点 `/models` 拉回来的 id，换行分隔（[ModelIdList]）。 */
         val MODEL_IDS = stringPreferencesKey("model_ids")
+        val MODEL_CONTEXT_WINDOWS = stringPreferencesKey("model_context_windows")
         val ONBOARDING_COMPLETE = booleanPreferencesKey("onboarding_complete")
 
     }

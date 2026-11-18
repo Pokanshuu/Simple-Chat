@@ -97,10 +97,18 @@ data class ErrorBodyDto(
 
 /** `GET /models` 响应（OpenCode Go 的模型列表无需鉴权即可访问）。 */
 @Serializable
-data class ModelListDto(val data: List<ModelEntryDto> = emptyList())
+data class ModelListDto(
+    val data: List<ModelEntryDto> = emptyList(),
+    val models: List<ModelEntryDto> = emptyList(),
+)
 
 @Serializable
 data class ModelEntryDto(
-    val id: String,
-    @SerialName("owned_by") val ownedBy: String? = null,
+    val id: String? = null,
+    val name: String? = null,
+    @SerialName("context_length") val contextLength: kotlinx.serialization.json.JsonElement? = null,
+    @SerialName("context_window") val contextWindow: kotlinx.serialization.json.JsonElement? = null,
+    @SerialName("inputTokenLimit") val inputTokenLimit: kotlinx.serialization.json.JsonElement? = null,
+    @SerialName("input_token_limit") val snakeInputTokenLimit: kotlinx.serialization.json.JsonElement? = null,
+    @SerialName("top_provider") val topProvider: kotlinx.serialization.json.JsonElement? = null,
 )

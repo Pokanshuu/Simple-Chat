@@ -149,15 +149,29 @@ object ModelCatalog {
      * OpenCode Go 那张里明确标了不支持识图 —— 那是上游实测的路由结果），
      * 当前服务商的记录更可信。
      *
-     * 全局表都没有的 id 一律回落到 [ModelInfo] 默认值（128K / 不支持识图与思考）。
-     * **刻意不按 id 的字面去猜**：把上下文窗口猜大，压缩就不会及时触发，最后是
-     * 服务端 400（`maximum context length`）；猜小只是早点压缩。识图/思考同理 ——
-     * 猜错会直接发出模型不接受的参数。这三样都必须靠"确知"或用户手动填。
+     * 窗口优先采用当前端点提供的值，再查内置能力表和已知 Gemini 聊天模型。
+     * 未知模型仍使用保守默认值；第三方端点可能比官方模型限制更低。
      */
-    fun find(kind: ProviderKind, modelId: String): ModelInfo =
-        knownModels(kind).firstOrNull { it.id == modelId }
-            ?: allKnown[modelId]
-            ?: ModelInfo(id = modelId)
+    fun find(kind: ProviderKind, modelId: String, contextWindows: Map<String, Int> = emptyMap()): ModelInfo {
+        val known = knownModels(kind).firstOrNull { it.id == modelId } ?: allKnown[modelId]
+        val window = contextWindows[modelId]?.takeIf { it > 0 } ?: known?.contextWindow
+            ?: geminiContextWindow(modelId) ?: ModelInfo.DEFAULT_CONTEXT_WINDOW
+        return known?.copy(contextWindow = window) ?: ModelInfo(id = modelId, contextWindow = window)
+    }
+
+    // Match documented chat model IDs only; Gemini image, Live and embedding variants differ.
+    private val geminiMillionTokenModels = setOf(
+        "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
+        "gemini-3-pro", "gemini-3-flash", "gemini-3.1-pro", "gemini-3.1-flash-lite",
+        "gemini-3.5-flash",
+    )
+    private val geminiPreviewSuffix = Regex("-preview(?:-\\d{2}-\\d{2,4})?$")
+
+    private fun geminiContextWindow(id: String): Int? {
+        val name = id.lowercase().removePrefix("google/").removePrefix("models/")
+        val base = name.replace(geminiPreviewSuffix, "")
+        return 1_048_576.takeIf { base in geminiMillionTokenModels }
+    }
 
     /**
      * 把运行时拉取到的模型 id 与已知能力表合并。
@@ -181,15 +195,15 @@ object ModelCatalog {
      * `CUSTOM` 没有内置目录，于是「远端列表为空」时这里就是空 —— 界面必须给出
      * 空态提示和一个手动填写的入口，而不是弹一个只有标题的白框。
      */
-    fun pickerModels(kind: ProviderKind, remoteIds: List<String>): List<ModelInfo> {
+    fun pickerModels(kind: ProviderKind, remoteIds: List<String>, contextWindows: Map<String, Int> = emptyMap()): List<ModelInfo> {
         val ids = remoteIds
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .distinct()
-        if (ids.isEmpty()) return knownModels(kind)
-        val merged = merge(kind, ids)
+        if (ids.isEmpty()) return knownModels(kind).map { find(kind, it.id, contextWindows) }
+        val merged = ids.map { find(kind, it, contextWindows) }
         val seen = merged.mapTo(HashSet()) { it.id }
-        return merged + knownModels(kind).filter { it.id !in seen }
+        return merged + knownModels(kind).filter { it.id !in seen }.map { find(kind, it.id, contextWindows) }
     }
 }
 
