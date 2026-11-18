@@ -670,7 +670,6 @@
     <string name="onboarding_theme_title">选择主题色</string>
     <string name="onboarding_start">开始聊天吧</string>
     <string name="onboarding_begin">开始设置</string>
-    <string name="onboarding_welcome_hint">完成几项基础设置后即可开始对话</string>
     <string name="onboarding_step">第 %1$d 步，共 %2$d 步</string>
     <string name="onboarding_key_label">DeepSeek API Key</string>
     <string name="onboarding_verify">验证并继续</string>

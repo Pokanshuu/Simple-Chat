@@ -520,20 +520,13 @@ private fun WelcomePage() {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Icon(AppIcons.Bubble, null, Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
+        Icon(AppIcons.MessageSquare, null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.height(Space.Section))
         Text(
             text = stringResource(R.string.onboarding_welcome),
             style = MaterialTheme.typography.titleLarge,
             textAlign = TextAlign.Center,
             modifier = Modifier.semantics { heading() },
-        )
-        Spacer(Modifier.height(Space.Gap))
-        Text(
-            text = stringResource(R.string.onboarding_welcome_hint),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
         )
     }
 }

@@ -671,7 +671,6 @@
     <string name="onboarding_theme_title">Choose an accent color</string>
     <string name="onboarding_start">Start chatting</string>
     <string name="onboarding_begin">Get started</string>
-    <string name="onboarding_welcome_hint">Finish a few basic settings and start chatting</string>
     <string name="onboarding_step">Step %1$d of %2$d</string>
     <string name="onboarding_key_label">DeepSeek API key</string>
     <string name="onboarding_verify">Verify and continue</string>
