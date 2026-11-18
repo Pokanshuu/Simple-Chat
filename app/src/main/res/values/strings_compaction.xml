@@ -1,7 +1,14 @@
 <resources>
-    <string name="compact_batch_source">正在压缩第 %1$d 批（当前阶段 %2$d%%）</string>
-    <string name="compact_batch_merge">正在合并摘要（第 %1$d 批，当前阶段 %2$d%%）</string>
-    <string name="compact_batch_retry">正在重试：%1$s</string>
-    <string name="compact_request_timeout">等待摘要超时。请检查接口或稍后重试，已完成的批次会保留。</string>
+    <string name="compact_output_exhausted">摘要输出仍被截断，已停止重新发送。请检查模型的输出上限或切换模型。</string>
+    <string name="compact_output_target">以上为待总结的历史记录。现在只输出供下一轮使用的摘要，将整份摘要控制在 %1$d 字以内。按重要性取舍，优先写最近的目标、约束和未决事项。避免逐轮复述或逐句引用。在限额前结束。</string>
+    <string name="compact_truncated">摘要输出被截断。已保存完成的部分。可手动继续，或更换支持较长输出的模型。</string>
+    <string name="compact_whole_source">正在整段压缩 · 1 次请求</string>
+    <string name="compact_whole_limit">模型窗口为 %1$d token，当前接口报告的输入上限为 %2$d token。整段请求已停止。再次点击压缩可分批继续。</string>
+    <string name="compact_whole_rejected">当前接口拒绝了整段输入的长度。已停止请求。再次点击压缩可分批继续。</string>
+    <string name="compact_batch_source">已压缩 %1$d%% 原文 · 本次请求 %2$d</string>
+    <string name="compact_batch_merge">原文已压缩，正在合并摘要 · 本次请求 %1$d</string>
+    <string name="compact_request_cap">本次已发送 %1$d 个请求，压缩已暂停。点击压缩可从已保存的位置继续。</string>
+    <string name="compact_deadline">本次压缩已用时 %1$d 秒，已停止请求。点击压缩可从已保存的位置继续。</string>
+    <string name="compact_request_timeout">等待摘要超时，已停止请求。请检查接口后再继续，已完成的批次会保留。</string>
     <string name="compact_no_new_history">暂无可纳入摘要的更早消息，已保留当前摘要。</string>
 </resources>

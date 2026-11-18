@@ -431,7 +431,7 @@
     <string name="compact_start">Compact context</string>
     <string name="compact_desc">Summarize earlier messages in batches, normally keeping the latest 6 intact. If recent messages are too large, keep the latest turn. View and edit the summary after completion. Retrying resumes saved progress.</string>
     <string name="compact_input_rejected">The service still rejected the compaction request after reducing batch sizes. Retry later or check the input limit for this endpoint. Your previous summary and local messages have not changed.</string>
-    <string name="compact_interrupted">The connection was interrupted or the service is temporarily unavailable. Automatic retries did not complete. Retry to resume saved progress. Your previous summary and local messages have not changed.</string>
+    <string name="compact_interrupted">The connection was interrupted or the service is temporarily unavailable. Compaction has stopped. Retry to resume saved progress. Your previous summary and local messages have not changed.</string>
     <string name="compact_incomplete">A complete summary could not be generated. Retry to resume saved progress. Your previous summary and local messages have not changed.</string>
     <string name="compact_no_progress">The summaries could not be reduced to a usable size. Retry or choose another model. Your previous summary and local messages have not changed.</string>
     <string name="compact_attachment_unavailable">These attachments have no complete readable text for compaction: %1$s. A file ID is not its content. Provide the file text and retry. No compaction request was sent; your previous summary and local messages are unchanged.</string>

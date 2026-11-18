@@ -21,21 +21,21 @@ class CompactionResponseTest {
         assertNull(compactionFailure(StreamEvent.Error("context length exceeded")).inputLimit)
     }
 
-    @Test fun `disconnect after partial text retries with a fresh buffer`() = runBlocking {
+    @Test fun `disconnect after partial text stops and discards partial output`() = runBlocking {
         var calls = 0
         var checkpoint = CompactionCheckpoint()
-        val result = compactInBatches(sequenceOf("source"),
-            CompactionPrompts("summarize", "old", "new", "user", "assistant", "image"),
-            8192, onCheckpoint = { checkpoint = it }, pause = {}) { _, _, _ ->
-            calls++
-            collectCompactionSummary(if (calls == 1) flowOf(
-                StreamEvent.Content("partial text that must be discarded"),
-                StreamEvent.Error("connection interrupted", retryable = true),
-            ) else flowOf(StreamEvent.Content("complete summary"), StreamEvent.Stopped("stop"), StreamEvent.Done))
-        }
-        assertEquals(2, calls)
-        assertEquals("complete summary", result)
-        assertEquals(listOf("complete summary"), checkpoint.summaries)
+        try {
+            compactInBatches(sequenceOf("source"),
+                CompactionPrompts("summarize", "old", "new", "user", "assistant", "image"),
+                8192, onCheckpoint = { checkpoint = it }) { _, _, _ ->
+                calls++
+                collectCompactionSummary(flowOf(StreamEvent.Content("partial text"),
+                    StreamEvent.Error("connection interrupted", retryable = true)))
+            }
+            fail("A broken stream must stop the operation")
+        } catch (failure: CompactionRequestFailure) { assertEquals(CompactionFailureKind.TRANSIENT, failure.kind) }
+        assertEquals(1, calls)
+        assertTrue(checkpoint.summaries.isEmpty())
     }
 
     @Test fun `both protocols require completed untruncated text`() = runBlocking {

@@ -888,29 +888,35 @@ class ChatViewModel(
                         ?: CompactionCheckpoint(fingerprint = fingerprint)
                     val summary = compactInBatches(
                         segments, prompts, model.contextWindow, checkpoint,
-                        preferWhole = true,
+                        // Other endpoints can impose lower output limits even when advertising a 1M input window.
+                        harnessBudget = runCatching { java.net.URI(baseUrl).host.equals("api.deepseek.com", true) }.getOrDefault(false) &&
+                            model.id in setOf("deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4.1-flash", "deepseek-v4-flash-vision-exp"),
                         onCheckpoint = { repository.saveCompactionCheckpoint(conversationId, it) },
                         onProgress = {
                             // Log only operational metadata, never conversation content or credentials.
                             android.util.Log.i("SimpleChat/Compaction",
-                                "Level=${it.level} batch=${it.batch} chars=${it.processedChars}/${it.totalChars} recovery=${it.recovery}")
-                            val percent = if (it.totalChars > 0) (100 * it.processedChars / it.totalChars).toInt() else 0
-                            val phase = Res.get(if (it.level == 0) R.string.compact_batch_source else R.string.compact_batch_merge,
-                                it.batch, percent)
-                            withContext(Dispatchers.Main) {
-                                if (operation == compactGeneration) compactionStatus =
-                                    if (it.recovery in setOf(CompactionFailureKind.INPUT_LIMIT, CompactionFailureKind.TRUNCATED,
-                                            CompactionFailureKind.TRANSIENT, CompactionFailureKind.EMPTY))
-                                        Res.get(R.string.compact_batch_retry, phase) else phase
+                                "level=${it.level} batch=${it.batch} attempt=${it.attempt} inputChars=${it.inputChars} " +
+                                    "processed=${it.processedChars}/${it.totalChars} window=${it.effectiveWindow} output=${it.outputTokens} recovery=${it.recovery}")
+                            if (it.recovery == null) {
+                                val phase = if (it.isWholeSource) Res.get(R.string.compact_whole_source) else if (it.level == 0) {
+                                    val percent = 100 * it.processedChars / it.totalChars.coerceAtLeast(1)
+                                    Res.get(R.string.compact_batch_source, percent, it.attempt)
+                                } else Res.get(R.string.compact_batch_merge, it.attempt)
+                                withContext(Dispatchers.Main) {
+                                    if (operation == compactGeneration) compactionStatus = phase
+                                }
                             }
                         },
                     ) { transcript, maxTokens, _ ->
+                        val brief = Res.get(R.string.compact_output_target, (maxTokens / 3).coerceIn(32, 1200))
+                        // Finish with the active summarization task, after the quoted history.
+                        val material = transcript + "\n\n" + brief
                         val stream = if (extended) {
                             chatApi.streamMessage(
                                 baseUrl = baseUrl, apiKey = apiKey,
                                 request = buildAnthropicRequest(
                                     model = model.id, systemPrompt = prompts.system,
-                                    path = listOf(UiMessage("compact", MessageRole.USER, transcript)),
+                                    path = listOf(UiMessage("compact", MessageRole.USER, material)),
                                     searchEnabled = false, thinkingEnabled = false, requestTitle = false,
                                     latestReminder = null, maxTokens = maxTokens, temperature = 0.3,
                                     deepSeekExtensions = isOfficialDeepSeekEndpoint(baseUrl),
@@ -922,13 +928,15 @@ class ChatViewModel(
                                 baseUrl = baseUrl, apiKey = apiKey, model = model,
                                 messages = listOf(
                                     OutMessageDto("system", MessageContent.text(prompts.system)),
-                                    OutMessageDto("user", MessageContent.text(transcript)),
+                                    OutMessageDto("user", MessageContent.text(material)),
                                 ),
                                 thinkingEnabled = false, maxTokens = maxTokens,
                                 temperature = 0.3, extraHeaders = headers, retryBeforeContent = false,
                             )
                         }
-                        collectCompactionSummary(stream)
+                        collectCompactionSummary(stream, maxChars = com.simplechat.app.data.MaxCompactionSummaryChars) { reason, chars, thinking ->
+                            android.util.Log.i("SimpleChat/Compaction", "protocol=$apiStyle end=$reason textChars=$chars thinkingChars=$thinking maxTokens=$maxTokens")
+                        }
                     }
                     (toSummarize.lastOrNull()?.id ?: checkNotNull(existing).throughMessageId) to summary
                 }
@@ -953,12 +961,18 @@ class ChatViewModel(
                         CompactionFailureKind.INPUT_LIMIT -> Res.get(R.string.compact_input_rejected)
                         CompactionFailureKind.TRANSIENT -> Res.get(R.string.compact_interrupted)
                         CompactionFailureKind.TIMEOUT -> Res.get(R.string.compact_request_timeout)
-                        CompactionFailureKind.TRUNCATED, CompactionFailureKind.EMPTY -> Res.get(R.string.compact_incomplete)
+                        CompactionFailureKind.TRUNCATED -> Res.get(R.string.compact_truncated)
+                        CompactionFailureKind.EMPTY -> Res.get(R.string.compact_incomplete)
                         CompactionFailureKind.PERMANENT -> error.event?.let {
                             if (it.rawMessage != null || it.code != null) it.message else serverErrorText(it.message)
                         } ?: Res.get(R.string.compact_incomplete)
                     } else error.userMessage()
-                    banner = Res.get(R.string.compact_failed_detail, detail)
+                    val resource = (error as? com.simplechat.app.data.AppTextException)?.text?.resId
+                    banner = when (resource) {
+                        R.string.compact_request_cap, R.string.compact_deadline,
+                        R.string.compact_whole_limit, R.string.compact_whole_rejected -> detail
+                        else -> Res.get(R.string.compact_failed_detail, detail)
+                    }
                 }
             } finally {
                 if (generation == switchGeneration && operation == compactGeneration) {
@@ -1517,6 +1531,11 @@ class ChatViewModel(
                 }
             }
 
+            fun sendError(event: StreamEvent.Error): String {
+                val hint = com.simplechat.app.net.providerHintRes(event.rawMessage ?: event.message)
+                android.util.Log.w("SimpleChat/Send", "protocol=$apiStyle http=${event.code} category=${Res.nameOrNull(hint)} retryable=${event.retryable}")
+                return if (event.code != null) event.message else serverErrorText(event.message)
+            }
             var failure: String? = null
             var cancelled = false
             var serverTitle: String? = null
@@ -1579,7 +1598,7 @@ class ChatViewModel(
 
                             // 流内错误对象是**上游网关原文**（如 `No available channel …`）：
                             // 先翻成人话，认不出才保留原文（见 `serverErrorText`）
-                            is StreamEvent.Error -> failure = if (event.code != null) event.message else serverErrorText(event.message)
+                            is StreamEvent.Error -> failure = sendError(event)
 
                             // 块通道不该出现这两类增量；出现了说明通道配错，忽略
                             is StreamEvent.Content, is StreamEvent.Reasoning -> Unit
@@ -1633,7 +1652,7 @@ class ChatViewModel(
 
                             // 流内错误对象是**上游网关原文**（如 `No available channel …`）：
                             // 先翻成人话，认不出才保留原文（见 `serverErrorText`）
-                            is StreamEvent.Error -> failure = if (event.code != null) event.message else serverErrorText(event.message)
+                            is StreamEvent.Error -> failure = sendError(event)
 
                             // 块级事件只属于 Anthropic 通道；这条路径上忽略
                             else -> Unit
@@ -1643,7 +1662,12 @@ class ChatViewModel(
             } catch (t: kotlinx.coroutines.CancellationException) {
                 cancelled = true
             } catch (t: Throwable) {
-                if (!stoppedByUser) failure = t.userMessage()
+                if (!stoppedByUser) {
+                    val category = (t as? com.simplechat.app.data.AppTextException)?.text?.resId
+                    val http = (t as? com.simplechat.app.net.ServiceApi.HttpFailure)?.status
+                    android.util.Log.w("SimpleChat/Send", "protocol=$apiStyle error=${t.javaClass.simpleName} http=$http category=${Res.nameOrNull(category)}")
+                    failure = t.userMessage()
+                }
             } finally {
                 flusher.cancel()
             }

@@ -45,12 +45,19 @@ internal fun compactionFailure(event: StreamEvent.Error): CompactionRequestFailu
 internal suspend fun collectCompactionSummary(
     stream: Flow<StreamEvent>,
     maxChars: Int = 64_000,
+    onFinish: (reason: String, textChars: Int, thinkingChars: Int) -> Unit = { _, _, _ -> },
 ): String {
     val text = StringBuilder()
     var completed = false
+    var thinkingChars = 0
     // A finish reason is sufficient for summaries; usage trailers are irrelevant.
     // Returning early also cancels the upstream SSE read if the peer keeps it open.
     stream.takeWhile { event ->
+        thinkingChars += when (event) {
+            is StreamEvent.Reasoning -> event.text.length
+            is StreamEvent.ThinkingDelta -> event.text.length
+            else -> 0
+        }
         val piece = when (event) {
             is StreamEvent.Content -> event.text
             is StreamEvent.TextDelta -> event.text
@@ -58,20 +65,28 @@ internal suspend fun collectCompactionSummary(
             else -> null
         }
         if (piece != null) {
-            if (piece.length > maxChars - text.length) throw CompactionRequestFailure(CompactionFailureKind.TRUNCATED)
+            if (piece.length > maxChars - text.length) {
+                onFinish("client_character_limit", text.length, thinkingChars)
+                throw CompactionRequestFailure(CompactionFailureKind.TRUNCATED)
+            }
             text.append(piece)
         }
         when (event) {
             is StreamEvent.Error -> throw compactionFailure(event)
             is StreamEvent.Stopped -> {
-                when (event.reason) {
+                val reason = event.reason
+                if (reason != null) onFinish(if (reason in setOf("length", "max_tokens", "stop", "end_turn", "stop_sequence")) reason else "other", text.length, thinkingChars)
+                when (reason) {
                     "length", "max_tokens" -> throw CompactionRequestFailure(CompactionFailureKind.TRUNCATED)
                     "stop", "end_turn", "stop_sequence" -> completed = true
                     null -> Unit
                     else -> throw CompactionRequestFailure(CompactionFailureKind.PERMANENT)
                 }
             }
-            StreamEvent.Done -> completed = true
+            StreamEvent.Done -> {
+                onFinish("done", text.length, thinkingChars)
+                completed = true
+            }
             else -> Unit
         }
         !completed

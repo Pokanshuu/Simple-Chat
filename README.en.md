@@ -55,7 +55,7 @@ Good for:
 - Reasoning effort includes Off, `low`, `high`, and `max` for both request protocols.
 - Message tree organised by `parentId`. Regenerating creates an in-conversation branch; switching versions carries the downstream along instead of deleting history; long-press forks into a new conversation.
 - **Context management**: Estimate usage and check the budget before sending. Compaction keeps recent turns intact
-  and leaves local messages unchanged. Compaction supports resumable batches. It uses one request
+  and leaves local messages unchanged. Compaction stops on timeout or truncated output and saves completed batches. It uses one request
   for all eligible history when the budget allows, with summary guidance for creative, technical, or general
   conversations. See [context compaction and recovery](docs/22-上下文压缩与恢复.md).
 - Attachments: camera / gallery / files, none of which need runtime permission; images, plain text, docx and PDF. Imported images are stored as files in app-private storage, with only the file name kept in the database. Oversized messages use chunked reads; capacity depends on available device storage and memory. Tapping an image opens a full-screen viewer with swipe between images.

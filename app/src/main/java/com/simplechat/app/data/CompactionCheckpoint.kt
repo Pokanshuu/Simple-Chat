@@ -7,6 +7,9 @@ import java.security.MessageDigest
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
+internal const val MaxCompactionSummaryChars = 262_144
+internal const val MaxCompactionChunkChars = 1_500_000
+
 /** Work in progress is separate from the summary used for chat requests. */
 @Serializable
 internal data class CompactionCheckpoint(
@@ -15,8 +18,12 @@ internal data class CompactionCheckpoint(
     val offset: Long = 0,
     val sources: List<String> = emptyList(),
     val summaries: List<String> = emptyList(),
-    val chunkChars: Int = 48_000,
+    val chunkChars: Int = MaxCompactionChunkChars,
     val requestWindow: Int = Int.MAX_VALUE,
+    val triedHarnessBudget: Boolean = false,
+    val outputExhausted: Boolean = false,
+    val moreOutput: Boolean = false,
+    val inputSizeRejected: Boolean = false,
     val completedBatches: Int = 0,
 )
 
@@ -47,9 +54,9 @@ internal class CompactionCheckpointStore(private val directory: File) {
         if (!file.isFile || file.length() > MaxBytes) return null
         json.decodeFromString<CompactionCheckpoint>(file.readText()).takeIf {
             it.fingerprint == fingerprint && it.level in 0..12 && it.offset >= 0 &&
-                it.chunkChars in 2..48_000 && it.requestWindow > 0 && it.completedBatches >= 0 &&
+                it.chunkChars in 2..MaxCompactionChunkChars && it.requestWindow > 0 && it.completedBatches >= 0 &&
                 (it.level > 0 || it.sources.isEmpty()) &&
-                (it.sources + it.summaries).all { text -> text.isNotBlank() && text.length <= 64_000 }
+                (it.sources + it.summaries).all { text -> text.isNotBlank() && text.length <= MaxCompactionSummaryChars }
         }
     }.getOrNull()
 

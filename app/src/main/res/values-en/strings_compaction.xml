@@ -1,7 +1,14 @@
 <resources>
-    <string name="compact_batch_source">Summarizing batch %1$d (%2$d%% of this stage)</string>
-    <string name="compact_batch_merge">Merging summaries (batch %1$d, %2$d%% of this stage)</string>
-    <string name="compact_batch_retry">Retrying: %1$s</string>
-    <string name="compact_request_timeout">The summary request timed out. Check the endpoint or retry later. Completed batches are kept.</string>
-    <string name="compact_no_new_history">No additional older messages to summarize. The current summary was kept.</string>
+    <string name="compact_output_exhausted">Summary output was cut short at the maximum budget. Check the output limit or choose another model.</string>
+    <string name="compact_output_target">The preceding text is the conversation history. Output only the summary needed for the next turn. Keep the entire summary under %1$d characters. Prioritize recent goals, constraints and open questions. Avoid turn-by-turn retelling or direct quotes. Finish within that limit.</string>
+    <string name="compact_truncated">The summary output was cut short. Completed work is saved. Continue manually or choose a model that supports longer outputs.</string>
+    <string name="compact_whole_source">Summarizing the full text in one request</string>
+    <string name="compact_whole_limit">The model window is %1$d tokens. The endpoint reported a limit of %2$d tokens. The request has stopped. Select Compact again to continue in batches.</string>
+    <string name="compact_whole_rejected">The endpoint rejected the full input size. The request has stopped. Select Compact again to continue in batches.</string>
+    <string name="compact_batch_source">%1$d%% of original text summarized · Request %2$d this run</string>
+    <string name="compact_batch_merge">Original text summarized. Merging summaries · Request %1$d this run</string>
+    <string name="compact_request_cap">Paused after %1$d requests. Select Compact to continue from saved progress.</string>
+    <string name="compact_deadline">Stopped after %1$d seconds. Select Compact to continue from saved progress.</string>
+    <string name="compact_request_timeout">The summary request timed out. Check the endpoint before continuing. Completed batches are saved.</string>
+    <string name="compact_no_new_history">No earlier messages to add. Your current summary is unchanged.</string>
 </resources>

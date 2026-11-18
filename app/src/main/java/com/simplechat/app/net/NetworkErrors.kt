@@ -87,7 +87,7 @@ internal fun providerHintRes(serverMessage: String?): Int? {
     return when {
         text.contains("file") && text.containsAny(listOf("not found", "expired", "does not exist")) -> R.string.service_file_expired
         text.containsAny(listOf("unsupported file", "password-protected", "failed to parse", "file format")) -> R.string.service_file_format
-        text.containsAny(listOf("purpose", "invalid_request_error")) -> R.string.error_http_bad_request
+        text.contains("purpose") -> R.string.error_http_bad_request
         text.containsAny(AUTH_KEYWORDS) -> R.string.error_provider_auth
         text.containsAny(NO_CHANNEL_KEYWORDS) -> R.string.error_provider_no_channel
         text.containsAny(MODEL_MISSING_KEYWORDS) -> R.string.error_provider_model_not_found
@@ -95,6 +95,7 @@ internal fun providerHintRes(serverMessage: String?): Int? {
         text.containsAny(RATE_LIMIT_KEYWORDS) -> R.string.error_provider_rate_limit
         text.containsAny(PAYLOAD_KEYWORDS) -> R.string.error_http_too_large
         text.containsAny(CONTEXT_KEYWORDS) -> R.string.error_provider_context_length
+        text.contains("invalid_request_error") -> R.string.error_http_bad_request
         else -> null
     }
 }

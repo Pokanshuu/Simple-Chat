@@ -43,6 +43,7 @@ internal object CompactionRegression {
         val store = SettingsStore(ctx, PreferenceDataStoreFactory.create(scope = scope,
             produceFile = { File(root, "test.preferences_pb") }))
         store.setProvider("DEEPSEEK", "https://api.deepseek.com", "deepseek-flash")
+        store.setApiKey("sk-local-test-key")
         val db = Room.inMemoryDatabaseBuilder(ctx, AppDatabase::class.java).build()
         val repository = ChatRepository(db, ctx)
         val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
@@ -124,6 +125,10 @@ internal object CompactionRegression {
                 render(vm)
                 blocked.set(true)
                 withContext(Dispatchers.Main) { vm.compactContext() }
+                waitFor { withContext(Dispatchers.Main) { !vm.compacting } }
+                check(calls.get() == 1)
+                check(withContext(Dispatchers.Main) { vm.banner?.contains("32768") == true && vm.compaction == old })
+                withContext(Dispatchers.Main) { vm.compactContext() }
                 waitFor { calls.get() >= 3 }
                 delay(300)
                 check(withContext(Dispatchers.Main) { vm.compacting && vm.compaction == old })
@@ -164,8 +169,35 @@ internal object CompactionRegression {
                 check(File(ctx.noBackupFilesDir, "compaction").listFiles().orEmpty().isEmpty())
                 delay(300)
                 check(nodes().any { it.text?.toString()?.contains(final.summary) == true })
+                // A fresh 1M conversation takes exactly one HTTP request for the full 228k-token input.
+                val big = "abcd".repeat(228_000)
+                check(TokenEstimate.of(big) == 228_000)
+                val wholeId = repository.createConversation(ConversationMode.CREATIVE, "DEEPSEEK", "deepseek-flash", title = "Whole input")
+                repeat(4) { index ->
+                    val user = repository.appendUserMessage(wholeId, if (index == 0) big else "recent-$index")
+                    val reply = repository.beginAssistantMessage(wholeId, user.id)
+                    repository.finishMessage(reply, "answer", null, MessageStatus.DONE)
+                }
+                withContext(Dispatchers.Main) { vm.openConversation(wholeId) }
+                waitFor { withContext(Dispatchers.Main) { !vm.switching && vm.messages.size == 8 } }
+                val beforeSend = calls.get()
+                val followUp = "continue-WITH-228K-HISTORY"
+                withContext(Dispatchers.Main) { vm.send(followUp) }
+                waitFor { withContext(Dispatchers.Main) { !vm.isStreaming && vm.messages.lastOrNull()?.content == "COMPLETE_SUMMARY_${beforeSend + 1}" } }
+                val sentHistory = payloads.last()["messages"]!!.jsonArray.toString()
+                check(calls.get() == beforeSend + 1 && sentHistory.contains(big) && sentHistory.contains(followUp))
+                val beforeWhole = calls.get()
+                blocked.set(true)
+                withContext(Dispatchers.Main) { vm.compactContext() }
+                waitFor { calls.get() > beforeWhole }
+                check(withContext(Dispatchers.Main) { vm.compactionStatus == Res.get(com.simplechat.app.R.string.compact_whole_source) })
+                blocked.set(false)
+                waitFor { withContext(Dispatchers.Main) { !vm.compacting } }
+                check(calls.get() == beforeWhole + 1 && accepted.last().contains(big))
+                check(payloads.last()["max_tokens"]?.jsonPrimitive?.int == 65_536 && "safety_check" !in payloads.last())
+                check(withContext(Dispatchers.Main) { vm.banner == null && vm.compaction?.summary == "COMPLETE_SUMMARY_${calls.get()}" })
                 withContext(Dispatchers.Main) { vm.viewModelScope.cancel() }
-                status("$style: 1M capability retained; 32K rejection recovered; checkpoint resumed after VM restart; originals preserved; only complete summary displayed")
+                status("$style: ordinary follow-up including full 228k history sent in one request; compaction also used one request; 32K rejection paused before batching; checkpoint resumed after VM restart; originals preserved; only complete summary displayed")
             }
         } finally {
             blocked.set(false)

@@ -6,9 +6,7 @@ import com.simplechat.app.data.Attachment
 import com.simplechat.app.data.CompactionCheckpoint
 import com.simplechat.app.data.TokenEstimate
 import java.io.IOException
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -135,14 +133,18 @@ internal data class CompactionProgress(
     val batch: Int,
     val processedChars: Long,
     val totalChars: Long,
+    val attempt: Int,
+    val inputChars: Int,
+    val effectiveWindow: Int,
+    val outputTokens: Int,
+    val isWholeSource: Boolean = level == 0 && processedChars == 0L && inputChars.toLong() == totalChars,
     val recovery: CompactionFailureKind? = null,
 )
 
-/**
- * Summarize independent chunks, then merge summaries in chronological order.
- * Only accepted responses advance the cursor. Rejections shrink the current chunk, while
- * transport failures retry that chunk. A checkpoint never becomes an active chat summary.
- */
+internal const val CompactionRequestLimit = 8
+private const val CompactionDeadlineMillis = 180_000L
+
+/** Each explicit invocation gets one budget shared by source, merge and rejected requests. */
 internal suspend fun compactInBatches(
     segments: Sequence<String>,
     prompts: CompactionPrompts,
@@ -150,134 +152,87 @@ internal suspend fun compactInBatches(
     checkpoint: CompactionCheckpoint = CompactionCheckpoint(),
     onCheckpoint: suspend (CompactionCheckpoint) -> Unit = {},
     onProgress: suspend (CompactionProgress) -> Unit = {},
-    pause: suspend (Long) -> Unit = { delay(it) },
     attemptTimeoutMillis: (Int) -> Long = { if (it <= 4_000) 45_000L else 90_000L },
-    preferWhole: Boolean = false,
+    harnessBudget: Boolean = false,
+    deadlineMillis: Long = CompactionDeadlineMillis,
     summarize: suspend (transcript: String, maxTokens: Int, batch: Int) -> String,
-): String {
+): String = withTimeoutOrNull(deadlineMillis) {
     require(contextWindow > 0)
-    var state = checkpoint.copy(requestWindow = minOf(contextWindow, checkpoint.requestWindow))
-    val overhead = conservativeCompactionTokens(prompts.system) + 128L
-    suspend fun requestSummary(input: String, outputTokens: Int, batch: Int): String {
-        val candidate = withTimeoutOrNull(attemptTimeoutMillis(input.length)) {
-            summarize(input, outputTokens, batch)
-        }?.trim() ?: throw CompactionRequestFailure(CompactionFailureKind.TIMEOUT)
-        currentCoroutineContext().ensureActive()
-        if (candidate.isEmpty()) throw CompactionRequestFailure(CompactionFailureKind.EMPTY)
-        if (candidate.length > 64_000 || conservativeCompactionTokens(candidate) > state.requestWindow / 3) {
-            throw CompactionRequestFailure(CompactionFailureKind.TRUNCATED)
-        }
-        return candidate
-    }
-
-    if (preferWhole && state.level == 0 && state.offset == 0L && state.completedBatches == 0 &&
-        state.summaries.isEmpty() && checkpoint.requestWindow == Int.MAX_VALUE
-    ) {
-        val maxWholeChars = 1_500_000
-        val totalChars = segments.sumOf { currentCoroutineContext().ensureActive(); it.length.toLong() }
-        // Small transcripts already use one request in the normal batch path.
-        if (totalChars in 1..maxWholeChars.toLong()) {
-            val input = segments.joinToString("")
-            val inputTokens = conservativeCompactionTokens(input)
-            val outputTokens = minOf(4096L, inputTokens.coerceAtLeast(256), state.requestWindow / 8L).toInt()
-            val available = state.requestWindow * 3L / 4 - overhead - outputTokens
-            if (outputTokens > 0 && inputTokens <= available &&
-                (input.length > state.chunkChars || outputTokens > 2048)
-            ) {
-                val progress = CompactionProgress(0, 1, 0, totalChars)
-                onProgress(progress)
-                val whole = try {
-                    requestSummary(input, outputTokens, 1)
-                } catch (failure: CompactionRequestFailure) {
-                    when (failure.kind) {
-                        CompactionFailureKind.INPUT_LIMIT, CompactionFailureKind.TIMEOUT,
-                        CompactionFailureKind.TRUNCATED, CompactionFailureKind.EMPTY -> {
-                            onProgress(progress.copy(recovery = failure.kind))
-                            state = state.copy(requestWindow = minOf(state.requestWindow, failure.inputLimit ?: state.requestWindow))
-                            onCheckpoint(state)
-                            null
-                        }
-                        else -> throw failure
-                    }
-                }
-                if (whole != null && (totalChars <= 1024 || whole.length.toLong() + 2 < totalChars)) return whole
-            }
-        }
-    }
+    if (checkpoint.outputExhausted && !(harnessBudget && checkpoint.requestWindow >= 524_288 && !checkpoint.triedHarnessBudget)) throw AppTextException(R.string.compact_output_exhausted)
+    // Older checkpoints also halved the chunk after a timeout or truncated response. Keep
+    // their accepted summaries, but only carry forward a size limit backed by a rejection.
+    val legacySize = !checkpoint.inputSizeRejected && checkpoint.requestWindow == contextWindow
+    var state = checkpoint.copy(
+        requestWindow = minOf(contextWindow, checkpoint.requestWindow),
+        chunkChars = if (legacySize) com.simplechat.app.data.MaxCompactionChunkChars else checkpoint.chunkChars,
+    )
+    val overhead = TokenEstimate.of(prompts.system) + 256L
+    var attempts = 0
     while (state.level <= 12) {
         currentCoroutineContext().ensureActive()
         val source = if (state.level == 0) segments else state.sources.asSequence().flatMap { sequenceOf(it, "\n\n") }
         val totalChars = source.sumOf { it.length.toLong() }
         require(state.offset <= totalChars) { "Invalid compaction checkpoint offset" }
-        val chunks = boundedCompactionChunks(skipCompactionChars(source, state.offset), state.chunkChars).iterator()
+        // Buffer only enough characters for one window even when the model is small.
+        val bufferSize = minOf(state.chunkChars.toLong(), (state.requestWindow * 4L).coerceAtLeast(2)).toInt()
+        val chunks = boundedCompactionChunks(skipCompactionChars(source, state.offset), bufferSize).iterator()
         var pending = ""
+        var sizeRejections = 0
         while (pending.isNotEmpty() || chunks.hasNext()) {
-            // Refill across original chunk boundaries after a provider reduces the batch size.
-            if (pending.length < state.chunkChars && chunks.hasNext()) pending += chunks.next()
-            run {
-                var transientRetries = 0
-                var sizeRetries = 0
-                val outputCap = if (state.level == 0) 2048 else 4096
-                var outputTokens = minOf(outputCap, conservativeCompactionTokens(pending).coerceAtLeast(256).toInt(),
-                    state.requestWindow / 8).coerceAtLeast(1)
-                while (true) {
-                    currentCoroutineContext().ensureActive()
-                    val inputBudget = state.requestWindow * 3L / 4 - overhead - outputTokens
-                    val end = fittingCompactionPrefix(pending, state.chunkChars, inputBudget)
-                    if (end <= 0) throw CompactionRequestFailure(CompactionFailureKind.INPUT_LIMIT)
-                    val input = pending.substring(0, end)
-                    val progress = CompactionProgress(state.level, state.completedBatches + 1, state.offset, totalChars)
-                    onProgress(progress)
-                    val summary = try {
-                        requestSummary(input, outputTokens, progress.batch)
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (error: Exception) {
-                        val failure = when (error) {
-                            is CompactionRequestFailure -> error
-                            is IOException -> CompactionRequestFailure(CompactionFailureKind.TRANSIENT)
-                            else -> throw error
-                        }
-                        onProgress(progress.copy(recovery = failure.kind))
-                        when (failure.kind) {
-                            CompactionFailureKind.INPUT_LIMIT -> {
-                                if (++sizeRetries > 8 || end <= 2) throw failure
-                                state = state.copy(
-                                    chunkChars = minOf(state.chunkChars, end / 2).coerceAtLeast(2),
-                                    requestWindow = minOf(state.requestWindow, failure.inputLimit ?: state.requestWindow),
-                                )
-                                outputTokens = minOf(outputTokens, state.requestWindow / 8).coerceAtLeast(1)
-                                onCheckpoint(state)
-                            }
-                            CompactionFailureKind.TRUNCATED -> {
-                                if (++sizeRetries > 4) throw failure
-                                val larger = minOf(outputTokens * 2, 8192, state.requestWindow / 4)
-                                if (larger > outputTokens) {
-                                    outputTokens = larger
-                                } else {
-                                    if (end <= 2) throw failure
-                                    state = state.copy(chunkChars = minOf(state.chunkChars, end / 2).coerceAtLeast(2))
-                                    onCheckpoint(state)
-                                }
-                            }
-                            CompactionFailureKind.TRANSIENT, CompactionFailureKind.EMPTY -> {
-                                if (++transientRetries > 2) throw failure
-                                pause(600L * transientRetries * transientRetries)
-                            }
-                            CompactionFailureKind.TIMEOUT, CompactionFailureKind.PERMANENT -> throw failure
-                        }
-                        continue
-                    }
-                    state = state.copy(
-                        offset = state.offset + end,
-                        summaries = state.summaries + summary,
-                        completedBatches = state.completedBatches + 1,
-                    )
-                    onCheckpoint(state)
-                    pending = pending.substring(end)
-                    break
+            currentCoroutineContext().ensureActive()
+            if (attempts >= CompactionRequestLimit) throw AppTextException(R.string.compact_request_cap, CompactionRequestLimit)
+            if (pending.length < minOf(bufferSize, state.chunkChars) && chunks.hasNext()) pending += chunks.next()
+            val outputTokens = if (harnessBudget && state.requestWindow >= 524_288) {
+                // DeepSeek Harness compaction-basic reserves 65,536 output tokens on its large route.
+                65_536
+            } else if (state.moreOutput) minOf(8192, state.requestWindow / 8).coerceAtLeast(1)
+                else minOf(4096, TokenEstimate.of(pending).coerceAtLeast(256), state.requestWindow / 8).coerceAtLeast(1)
+            val inputBudget = state.requestWindow * 95L / 100 - overhead - outputTokens
+            val end = fittingCompactionPrefix(pending, state.chunkChars, inputBudget)
+            if (end <= 0) throw CompactionRequestFailure(CompactionFailureKind.INPUT_LIMIT)
+            val input = pending.substring(0, end)
+            val progress = CompactionProgress(state.level, state.summaries.size + 1, state.offset, totalChars, ++attempts, end, state.requestWindow, outputTokens)
+            onProgress(progress)
+            val summary = try {
+                val candidate = withTimeoutOrNull(if (outputTokens == 65_536) deadlineMillis else attemptTimeoutMillis(end)) {
+                    summarize(input, outputTokens, progress.batch)
+                }?.trim() ?: throw CompactionRequestFailure(CompactionFailureKind.TIMEOUT)
+                currentCoroutineContext().ensureActive()
+                if (candidate.isEmpty()) throw CompactionRequestFailure(CompactionFailureKind.EMPTY)
+                if (candidate.length > com.simplechat.app.data.MaxCompactionSummaryChars || TokenEstimate.of(candidate) > state.requestWindow / 3) {
+                    throw CompactionRequestFailure(CompactionFailureKind.TRUNCATED)
                 }
+                candidate
+            } catch (failure: CompactionRequestFailure) {
+                // A timeout or a partial response may already be billed. Only an explicit input
+                // rejection justifies using smaller requests.
+                if (failure.kind == CompactionFailureKind.INPUT_LIMIT && end > 2) {
+                    state = state.copy(inputSizeRejected = true, chunkChars = minOf(state.chunkChars, end / 2).coerceAtLeast(2),
+                        requestWindow = minOf(state.requestWindow, failure.inputLimit ?: state.requestWindow))
+                    onCheckpoint(state)
+                }
+                if (failure.kind == CompactionFailureKind.TRUNCATED) {
+                    val canIncrease = outputTokens < minOf(8192, state.requestWindow / 8)
+                    state = state.copy(moreOutput = canIncrease, outputExhausted = !canIncrease, triedHarnessBudget = outputTokens == 65_536)
+                    onCheckpoint(state)
+                }
+                onProgress(progress.copy(recovery = failure.kind))
+                if (state.outputExhausted) throw AppTextException(R.string.compact_output_exhausted)
+                if (progress.isWholeSource && failure.kind == CompactionFailureKind.INPUT_LIMIT && end > 2) {
+                    throw if (failure.inputLimit != null) AppTextException(
+                        R.string.compact_whole_limit, contextWindow, failure.inputLimit,
+                    ) else AppTextException(R.string.compact_whole_rejected)
+                }
+                if (failure.kind != CompactionFailureKind.INPUT_LIMIT || end <= 2 || ++sizeRejections > 2) throw failure
+                continue
+            } catch (_: IOException) {
+                throw CompactionRequestFailure(CompactionFailureKind.TRANSIENT)
             }
+            sizeRejections = 0
+            state = state.copy(outputExhausted = false, moreOutput = false, offset = state.offset + end, summaries = state.summaries + summary,
+                completedBatches = state.completedBatches + 1)
+            onCheckpoint(state)
+            pending = pending.substring(end)
         }
         if (state.summaries.isEmpty()) throw AppTextException(R.string.error_no_content)
         // Refuse an expanding merge instead of looping forever or truncating source text.
@@ -287,23 +242,26 @@ internal suspend fun compactInBatches(
             onCheckpoint(state.copy(offset = 0, summaries = emptyList()))
             throw AppTextException(R.string.compact_no_progress)
         }
-        if (state.summaries.size == 1) return state.summaries.single()
+        if (state.summaries.size == 1) return@withTimeoutOrNull state.summaries.single()
+        // Short, complete recaps already fit the final summary budget. Keep their chronological
+        // order locally rather than paying for another generation just to join them.
+        if (state.summaries.sumOf { it.length.toLong() + 2 } <= 64_000) {
+            val combined = state.summaries.joinToString("\n\n")
+            if (TokenEstimate.of(combined) <= minOf(4096, state.requestWindow / 8)) return@withTimeoutOrNull combined
+        }
         state = state.copy(level = state.level + 1, offset = 0, sources = state.summaries, summaries = emptyList())
         onCheckpoint(state)
     }
     throw AppTextException(R.string.compact_no_progress)
-}
-
-/** Planning margin; provider feedback remains authoritative when tokenizers disagree. */
-private fun conservativeCompactionTokens(text: String): Long = (TokenEstimate.of(text).toLong() * 3 + 1) / 2
+} ?: throw AppTextException(R.string.compact_deadline, deadlineMillis / 1000)
 
 private fun fittingCompactionPrefix(text: String, maxChars: Int, tokenBudget: Long): Int {
     var low = 0
     var high = minOf(text.length, maxChars)
-    if (high == text.length && conservativeCompactionTokens(text) <= tokenBudget) return high
+    if (high == text.length && TokenEstimate.of(text) <= tokenBudget) return high
     while (low < high) {
         val mid = low + (high - low + 1) / 2
-        if (conservativeCompactionTokens(text.substring(0, mid)) <= tokenBudget) low = mid else high = mid - 1
+        if (TokenEstimate.of(text.substring(0, mid)) <= tokenBudget) low = mid else high = mid - 1
     }
     if (low < text.length && low > 0 && Character.isHighSurrogate(text[low - 1]) && Character.isLowSurrogate(text[low])) low--
     return low

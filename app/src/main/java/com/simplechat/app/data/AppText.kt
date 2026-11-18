@@ -39,6 +39,8 @@ object Res {
         return if (args.isEmpty()) context.getString(resId) else context.getString(resId, *args)
     }
 
+    internal fun nameOrNull(@StringRes id: Int?) = id?.let { app?.resources?.getResourceEntryName(it) }
+
     /** 读布尔资源（目前只有 `ui_is_cjk`：界面语言是不是中文）。 */
     fun bool(@BoolRes resId: Int): Boolean {
         val app = checkNotNull(app) { "Res 还没 init —— App.onCreate 里漏了 Res.init(this)" }

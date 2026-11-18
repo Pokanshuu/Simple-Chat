@@ -436,7 +436,7 @@
     <string name="compact_start">压缩上下文</string>
     <string name="compact_desc">分批总结较早的对话，通常保留最近 6 条完整消息；近期内容过大时保留最新一轮。完成后可查看和编辑摘要，中断后重试将复用已保存的进度。</string>
     <string name="compact_input_rejected">已缩小批次，但服务端仍拒绝本次压缩请求。请稍后重试或检查当前接口的输入限制。原摘要和本地消息未更改。</string>
-    <string name="compact_interrupted">连接中断或服务暂时不可用，自动重试未完成。请重试以继续已保存的进度。原摘要和本地消息未更改。</string>
+    <string name="compact_interrupted">连接中断或服务暂时不可用，本次压缩已停止。请重试以继续已保存的进度。原摘要和本地消息未更改。</string>
     <string name="compact_incomplete">未能生成完整摘要。请重试以继续已保存的进度。原摘要和本地消息未更改。</string>
     <string name="compact_no_progress">摘要未能收敛到可用大小。请重试或更换模型。原摘要和本地消息未更改。</string>
     <string name="compact_attachment_unavailable">以下附件没有可读取的完整正文，无法纳入压缩：%1$s。文件 ID 不等于文件内容。请提供文件正文后重试；本次未发送压缩请求，原摘要和本地消息未更改。</string>
