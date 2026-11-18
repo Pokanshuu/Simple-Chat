@@ -4,7 +4,7 @@
 
 **[中文](README.md) | English**
 
-[![Version](https://img.shields.io/badge/version-1.1.6--pre-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
+[![Version](https://img.shields.io/badge/version-1.2.0--pre-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## Introduction
@@ -51,6 +51,8 @@ Good for:
 - **Read aloud**: replies are spoken by the system TTS engine — no backend, no permission. Pick a voice (with preview) in Settings; code blocks and tables are stripped before reading.
 - **Automatic reading**: the speaker switch next to New chat reads newly completed replies using the selected voice. Turning it off stops playback immediately.
 - **API profiles**: save independent URLs, models, protocols and encrypted keys; create, copy, rename, delete or switch profiles. Changes save automatically and existing settings are preserved.
+- **First-run onboarding**: validate a DeepSeek API key, choose a model, import a backup, and set an accent color. Existing configured installs skip onboarding after upgrading.
+- Reasoning effort includes Off, `low`, `high`, and `max` for both request protocols.
 - Message tree organised by `parentId`. Regenerating creates an in-conversation branch; switching versions carries the downstream along instead of deleting history; long-press forks into a new conversation.
 - **Context management**: Estimate usage and check the budget before sending. Compaction keeps recent turns intact
   and leaves local messages unchanged. Build 28 uses resumable batches. The unpublished source changes try one request

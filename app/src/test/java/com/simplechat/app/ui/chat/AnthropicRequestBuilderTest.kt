@@ -55,6 +55,7 @@ class AnthropicRequestBuilderTest {
         maxTokens: Int? = null,
         prefix: UiMessage? = null,
         system: String = "",
+        reasoningEffort: String? = null,
     ) = buildAnthropicRequest(
         model = "deepseek-flash",
         systemPrompt = system,
@@ -65,6 +66,7 @@ class AnthropicRequestBuilderTest {
         latestReminder = reminder,
         maxTokens = maxTokens,
         prefix = prefix,
+        reasoningEffort = reasoningEffort,
     )
 
     // ── 系统提示词与工具 ──────────────────────────────────
@@ -95,6 +97,12 @@ class AnthropicRequestBuilderTest {
     fun `思考开关映射到 thinking 字段`() {
         assertEquals("disabled", build(listOf(user("你好"))).thinking!!.type)
         assertEquals("enabled", build(listOf(user("你好")), thinking = true).thinking!!.type)
+    }
+
+    @Test
+    fun `DeepSeek Anthropic 扩展通道传递 low 思考强度`() {
+        val request = build(listOf(user("你好")), thinking = true, reasoningEffort = "low")
+        assertEquals("low", request.outputConfig?.effort)
     }
 
     @Test

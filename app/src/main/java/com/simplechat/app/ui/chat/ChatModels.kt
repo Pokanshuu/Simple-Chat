@@ -47,7 +47,7 @@ enum class MessageStatus { DONE, STREAMING, STOPPED, ERROR }
  * 思考档位。**开关与强度合并为一个滑块**，3 档：
  *
  * ```
- * 关闭  ────  high  ────  max
+ * 关闭  ────  low  ────  high  ────  max
  *  ↑ 最左即关闭
  * ```
  *
@@ -56,6 +56,7 @@ enum class MessageStatus { DONE, STREAMING, STOPPED, ERROR }
  */
 enum class ReasoningLevel(val apiValue: String?, @StringRes private val labelRes: Int) {
     OFF(null, R.string.reasoning_off),
+    LOW("low", R.string.reasoning_low),
     HIGH("high", R.string.reasoning_high),
     MAX("max", R.string.reasoning_max),
     ;
@@ -67,7 +68,7 @@ enum class ReasoningLevel(val apiValue: String?, @StringRes private val labelRes
 
     companion object {
         /** 滑块档位顺序，索引即滑块位置。 */
-        val sliderOrder: List<ReasoningLevel> = listOf(OFF, HIGH, MAX)
+        val sliderOrder: List<ReasoningLevel> = listOf(OFF, LOW, HIGH, MAX)
 
         fun fromSliderPosition(position: Int): ReasoningLevel =
             sliderOrder[position.coerceIn(0, sliderOrder.lastIndex)]

@@ -311,6 +311,7 @@
     <string name="mode_roleplay_caption">AI 扮演角色，以对话和动作推进剧情</string>
     <string name="reasoning_off">关闭</string>
     <string name="reasoning_high">high</string>
+    <string name="reasoning_low">low</string>
     <string name="reasoning_max">max</string>
 
     <!-- ── 会话列表分组 ─────────────────────────────────── -->
@@ -646,6 +647,26 @@
     <string name="share_image_pages_hint">分成适合手机阅读的多张图片</string>
     <string name="share_image_generate">生成</string>
     <string name="share_image_hide_branding">隐藏 SimpleChat 名称</string>
+    <string name="onboarding_welcome">欢迎使用 SimpleChat！</string>
+    <string name="onboarding_key_title">输入您的 DeepSeek API Key</string>
+    <string name="onboarding_key_privacy">API Key 将加密后保存在本机，不会上传到 SimpleChat</string>
+    <string name="onboarding_get_key">没有 API Key？前往获取</string>
+    <string name="onboarding_later">稍后输入，配置其他 API</string>
+    <string name="onboarding_next">下一步</string>
+    <string name="onboarding_skip">跳过</string>
+    <string name="onboarding_key_invalid">请检查 Key 格式，确认以 sk- 开头且只包含英文字符</string>
+    <string name="onboarding_key_rejected">验证失败，请检查 Key、账户状态和网络连接</string>
+    <string name="onboarding_model_title">选择常用模型</string>
+    <string name="onboarding_model_pro">文笔更好，适合复杂任务</string>
+    <string name="onboarding_model_flash">响应更快，使用更经济</string>
+    <string name="onboarding_model_note">之后可随时在 ✨ 菜单切换模型并调整思考强度</string>
+    <string name="onboarding_backup_title">导入您的备份</string>
+    <string name="onboarding_backup_hint">支持 SimpleChat、Chatbox、DeepSeek 官方 ZIP 备份</string>
+    <string name="onboarding_import">选择备份文件</string>
+    <string name="onboarding_imported">备份导入完成</string>
+    <string name="onboarding_import_mode_hint">选择导入方式</string>
+    <string name="onboarding_theme_title">选择您喜欢的颜色</string>
+    <string name="onboarding_start">开始聊天吧</string>
 </resources>
 
 

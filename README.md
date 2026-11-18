@@ -4,7 +4,7 @@
 
 **中文 | [English](README.en.md)**
 
-[![Version](https://img.shields.io/badge/version-1.1.6--pre-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
+[![Version](https://img.shields.io/badge/version-1.2.0--pre-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## 简介
@@ -49,6 +49,8 @@
 - **朗读**：系统 TTS 逐条朗读回复，无需服务端与权限；设置里可切换音色（含试听），朗读前会剥掉代码块与表格。
 - **自动朗读**：顶栏新建对话左侧的喇叭开关，开启后朗读新完成的回复，关闭即停止；使用已选朗读音色。
 - **API 配置管理**：独立保存多组地址、模型、协议与加密 Key，支持新建、复制、重命名、删除和一键切换；修改自动保存，现有配置自动保留。
+- **首次启动引导**：验证 DeepSeek API Key、选择模型、导入备份并设置主题色；已有配置的用户升级时跳过引导。
+- 思考强度支持关闭、`low`、`high` 与 `max`，两种请求协议均可使用。
 - **独立搜索与文件 API**：自定义地址、路径和加密密钥，或复用聊天密钥；兼容 DeepSeek Search / Fetch 与 Files 协议。
 - **长文本文件传输**：启用文件 API 后，超过阈值的用户输入和文本附件上传一次并复用文件 ID，减少重复传输；本地保留原始消息。配置与限制见[工具 API 指南](docs/23-独立工具API与长文本文件传输.md)。
 - 消息树：以 `parentId` 组织。重新生成为会话内分支，切换版本时下游整段跟随，不删除历史；长按支持会话间分叉。

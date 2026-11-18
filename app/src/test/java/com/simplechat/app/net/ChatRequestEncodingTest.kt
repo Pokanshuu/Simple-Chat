@@ -63,6 +63,13 @@ class ChatRequestEncodingTest {
         assertTrue(body.contains("\"reasoning_effort\":\"high\""))
     }
 
+    @Test
+    fun `low 思考档位编码为 reasoning_effort low`() {
+        val body = encode(request(thinking = ThinkingDto.Enabled, reasoningEffort = "low"))
+        assertTrue(body.contains("\"thinking\":{\"type\":\"enabled\"}"))
+        assertTrue(body.contains("\"reasoning_effort\":\"low\""))
+    }
+
     // ── null 字段不应泄漏 ─────────────────────────────────
 
     @Test

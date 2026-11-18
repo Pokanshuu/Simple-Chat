@@ -63,6 +63,7 @@ import com.simplechat.app.ui.history.HistoryDrawerContent
 import com.simplechat.app.ui.history.HistoryViewModel
 import com.simplechat.app.ui.history.searchResultKey
 import com.simplechat.app.ui.settings.SettingsScreen
+import com.simplechat.app.ui.onboarding.OnboardingScreen
 import com.simplechat.app.ui.theme.LocalChatColors
 import kotlinx.coroutines.launch
 
@@ -103,6 +104,16 @@ private val DrawerCorner = 16.dp
 @Composable
 fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
     val container = (LocalContext.current.applicationContext as App).container
+    val onboarding by container.settingsStore.flow.collectAsStateWithLifecycle(initialValue = null)
+    if (onboarding == null) return
+    if (onboarding?.onboardingComplete == false) {
+        OnboardingScreen(
+            settingsStore = container.settingsStore,
+            chatApi = container.chatApi,
+            repository = container.chatRepository,
+        )
+        return
+    }
     val scope = rememberCoroutineScope()
 
     val chatViewModel: ChatViewModel = chat ?: viewModel(

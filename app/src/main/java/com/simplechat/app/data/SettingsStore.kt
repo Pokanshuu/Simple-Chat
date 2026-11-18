@@ -140,6 +140,7 @@ data class StoredSettings(
      * 端点（服务商 / Base URL）一换就清空，见 [SettingsStore.setProvider]。
      */
     val modelIds: List<String> = emptyList(),
+    val onboardingComplete: Boolean = false,
 
 ) {
     val hasKey: Boolean get() = apiKey.isNotBlank()
@@ -209,6 +210,7 @@ class SettingsStore(
             ttsVoiceName = prefs[Keys.TTS_VOICE] ?: StoredSettings().ttsVoiceName,
             ttsVoiceLabel = prefs[Keys.TTS_VOICE_LABEL] ?: StoredSettings().ttsVoiceLabel,
             modelIds = ModelIdList.decode(prefs[Keys.MODEL_IDS]),
+            onboardingComplete = prefs[Keys.ONBOARDING_COMPLETE] ?: false,
 
         )
     }
@@ -311,6 +313,10 @@ class SettingsStore(
         preferences.edit { it[Keys.ACCENT_COLOR] = colorId }
     }
 
+    suspend fun setOnboardingComplete() {
+        preferences.edit { it[Keys.ONBOARDING_COMPLETE] = true }
+    }
+
     suspend fun setFontScale(scale: Float) {
         preferences.edit { it[Keys.FONT_SCALE] = scale }
     }
@@ -379,7 +385,15 @@ class SettingsStore(
 
 
     /** Seed the registry in one edit, preserving the existing active configuration and encrypted key. */
-    suspend fun migrateApiProfiles() { preferences.edit { ensureProfiles(it) } }
+    suspend fun migrateApiProfiles() {
+        preferences.edit {
+            val hadExistingSettings = it.asMap().isNotEmpty()
+            ensureProfiles(it)
+            if (hadExistingSettings && Keys.ONBOARDING_COMPLETE !in it) {
+                it[Keys.ONBOARDING_COMPLETE] = true
+            }
+        }
+    }
 
     suspend fun setShowImageSkipNotice(enabled: Boolean) {
         preferences.edit { it[Keys.IMAGE_SKIP_NOTICE] = enabled }
@@ -587,6 +601,7 @@ class SettingsStore(
 
         /** 当前端点 `/models` 拉回来的 id，换行分隔（[ModelIdList]）。 */
         val MODEL_IDS = stringPreferencesKey("model_ids")
+        val ONBOARDING_COMPLETE = booleanPreferencesKey("onboarding_complete")
 
     }
 }

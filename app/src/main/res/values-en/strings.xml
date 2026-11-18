@@ -306,6 +306,7 @@
     <string name="mode_roleplay_caption">AI role-plays the characters, advancing the plot through dialogue and action</string>
     <string name="reasoning_off">Off</string>
     <string name="reasoning_high">high</string>
+    <string name="reasoning_low">low</string>
     <string name="reasoning_max">max</string>
 
     <!-- ── Conversation list groups ─────────────────────── -->
@@ -647,6 +648,26 @@
     <string name="share_image_pages_hint">Multiple images sized for reading on a phone</string>
     <string name="share_image_generate">Generate</string>
     <string name="share_image_hide_branding">Hide SimpleChat name</string>
+    <string name="onboarding_welcome">Welcome to SimpleChat!</string>
+    <string name="onboarding_key_title">Enter your DeepSeek API key</string>
+    <string name="onboarding_key_privacy">Your API key is encrypted and stored on this device. It is never sent to SimpleChat.</string>
+    <string name="onboarding_get_key">No API key? Get one</string>
+    <string name="onboarding_later">Enter later or configure another API</string>
+    <string name="onboarding_next">Next</string>
+    <string name="onboarding_skip">Skip</string>
+    <string name="onboarding_key_invalid">Check that the key starts with sk- and contains only English characters</string>
+    <string name="onboarding_key_rejected">Verification failed. Check the key, account status, and network connection.</string>
+    <string name="onboarding_model_title">Choose a model</string>
+    <string name="onboarding_model_pro">Better writing for complex tasks</string>
+    <string name="onboarding_model_flash">Faster responses at lower cost</string>
+    <string name="onboarding_model_note">Change models and reasoning effort anytime in the ✨ menu</string>
+    <string name="onboarding_backup_title">Import your backup</string>
+    <string name="onboarding_backup_hint">Supports SimpleChat, Chatbox, and official DeepSeek ZIP backups</string>
+    <string name="onboarding_import">Choose a backup file</string>
+    <string name="onboarding_imported">Backup imported</string>
+    <string name="onboarding_import_mode_hint">Choose how to import</string>
+    <string name="onboarding_theme_title">Choose your preferred color</string>
+    <string name="onboarding_start">Start chatting</string>
 </resources>
 
 
