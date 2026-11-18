@@ -4,7 +4,7 @@
 
 **中文 | [English](README.en.md)**
 
-[![Version](https://img.shields.io/badge/version-1.2.0--pre-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## 简介
@@ -55,7 +55,7 @@
 - **长文本文件传输**：启用文件 API 后，超过阈值的用户输入和文本附件上传一次并复用文件 ID，减少重复传输；本地保留原始消息。配置与限制见[工具 API 指南](docs/23-独立工具API与长文本文件传输.md)。
 - 消息树：以 `parentId` 组织。重新生成为会话内分支，切换版本时下游整段跟随，不删除历史；长按支持会话间分叉。
 - **上下文管理**：估算用量并在发送前检查预算。压缩保留最近的完整对话轮次，不改写本地原文。
-  构建号 28 按批压缩并可恢复进度。未发布的源码调整在预算允许时优先用一次请求总结待压缩历史，
+  压缩支持分批与进度恢复。预算允许时，优先用一次请求总结待压缩历史，
   并按创作、技术或通用对话调整摘要重点。详见[上下文压缩与恢复](docs/22-上下文压缩与恢复.md)。
 - 附件：拍照、相册和文件三个入口；相册与文件支持多选，无需额外申请媒体读取权限。支持图片、纯文本、docx、PDF。
   导入的图片字节落在应用私有目录，数据库只存文件名，超大消息采用分块读取；

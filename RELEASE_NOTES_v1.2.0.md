@@ -1,34 +1,36 @@
 # SimpleChat v1.2.0
 
-SimpleChat v1.2.0 introduces a first-run setup flow and a lower reasoning-effort option. This build is a GitHub pre-release for final user acceptance; it is not marked as the latest stable release.
+此版本汇总 v1.1.6 和 v1.2.0 预发布版的改动，新增首次启动引导，并改进长对话、备份和图片分享。
 
-## Highlights
+## 新增功能
 
-- A four-step welcome flow introduces SimpleChat, validates an optional DeepSeek API key, offers model selection, imports an existing backup, and lets users choose an accent color.
-- DeepSeek keys are checked against the official model-list endpoint before the flow accepts them. Accepted keys use the existing encrypted local storage.
-- Existing installations with saved settings skip onboarding after upgrading. Fresh installs and cleared app data start with onboarding.
-- Reasoning effort now includes `low`, alongside Off, `high`, and `max`, for both supported request protocols.
-- Backup import in onboarding uses the existing streaming importer and its progress reporting.
-- Import mode supports merge, replace matching conversations, and rename duplicates.
+- 首次打开应用时，可验证 DeepSeek API Key、选择 Pro 或 Flash、导入备份并设置主题色。可跳过 API 配置和备份导入。应用会加密保存 API Key，已有设置的用户升级时会直接进入聊天。
+- 在每份聊天配置中独立设置搜索、网页读取和文件 API。支持 DeepSeek Search、Fetch 和 Files，可复用聊天密钥或为工具配置单独的密钥。
+- 新增 `low` 思考强度，支持 DeepSeek 的 OpenAI 和 Anthropic 兼容端点。
+- 支持导出 DeepSeek v3 兼容 ZIP。备份包含 SimpleChat 扩展，用于保留分支、预设、来源和本地附件正文。原有 JSON 和 ZIP 备份仍可使用。
+- 双击 AI 回复即可选择、复制文字。也可从长按菜单进入选字。
 
-## Validation Checklist
+## 改进
 
-- [x] Debug and signed, minified release APKs build successfully.
-- [x] Unit tests pass: 714 tests, 0 failures, 10 skipped.
-- [x] Signed release APK verifies with Android APK Signature Scheme v2.
-- [x] Existing v1.1.6 installation upgrades and cold-starts in the emulator.
-- [x] Onboarding import presents the same three import modes used elsewhere in the app.
-- [ ] Fresh install shows the welcome page and completes all steps.
-- [ ] Invalid and rejected API keys show an actionable error and block Next.
-- [ ] A valid DeepSeek key enables Pro and Flash selection.
-- [ ] SimpleChat, Chatbox, and DeepSeek ZIP backups import; skipping remains available.
-- [ ] Theme selection is saved and the app opens to chat after completion.
-- [ ] Relaunch skips onboarding; clearing app data shows it again.
-- [ ] OpenAI-compatible and Anthropic-compatible requests send each reasoning level correctly.
-- [ ] Verify layout on a narrow screen and with enlarged system text.
+- 启用文件 API 后，长输入和文本附件可通过文件引用发送。重复使用同一份内容时，应用会复用已上传的文件 ID。
+- 上下文压缩会根据内容选择摘要重点。预算允许时一次总结待压缩历史，必要时分批处理。中断后可从匹配的进度继续。
+- 改善 Markdown 和 LaTeX 混排效果，让行内公式与正文保持连贯，并将同样的排版用于图片分享。
+- 图片导出默认隐藏思考内容。选择包含思考内容时，通过字号和文字颜色区分思考与正文，移除“深度思考”标题和左侧竖线。
+- 为密钥验证、文件格式、上传超时和文件引用失效提供中文提示及处理建议。
 
-This checklist is for final acceptance of the pre-release. No live DeepSeek credential was available during automated validation, so key validation and model selection still need a real-account check. The emulator check used an existing v1.1.6 installation; a clean-data first-run walkthrough remains on the checklist.
+## 修复
 
-## Build
+- 修复 DeepSeek Anthropic 兼容端点发送长文本时的问题。
+- 如果远程附件缺少可读正文，压缩前会提示文件名并保留原摘要。
+- 修复公式裁切、引用段落间距、编辑后显示旧正文，以及退出选字后页码未恢复的问题。
 
-Build number: 30. SHA-256: `E3BA406E5301E25030387370F855039D3522F54DF6610618D6565463214E79E5`.
+## 使用限制
+
+- 文件引用可减少请求体积。文件正文仍计入模型上下文和输入 token。文件 API 和聊天 API 须使用同一服务和账户。
+- 备份不包含仅存于服务端的文件原件。需要恢复这类附件时，请保留原文件。
+
+## 安装与校验
+
+- 构建号：31
+- APK：`SimpleChat-1.2.0-release.apk`
+- SHA-256：`b8fc85ddb3a7533baa844ec6135a6edf587a4a12eadc33a15ad77af381940afa`

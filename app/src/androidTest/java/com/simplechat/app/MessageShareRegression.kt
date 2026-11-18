@@ -111,9 +111,10 @@ internal object MessageShareRegression {
         }
         suspend fun tapResource(id: Int) = touch(context.getString(id))
         suspend fun optionChecked(id: Int): Boolean {
-            val node = find(context.getString(id))
-            check(node.isCheckable) { "Image option is not exposed as a checkbox: ${node.text}" }
-            return node.isChecked
+            val label = context.getString(id)
+            val checkbox = generateSequence(find(label)) { it.parent }.firstOrNull { it.isCheckable }
+                ?: error("Image option is not exposed as a checkbox: $label")
+            return checkbox.isChecked
         }
         suspend fun count(n: Int) { find(context.getString(R.string.share_selected_count, n)) }
         suspend fun screenshot(name: String) {
@@ -259,16 +260,16 @@ internal object MessageShareRegression {
                 } finally { bitmap.recycle() }
             }
             check(reasoningRuleHeight(hidden) == 0) { "Hidden reasoning left a vertical rule" }
-            check(reasoningRuleHeight(timelineShown) >= 24) { "Missing vertical rule beside reasoning" }
+            check(reasoningRuleHeight(timelineShown) == 0) { "Opt-in reasoning added a vertical rule" }
             val multiPageThought = legacyReply.copy(reasoning = (1..100).joinToString("\n") { "Reasoning line $it." })
             val thoughtPages = exportSharedImages(activity,
                 MessageShareDocument("Paged reasoning", messageShareGroups(listOf(multiPageThought))),
                 hideReasoning = false,
             )
-            check(thoughtPages.size > 1 && thoughtPages.take(2).all { reasoningRuleHeight(it) >= 24 }) {
-                "The vertical rule did not continue on the next page"
+            check(thoughtPages.size > 1 && thoughtPages.all { reasoningRuleHeight(it) == 0 }) {
+                "Paged reasoning should span pages without a vertical rule"
             }
-            status("PNG output excludes reasoning and its rule by default; opt-in draws one reasoning section with a rule across pages")
+            status("PNG output hides reasoning by default and renders opt-in reasoning across pages without a rule")
 
             val body = "# 图片分享\n\n支持 **加粗**、`行内代码` 与中文 😀。\n\n```kotlin\nval example = 42\n```\n\n" +
                 (1..110).joinToString("\n\n") { "第 $it 段：长内容分页输出，所有已选文字都保留。" }

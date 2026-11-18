@@ -9,7 +9,6 @@ import android.util.Base64
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -17,8 +16,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.R
 import com.simplechat.app.data.Attachment
@@ -54,7 +51,7 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
     val writer = ShareImageWriter(context, directory, document.title, shareImagePageHeight(mode, memoryClass), mode == ShareImageMode.LONG, hideBranding)
     val result = try {
         suspend fun render(block: ShareRenderBlock, user: Boolean = false, reasoning: Boolean = false,
-            reasoningHeading: Boolean = false, reasoningContinues: Boolean = false) {
+            reasoningContinues: Boolean = false) {
             val metrics = ExportTableMetrics()
             var tablePage = -1
             suspend fun part(rows: IntRange? = null) {
@@ -73,21 +70,13 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
                                         modifier = Modifier.widthIn(max = 380.dp)
                                             .background(LocalChatColors.current.userBubble, BubbleShapeOut)
                                             .padding(horizontal = 14.dp, vertical = 11.dp))
-                                } else if (reasoning) Column(Modifier.fillMaxWidth()) {
-                                    val color = LocalChatColors.current.processText
-                                    if (reasoningHeading) Text(context.getString(R.string.large_message_reasoning),
-                                        style = MaterialTheme.typography.titleSmall, color = color,
-                                        modifier = Modifier.padding(bottom = 6.dp))
-                                    val railColor = LocalChatColors.current.processBar
+                                } else if (reasoning) {
                                     Text(
                                         block.source,
                                         style = ProcessTextStyle,
-                                        color = color,
+                                        color = LocalChatColors.current.processText,
                                         modifier = Modifier.fillMaxWidth()
-                                            .drawBehind {
-                                                drawRect(railColor, size = Size(2.dp.toPx(), size.height))
-                                            }
-                                            .padding(start = 12.dp, bottom = if (reasoningContinues) 12.dp else 0.dp),
+                                            .padding(bottom = if (reasoningContinues) 12.dp else 0.dp),
                                     )
                                 } else Text(block.source, style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.fillMaxWidth())
@@ -149,7 +138,6 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
                     val blocks = shareRenderBlocks(section.text, markdown = !user && !section.reasoning)
                     for ((blockIndex, block) in blocks.withIndex()) {
                         render(block, user, section.reasoning,
-                            reasoningHeading = section.reasoning && blockIndex == 0,
                             reasoningContinues = section.reasoning && blockIndex < blocks.lastIndex)
                     }
                 }
