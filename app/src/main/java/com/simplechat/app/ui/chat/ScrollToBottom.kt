@@ -24,6 +24,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.ui.theme.LocalChatColors
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 
 /**
  * 聊天流的滚动助手。
@@ -169,9 +170,8 @@ private val ScrollBarMinThumb = 28.dp
  * Compose 没给 `LazyColumn` 自带滚动条，这里照原生观感做一个：细、圆头、半透明，
  * 只在滚动时可见。
  *
- * ⚠️ 位置与长度按**条目比例**估算 —— Compose 只暴露条目数，不暴露内容总高度。
- * 聊天流里条目高度差异极大（一条几行 vs 一条几十万字），所以它只是
- * "我大概在读哪一段"的提示，不是精确比例尺。
+ * 用视口两端在各自消息内的像素偏移估算位置和长度。消息高度按需测量，
+ * 但滚过一条消息时，两端的比例会连续过渡。
  *
  * ⚠️ **滚动状态一律在绘制期读，组合期一个都不碰。** `layoutInfo` /
  * `firstVisibleItemIndex` 滚一帧变一次，落在组合里就是**每帧重组**；再叠上
@@ -184,9 +184,9 @@ fun VerticalScrollBar(
     state: LazyListState,
     modifier: Modifier = Modifier,
 ) {
-    var scrolling by remember { mutableStateOf(false) }
+    var scrolling by remember(state) { mutableStateOf(false) }
     LaunchedEffect(state) {
-        snapshotFlow { state.isScrollInProgress }.collect { inProgress ->
+        snapshotFlow { state.isScrollInProgress }.collectLatest { inProgress ->
             if (inProgress) {
                 scrolling = true
             } else {
@@ -217,17 +217,33 @@ fun VerticalScrollBar(
                     if (fade <= 0.01f) return@onDrawBehind
                     val info = state.layoutInfo
                     val total = info.totalItemsCount
-                    if (total <= 0) return@onDrawBehind
+                    if (total <= 0 || (!state.canScrollBackward && !state.canScrollForward)) return@onDrawBehind
+                    val first = info.visibleItemsInfo.firstOrNull() ?: return@onDrawBehind
+                    val last = info.visibleItemsInfo.lastOrNull() ?: return@onDrawBehind
 
-                    val visibleCount = info.visibleItemsInfo.size.coerceAtLeast(1)
-                    val thumbFraction = (visibleCount.toFloat() / total).coerceIn(0.06f, 1f)
-                    // 顶部为原点：下标 0 在视觉**顶部**，进度正着算
-                    val startFraction = (state.firstVisibleItemIndex.toFloat() / total)
-                        .coerceIn(0f, 1f - thumbFraction)
+                    val start = if (state.canScrollBackward) scrollBarItemPosition(
+                        index = first.index,
+                        offset = first.offset,
+                        extent = first.size + if (first.index == total - 1) info.afterContentPadding else info.mainAxisItemSpacing,
+                        viewportEdge = info.viewportStartOffset,
+                        leadingPadding = if (first.index == 0) info.beforeContentPadding else 0,
+                    ) else 0f
+                    val end = if (state.canScrollForward) scrollBarItemPosition(
+                        index = last.index,
+                        offset = last.offset,
+                        extent = last.size + if (last.index == total - 1) info.afterContentPadding else info.mainAxisItemSpacing,
+                        viewportEdge = info.viewportEndOffset,
+                        leadingPadding = if (last.index == 0) info.beforeContentPadding else 0,
+                    ) else total.toFloat()
 
                     val track = size.height
-                    val thumbHeight = (track * thumbFraction).coerceAtLeast(minThumb)
-                    val top = (track * startFraction).coerceIn(0f, track - thumbHeight)
+                    if (track <= 0f) return@onDrawBehind
+                    val visibleFraction = ((end - start) / total).coerceIn(0f, 1f)
+                    val thumbHeight = (track * visibleFraction).coerceIn(minThumb.coerceAtMost(track), track)
+                    // Scale the remaining travel so the thumb reaches both ends even at its minimum size.
+                    val scrollableItems = (total - (end - start)).coerceAtLeast(0f)
+                    val progress = if (scrollableItems > 0f) (start / scrollableItems).coerceIn(0f, 1f) else 0f
+                    val top = (track - thumbHeight) * progress
 
                     drawRoundRect(
                         color = thumbColor,
@@ -239,4 +255,11 @@ fun VerticalScrollBar(
                 }
             },
     )
+}
+
+/** Map a viewport edge into item units, including the item's share of spacing and padding. */
+internal fun scrollBarItemPosition(index: Int, offset: Int, extent: Int, viewportEdge: Int, leadingPadding: Int): Float {
+    val start = offset - leadingPadding
+    val length = (extent + leadingPadding).coerceAtLeast(1)
+    return index + ((viewportEdge - start).toFloat() / length).coerceIn(0f, 1f)
 }
