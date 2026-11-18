@@ -9,6 +9,7 @@ SimpleChat v1.2.0 introduces a first-run setup flow and a lower reasoning-effort
 - Existing installations with saved settings skip onboarding after upgrading. Fresh installs and cleared app data start with onboarding.
 - Reasoning effort now includes `low`, alongside Off, `high`, and `max`, for both supported request protocols.
 - Backup import in onboarding uses the existing streaming importer and its progress reporting.
+- Import mode supports merge, replace matching conversations, and rename duplicates.
 
 ## Validation Checklist
 
@@ -16,6 +17,7 @@ SimpleChat v1.2.0 introduces a first-run setup flow and a lower reasoning-effort
 - [x] Unit tests pass: 714 tests, 0 failures, 10 skipped.
 - [x] Signed release APK verifies with Android APK Signature Scheme v2.
 - [x] Existing v1.1.6 installation upgrades and cold-starts in the emulator.
+- [x] Onboarding import presents the same three import modes used elsewhere in the app.
 - [ ] Fresh install shows the welcome page and completes all steps.
 - [ ] Invalid and rejected API keys show an actionable error and block Next.
 - [ ] A valid DeepSeek key enables Pro and Flash selection.
