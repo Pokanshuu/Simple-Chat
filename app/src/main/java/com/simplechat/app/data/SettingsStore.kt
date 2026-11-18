@@ -460,6 +460,26 @@ class SettingsStore(
         prefs[Keys.FILES_API] = apiProfileJson.encodeToString(profile.filesApi)
     }
 
+    /** Update a profile without selecting it or changing its recency. */
+    internal suspend fun updateApiProfile(id: String, transform: (ApiProfile) -> ApiProfile) {
+        preferences.edit { prefs ->
+            if (prefs[Keys.PROFILES] == null && id != "legacy") return@edit
+            val profiles = ensureProfiles(prefs)
+            val current = profiles.firstOrNull { it.id == id } ?: return@edit
+            val updated = transform(current)
+            require(updated.id == id) { "Cannot change a profile ID" }
+            if (prefs[Keys.ACTIVE_PROFILE] == id) activate(prefs, updated)
+            prefs[Keys.PROFILES] = apiProfileJson.encodeToString(profiles.map { if (it.id == id) updated else it })
+        }
+    }
+
+    internal suspend fun readApiKeyForProfile(id: String): String {
+        val prefs = preferences.data.first()
+        if (prefs[Keys.PROFILES] == null) return if (id == "legacy") readApiKey(prefs) else ""
+        return profileRows(prefs).firstOrNull { it.id == id }?.apiKeyEncrypted
+            ?.takeIf { it.isNotBlank() }?.let(SecretBox::decrypt).orEmpty()
+    }
+
     suspend fun selectApiProfile(id: String) {
         preferences.edit { prefs ->
             val profiles = ensureProfiles(prefs)

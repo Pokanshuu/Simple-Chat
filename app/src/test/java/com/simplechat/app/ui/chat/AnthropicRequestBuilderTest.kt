@@ -1,10 +1,12 @@
 package com.simplechat.app.ui.chat
 
 import com.simplechat.app.data.Attachment
+import com.simplechat.app.net.ChatApi
 import com.simplechat.app.net.ReplyBlock
 import com.simplechat.app.net.anthropic.AnthropicMessageParam
 import com.simplechat.app.net.anthropic.AnthropicTool
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
@@ -80,12 +82,13 @@ class AnthropicRequestBuilderTest {
     }
 
     @Test
-    fun `读链接始终声明，搜索受开关控制`() {
-        assertEquals(listOf(AnthropicTool.ReadUrl), build(listOf(user("你好"))).tools)
-        assertEquals(
-            listOf(AnthropicTool.ReadUrl, AnthropicTool.WebSearch),
-            build(listOf(user("你好")), search = true).tools,
-        )
+    fun `读链接按当前消息声明，搜索受开关控制`() {
+        val link = user("看看 https://example.com/page")
+        val plain = user("你好")
+        assertTrue(build(listOf(link, assistant("好的"), plain)).tools.isEmpty())
+        assertEquals(listOf(AnthropicTool.ReadUrl), build(listOf(link)).tools)
+        assertEquals(listOf(AnthropicTool.WebSearch), build(listOf(plain), search = true).tools)
+        assertEquals(listOf(AnthropicTool.ReadUrl, AnthropicTool.WebSearch), build(listOf(link), search = true).tools)
     }
 
     @Test
@@ -95,8 +98,20 @@ class AnthropicRequestBuilderTest {
     }
 
     @Test
-    fun `安全审核档位始终为 high（扩展模式的开关）`() {
-        assertEquals("high", build(listOf(user("你好"))).safetyCheck!!.level)
+    fun `长文本和文件引用不附加额外请求选项`() {
+        val text = " apple".repeat(36_000).trimStart()
+        val file = Attachment(Attachment.Kind.TEXT, "large.json", "application/json", "", fileId = "file-test")
+        val json = ChatApi.defaultJson()
+        val inline = json.encodeToJsonElement(build(listOf(user(text)), title = true)).jsonObject
+        val attached = json.encodeToJsonElement(build(listOf(user("继续讨论", listOf(file))), title = true)).jsonObject
+        for (request in listOf(inline, attached)) {
+            assertTrue("safety_check" !in request)
+            assertTrue("tools" !in request)
+            assertTrue("title" !in request)
+        }
+        assertEquals(text, inline.getValue("messages").jsonArray.single().jsonObject.getValue("content").jsonPrimitive.content)
+        val blocks = attached.getValue("messages").jsonArray.single().jsonObject.getValue("content").jsonArray
+        assertEquals("file-test", blocks.first().jsonObject.getValue("source").jsonObject.getValue("file_id").jsonPrimitive.content)
     }
 
     @Test
@@ -454,7 +469,6 @@ class AnthropicRequestBuilderTest {
     fun `原版目标不带 DeepSeek 专有字段`() {
         val request = buildVanilla(listOf(user("你好")))
         // 这些字段原版不认识，带上就是 400
-        assertNull(request.safetyCheck)
         assertNull(request.title)
         assertTrue(request.tools.isEmpty())
         // 空系统提示词不再塞 DeepSeek 身份说明

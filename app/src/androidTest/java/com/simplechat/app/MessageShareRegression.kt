@@ -25,6 +25,7 @@ import androidx.room.Room
 import com.simplechat.app.data.*
 import com.simplechat.app.db.AppDatabase
 import com.simplechat.app.net.ChatApi
+import com.simplechat.app.net.ReplyBlock
 import com.simplechat.app.net.SseClient
 import com.simplechat.app.net.anthropic.AnthropicApi
 import com.simplechat.app.ui.chat.*
@@ -109,6 +110,11 @@ internal object MessageShareRegression {
             delay(250)
         }
         suspend fun tapResource(id: Int) = touch(context.getString(id))
+        suspend fun optionChecked(id: Int): Boolean {
+            val node = find(context.getString(id))
+            check(node.isCheckable) { "Image option is not exposed as a checkbox: ${node.text}" }
+            return node.isChecked
+        }
         suspend fun count(n: Int) { find(context.getString(R.string.share_selected_count, n)) }
         suspend fun screenshot(name: String) {
             val image = checkNotNull(automation.takeScreenshot())
@@ -189,6 +195,12 @@ internal object MessageShareRegression {
 
             tapResource(R.string.share_image)
             find(context.getString(R.string.share_image_long))
+            check(optionChecked(R.string.share_image_hide_reasoning)) { "Reasoning should be hidden by default" }
+            tapResource(R.string.share_image_hide_reasoning)
+            check(!optionChecked(R.string.share_image_hide_reasoning)) { "Reasoning checkbox did not toggle" }
+            tapResource(R.string.action_cancel)
+            tapResource(R.string.share_image)
+            check(optionChecked(R.string.share_image_hide_reasoning)) { "Cancelled opt-in was retained" }
             tapResource(R.string.share_image_hide_branding)
             screenshot("share-image-options.png")
             tapResource(R.string.share_image_pages)
@@ -198,7 +210,9 @@ internal object MessageShareRegression {
             screenshot("share-image-preview.png")
             tapResource(R.string.action_close)
             tapResource(R.string.share_image)
-            check(nodes().any { it.isCheckable && it.isChecked }) { "Hide-branding option was not retained" }
+            check(optionChecked(R.string.share_image_hide_branding)) { "Hide-branding option was not retained" }
+            check(optionChecked(R.string.share_image_hide_reasoning))
+            tapResource(R.string.share_image_hide_reasoning)
             tapResource(R.string.share_image_long)
             tapResource(R.string.share_image_generate)
             find(context.getString(R.string.share_image_preview, 1))
@@ -208,7 +222,53 @@ internal object MessageShareRegression {
             touch("回答 3", long = true)
             find(context.getString(R.string.action_select_text))
             automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
-            status("generated image preview opens; exit restores draft and normal long-press menu")
+            status("image reasoning is hidden on each open, the checkbox can opt in, preview opens, and exit restores the draft")
+
+            val thought = "First, compare the two available layouts. Then choose the best fit for the content."
+            val reply = UiMessage("reasoning", MessageRole.ASSISTANT, "The answer is ready.")
+            val legacyReply = reply.copy(reasoning = thought)
+            val timelineReply = legacyReply.copy(timeline = listOf(
+                ReplyBlock.Thinking(thought, signature = "PRIVATE_SIGNATURE"), ReplyBlock.Text(reply.content)))
+            suspend fun reasoningImage(message: UiMessage, hideReasoning: Boolean = true) = exportSharedImages(
+                activity, MessageShareDocument("Reasoning export", messageShareGroups(listOf(message))),
+                hideReasoning = hideReasoning,
+            ).single()
+            val plain = reasoningImage(reply)
+            val hidden = reasoningImage(timelineReply)
+            val legacyShown = reasoningImage(legacyReply, hideReasoning = false)
+            val timelineShown = reasoningImage(timelineReply, hideReasoning = false)
+            check(plain.readBytes().contentEquals(hidden.readBytes())) { "Default image changed when reasoning was present" }
+            check(legacyShown.readBytes().contentEquals(timelineShown.readBytes())) { "Timeline image duplicated legacy reasoning" }
+            fun imageHeight(file: File): Int {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(file.path, bounds)
+                return bounds.outHeight
+            }
+            check(imageHeight(timelineShown) > imageHeight(hidden)) { "Opt-in image did not expand to show reasoning" }
+            fun reasoningRuleHeight(file: File): Int {
+                val bitmap = checkNotNull(BitmapFactory.decodeFile(file.path))
+                try {
+                    val rail = 0xFFD8DADE.toInt()
+                    var run = 0
+                    var longest = 0
+                    for (y in 0 until bitmap.height) {
+                        run = if (bitmap.getPixel(65, y) == rail && bitmap.getPixel(66, y) == rail) run + 1 else 0
+                        longest = maxOf(longest, run)
+                    }
+                    return longest
+                } finally { bitmap.recycle() }
+            }
+            check(reasoningRuleHeight(hidden) == 0) { "Hidden reasoning left a vertical rule" }
+            check(reasoningRuleHeight(timelineShown) >= 24) { "Missing vertical rule beside reasoning" }
+            val multiPageThought = legacyReply.copy(reasoning = (1..100).joinToString("\n") { "Reasoning line $it." })
+            val thoughtPages = exportSharedImages(activity,
+                MessageShareDocument("Paged reasoning", messageShareGroups(listOf(multiPageThought))),
+                hideReasoning = false,
+            )
+            check(thoughtPages.size > 1 && thoughtPages.take(2).all { reasoningRuleHeight(it) >= 24 }) {
+                "The vertical rule did not continue on the next page"
+            }
+            status("PNG output excludes reasoning and its rule by default; opt-in draws one reasoning section with a rule across pages")
 
             val body = "# 图片分享\n\n支持 **加粗**、`行内代码` 与中文 😀。\n\n```kotlin\nval example = 42\n```\n\n" +
                 (1..110).joinToString("\n\n") { "第 $it 段：长内容分页输出，所有已选文字都保留。" }

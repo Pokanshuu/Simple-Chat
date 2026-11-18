@@ -65,7 +65,7 @@ internal object CompactionRegression {
             activity.setContent { SimpleChatTheme {
                 Column(Modifier.fillMaxSize().systemBarsPadding().padding(20.dp)) {
                     CompactionSection(vm.compaction, vm.compacting, vm::compactContext,
-                        vm::cancelCompaction, vm::clearCompaction, vm::updateCompactionSummary)
+                        vm::cancelCompaction, vm::clearCompaction, vm::updateCompactionSummary, vm.compactionStatus)
                 }
             } }
         }
@@ -136,7 +136,8 @@ internal object CompactionRegression {
                     bitmap.recycle()
                 }
                 val runningTexts = nodes().mapNotNull { it.text?.toString() }
-                check(runningTexts.any { it.contains(Res.get(R.string.compact_running)) }) { "Missing loading state: $runningTexts" }
+                val statusText = withContext(Dispatchers.Main) { checkNotNull(vm.compactionStatus) }
+                check(runningTexts.any { it.contains(statusText) }) { "Missing loading state: $runningTexts" }
                 check(runningTexts.none { it.contains("COMPLETE_SUMMARY") || it.contains("ORIGINAL_SUMMARY") })
                 withContext(Dispatchers.Main) { vm.cancelCompaction(); vm.viewModelScope.cancel() }
                 delay(200)

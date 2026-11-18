@@ -45,6 +45,7 @@ class SseClient(
         request: ChatRequestDto,
         extraHeaders: Map<String, String> = emptyMap(),
         contextWindow: Int? = null,
+        retryBeforeContent: Boolean = true,
     ): Flow<StreamEvent> = flow {
         validateRequestBudget(estimatedInputTokens(request), request.maxTokens, contextWindow)
         val body = StreamingJsonRequestBody(json, request)
@@ -116,7 +117,7 @@ class SseClient(
             } catch (e: IOException) {
                 // 用户主动取消造成的 IOException 不应报告为错误
                 if (!currentCoroutineContext().isActive) return@flow
-                if (!emittedAny && attempt < StreamMaxAttempts) {
+                if (retryBeforeContent && !emittedAny && attempt < StreamMaxAttempts) {
                     // 一个字都还没发出去 → 重发是安全的（不会出现两份内容）
                     android.util.Log.w(ChatStreamLogTag, "stream reset before any event; retrying", e)
                     delay(StreamRetryDelayMs)

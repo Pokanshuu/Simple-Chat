@@ -305,7 +305,7 @@ interface MessageDao {
     @Query(
         """
         UPDATE messages
-        SET status = :status, errorMessage = :error,
+        SET content = :content, reasoning = :reasoning, status = :status, errorMessage = :error,
             ttftMs = :ttftMs, tps = :tps, thinkingMs = :thinkingMs,
             timeline = :timeline, stopReason = :stopReason
         WHERE id = :id
@@ -313,6 +313,8 @@ interface MessageDao {
     )
     suspend fun finish(
         id: String,
+        content: String,
+        reasoning: String?,
         status: String,
         error: String?,
         ttftMs: Long?,

@@ -2,7 +2,10 @@ package com.simplechat.app.ui.chat
 
 import com.simplechat.app.data.CompactionCheckpoint
 import com.simplechat.app.net.StreamEvent
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
@@ -51,6 +54,17 @@ class CompactionResponseTest {
                 collectCompactionSummary(stream)
                 fail("Incomplete response was accepted: $kind")
             } catch (failure: CompactionRequestFailure) { assertEquals(kind, failure.kind) }
+        }
+    }
+
+    @Test fun `terminal signal does not wait for an idle open stream`() = runBlocking {
+        for (stop in listOf(StreamEvent.Stopped("stop"), StreamEvent.Stopped("end_turn"), StreamEvent.Done)) {
+            val upstream = flow {
+                emit(StreamEvent.Content("finished"))
+                emit(stop)
+                awaitCancellation()
+            }
+            assertEquals("finished", withTimeout(2_000) { collectCompactionSummary(upstream) })
         }
     }
 

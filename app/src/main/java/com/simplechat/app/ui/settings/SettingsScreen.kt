@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -72,7 +73,6 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.simplechat.app.ui.common.MenuShape
-import com.simplechat.app.ui.common.ContainerShape
 import com.simplechat.app.ui.common.BubbleShapeOut
 import com.simplechat.app.App
 import com.simplechat.app.R
@@ -82,6 +82,7 @@ import com.simplechat.app.data.AppLanguage
 import com.simplechat.app.data.ImportMode
 import com.simplechat.app.data.Res
 import com.simplechat.app.data.StoredSettings
+import com.simplechat.app.data.SettingsStore
 import com.simplechat.app.data.ApiProfile
 import com.simplechat.app.data.userMessage
 import com.simplechat.app.data.copyExportFile
@@ -119,19 +120,22 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * 设置页内的一级 / 二级页面。
+ * 设置页内的页面层级。
  *
- * [depth] 只用来判断转场方向：二级页从右侧进来，返回时原路退回。
+ * [depth] 只用来判断转场方向：子页从右侧进来，返回时原路退回。
  */
 private enum class SettingsPage(private val parentName: String?) {
     ROOT(null),
     DATA("ROOT"),
-    API("ROOT"),
-    API_PROFILES("API"),
+    API_PROFILES("ROOT"),
+    API_PROFILE("API_PROFILES"),
+    SEARCH_API("API_PROFILES"),
+    FILES_API("API_PROFILES"),
     PRESETS("ROOT"),
     /** 外观：主题模式、主题色、字体大小入口。 */
     APPEARANCE("ROOT"),
@@ -157,7 +161,6 @@ private sealed interface SettingsDialog {
     /** 手动填写模型 id：端点没实现 `/models`、或列表里没有目标模型时的出口。 */
     data object ModelManual : SettingsDialog
     data object ApiKey : SettingsDialog
-    data class Service(val files: Boolean) : SettingsDialog
     data class ApiProfileName(val profile: ApiProfile? = null, val copyCurrent: Boolean = false) : SettingsDialog
     data class DeleteApiProfile(val profile: ApiProfile) : SettingsDialog
     data object DeleteAll : SettingsDialog
@@ -211,16 +214,37 @@ fun SettingsScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    SettingsScreen(onBack, modifier, (context.applicationContext as App).container.settingsStore)
+}
+
+@Composable
+internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: SettingsStore) {
     val colors = LocalChatColors.current
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
     val scope = rememberCoroutineScope()
-    val store = container.settingsStore
     val repository = container.chatRepository
 
     var stored by remember { mutableStateOf(StoredSettings()) }
-    // rememberSaveable：换语言会 recreate()（见 MainActivity），二级页要停在原地
+    var settingsLoaded by remember { mutableStateOf(false) }
+    // 换语言会重建 Activity，保留设置页的当前位置。
     var page by rememberSaveable { mutableStateOf(SettingsPage.ROOT) }
+    var editingProfileId by rememberSaveable { mutableStateOf<String?>(null) }
+    val editingProfile = stored.apiProfiles.firstOrNull { it.id == editingProfileId }
+    val editingSettings = editingProfile?.let { profile ->
+        stored.copy(providerId = profile.providerId, baseUrl = profile.baseUrl,
+            modelId = profile.modelId, apiStyleId = profile.apiStyleId, modelIds = profile.modelIds,
+            webSearch = profile.webSearch, searchApi = profile.searchApi)
+    }
+    var savingService by remember { mutableStateOf(false) }
+    var serviceBack by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    var serviceVisit by remember { mutableStateOf(0) }
+    fun openService(target: SettingsPage) {
+        serviceVisit++
+        page = target
+    }
     var dialog by remember { mutableStateOf<SettingsDialog?>(null) }
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }
@@ -309,16 +333,52 @@ fun SettingsScreen(
         }
     }
 
-    LaunchedEffect(Unit) { store.flow.collect { stored = it } }
+    LaunchedEffect(store) { store.flow.collect { stored = it; settingsLoaded = true } }
     LaunchedEffect(Unit) { repository.observePresets().collect { presets = it } }
 
-    // 二级页面按返回键先回一级，而不是直接退出设置
-    fun previousPage() { page = page.parent ?: SettingsPage.ROOT }
-    BackHandler(enabled = page != SettingsPage.ROOT) { previousPage() }
+    fun previousPage() {
+        if (savingService) return
+        profileError = null
+        testResult = null
+        page = page.parent ?: SettingsPage.ROOT
+    }
+    fun requestBack() {
+        if (savingService) return
+        if (page == SettingsPage.ROOT) onBack()
+        else if (page in listOf(SettingsPage.SEARCH_API, SettingsPage.FILES_API) && settingsLoaded) serviceBack?.invoke()
+        else previousPage()
+    }
+    BackHandler(enabled = page != SettingsPage.ROOT) { requestBack() }
     LaunchedEffect(stored.activeApiProfileId, stored.baseUrl) { testResult = null }
 
-    val provider = runCatching { ProviderKind.valueOf(stored.providerId) }
+    val profileSettings = editingSettings ?: stored
+    val provider = runCatching { ProviderKind.valueOf(profileSettings.providerId) }
         .getOrDefault(ProviderKind.DEEPSEEK)
+    fun editProfile(change: (ApiProfile) -> ApiProfile) {
+        val id = editingProfileId ?: return
+        updateProfile { store.updateApiProfile(id, change) }
+    }
+    fun openProfile(profile: ApiProfile) {
+        editingProfileId = profile.id
+        testResult = null
+        profileError = null
+        page = SettingsPage.API_PROFILE
+    }
+    var keyDialogValue by remember { mutableStateOf("") }
+    fun pickProfileField(field: SettingsDialog) {
+        if (field != SettingsDialog.ApiKey) {
+            dialog = field
+            return
+        }
+        val id = editingProfileId ?: return
+        updateProfile {
+            val key = store.readApiKeyForProfile(id)
+            if (page == SettingsPage.API_PROFILE && editingProfileId == id) {
+                keyDialogValue = key
+                dialog = field
+            }
+        }
+    }
 
     val themeMode = runCatching { ThemeMode.valueOf(stored.themeModeId) }
         .getOrDefault(ThemeMode.SYSTEM)
@@ -483,14 +543,18 @@ fun SettingsScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.settingsBackground),
+            .background(colors.settingsBackground)
+            .imePadding(),
     ) {
         SettingsTopBar(
             title = when (page) {
                 SettingsPage.ROOT -> stringResource(R.string.settings_title)
                 SettingsPage.DATA -> stringResource(R.string.settings_data)
-                SettingsPage.API -> stringResource(R.string.settings_api)
-                SettingsPage.API_PROFILES -> stringResource(R.string.api_profiles_title)
+                SettingsPage.API_PROFILES -> stringResource(R.string.settings_api)
+                SettingsPage.API_PROFILE -> editingProfile?.name
+                    ?: stringResource(R.string.settings_api)
+                SettingsPage.SEARCH_API -> stringResource(R.string.service_search_title)
+                SettingsPage.FILES_API -> stringResource(R.string.service_files_title)
                 SettingsPage.PRESETS -> stringResource(R.string.settings_presets)
                 SettingsPage.APPEARANCE -> stringResource(R.string.settings_appearance)
                 SettingsPage.FONT -> stringResource(R.string.settings_font_size)
@@ -501,7 +565,7 @@ fun SettingsScreen(
             },
             onBack = {
                 if (archiveProgress.value == null && importProgress.value == null && !importReading) {
-                    if (page == SettingsPage.ROOT) onBack() else previousPage()
+                    requestBack()
                 }
             },
         )
@@ -584,33 +648,39 @@ fun SettingsScreen(
                             onDeleteAll = { dialog = SettingsDialog.DeleteAll },
                         )
 
-                        SettingsPage.API -> ApiPage(
-                            stored = stored,
+                        SettingsPage.API_PROFILE -> if (editingProfile != null && editingSettings != null) ApiPage(
+                            stored = editingSettings,
+                            profile = editingProfile,
+                            onRename = { dialog = SettingsDialog.ApiProfileName(profile = editingProfile) },
                             provider = provider,
                             testing = testing,
                             testResult = testResult,
-                            onPick = { dialog = it },
-                            onProfiles = { page = SettingsPage.API_PROFILES },
+                            onPick = ::pickProfileField,
                             profileError = profileError,
-                            onWebSearch = { enabled ->
-                                scope.launch { store.setWebSearch(enabled) }
-                            },
+                            onWebSearch = { enabled -> editProfile { it.copy(webSearch = enabled) } },
                             onTest = {
                                 if (testing) return@ApiPage
                                 testing = true
                                 testResult = null
-                                val source = stored
+                                val source = editingProfile
                                 scope.launch {
                                     try {
                                     val result = container.chatApi.fetchModels(
                                         baseUrl = source.baseUrl.ifBlank { provider.defaultBaseUrl },
-                                        apiKey = source.apiKey,
+                                        apiKey = store.readApiKeyForProfile(source.id),
                                     )
                                     // 拉到的列表**必须落库**：它就是「模型」选择器的数据源，
                                     // 早先只报了个条数、列表丢掉，于是自定义端点明明"连接成功"，
                                     // 点开「模型」却是一个只有标题的白框。
-                                    result.onSuccess { ids -> store.setModelIds(ids, source.activeApiProfileId, source.baseUrl) }
-                                    if (stored.activeApiProfileId == source.activeApiProfileId && stored.baseUrl == source.baseUrl) testResult = result.fold(
+                                    result.onSuccess { ids ->
+                                        store.updateApiProfile(source.id) {
+                                            if (it.baseUrl == source.baseUrl && it.providerId == source.providerId &&
+                                                it.apiKeyEncrypted == source.apiKeyEncrypted) it.copy(modelIds = ids) else it
+                                        }
+                                    }
+                                    if (page == SettingsPage.API_PROFILE && editingProfileId == source.id &&
+                                        stored.apiProfiles.any { it.id == source.id && it.baseUrl == source.baseUrl &&
+                                            it.providerId == source.providerId && it.apiKeyEncrypted == source.apiKeyEncrypted }) testResult = result.fold(
                                         onSuccess = { Res.get(R.string.api_test_ok, it.size) },
                                         onFailure = { Res.get(R.string.api_test_failed, it.userMessage()) },
                                     )
@@ -621,13 +691,31 @@ fun SettingsScreen(
                             },
                         )
 
-                        SettingsPage.API_PROFILES -> ApiProfilesPage(
-                            stored = stored, error = profileError,
-                            onSelect = { profile -> updateProfile { store.selectApiProfile(profile.id); page = SettingsPage.API } },
-                            onNew = { dialog = SettingsDialog.ApiProfileName() },
-                            onCopy = { dialog = SettingsDialog.ApiProfileName(copyCurrent = true) },
-                            onRename = { dialog = SettingsDialog.ApiProfileName(profile = it) },
-                            onDelete = { dialog = SettingsDialog.DeleteApiProfile(it) },
+                        SettingsPage.API_PROFILES -> if (settingsLoaded) {
+                            ApiProfilesPage(
+                                stored = stored, error = profileError,
+                                onSelect = { profile -> updateProfile { store.selectApiProfile(profile.id) } },
+                                onNew = { dialog = SettingsDialog.ApiProfileName() },
+                                onCopy = { dialog = SettingsDialog.ApiProfileName(copyCurrent = true) },
+                                onEdit = ::openProfile,
+                                onDelete = { dialog = SettingsDialog.DeleteApiProfile(it) },
+                            )
+                            ToolApisPage(
+                                stored = stored,
+                                onOpenSearch = { openService(SettingsPage.SEARCH_API) },
+                                onOpenFiles = { openService(SettingsPage.FILES_API) },
+                            )
+                        }
+
+                        SettingsPage.SEARCH_API, SettingsPage.FILES_API -> if (settingsLoaded) ServiceApiPage(
+                            files = target == SettingsPage.FILES_API,
+                            visit = serviceVisit,
+                            stored = stored,
+                            store = store,
+                            saving = savingService,
+                            onSavingChange = { savingService = it },
+                            onBackAction = { serviceBack = it },
+                            onSaved = { if (page == target) previousPage() },
                         )
 
                         SettingsPage.PRESETS -> PresetsPage(
@@ -678,7 +766,6 @@ fun SettingsScreen(
     // 先收进局部变量：dialog 是委托属性，直接 when(dialog) 无法智能转换
     val activeDialog = dialog
     when (activeDialog) {
-        is SettingsDialog.Service -> ServiceApiDialog(activeDialog.files, stored, store) { dialog = null }
         SettingsDialog.Provider -> ChoiceDialog(
             title = stringResource(R.string.label_provider),
             options = ProviderKind.entries.map { it to it.displayName },
@@ -686,7 +773,7 @@ fun SettingsScreen(
             onDismiss = { dialog = null },
             onSelect = { picked ->
                 dialog = null
-                updateProfile { store.selectProvider(picked) }
+                editProfile { if (it.providerId == picked.name) it else it.copy(providerId = picked.name, baseUrl = picked.defaultBaseUrl, modelId = picked.defaultModel, modelIds = emptyList()) }
             },
         )
 
@@ -703,7 +790,11 @@ fun SettingsScreen(
                     dialog = null
                     updateProfile {
                         if (activeDialog.profile != null) store.renameApiProfile(activeDialog.profile.id, value)
-                        else { store.createApiProfile(value, activeDialog.copyCurrent); page = SettingsPage.API }
+                        else {
+                            store.createApiProfile(value, activeDialog.copyCurrent)
+                            stored = store.flow.first()
+                            if (page == SettingsPage.API_PROFILES) stored.apiProfiles.firstOrNull { it.id == stored.activeApiProfileId }?.let(::openProfile)
+                        }
                     }
                 }
             },
@@ -720,12 +811,12 @@ fun SettingsScreen(
 
         SettingsDialog.BaseUrl -> TextInputDialog(
             title = "Base URL",
-            initial = stored.baseUrl.ifBlank { provider.defaultBaseUrl },
+            initial = profileSettings.baseUrl.ifBlank { provider.defaultBaseUrl },
             placeholder = "https://api.deepseek.com",
             onDismiss = { dialog = null },
             onConfirm = { value ->
                 dialog = null
-                updateProfile { store.setBaseUrl(value) }
+                editProfile { if (it.baseUrl == value.trim()) it else it.copy(baseUrl = value.trim(), modelIds = emptyList()) }
             },
         )
 
@@ -737,11 +828,11 @@ fun SettingsScreen(
              * 于是「测试连接」显示"可用模型 45 个"、点开「模型」却什么都没有 ——
              * 拉取结果根本没进界面。
              */
-            val models = ModelCatalog.pickerModels(provider, stored.modelIds)
+            val models = ModelCatalog.pickerModels(provider, profileSettings.modelIds)
             ChoiceDialog(
                 title = stringResource(R.string.label_model),
                 options = models.map { it to it.displayName },
-                selected = models.firstOrNull { it.id == stored.modelId },
+                selected = models.firstOrNull { it.id == profileSettings.modelId },
                 emptyHint = stringResource(R.string.api_model_empty_hint),
                 extraAction = stringResource(R.string.api_model_manual) to {
                     dialog = SettingsDialog.ModelManual
@@ -749,14 +840,14 @@ fun SettingsScreen(
                 onDismiss = { dialog = null },
                 onSelect = { picked ->
                     dialog = null
-                    scope.launch { store.setModel(picked.id) }
+                    editProfile { it.copy(modelId = picked.id) }
                 },
             )
         }
 
         SettingsDialog.ModelManual -> TextInputDialog(
             title = stringResource(R.string.api_model_manual),
-            initial = stored.modelId,
+            initial = profileSettings.modelId,
             // 例子用**当前服务商的默认模型**：用户照抄一个多半就是能用的
             placeholder = provider.defaultModel.ifBlank { ProviderKind.DEEPSEEK.defaultModel },
             onDismiss = { dialog = null },
@@ -764,13 +855,13 @@ fun SettingsScreen(
                 dialog = null
                 val id = value.trim()
                 // 空值等于"没选"，不要拿它覆盖已选模型
-                if (id.isNotEmpty()) scope.launch { store.setModel(id) }
+                if (id.isNotEmpty()) editProfile { it.copy(modelId = id) }
             },
         )
 
         SettingsDialog.ApiKey -> TextInputDialog(
             title = "API Key",
-            initial = stored.apiKey,
+            initial = keyDialogValue,
             placeholder = "sk-…",
             secret = true,
             /*
@@ -790,21 +881,22 @@ fun SettingsScreen(
                     )
                 }
             },
-            onDismiss = { dialog = null },
+            onDismiss = { dialog = null; keyDialogValue = "" },
             onConfirm = { value ->
                 dialog = null
-                updateProfile { store.setApiKey(value) }
+                keyDialogValue = ""
+                editProfile { it.copy(apiKeyEncrypted = if (ApiKey.normalize(value).isEmpty()) "" else store.encryptServiceKey(value), modelIds = emptyList()) }
             },
         )
 
         SettingsDialog.ApiStyle -> ChoiceDialog(
             title = stringResource(R.string.settings_api_style),
             options = ApiStylePreference.entries.map { it to stringResource(it.labelRes) },
-            selected = ApiStylePreference.fromId(stored.apiStyleId),
+            selected = ApiStylePreference.fromId(profileSettings.apiStyleId),
             onDismiss = { dialog = null },
             onSelect = { picked ->
                 dialog = null
-                scope.launch { store.setApiStyle(picked.name) }
+                editProfile { it.copy(apiStyleId = picked.name) }
             },
         )
 
@@ -948,7 +1040,7 @@ private fun RootPage(
             icon = AppIcons.Server,
             label = stringResource(R.string.settings_api),
             value = null,
-            onClick = { onOpen(SettingsPage.API) },
+            onClick = { onOpen(SettingsPage.API_PROFILES) },
         )
     }
 
@@ -1165,7 +1257,7 @@ private fun ChatBehaviorPage(
 
 /** 单选行：图标 + 标题 + 选中时行尾一个主色对勾。 */
 @Composable
-private fun SettingsChoiceRow(
+internal fun SettingsChoiceRow(
     icon: ImageVector?,
     label: String,
     selected: Boolean,
@@ -1505,34 +1597,21 @@ private fun DataPage(
 @Composable
 private fun ApiPage(
     stored: StoredSettings,
+    profile: ApiProfile,
+    onRename: () -> Unit,
     provider: ProviderKind,
     testing: Boolean,
     testResult: String?,
     onPick: (SettingsDialog) -> Unit,
-    onProfiles: () -> Unit,
     profileError: String?,
     onTest: () -> Unit,
     onWebSearch: (Boolean) -> Unit,
 ) {
     val colors = LocalChatColors.current
 
-    SettingsSectionLabel(stringResource(R.string.api_profiles_title))
-    SettingsCard {
-        SettingsNavRow(null, stringResource(R.string.api_profile_current),
-            stored.apiProfiles.firstOrNull { it.id == stored.activeApiProfileId }?.name, onProfiles)
-    }
-    Text(stringResource(R.string.api_profiles_hint), style = MaterialTheme.typography.labelSmall,
-        color = colors.placeholder, modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp))
     profileError?.let { Text(it, color = colors.danger, style = MaterialTheme.typography.labelMedium) }
-    SettingsSectionLabel(stringResource(R.string.service_group))
     SettingsCard {
-        SettingsNavRow(null, stringResource(R.string.service_search_title),
-            stringResource(if (stored.searchApi.enabled) R.string.service_enabled else R.string.service_disabled),
-            { onPick(SettingsDialog.Service(false)) })
-        RowDivider(inset = 16.dp)
-        SettingsNavRow(null, stringResource(R.string.service_files_title),
-            stringResource(if (stored.filesApi.enabled) R.string.service_enabled else R.string.service_disabled),
-            { onPick(SettingsDialog.Service(true)) })
+        SettingsNavRow(null, stringResource(R.string.api_profile_rename), profile.name, onRename)
     }
 
     SettingsSectionLabel(stringResource(R.string.settings_group_service))
@@ -1567,7 +1646,7 @@ private fun ApiPage(
         SettingsNavRow(
             icon = null,
             label = "API Key",
-            value = if (stored.hasKey) maskKey(stored.apiKey) else stringResource(R.string.api_key_unset),
+            value = stringResource(if (profile.apiKeyEncrypted.isNotBlank()) R.string.api_profile_key_saved else R.string.api_key_unset),
             onClick = { onPick(SettingsDialog.ApiKey) },
         )
         RowDivider(inset = 16.dp)
@@ -1633,7 +1712,7 @@ private fun ApiPage(
 @Composable
 internal fun ApiProfilesPage(
     stored: StoredSettings, error: String?, onSelect: (ApiProfile) -> Unit,
-    onNew: () -> Unit, onCopy: () -> Unit, onRename: (ApiProfile) -> Unit, onDelete: (ApiProfile) -> Unit,
+    onNew: () -> Unit, onCopy: () -> Unit, onEdit: (ApiProfile) -> Unit, onDelete: (ApiProfile) -> Unit,
 ) {
     val colors = LocalChatColors.current
     SettingsSectionLabel(stringResource(R.string.api_profiles_title))
@@ -1658,7 +1737,7 @@ internal fun ApiProfilesPage(
                         else if (profile.apiKeyEncrypted.isNotBlank()) R.string.api_profile_key_saved else R.string.api_key_unset),
                         style = MaterialTheme.typography.labelSmall, color = colors.placeholder)
                 }
-                IconCircleButton(AppIcons.Edit, stringResource(R.string.api_profile_rename), { onRename(profile) }, size = 36.dp, iconSize = 18.dp)
+                IconCircleButton(AppIcons.Edit, stringResource(R.string.api_profile_edit), { onEdit(profile) }, size = 36.dp, iconSize = 18.dp)
                 if (stored.apiProfiles.size > 1) IconCircleButton(AppIcons.Trash,
                     stringResource(R.string.api_profile_delete), { onDelete(profile) }, size = 36.dp, iconSize = 18.dp)
             }
@@ -2369,7 +2448,7 @@ fun SettingsCard(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun RowDivider(inset: androidx.compose.ui.unit.Dp = Space.Screen + Space.Icon + Space.IconGap) {
+internal fun RowDivider(inset: androidx.compose.ui.unit.Dp = Space.Screen + Space.Icon + Space.IconGap) {
     val colors = LocalChatColors.current
     Box(
         modifier = Modifier
@@ -2532,7 +2611,7 @@ private fun SettingsActionRow(
 
 /** 开关行。 */
 @Composable
-private fun SettingsSwitchRow(
+internal fun SettingsSwitchRow(
     label: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
@@ -2561,7 +2640,11 @@ private fun SettingsSwitchRow(
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f),
         )
-        AppSwitch(checked = checked, onCheckedChange = onCheckedChange)
+        AppSwitch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = Modifier.semantics { contentDescription = label },
+        )
     }
 }
 

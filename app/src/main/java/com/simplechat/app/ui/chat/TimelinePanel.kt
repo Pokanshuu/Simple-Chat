@@ -165,6 +165,10 @@ private fun timelineHeader(view: TimelineView, streaming: Boolean): String? {
 /** 思考片段：左侧圆点 + 竖线，小号正文。 */
 @Composable
 private fun ThinkingStep(step: TimelineStep.Thinking) {
+    if (step.active) {
+        TailContent(step.text)
+        return
+    }
     val colors = LocalChatColors.current
     Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
         Column(
@@ -248,7 +252,7 @@ private fun SearchStep(step: TimelineStep.Search, onOpenSources: (List<SourceRef
 @Composable
 private fun searchSummary(step: TimelineStep.Search): String {
     val count = step.sources.size
-    return if (isDeepSearchKind(step.kind)) {
+    return if (isDeepSearchKind(step.kind) || step.kind == com.simplechat.app.net.IndependentSearchKind) {
         stringResource(if (count == 1) R.string.search_found_one else R.string.search_found_many, count)
     } else {
         stringResource(if (count == 1) R.string.search_read_one else R.string.search_read_many, count)

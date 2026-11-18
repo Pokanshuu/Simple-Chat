@@ -11,8 +11,8 @@ sealed interface ContentSegment {
 
     data class Text(val text: String) : ContentSegment
 
-    /** [display] = true 表示独占一行的行间公式（`$$…$$` / `\[…\]`）。 */
-    data class Formula(val tex: String, val display: Boolean) : ContentSegment
+    /** [source] preserves the delimiters when the span is passed back to Markdown. */
+    data class Formula(val tex: String, val display: Boolean, val source: String) : ContentSegment
 }
 
 /**
@@ -21,7 +21,7 @@ sealed interface ContentSegment {
  * ### 支持的定界符
  * | 写法 | 形态 |
  * |---|---|
- * | `$$…$$` | 行间（独占一行、居中） |
+ * | `$$…$$` | 独占一行时为行间；同一行夹在正文中时为行内 |
  * | `\[…\]` | 行间 |
  * | `$…$` | 行内 |
  * | `\(…\)` | 行内 |
@@ -29,7 +29,7 @@ sealed interface ContentSegment {
  * ### 三条刻意的规则
  * 1. **代码里的 `$` 不算公式**：围栏代码块与行内代码整段跳过 —— 否则一段 shell
  *    脚本里的 `$PATH` 会把后面整篇正文吞掉。
- * 2. **定界符内侧不能是空白**：这条把 `$5 和 $10` 这类金额挡在外面
+ * 2. **单 `$` 定界符内侧不能是空白**：这条把 `$5 和 $10` 这类金额挡在外面
  *    （开引号后面紧跟数字、闭引号前面是空格 → 不成对）。
  * 3. **没闭合就按普通文本**：流式期间半截公式会先以原文显示，闭合后才变成公式。
  *    宁可晚一拍，也不要在屏幕上闪一个渲染失败的红框。
@@ -53,7 +53,7 @@ internal fun splitMath(content: String): List<ContentSegment> {
     }
 
     while (i < content.length) {
-        if (content.startsWith("\\$", i)) {
+        if (content.startsWith("\\$", i) || content.startsWith("\\\\", i) || content.startsWith("\\`", i)) {
             buffer.append(content, i, i + 2)
             i += 2
             continue
@@ -68,53 +68,49 @@ internal fun splitMath(content: String): List<ContentSegment> {
             continue
         }
 
-        // ── 行内代码：同样跳过 ──
+        // A code span closes only with a backtick run of the same length.
         if (content[i] == '`') {
-            val end = content.indexOf('`', i + 1)
-            val stop = if (end < 0) i + 1 else end + 1
+            val openEnd = content.runEnd(i, '`')
+            var close = content.indexOf('`', openEnd)
+            var stop = openEnd
+            while (close >= 0) {
+                val closeEnd = content.runEnd(close, '`')
+                if (closeEnd - close == openEnd - i) {
+                    stop = closeEnd
+                    break
+                }
+                close = content.indexOf('`', closeEnd)
+            }
             buffer.append(content, i, stop)
             i = stop
             continue
         }
 
-        // ── 行间公式 ──
-        if (content.startsWith("$$", i)) {
-            val end = content.indexOf("$$", i + 2)
-            if (end > i + 2) {
-                val tex = content.substring(i + 2, end)
-                if (tex.isNotBlank()) {
-                    flushText()
-                    out += ContentSegment.Formula(tex.trim(), display = true)
-                    i = end + 2
-                    continue
-                }
-            }
+        val closer = when {
+            content.startsWith("$$", i) -> "$$"
+            content.startsWith("\\[", i) -> "\\]"
+            content.startsWith("\\(", i) -> "\\)"
+            else -> null
         }
-        if (content.startsWith("\\[", i)) {
-            val end = content.indexOf("\\]", i + 2)
+        if (closer != null) {
+            val dollarPair = closer == "$$"
+            val end = mathClose(content, i + 2, closer, singleLine = closer == "\\)")
             if (end > i + 2) {
-                val tex = content.substring(i + 2, end)
-                if (tex.isNotBlank()) {
+                val tex = content.substring(i + 2, end).trim()
+                if (tex.isNotEmpty()) {
+                    val stop = end + 2
+                    val display = closer == "\\]" || dollarPair &&
+                        (content.hasLineBreak(i + 2, end) || content.isStandalone(i, stop))
                     flushText()
-                    out += ContentSegment.Formula(tex.trim(), display = true)
-                    i = end + 2
+                    out += ContentSegment.Formula(tex, display, content.substring(i, stop))
+                    i = stop
                     continue
                 }
             }
-        }
-
-        // ── 行内公式 ──
-        if (content.startsWith("\\(", i)) {
-            val end = content.indexOf("\\)", i + 2)
-            if (end > i + 2) {
-                val tex = content.substring(i + 2, end)
-                if (tex.isNotBlank()) {
-                    flushText()
-                    out += ContentSegment.Formula(tex.trim(), display = false)
-                    i = end + 2
-                    continue
-                }
-            }
+            // Do not reinterpret the second dollar of an incomplete pair as a single opener.
+            buffer.append(content, i, i + 2)
+            i += 2
+            continue
         }
         if (content[i] == '$') {
             val close = inlineClose(content, i)
@@ -123,6 +119,7 @@ internal fun splitMath(content: String): List<ContentSegment> {
                 out += ContentSegment.Formula(
                     content.substring(i + 1, close).trim(),
                     display = false,
+                    source = content.substring(i, close + 1),
                 )
                 i = close + 1
                 continue
@@ -134,6 +131,42 @@ internal fun splitMath(content: String): List<ContentSegment> {
     }
     flushText()
     return out
+}
+
+private fun String.runEnd(start: Int, char: Char): Int {
+    var end = start + 1
+    while (end < length && this[end] == char) end++
+    return end
+}
+
+private fun mathClose(content: String, start: Int, closer: String, singleLine: Boolean): Int {
+    var i = start
+    while (i < content.length) {
+        val char = content[i]
+        if (singleLine && (char == '\r' || char == '\n')) return -1
+        if (content.startsWith(closer, i)) return i
+        // A closing delimiter can contain a backslash, so test it before skipping escapes.
+        if (char == '\\' && (!singleLine || (content.getOrNull(i + 1) ?: '\u0000') !in LineBreaks)) i++
+        i++
+    }
+    return -1
+}
+
+private val LineBreaks = charArrayOf('\r', '\n')
+
+private fun String.hasLineBreak(start: Int, end: Int): Boolean =
+    (start until end).any { this[it] in LineBreaks }
+
+private fun String.isStandalone(start: Int, end: Int): Boolean {
+    var before = start - 1
+    while (before >= 0 && this[before] !in LineBreaks) {
+        if (!this[before--].isWhitespace()) return false
+    }
+    var after = end
+    while (after < length && this[after] !in LineBreaks) {
+        if (!this[after++].isWhitespace()) return false
+    }
+    return true
 }
 
 /**

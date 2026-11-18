@@ -425,7 +425,7 @@
 
     <!-- 上下文压缩 -->
     <string name="compact_title">上下文压缩</string>
-    <string name="compact_note">只影响发给模型的内容，本地消息不受影响。</string>
+    <string name="compact_note">只影响发给模型的内容，本地消息不受影响。压缩可能需要几分钟，甚至更久。</string>
     <string name="compact_running">正在压缩上下文…</string>
     <string name="compact_summarized">已总结较早的对话</string>
     <string name="compact_redo">重新压缩</string>

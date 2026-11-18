@@ -539,6 +539,8 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         stopReason: String? = null,
     ) = messages.finish(
         id = id,
+        content = content,
+        reasoning = reasoning,
         status = status.toStorage(),
         error = errorMessage,
         ttftMs = ttftMs,
@@ -546,15 +548,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         thinkingMs = thinkingMs,
         timeline = ReplyBlocks.encode(timeline),
         stopReason = stopReason,
-    ).also {
-        messages.checkpoint(
-            id = id,
-            content = content,
-            reasoning = reasoning,
-            status = status.toStorage(),
-            timeline = ReplyBlocks.encode(timeline),
-        )
-    }
+    )
 
     /**
      * 打开会话前清扫：把上次被中断的流式消息判为 STOPPED。
@@ -622,6 +616,8 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         )
         messages.finish(
             id = entity.id,
+            content = entity.content,
+            reasoning = entity.reasoning,
             status = status.toStorage(),
             error = null,
             ttftMs = ttftMs,

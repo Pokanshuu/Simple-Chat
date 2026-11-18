@@ -1,14 +1,53 @@
 package com.simplechat.app.ui.chat
 
+import com.simplechat.app.net.ReplyBlock
 import com.simplechat.app.ui.markdown.ContentSegment
 import com.simplechat.app.ui.markdown.normalizeHtml
 import com.simplechat.app.ui.markdown.normalizeListIndent
 import com.simplechat.app.ui.markdown.normalizeSoftBreaks
 import com.simplechat.app.ui.markdown.splitMarkdownBlocks
-import com.simplechat.app.ui.markdown.splitMath
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.parser.MarkdownParser
+
+internal data class ShareImageText(val text: String, val reasoning: Boolean = false)
+
+/** Use one reasoning source; the legacy field often contains the same text as the timeline. */
+internal fun shareImageText(message: UiMessage, hideReasoning: Boolean = true): List<ShareImageText> {
+    val body = ShareImageText(message.content)
+    if (hideReasoning || message.role != MessageRole.ASSISTANT) return listOf(body)
+
+    if (message.timeline.none { it is ReplyBlock.Thinking && it.thinking.isNotBlank() }) {
+        val reasoning = message.reasoning?.takeIf { it.isNotBlank() } ?: return listOf(body)
+        return listOf(ShareImageText(reasoning, reasoning = true), body)
+    }
+
+    return buildList {
+        val pending = StringBuilder()
+        var hasAnswer = false
+        var isReasoning = false
+        fun append(text: String, reasoning: Boolean) {
+            if (reasoning != isReasoning && pending.isNotEmpty()) {
+                add(ShareImageText(pending.toString(), isReasoning))
+                pending.clear()
+            }
+            isReasoning = reasoning
+            pending.append(text)
+        }
+        for (block in message.timeline) when (block) {
+            is ReplyBlock.Text -> {
+                if (block.text.isNotEmpty()) {
+                    hasAnswer = true
+                    append(block.text, reasoning = false)
+                }
+            }
+            is ReplyBlock.Thinking -> if (block.thinking.isNotBlank()) append(block.thinking, reasoning = true)
+            else -> Unit
+        }
+        if (pending.isNotEmpty()) add(ShareImageText(pending.toString(), isReasoning))
+        if (!hasAnswer) add(body)
+    }
+}
 
 internal sealed interface ShareRenderBlock {
     data class Text(val source: String, val markdown: Boolean) : ShareRenderBlock

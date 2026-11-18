@@ -152,6 +152,24 @@ class ContextCompactionTest {
         assertEquals(1, calls)
     }
 
+    @Test fun `timed out batch stops without retrying or advancing checkpoint`() = runBlocking {
+        var checkpoint = CompactionCheckpoint()
+        var calls = 0
+        try {
+            compactInBatches(sequenceOf("中".repeat(30_000)), prompts, 8192,
+                onCheckpoint = { checkpoint = it }, attemptTimeoutMillis = { 100 }) { _, _, _ ->
+                if (++calls > 1) awaitCancellation()
+                "completed batch"
+            }
+            fail("Timed out batch must not replace the summary")
+        } catch (error: CompactionRequestFailure) {
+            assertEquals(CompactionFailureKind.TIMEOUT, error.kind)
+        }
+        assertEquals(2, calls)
+        assertEquals(listOf("completed batch"), checkpoint.summaries)
+        assertTrue(checkpoint.offset > 0)
+    }
+
     @Test fun `empty and oversized summaries do not silently discard history`() = runBlocking {
         for (summary in listOf("", "中".repeat(20_000))) {
             try {
@@ -206,7 +224,7 @@ class ContextCompactionTest {
             if (budgets.size == 1) throw CompactionRequestFailure(CompactionFailureKind.TRUNCATED)
             "complete"
         }
-        assertEquals(listOf(2048, 4096), budgets)
+        assertEquals(listOf(256, 512), budgets)
         assertEquals("complete", result)
     }
 

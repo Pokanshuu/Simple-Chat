@@ -51,6 +51,7 @@ class AnthropicApi(
         request: AnthropicRequest,
         extraHeaders: Map<String, String> = emptyMap(),
         contextWindow: Int? = null,
+        retryBeforeContent: Boolean = true,
     ): Flow<StreamEvent> = flow {
         validateRequestBudget(estimatedInputTokens(request), request.maxTokens, contextWindow)
         val body = StreamingAnthropicRequestBody(json, request)
@@ -78,7 +79,7 @@ class AnthropicApi(
                          * 429 / 5xx 且**一个字都还没发出去** → 重发一次。
                          * 与 OpenAI 通道同一条规则：已经收到内容再重发会出现两份回答。
                          */
-                        if (!emittedAny && attempt < StreamMaxAttempts && isRetryableStatus(response.code)) {
+                        if (retryBeforeContent && !emittedAny && attempt < StreamMaxAttempts && isRetryableStatus(response.code)) {
                             android.util.Log.w(ChatStreamLogTag, "HTTP ${response.code}; retrying")
                             retryHttp = true
                             return@use
@@ -130,7 +131,7 @@ class AnthropicApi(
                 // 用户主动取消造成的 IOException 不应报告为错误
                 if (!currentCoroutineContext().isActive) return@flow
                 // 一个字都还没发出去 → 重发是安全的（与 SseClient 同一条规则，见那里的说明）
-                if (!emittedAny && attempt < StreamMaxAttempts) {
+                if (retryBeforeContent && !emittedAny && attempt < StreamMaxAttempts) {
                     android.util.Log.w(ChatStreamLogTag, "stream reset before any event; retrying", e)
                     delay(StreamRetryDelayMs)
                     continue

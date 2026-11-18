@@ -43,12 +43,14 @@ class ChatApi(
         request: AnthropicRequest,
         extraHeaders: Map<String, String> = emptyMap(),
         contextWindow: Int? = null,
+        retryBeforeContent: Boolean = true,
     ): Flow<StreamEvent> = anthropicApi.streamMessage(
         url = anthropicMessagesUrl(baseUrl),
         apiKey = apiKey,
         request = request,
         extraHeaders = extraHeaders,
         contextWindow = contextWindow,
+        retryBeforeContent = retryBeforeContent,
     )
 
     /**
@@ -70,6 +72,7 @@ class ChatApi(
         temperature: Double? = null,
         topP: Double? = null,
         extraHeaders: Map<String, String> = emptyMap(),
+        retryBeforeContent: Boolean = true,
     ): Flow<StreamEvent> {
         val thinkingActive = model.supportsThinking && thinkingEnabled
 
@@ -94,6 +97,7 @@ class ChatApi(
             request = request,
             extraHeaders = extraHeaders,
             contextWindow = model.contextWindow,
+            retryBeforeContent = retryBeforeContent,
         )
     }
 

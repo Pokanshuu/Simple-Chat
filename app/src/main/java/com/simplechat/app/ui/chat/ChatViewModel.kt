@@ -1,5 +1,6 @@
 package com.simplechat.app.ui.chat
 
+import android.os.SystemClock
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -157,6 +158,8 @@ class ChatViewModel(
         private set
 
     var compacting by mutableStateOf(false)
+        private set
+    var compactionStatus by mutableStateOf<String?>(null)
         private set
 
     private var compactJob: Job? = null
@@ -330,9 +333,6 @@ class ChatViewModel(
 
     /** 上一次见到的远端模型列表（落库的那份），同理只用来比较。 */
     private var previousModelIds: List<String> = emptyList()
-
-    /** 流式 checkpoint 的节流计时。 */
-    private var lastCheckpointAt = 0L
 
     private val providerKind: ProviderKind
         get() = runCatching { ProviderKind.valueOf(stored.providerId) }
@@ -838,13 +838,8 @@ class ChatViewModel(
         val revision = pathRevision
         val operation = ++compactGeneration
         val savedCompaction = compaction
-        val existing = validCompaction(messages, compaction)
-        val alreadyCovered = existing
-            ?.let { c -> messages.indexOfFirst { it.id == c.throughMessageId } }
-            ?: -1
-        val candidates = messages
-            .filterIndexed { index, _ -> index > alreadyCovered }
-            .filter { !it.streaming && (it.content.isNotBlank() || it.attachments.isNotEmpty()) }
+        val sourceMessages = messages.toList()
+        val existing = validCompaction(sourceMessages, savedCompaction)
         // Capture configuration once: changing models mid-compaction must not mix endpoints/budgets.
         val model = settings.model
         val baseUrl = stored.baseUrl.ifBlank { providerKind.defaultBaseUrl }
@@ -861,14 +856,20 @@ class ChatViewModel(
         )
 
         compacting = true
+        compactionStatus = null
         banner = null
         imageSkipNotice = null
 
         compactJob = viewModelScope.launch {
             try {
                 val result = withContext(Dispatchers.Default) {
+                    val alreadyCovered = existing?.let { c -> sourceMessages.indexOfFirst { it.id == c.throughMessageId } } ?: -1
+                    val candidates = sourceMessages.asSequence().drop(alreadyCovered + 1)
+                        .filter { !it.streaming && (it.content.isNotBlank() || it.attachments.isNotEmpty()) }.toList()
                     val cutIndex = compactionCutIndex(candidates, model.contextWindow / 2)
-                    if (cutIndex <= 0 && existing == null) throw com.simplechat.app.data.AppTextException(R.string.compact_too_few)
+                    if (cutIndex <= 0) throw com.simplechat.app.data.AppTextException(
+                        if (existing != null) R.string.compact_no_new_history else R.string.compact_too_few,
+                    )
                     val toSummarize = candidates.take(cutIndex)
                     val segments = compactionSegments(toSummarize, existing?.summary, prompts)
                     val fingerprint = compactionFingerprint(sequenceOf(
@@ -885,6 +886,15 @@ class ChatViewModel(
                             // Log only operational metadata, never conversation content or credentials.
                             android.util.Log.i("SimpleChat/Compaction",
                                 "Level=${it.level} batch=${it.batch} chars=${it.processedChars}/${it.totalChars} recovery=${it.recovery}")
+                            val percent = if (it.totalChars > 0) (100 * it.processedChars / it.totalChars).toInt() else 0
+                            val phase = Res.get(if (it.level == 0) R.string.compact_batch_source else R.string.compact_batch_merge,
+                                it.batch, percent)
+                            withContext(Dispatchers.Main) {
+                                if (operation == compactGeneration) compactionStatus =
+                                    if (it.recovery in setOf(CompactionFailureKind.INPUT_LIMIT, CompactionFailureKind.TRUNCATED,
+                                            CompactionFailureKind.TRANSIENT, CompactionFailureKind.EMPTY))
+                                        Res.get(R.string.compact_batch_retry, phase) else phase
+                            }
                         },
                     ) { transcript, maxTokens, _ ->
                         val stream = if (extended) {
@@ -897,7 +907,7 @@ class ChatViewModel(
                                     latestReminder = null, maxTokens = maxTokens, temperature = 0.3,
                                     deepSeekExtensions = isOfficialDeepSeekEndpoint(baseUrl),
                                 ).copy(tools = emptyList()),
-                                extraHeaders = headers, contextWindow = model.contextWindow,
+                                extraHeaders = headers, contextWindow = model.contextWindow, retryBeforeContent = false,
                             )
                         } else {
                             chatApi.streamChat(
@@ -907,7 +917,7 @@ class ChatViewModel(
                                     OutMessageDto("user", MessageContent.text(transcript)),
                                 ),
                                 thinkingEnabled = false, maxTokens = maxTokens,
-                                temperature = 0.3, extraHeaders = headers,
+                                temperature = 0.3, extraHeaders = headers, retryBeforeContent = false,
                             )
                         }
                         collectCompactionSummary(stream)
@@ -934,6 +944,7 @@ class ChatViewModel(
                     val detail = if (error is CompactionRequestFailure) when (error.kind) {
                         CompactionFailureKind.INPUT_LIMIT -> Res.get(R.string.compact_input_rejected)
                         CompactionFailureKind.TRANSIENT -> Res.get(R.string.compact_interrupted)
+                        CompactionFailureKind.TIMEOUT -> Res.get(R.string.compact_request_timeout)
                         CompactionFailureKind.TRUNCATED, CompactionFailureKind.EMPTY -> Res.get(R.string.compact_incomplete)
                         CompactionFailureKind.PERMANENT -> error.event?.let {
                             if (it.rawMessage != null || it.code != null) it.message else serverErrorText(it.message)
@@ -944,6 +955,8 @@ class ChatViewModel(
             } finally {
                 if (generation == switchGeneration && operation == compactGeneration) {
                     compacting = false
+                    compactionStatus = null
+                    compactJob = null
                 }
             }
         }
@@ -974,6 +987,7 @@ class ChatViewModel(
         compactJob?.cancel()
         compactJob = null
         compacting = false
+        compactionStatus = null
     }
 
     // ── 上下文统计 ────────────────────────────────────────
@@ -1398,11 +1412,11 @@ class ChatViewModel(
         // 生成期间把进程提到前台服务优先级：退到后台 / 熄屏也继续收
         BackgroundGeneration.sync(true)
         stoppedByUser = false
-        lastCheckpointAt = System.currentTimeMillis()
         val extended = apiStyle == ApiStyle.ANTHROPIC
 
         streamJob = viewModelScope.launch {
-            val startedAt = System.currentTimeMillis()
+            val startedAt = SystemClock.elapsedRealtime()
+            var lastCheckpointAt = startedAt
             var firstTokenAt: Long? = null
             var contentChars = 0
 
@@ -1434,60 +1448,62 @@ class ChatViewModel(
             var research = com.simplechat.app.net.SearchAugmentation()
             var dirty = false
 
-            fun publishBuffered() {
-                if (reasonBuf.isNotEmpty()) { reasoningText += reasonBuf.toString(); reasonBuf.clear() }
-                if (contentBuf.isNotEmpty()) { contentText += contentBuf.toString(); contentBuf.clear() }
-                if (research.blocks.isNotEmpty()) timeline = research.replyBlocks(reasoningText, contentText)
-                patch(replyId) { it.copy(reasoning = reasoningText.ifEmpty { null }, content = contentText, timeline = timeline) }
+            fun refreshBuffered() {
+                if (accumulator != null) {
+                    timeline = accumulator.blocks
+                    reasoningText = accumulator.thinking
+                    contentText = accumulator.answer
+                } else {
+                    if (reasonBuf.length != reasoningText.length) reasoningText = reasonBuf.toString()
+                    if (contentBuf.length != contentText.length) contentText = contentBuf.toString()
+                    if (research.blocks.isNotEmpty()) {
+                        timeline = research.replyBlocks(reasoningText, contentText, reasoningStartedAt, reasoningEndedAt)
+                    }
+                }
             }
 
             /** 正文（或正文块）一出现 = 思维链已经写完，思考栏当场收口。 */
             fun noteBody() {
-                if (firstTokenAt == null) firstTokenAt = System.currentTimeMillis()
                 if (reasoningEndedAt != null) return
-                val endedAt = System.currentTimeMillis()
+                val endedAt = SystemClock.elapsedRealtime()
+                firstTokenAt = endedAt
                 reasoningEndedAt = endedAt
-                val ms = endedAt - (reasoningStartedAt ?: startedAt)
+                val ms = reasoningStartedAt?.let { endedAt - it }
                 patch(replyId) {
-                    it.copy(reasoningDone = true, reasoningSeconds = thinkingSeconds(ms))
+                    it.copy(reasoningDone = true, reasoningSeconds = ms?.let(::thinkingSeconds) ?: prefix?.reasoningSeconds)
                 }
             }
 
             fun noteThinking() {
-                if (reasoningStartedAt == null) reasoningStartedAt = System.currentTimeMillis()
+                if (reasoningStartedAt == null && reasoningEndedAt == null) {
+                    reasoningStartedAt = SystemClock.elapsedRealtime()
+                }
             }
 
             // 节流提交器：与 collect 同在主线程调度器，天然串行，无需加锁
             val flusher = launch {
+                var checkpointJob: Job? = null
+                var needsCheckpoint = false
                 while (isActive) {
                     delay(STREAM_THROTTLE_MS)
-                    if (!dirty) continue
-
-                    if (accumulator != null) {
-                        // 块通道是**全量替换**：顺序与内容都由累加器持有
-                        timeline = accumulator.blocks
-                        patch(replyId) {
-                            it.copy(
-                                content = accumulator.answer,
-                                reasoning = accumulator.thinking.ifEmpty { null },
-                                timeline = accumulator.blocks,
-                            )
-                        }
-                    } else {
-                        publishBuffered()
+                    if (dirty) {
+                        refreshBuffered()
+                        patch(replyId) { it.copy(reasoning = reasoningText.ifEmpty { null }, content = contentText, timeline = timeline) }
+                        dirty = false
+                        needsCheckpoint = true
                     }
-                    if (accumulator != null) { reasoningText = accumulator.thinking; contentText = accumulator.answer }
-                    dirty = false
 
-                    // §4.4：流中每约 1.5s 落一次盘，崩溃不丢内容
-                    val now = System.currentTimeMillis()
-                    if (now - lastCheckpointAt >= CHECKPOINT_INTERVAL_MS) {
+                    val now = SystemClock.elapsedRealtime()
+                    if (needsCheckpoint && checkpointJob?.isCompleted != false && now - lastCheckpointAt >= CHECKPOINT_INTERVAL_MS) {
                         lastCheckpointAt = now
+                        needsCheckpoint = false
                         val r = reasoningText
                         val c = contentText
                         val t = timeline
-                        withContext(NonCancellable) {
-                            runCatching { repository.checkpoint(replyId, c, r, t) }
+                        checkpointJob = launch {
+                            withContext(NonCancellable + Dispatchers.IO) {
+                                runCatching { repository.checkpoint(replyId, c, r, t) }
+                            }
                         }
                     }
                 }
@@ -1500,10 +1516,13 @@ class ChatViewModel(
             try {
                 if (webSearch && stored.searchApi.enabled) {
                     val question = messages.lastOrNull { it.role == MessageRole.USER }?.content.orEmpty()
-                    research = com.simplechat.app.net.searchAugmentation(stored, question)
-                    timeline = timeline + research.blocks
-                    if (accumulator != null) accumulator.seed(timeline)
-                    patch(replyId) { it.copy(timeline = timeline) }
+                    val previousBlocks = prefix?.timeline.orEmpty()
+                    research = com.simplechat.app.net.searchAugmentation(stored, question) { progress ->
+                        research = research.copy(blocks = progress)
+                        timeline = previousBlocks + progress
+                        accumulator?.seed(timeline)
+                        patch(replyId) { it.copy(timeline = timeline) }
+                    }
                 }
                 if (accumulator != null) {
                     chatApi.streamMessage(
@@ -1519,7 +1538,7 @@ class ChatViewModel(
                             is StreamEvent.BlockStart -> {
                                 if (event.block is ReplyBlock.Text) noteBody()
                                 if (event.block is ReplyBlock.Thinking) noteThinking()
-                                accumulator.consume(event, System.currentTimeMillis())
+                                accumulator.consume(event, SystemClock.elapsedRealtime())
                                 dirty = true
                             }
 
@@ -1528,13 +1547,13 @@ class ChatViewModel(
                                     noteBody()
                                     contentChars += event.text.length
                                 }
-                                accumulator.consume(event, System.currentTimeMillis())
+                                accumulator.consume(event, SystemClock.elapsedRealtime())
                                 dirty = true
                             }
 
                             is StreamEvent.ThinkingDelta -> {
                                 noteThinking()
-                                accumulator.consume(event, System.currentTimeMillis())
+                                accumulator.consume(event, SystemClock.elapsedRealtime())
                                 dirty = true
                             }
 
@@ -1542,7 +1561,7 @@ class ChatViewModel(
 
                             is StreamEvent.CitationDelta, is StreamEvent.SignatureDelta,
                             is StreamEvent.BlockStop, is StreamEvent.Stopped -> {
-                                accumulator.consume(event, System.currentTimeMillis())
+                                accumulator.consume(event, SystemClock.elapsedRealtime())
                                 dirty = true
                             }
 
@@ -1619,22 +1638,12 @@ class ChatViewModel(
                 if (!stoppedByUser) failure = t.userMessage()
             } finally {
                 flusher.cancel()
-                if (accumulator != null) {
-                    accumulator.settle(System.currentTimeMillis())
-                    timeline = accumulator.blocks
-                    patch(replyId) {
-                        it.copy(
-                            content = accumulator.answer,
-                            reasoning = accumulator.thinking.ifEmpty { null },
-                            timeline = accumulator.blocks,
-                        )
-                    }
-                } else {
-                    publishBuffered()
-                }
             }
 
-            val finishedAt = System.currentTimeMillis()
+            val finishedAt = SystemClock.elapsedRealtime()
+            accumulator?.settle(finishedAt)
+            if (reasoningStartedAt != null && reasoningEndedAt == null) reasoningEndedAt = finishedAt
+            refreshBuffered()
             /*
              * 这里**不做任何"审核/撤回"处理**。
              *
@@ -1652,8 +1661,8 @@ class ChatViewModel(
             val seconds = (finishedAt - startedAt).coerceAtLeast(1) / 1000f
             // 粗估：中文约 1 token ≈ 1.6 字符，仅用于性能仪表展示
             val tps = if (contentChars > 0) (contentChars / 1.6f) / seconds else null
-            val finalContent = accumulator?.answer ?: contentText
-            val finalReasoning = accumulator?.thinking ?: reasoningText
+            val finalContent = contentText
+            val finalReasoning = reasoningText
             /*
              * **真实**思考时长 = 首条思维链 → 首条正文。
              *
@@ -1665,12 +1674,14 @@ class ChatViewModel(
              * 续写且这一轮没再思考时，思考时长要**沿用上一轮的值** ——
              * 否则一条「已深度思考 · 8 秒」的回复，点一下继续生成就变成"没思考过"。
              */
-            val thinkingMs = reasoningStartedAt?.let { start ->
-                (reasoningEndedAt ?: finishedAt) - start
+            val thinkingMs = if (accumulator != null) accumulator.thinkingMillis(finishedAt) else {
+                reasoningStartedAt?.let { start -> (reasoningEndedAt ?: finishedAt) - start }
             } ?: prefix?.reasoningSeconds?.times(1000)
 
             patch(replyId) {
                 it.copy(
+                    content = finalContent,
+                    reasoning = finalReasoning.ifEmpty { null },
                     status = status,
                     errorMessage = failure,
                     ttftMs = ttft,
@@ -1683,20 +1694,24 @@ class ChatViewModel(
 
             // 终写一次：即使进程被杀，内容也已落库
             val persisted = withContext(NonCancellable) {
+                // Wait for any in-flight checkpoint so it cannot overwrite the final row.
+                flusher.join()
                 runCatching {
-                    repository.finishMessage(
-                        id = replyId,
-                        content = finalContent,
-                        reasoning = finalReasoning,
-                        status = status,
-                        errorMessage = failure,
-                        ttftMs = ttft,
-                        tps = tps,
-                        thinkingMs = thinkingMs,
-                        timeline = timeline,
-                        stopReason = accumulator?.stopReason,
-                    )
-                    repository.touchConversation(conversationId)
+                    withContext(Dispatchers.IO) {
+                        repository.finishMessage(
+                            id = replyId,
+                            content = finalContent,
+                            reasoning = finalReasoning,
+                            status = status,
+                            errorMessage = failure,
+                            ttftMs = ttft,
+                            tps = tps,
+                            thinkingMs = thinkingMs,
+                            timeline = timeline,
+                            stopReason = accumulator?.stopReason,
+                        )
+                        repository.touchConversation(conversationId)
+                    }
                 }.onFailure { error ->
                     android.util.Log.e("SimpleChat/Save", "Reply persistence failed: ${error.javaClass.simpleName}")
                     if (conversationId == currentConversationId) {
@@ -1769,7 +1784,6 @@ class ChatViewModel(
             }
         }
         val requestTitle = shouldRequestTitle()
-        if (requestTitle) serverTitleRequestedFor = currentConversationId
 
         /*
          * 续写时把这条 assistant 从历史里摘出去：它要以**末尾前缀**的身份出现，
@@ -1790,7 +1804,7 @@ class ChatViewModel(
             }
 
         /*
-         * 官方域才发 DeepSeek 扩展字段（safety_check / 搜索工具 / 服务端标题 /
+         * 官方域才发 DeepSeek 扩展字段（搜索工具 / 服务端标题 /
          * latest_reminder 角色 / thinking.type=disabled）。自建网关或 Claude 兼容中转
          * 遇到这些会 400，而不是"忽略" —— 见 `buildAnthropicRequest` 的说明。
          */
@@ -1813,6 +1827,7 @@ class ChatViewModel(
             topP = settings.topP.toDouble(),
         ).also { request ->
             if (request.messages.none { it.role == "user" }) throw com.simplechat.app.data.AppTextException(R.string.error_no_sendable_messages)
+            if (request.title != null) serverTitleRequestedFor = currentConversationId
         }
     }
 

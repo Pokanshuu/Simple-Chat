@@ -187,6 +187,52 @@ class ReplyTimelineViewTest {
     }
 
     @Test
+    fun `independent numeric links become chips only for known source URLs`() {
+        val use = ReplyBlock.ToolUse(
+            id = "is1", name = "simplechat_independent_search", kind = "independent_web_search",
+            action = "search", queries = listOf("query"),
+        )
+        val result = ReplyBlock.SearchResult(
+            toolUseId = "is1", kind = "web_search",
+            results = listOf(WebSource("https://known.example/p", "Known")),
+        )
+        val view = buildTimelineView(
+            listOf(use, result, text("[1](https://known.example/p) [2](https://unknown.example/p) ` [1](https://known.example/p) `\n```md\n[1](https://known.example/p)\n```")),
+            streaming = false,
+        )
+        assertTrue(view.answer.contains(" [1](#cite-1)"))
+        assertTrue(view.answer.contains("[2](https://unknown.example/p)"))
+        assertTrue(view.answer.contains("` [1](https://known.example/p) `"))
+        assertTrue(view.answer.contains("```md\n[1](https://known.example/p)\n```"))
+    }
+
+    @Test
+    fun `independent search accepts result-only legacy id`() {
+        val view = buildTimelineView(
+            listOf(searchResult(id = "independent-search", urls = listOf("https://legacy.example")), text("[1](https://legacy.example)")),
+            streaming = false,
+        )
+        assertEquals(listOf("https://legacy.example"), view.sources.map { it.url })
+        assertTrue(view.answer.contains("[1](#cite-1)"))
+    }
+
+    @Test
+    fun `independent fetch uses pending read link then completed open step`() {
+        val use = ReplyBlock.ToolUse(
+            id = "if1", name = "simplechat_independent_fetch", kind = "web_fetch",
+            action = "open_page", url = "https://page.example",
+        )
+        val pending = buildTimelineView(listOf(use), streaming = true)
+        assertEquals("https://page.example", pending.steps.filterIsInstance<TimelineStep.ReadLink>().single().links.single().url)
+
+        val done = buildTimelineView(
+            listOf(use, ReplyBlock.FetchResult("if1", "web_fetch", "https://page.example", "Page"), text("Done")),
+            streaming = false,
+        )
+        assertEquals("Page", done.steps.filterIsInstance<TimelineStep.Open>().single().pages.single().title)
+    }
+
+    @Test
     fun `搜索结果先于正文引用编号`() {
         val view = buildTimelineView(
             listOf(
@@ -304,6 +350,13 @@ class ReplyTimelineViewTest {
         )
         assertNull(view.thinkingMillis)
         assertNull(view.thinkingSeconds())
+    }
+
+    @Test
+    fun `incomplete thinking timestamps never mix with wall time`() {
+        val blocks = listOf(ReplyBlock.Thinking("current", startedAt = 1_000), text("answer"))
+        assertNull(buildTimelineView(blocks, streaming = true).thinkingMillis)
+        assertNull(buildTimelineView(blocks, streaming = false).thinkingMillis)
     }
 
     @Test

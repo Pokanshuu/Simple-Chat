@@ -9,6 +9,7 @@ import android.util.Base64
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -16,6 +17,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.R
 import com.simplechat.app.data.Attachment
@@ -23,6 +26,7 @@ import com.simplechat.app.data.AttachmentFiles
 import com.simplechat.app.ui.markdown.*
 import com.simplechat.app.ui.theme.LocalChatColors
 import com.simplechat.app.ui.theme.AccentColor
+import com.simplechat.app.ui.theme.ProcessTextStyle
 import com.simplechat.app.ui.common.BubbleShapeOut
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -35,9 +39,11 @@ import kotlin.math.ceil
 internal suspend fun exportSharedImages(context: Context, document: MessageShareDocument,
     mode: ShareImageMode = ShareImageMode.PAGES,
     accent: AccentColor = AccentColor.BLUE,
-    hideBranding: Boolean = false): List<File> = withContext(Dispatchers.Default) {
+    hideBranding: Boolean = false,
+    hideReasoning: Boolean = true): List<File> = withContext(Dispatchers.Default) {
     val characterCount = document.messages.sumOf { message ->
-        message.content.length.toLong() + message.attachments.filterNot { it.isImage }.sumOf { it.data.length.toLong() }
+        shareImageText(message, hideReasoning).sumOf { it.text.length.toLong() } +
+            message.attachments.filterNot { it.isImage }.sumOf { it.data.length.toLong() }
     }
     require(characterCount <= 200_000) { context.getString(R.string.share_image_too_long) }
     val fonts = loadExportFonts(context)
@@ -47,7 +53,8 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
     val memoryClass = (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).memoryClass
     val writer = ShareImageWriter(context, directory, document.title, shareImagePageHeight(mode, memoryClass), mode == ShareImageMode.LONG, hideBranding)
     val result = try {
-        suspend fun render(block: ShareRenderBlock, user: Boolean = false) {
+        suspend fun render(block: ShareRenderBlock, user: Boolean = false, reasoning: Boolean = false,
+            reasoningHeading: Boolean = false, reasoningContinues: Boolean = false) {
             val metrics = ExportTableMetrics()
             var tablePage = -1
             suspend fun part(rows: IntRange? = null) {
@@ -66,9 +73,24 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
                                         modifier = Modifier.widthIn(max = 380.dp)
                                             .background(LocalChatColors.current.userBubble, BubbleShapeOut)
                                             .padding(horizontal = 14.dp, vertical = 11.dp))
+                                } else if (reasoning) Column(Modifier.fillMaxWidth()) {
+                                    val color = LocalChatColors.current.processText
+                                    if (reasoningHeading) Text(context.getString(R.string.large_message_reasoning),
+                                        style = MaterialTheme.typography.titleSmall, color = color,
+                                        modifier = Modifier.padding(bottom = 6.dp))
+                                    val railColor = LocalChatColors.current.processBar
+                                    Text(
+                                        block.source,
+                                        style = ProcessTextStyle,
+                                        color = color,
+                                        modifier = Modifier.fillMaxWidth()
+                                            .drawBehind {
+                                                drawRect(railColor, size = Size(2.dp.toPx(), size.height))
+                                            }
+                                            .padding(start = 12.dp, bottom = if (reasoningContinues) 12.dp else 0.dp),
+                                    )
                                 } else Text(block.source, style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onBackground,
-                                    modifier = Modifier.fillMaxWidth())
+                                    color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.fillMaxWidth())
                         }
                     }
                 }
@@ -107,7 +129,7 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
                         } finally { image.recycle() }
                     }
                 }
-                writer.space(24)
+                if (!reasoningContinues) writer.space(24)
             }
             if (block is ShareRenderBlock.Table && block.rowCount > 0) {
                 var start = 0
@@ -123,7 +145,14 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
             for (message in group.messages) {
                 currentCoroutineContext().ensureActive()
                 val user = message.role == MessageRole.USER
-                for (block in shareRenderBlocks(message.content, !user)) render(block, user)
+                for (section in shareImageText(message, hideReasoning)) {
+                    val blocks = shareRenderBlocks(section.text, markdown = !user && !section.reasoning)
+                    for ((blockIndex, block) in blocks.withIndex()) {
+                        render(block, user, section.reasoning,
+                            reasoningHeading = section.reasoning && blockIndex == 0,
+                            reasoningContinues = section.reasoning && blockIndex < blocks.lastIndex)
+                    }
+                }
                 for (attachment in message.attachments) {
                     render(ShareRenderBlock.Text(attachment.name, false))
                     if (attachment.isImage) writer.image(attachment)
@@ -143,7 +172,7 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
         throw error
     } finally { renderer.close() }
     // Rerender at the ordinary page size so row boundaries and repeated headers remain correct.
-    result ?: exportSharedImages(context, document, ShareImageMode.PAGES, accent, hideBranding)
+    result ?: exportSharedImages(context, document, ShareImageMode.PAGES, accent, hideBranding, hideReasoning)
 }
 
 /** Cut only in a blank horizontal band between native text lines, never through glyph ink. */

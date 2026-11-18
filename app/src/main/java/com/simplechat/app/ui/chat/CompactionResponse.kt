@@ -5,8 +5,9 @@ import com.simplechat.app.net.ReplyBlock
 import com.simplechat.app.net.StreamEvent
 import com.simplechat.app.net.providerHintRes
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.takeWhile
 
-internal enum class CompactionFailureKind { INPUT_LIMIT, TRANSIENT, TRUNCATED, EMPTY, PERMANENT }
+internal enum class CompactionFailureKind { INPUT_LIMIT, TRANSIENT, TIMEOUT, TRUNCATED, EMPTY, PERMANENT }
 
 internal class CompactionRequestFailure(
     val kind: CompactionFailureKind,
@@ -47,8 +48,9 @@ internal suspend fun collectCompactionSummary(
 ): String {
     val text = StringBuilder()
     var completed = false
-    var stopped = false
-    stream.collect { event ->
+    // A finish reason is sufficient for summaries; usage trailers are irrelevant.
+    // Returning early also cancels the upstream SSE read if the peer keeps it open.
+    stream.takeWhile { event ->
         val piece = when (event) {
             is StreamEvent.Content -> event.text
             is StreamEvent.TextDelta -> event.text
@@ -64,14 +66,16 @@ internal suspend fun collectCompactionSummary(
             is StreamEvent.Stopped -> {
                 when (event.reason) {
                     "length", "max_tokens" -> throw CompactionRequestFailure(CompactionFailureKind.TRUNCATED)
-                    "stop", "end_turn", "stop_sequence", null -> stopped = true
+                    "stop", "end_turn", "stop_sequence" -> completed = true
+                    null -> Unit
                     else -> throw CompactionRequestFailure(CompactionFailureKind.PERMANENT)
                 }
             }
             StreamEvent.Done -> completed = true
             else -> Unit
         }
-    }
-    if (!completed && !stopped) throw CompactionRequestFailure(CompactionFailureKind.TRANSIENT)
+        !completed
+    }.collect {}
+    if (!completed) throw CompactionRequestFailure(CompactionFailureKind.TRANSIENT)
     return text.toString().trim().ifEmpty { throw CompactionRequestFailure(CompactionFailureKind.EMPTY) }
 }

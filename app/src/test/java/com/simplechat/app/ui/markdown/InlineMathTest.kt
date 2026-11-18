@@ -20,6 +20,29 @@ class InlineMathTest {
             assertTrue(result.formulas.isEmpty())
         }
     }
+    @Test fun `Chinese prose keeps both dollar styles inline and renders screenshot formulas`() {
+        val source = "因为矩阵 \$\$ A \\ne O \$\$，讨论其行列式 \$|A|\$ 的取值。假设 \$\$|A|=0\$\$，则 \$A^*=-A^T\$。"
+        assertEquals(listOf(ContentSegment.Text(source)), displayMathSegments(source))
+        val document = inlineMathDocument(source)
+        val tex = document.formulas.values.map { it.tex }
+        assertEquals(listOf("A \\ne O", "|A|", "|A|=0", "A^*=-A^T"), tex)
+        tex.forEach { assertNotNull(it, prepareLatexPresentation(it).nativeTex) }
+        assertEquals("因为矩阵 `SCMATH0`，讨论其行列式 `SCMATH1` 的取值。假设 `SCMATH2`，则 `SCMATH3`。", document.markdown)
+    }
+
+    @Test fun `adjacent formulas and emphasis survive the Markdown parser`() {
+        val document = inlineMathDocument("**设\$x\$\$y\$成立**")
+        val ast = org.intellij.markdown.parser.MarkdownParser(org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor())
+            .buildMarkdownTreeFromString(document.markdown)
+        fun nodes(node: org.intellij.markdown.ast.ASTNode): Sequence<org.intellij.markdown.ast.ASTNode> =
+            sequenceOf(node) + node.children.asSequence().flatMap(::nodes)
+        val types = org.intellij.markdown.MarkdownElementTypes
+        val code = nodes(ast).single { it.type == types.CODE_SPAN }
+        assertEquals("`SCMATH0 SCMATH1`", document.markdown.substring(code.startOffset, code.endOffset))
+        assertTrue(nodes(ast).any { it.type == types.STRONG })
+        assertEquals(listOf("x", "y"), document.formulas.values.map { it.tex })
+    }
+
     @Test fun `ordinary code token cannot collide with generated formula`() {
         val result = inlineMathDocument("`SCMATH0` and \\(x+1\\)")
         assertEquals(setOf("SCMATHX0"), result.formulas.keys)

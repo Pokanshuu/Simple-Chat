@@ -5,7 +5,6 @@ import com.simplechat.app.data.Attachment
 import com.simplechat.app.net.ReplyBlock
 import com.simplechat.app.net.anthropic.AnthropicMessageParam
 import com.simplechat.app.net.anthropic.AnthropicRequestDefaults
-import com.simplechat.app.net.anthropic.AnthropicSafetyCheck
 import com.simplechat.app.net.anthropic.AnthropicRequest
 import com.simplechat.app.net.anthropic.AnthropicThinking
 import com.simplechat.app.net.anthropic.AnthropicTitle
@@ -54,7 +53,7 @@ internal fun buildAnthropicRequest(
     /**
      * 目标是不是 **DeepSeek 官方**的扩展协议。
      *
-     * 同一条协议两边要求不同：`safety_check` / `title` / `deepseek_*` 工具 /
+     * 同一条协议两边要求不同：`title` / `deepseek_*` 工具 /
      * `latest_reminder` 角色 / `thinking.type=disabled` 只有 DeepSeek 收；
      * 原版 Anthropic（含 Claude 兼容网关）遇到这些是 **400**，而它又强制要求
      * `max_tokens` 与（开启思考时）`budget_tokens`。详见 `AnthropicRequest` 的表格。
@@ -166,14 +165,13 @@ internal fun buildAnthropicRequest(
      * assistant、丢掉空消息。**只改发给服务端的这一份，本地消息一条不动。**
      */
     val sanitizedMessages = sanitizeTurns(messages)
+    val effectiveSystem = systemPrompt.trim().let {
+        if (deepSeekExtensions && it.isBlank()) DefaultSystemPrompt else it
+    }
 
     return AnthropicRequest(
         model = model,
-        system = if (deepSeekExtensions) {
-            systemPrompt.trim().ifBlank { DefaultSystemPrompt }
-        } else {
-            systemPrompt.trim()
-        },
+        system = effectiveSystem,
         messages = sanitizedMessages,
         thinking = when {
             deepSeekExtensions && thinkingEnabled -> AnthropicThinking.Enabled
@@ -184,17 +182,18 @@ internal fun buildAnthropicRequest(
             // 原版：关闭思考 = **省略这个字段**（不接受 type=disabled）
             else -> null
         },
-        safetyCheck = if (deepSeekExtensions) AnthropicSafetyCheck() else null,
         tools = if (deepSeekExtensions) {
             buildList {
-                // 读链接始终开着（用户贴了 URL 就该被读），搜索才受开关控制
-                add(AnthropicTool.ReadUrl)
+                val latestUser = path.lastOrNull { it.role == MessageRole.USER }
+                if (latestUser != null && HttpLink.containsMatchIn(latestUser.content)) add(AnthropicTool.ReadUrl)
                 if (searchEnabled) add(AnthropicTool.WebSearch)
             }
         } else {
             emptyList()
         },
-        title = if (deepSeekExtensions && requestTitle) AnthropicTitle() else null,
+        title = if (deepSeekExtensions && requestTitle &&
+            titleFitsInline(effectiveSystem, sanitizedMessages)
+        ) AnthropicTitle() else null,
         maxTokens = effectiveMaxTokens,
         // 原版 Anthropic 不允许同时改 temperature 与 top_p；这里只发 temperature
         temperature = if (!deepSeekExtensions && !thinkingEnabled) temperature ?: 1.0 else null,
@@ -209,6 +208,18 @@ internal fun buildAnthropicRequest(
  * 此时用一句助手身份说明兜底 —— 与官方 Chat Demo 发给服务端的同一句。
  */
 internal const val DefaultSystemPrompt = "该助手为DeepSeek，由深度求索公司创造。"
+private val HttpLink = Regex("https?://[^\\s<>]+", RegexOption.IGNORE_CASE)
+
+// 含附件的输入无法从请求体估算；这类会话和长正文交给独立标题流程。
+private fun titleFitsInline(system: String, messages: List<AnthropicMessageParam>): Boolean {
+    var remaining = 8_000 - system.length
+    for (message in messages) {
+        val text = message.content as? JsonPrimitive ?: return false
+        remaining -= text.content.length + 32
+        if (remaining < 0) return false
+    }
+    return remaining >= 0
+}
 
 /**
  * 一条 user 消息的 `content`。

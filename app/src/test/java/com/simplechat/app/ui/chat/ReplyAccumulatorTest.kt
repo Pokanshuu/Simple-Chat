@@ -21,6 +21,46 @@ class ReplyAccumulatorTest {
     private val acc = ReplyAccumulator()
 
     @Test
+    fun `long stream snapshots stay unchanged while more deltas arrive`() {
+        acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Thinking("")), 1_000)
+        acc.consume(StreamEvent.BlockStart(1, ReplyBlock.Text("")), 1_000)
+        val citation = Citation("https://test/one")
+        repeat(10_000) {
+            acc.consume(StreamEvent.ThinkingDelta(0, "why"), 2_000)
+            acc.consume(StreamEvent.SignatureDelta(0, "s"), 2_000)
+            acc.consume(StreamEvent.TextDelta(1, "answer"), 2_000)
+        }
+        acc.consume(StreamEvent.CitationDelta(1, citation), 2_100)
+        val checkpoint = acc.blocks
+        assertTrue(checkpoint === acc.blocks)
+        acc.consume(StreamEvent.ThinkingDelta(0, " next"), 2_200)
+        acc.consume(StreamEvent.TextDelta(1, " complete"), 2_200)
+        acc.consume(StreamEvent.CitationDelta(1, Citation("https://test/two")), 2_200)
+        acc.settle(3_000)
+
+        val savedThought = checkpoint[0] as ReplyBlock.Thinking
+        val savedText = checkpoint[1] as ReplyBlock.Text
+        assertEquals("why".repeat(10_000), savedThought.thinking)
+        assertEquals("s".repeat(10_000), savedThought.signature)
+        assertNull(savedThought.endedAt)
+        assertEquals("answer".repeat(10_000), savedText.text)
+        assertEquals(listOf(citation), savedText.citations)
+        assertEquals(savedThought.thinking + " next", acc.thinking)
+        assertEquals(savedText.text + " complete", acc.answer)
+        assertEquals(2_000L, acc.thinkingMillis(9_000))
+    }
+
+    @Test
+    fun `continuation never closes a prior unfinished block using the new clock`() {
+        val old = ReplyBlock.Thinking("previous", startedAt = 1_700_000_000_000L)
+        acc.seed(listOf(old))
+        acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Thinking("current")), 1_000)
+        acc.settle(2_000)
+        assertEquals(old, acc.blocks.first())
+        assertEquals(1_000L, acc.thinkingMillis(2_000))
+    }
+
+    @Test
     fun `正文增量按 index 累加`() {
         acc.consume(StreamEvent.BlockStart(0, ReplyBlock.Text("")), 1_000)
         acc.consume(StreamEvent.TextDelta(0, "雨是从"), 1_001)

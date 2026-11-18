@@ -395,7 +395,8 @@ internal fun ConversationRow(
                 .clip(SoftShape)
                 .background(
                     when {
-                        selected || current -> colors.fieldBackground
+                        current -> colors.capsuleSelected
+                        selected -> colors.fieldBackground
                         else -> colors.card
                     },
                 )
@@ -442,7 +443,7 @@ internal fun ConversationRow(
                     // 抽屉里的标题是"索引"，不是正文：用 bodyMedium（15sp）。
                     // bodyLarge（17.3sp）原本是给聊天正文的，放进 40dp 的行里明显发福。
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = if (current) highlightColor else MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )

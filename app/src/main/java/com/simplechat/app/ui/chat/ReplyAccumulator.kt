@@ -22,11 +22,12 @@ class ReplyAccumulator {
 
     private val indexOf = mutableMapOf<Int, Int>()
 
-    /** 续写开局时已经存在多少块 —— [settle] 绝不能碰它们。 */
-    private var seededCount = 0
+    private val entries = mutableListOf<PendingBlock>()
+    private var cachedBlocks: List<ReplyBlock>? = emptyList()
 
-    var blocks: List<ReplyBlock> = emptyList()
-        private set
+    /** Only publication materializes strings and lists. Previously published blocks never change. */
+    val blocks: List<ReplyBlock>
+        get() = cachedBlocks ?: entries.map { it.snapshot() }.also { cachedBlocks = it }
 
     /** 服务端生成的会话标题（仅首轮请求了 `title.enabled` 时才有）。 */
     var title: String? = null
@@ -38,11 +39,24 @@ class ReplyAccumulator {
 
     /** 正文（所有 text 块按序拼接）。 */
     val answer: String
-        get() = blocks.filterIsInstance<ReplyBlock.Text>().joinToString("") { it.text }
+        get() = combine(ReplyBlock.Text::text)
 
     /** 思维链（所有 thinking 块按序拼接）。 */
     val thinking: String
-        get() = blocks.filterIsInstance<ReplyBlock.Thinking>().joinToString("") { it.thinking }
+        get() = combine(ReplyBlock.Thinking::thinking)
+
+    private inline fun <reified T : ReplyBlock> combine(textOf: (T) -> String): String {
+        var first = ""
+        var rest: StringBuilder? = null
+        for (block in blocks) {
+            if (block !is T) continue
+            val text = textOf(block)
+            if (text.isEmpty()) continue
+            if (first.isEmpty()) first = text
+            else (rest ?: StringBuilder(first).also { rest = it }).append(text)
+        }
+        return rest?.toString() ?: first
+    }
 
     /**
      * 续写：以已有回复开局，新事件往**后面**接。
@@ -51,8 +65,9 @@ class ReplyAccumulator {
      * 与旧的块下标毫无关系。种进去才不会有"第 0 块被新内容覆盖"这种事。
      */
     fun seed(existing: List<ReplyBlock>) {
-        blocks = existing
-        seededCount = existing.size
+        entries.clear()
+        existing.forEach { entries += PendingBlock(it) }
+        cachedBlocks = existing.toList()
         indexOf.clear()
         stopReason = null
     }
@@ -60,47 +75,18 @@ class ReplyAccumulator {
     fun consume(event: StreamEvent, now: Long) {
         when (event) {
             is StreamEvent.BlockStart -> {
-                indexOf.remove(event.index)
-                val block = event.block.withStart(now)
-                indexOf[event.index] = blocks.size
-                blocks = blocks + block
+                indexOf[event.index] = entries.size
+                entries += PendingBlock(event.block.withStart(now), fromCurrentResponse = true)
+                cachedBlocks = null
             }
 
-            is StreamEvent.TextDelta -> update(event.index) { block ->
-                if (block is ReplyBlock.Text) block.copy(text = block.text + event.text) else block
-            }
-
-            is StreamEvent.ThinkingDelta -> update(event.index) { block ->
-                if (block is ReplyBlock.Thinking) {
-                    block.copy(thinking = block.thinking + event.text)
-                } else {
-                    block
-                }
-            }
-
-            is StreamEvent.SignatureDelta -> update(event.index) { block ->
-                if (block is ReplyBlock.Thinking) {
-                    block.copy(signature = (block.signature.orEmpty() + event.signature))
-                } else {
-                    block
-                }
-            }
-
-            is StreamEvent.CitationDelta -> update(event.index) { block ->
-                if (block is ReplyBlock.Text) block.copy(citations = block.citations.plusUnique(event.citation))
-                else block
-            }
+            is StreamEvent.TextDelta -> update(event.index) { appendText(event.text, thinking = false) }
+            is StreamEvent.ThinkingDelta -> update(event.index) { appendText(event.text, thinking = true) }
+            is StreamEvent.SignatureDelta -> update(event.index) { appendSignature(event.signature) }
+            is StreamEvent.CitationDelta -> update(event.index) { addCitation(event.citation) }
 
             is StreamEvent.BlockStop -> {
-                update(event.index) { block ->
-                    if (block is ReplyBlock.Thinking && block.startedAt != null &&
-                        block.endedAt == null
-                    ) {
-                        block.copy(endedAt = now)
-                    } else {
-                        block
-                    }
-                }
+                update(event.index) { stop(now) }
                 indexOf.remove(event.index)
             }
 
@@ -131,32 +117,84 @@ class ReplyAccumulator {
      * （`ContinuePolicy` 靠它禁掉"继续生成"），只是不再删字。
      */
     fun settle(now: Long) {
-        blocks = blocks.map { block ->
-            if (block is ReplyBlock.Thinking && block.startedAt != null && block.endedAt == null) {
-                block.copy(endedAt = now)
-            } else {
-                block
-            }
-        }
+        entries.forEach { if (it.stop(now)) cachedBlocks = null }
         indexOf.clear()
     }
 
     /** 思考总用时（毫秒）。没有思考块时为 null。 */
     fun thinkingMillis(now: Long): Long? {
-        val spans = blocks.filterIsInstance<ReplyBlock.Thinking>().mapNotNull { block ->
-            val start = block.startedAt ?: return@mapNotNull null
-            (block.endedAt ?: now) - start
+        var total: Long? = null
+        for (entry in entries) {
+            val duration = entry.thinkingMillis(now) ?: continue
+            total = (total ?: 0L) + duration
         }
-        return spans.takeIf { it.isNotEmpty() }?.sum()
+        return total
     }
 
-    private inline fun update(index: Int, transform: (ReplyBlock) -> ReplyBlock) {
+    private inline fun update(index: Int, change: PendingBlock.() -> Boolean) {
         val at = indexOf[index] ?: return
-        val block = blocks.getOrNull(at) ?: return
-        val next = transform(block)
-        if (next !== block) {
-            blocks = blocks.toMutableList().also { it[at] = next }
+        if (entries[at].change()) cachedBlocks = null
+    }
+
+    private class PendingBlock(private var block: ReplyBlock, private val fromCurrentResponse: Boolean = false) {
+        private var text: StringBuilder? = null
+        private var signature: StringBuilder? = null
+        private var citations: LinkedHashMap<String, Citation>? = null
+        private var cached: ReplyBlock? = block
+
+        fun appendText(delta: String, thinking: Boolean): Boolean {
+            val initial = when (val current = block) {
+                is ReplyBlock.Thinking -> if (thinking) current.thinking else return false
+                is ReplyBlock.Text -> if (!thinking) current.text else return false
+                else -> return false
+            }
+            if (delta.isEmpty()) return false
+            (text ?: StringBuilder(initial).also { text = it }).append(delta)
+            cached = null
+            return true
         }
+
+        fun appendSignature(delta: String): Boolean {
+            val current = block as? ReplyBlock.Thinking ?: return false
+            (signature ?: StringBuilder(current.signature.orEmpty()).also { signature = it }).append(delta)
+            cached = null
+            return true
+        }
+
+        fun addCitation(citation: Citation): Boolean {
+            val current = block as? ReplyBlock.Text ?: return false
+            val byUrl = citations ?: linkedMapOf<String, Citation>().also { map ->
+                current.citations.forEach { map.putIfAbsent(it.url, it) }
+                citations = map
+            }
+            if (byUrl.putIfAbsent(citation.url, citation) != null) return false
+            cached = null
+            return true
+        }
+
+        fun stop(now: Long): Boolean {
+            val current = block as? ReplyBlock.Thinking ?: return false
+            val start = current.startedAt ?: return false
+            if (!fromCurrentResponse || current.endedAt != null) return false
+            block = current.copy(endedAt = now.coerceAtLeast(start))
+            cached = null
+            return true
+        }
+
+        fun thinkingMillis(now: Long): Long? {
+            val current = block as? ReplyBlock.Thinking ?: return null
+            val start = current.startedAt ?: return null
+            val end = current.endedAt ?: now.takeIf { fromCurrentResponse } ?: return null
+            return (end - start).coerceAtLeast(0L)
+        }
+
+        fun snapshot(): ReplyBlock = cached ?: when (val current = block) {
+            is ReplyBlock.Text -> current.copy(text = text?.toString() ?: current.text,
+                citations = citations?.values?.toList() ?: current.citations)
+            is ReplyBlock.Thinking -> current.copy(thinking = text?.toString() ?: current.thinking,
+                signature = signature?.toString() ?: current.signature)
+            else -> current
+        }.also { cached = it }
     }
 
     /** 思考块从开始计时（服务端不给时刻，只能本地记）。 */
@@ -171,7 +209,3 @@ class ReplyAccumulator {
         const val MaxTokens = "max_tokens"
     }
 }
-
-/** 同一块内引用按 url 去重（协议：同一块内引用按 url 只记一次）。 */
-private fun List<Citation>.plusUnique(citation: Citation): List<Citation> =
-    if (any { it.url == citation.url }) this else this + citation

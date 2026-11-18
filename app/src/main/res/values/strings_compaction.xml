@@ -1,0 +1,7 @@
+<resources>
+    <string name="compact_batch_source">正在压缩第 %1$d 批（当前阶段 %2$d%%）</string>
+    <string name="compact_batch_merge">正在合并摘要（第 %1$d 批，当前阶段 %2$d%%）</string>
+    <string name="compact_batch_retry">正在重试：%1$s</string>
+    <string name="compact_request_timeout">等待摘要超时。请检查接口或稍后重试，已完成的批次会保留。</string>
+    <string name="compact_no_new_history">暂无可纳入摘要的更早消息，已保留当前摘要。</string>
+</resources>

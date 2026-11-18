@@ -122,6 +122,7 @@ internal suspend fun compactInBatches(
     onCheckpoint: suspend (CompactionCheckpoint) -> Unit = {},
     onProgress: suspend (CompactionProgress) -> Unit = {},
     pause: suspend (Long) -> Unit = { delay(it) },
+    attemptTimeoutMillis: (Int) -> Long = { if (it <= 4_000) 45_000L else 90_000L },
     summarize: suspend (transcript: String, maxTokens: Int, batch: Int) -> String,
 ): String {
     require(contextWindow > 0)
@@ -133,12 +134,16 @@ internal suspend fun compactInBatches(
         val totalChars = source.sumOf { it.length.toLong() }
         require(state.offset <= totalChars) { "Invalid compaction checkpoint offset" }
         val chunks = boundedCompactionChunks(skipCompactionChars(source, state.offset), state.chunkChars).iterator()
-        while (chunks.hasNext()) {
-            var pending = chunks.next()
-            while (pending.isNotEmpty()) {
+        var pending = ""
+        while (pending.isNotEmpty() || chunks.hasNext()) {
+            // Refill across original chunk boundaries after a provider reduces the batch size.
+            if (pending.length < state.chunkChars && chunks.hasNext()) pending += chunks.next()
+            run {
                 var transientRetries = 0
                 var sizeRetries = 0
-                var outputTokens = minOf(if (state.level == 0) 2048 else 4096, state.requestWindow / 8).coerceAtLeast(1)
+                val outputCap = if (state.level == 0) 2048 else 4096
+                var outputTokens = minOf(outputCap, conservativeCompactionTokens(pending).coerceAtLeast(256).toInt(),
+                    state.requestWindow / 8).coerceAtLeast(1)
                 while (true) {
                     currentCoroutineContext().ensureActive()
                     val inputBudget = state.requestWindow * 3L / 4 - overhead - outputTokens
@@ -148,9 +153,9 @@ internal suspend fun compactInBatches(
                     val progress = CompactionProgress(state.level, state.completedBatches + 1, state.offset, totalChars)
                     onProgress(progress)
                     val summary = try {
-                        val candidate = withTimeoutOrNull(180_000L) {
+                        val candidate = withTimeoutOrNull(attemptTimeoutMillis(end)) {
                             summarize(input, outputTokens, progress.batch)
-                        }?.trim() ?: throw CompactionRequestFailure(CompactionFailureKind.TRANSIENT)
+                        }?.trim() ?: throw CompactionRequestFailure(CompactionFailureKind.TIMEOUT)
                         currentCoroutineContext().ensureActive()
                         if (candidate.isEmpty()) throw CompactionRequestFailure(CompactionFailureKind.EMPTY)
                         if (candidate.length > 64_000 || conservativeCompactionTokens(candidate) > state.requestWindow / 3) {
@@ -191,7 +196,7 @@ internal suspend fun compactInBatches(
                                 if (++transientRetries > 2) throw failure
                                 pause(600L * transientRetries * transientRetries)
                             }
-                            CompactionFailureKind.PERMANENT -> throw failure
+                            CompactionFailureKind.TIMEOUT, CompactionFailureKind.PERMANENT -> throw failure
                         }
                         continue
                     }
@@ -227,6 +232,7 @@ private fun conservativeCompactionTokens(text: String): Long = (TokenEstimate.of
 private fun fittingCompactionPrefix(text: String, maxChars: Int, tokenBudget: Long): Int {
     var low = 0
     var high = minOf(text.length, maxChars)
+    if (high == text.length && conservativeCompactionTokens(text) <= tokenBudget) return high
     while (low < high) {
         val mid = low + (high - low + 1) / 2
         if (conservativeCompactionTokens(text.substring(0, mid)) <= tokenBudget) low = mid else high = mid - 1

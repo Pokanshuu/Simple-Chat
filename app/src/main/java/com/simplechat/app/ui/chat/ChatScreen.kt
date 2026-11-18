@@ -1651,6 +1651,7 @@ fun ChatScreen(
                         usage = vm.lastUsage,
                         compaction = vm.compaction,
                         compacting = vm.compacting,
+                        compactionStatus = vm.compactionStatus,
                         onCompact = { vm.compactContext() },
                         onCancelCompact = { vm.cancelCompaction() },
                         onClearCompaction = { vm.clearCompaction() },

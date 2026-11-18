@@ -420,7 +420,7 @@
 
     <!-- Context compaction -->
     <string name="compact_title">Context compaction</string>
-    <string name="compact_note">Only affects what is sent to the model; local messages are not affected.</string>
+    <string name="compact_note">Only affects what is sent to the model; local messages are not affected. Compaction may take several minutes or longer.</string>
     <string name="compact_running">Compacting context…</string>
     <string name="compact_summarized">Earlier conversation summarized</string>
     <string name="compact_redo">Compact again</string>

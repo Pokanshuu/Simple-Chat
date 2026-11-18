@@ -29,7 +29,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -491,15 +490,10 @@ private fun rememberSmoothReveal(streaming: Boolean, value: String): String {
     if (!streaming) return value
     var shown by remember { mutableStateOf(value) }
     val latest by rememberUpdatedState(value)
-    var cooldownMs by remember { mutableLongStateOf(0L) }
-
-    LaunchedEffect(streaming) {
-        if (!streaming) {
-            // 定稿：一次追上，然后退出。此后内容不再变，不需要循环
-            if (shown != latest) shown = latest
-            return@LaunchedEffect
-        }
+    LaunchedEffect(Unit) {
+        var cooldownMs = 0L
         while (isActive) {
+            if (cooldownMs > 0L) delay(cooldownMs)
             val target = latest
             val current = shown
             // 没有新内容：只醒来比一下字符串引用，代价可以忽略
@@ -507,25 +501,20 @@ private fun rememberSmoothReveal(streaming: Boolean, value: String): String {
                 delay(SamplePollMs)
                 continue
             }
-            // 上次更新把帧拖长了 → 先按冷却睡一会；新内容不会打断这次冷却
-            if (cooldownMs > 0L) delay(cooldownMs)
-
             /*
              * 整段被换掉了（换消息 / 重新生成 / 从别处切回来）：
              * 没有"逐步浮现"可言，直接跳过去，否则会看到旧内容被一个字一个字擦掉。
              */
-            if (!target.startsWith(current)) {
-                shown = target
+            val isAppend = target.startsWith(current)
+            val start = if (isAppend) current.length else 0
+            val advance = if (isAppend) maxOf(1, ceil((target.length - start) * RevealRatio).toInt())
+                else target.length
+            val end = nextRevealEnd(target, start, advance)
+            if (isAppend && end == start) {
+                // The low surrogate may arrive in a later delta. Never retry without suspending.
+                delay(SamplePollMs)
                 continue
             }
-
-            // 积压多少，就按比例放出来；至少一个字，保证不会停住
-            val backlog = target.length - current.length
-            var advance = maxOf(1, ceil(backlog * RevealRatio).toInt())
-            var end = minOf(current.length + advance, target.length)
-            // 不要把代理对切成两半（emoji 会闪一帧方块）
-            if (end < target.length && target[end - 1].isHighSurrogate()) end -= 1
-            if (end <= current.length) continue
 
             // 对齐到帧的开始：让"提交 → 分块 → 解析尾块 → 排版 → 绘制"落在同一帧里
             val startNs = withFrameNanos { it }

@@ -7,11 +7,13 @@
     <string name="service_uploading">正在上传并解析文件…</string>
     <string name="service_long_text_prompt">本轮用户的完整输入在 message.txt 文件中。请完整阅读，并按文件中的用户要求作答。</string>
     <string name="service_group">独立工具 API</string>
+    <string name="service_active_profile">工具设置应用于当前 API 配置：%1$s</string>
+    <string name="service_connection">连接</string>
     <string name="service_search_title">搜索与网页读取 API</string>
     <string name="service_files_title">文件 API</string>
     <string name="service_enabled">已启用</string>
     <string name="service_disabled">未启用</string>
-    <string name="service_search_hint">兼容 DeepSeek Search / Fetch 协议。开启聊天中的联网搜索后，会先搜索再生成回答；问题中的网页链接也会读取。搜索资料可能不可信，请核对来源。搜索和读取可能单独计费。</string>
+    <string name="service_search_hint">兼容 DeepSeek Search / Fetch 协议。启用独立接口后，聊天中的联网搜索会先检索资料，再生成回答，也会读取问题中的网页链接。关闭独立接口后，如果当前聊天 API 支持内置搜索（如 DeepSeek 官方 API 的 Anthropic 兼容通道），仍可在聊天中开启联网搜索。请核对来源，搜索和网页读取可能单独计费。</string>
     <string name="service_files_hint">启用后，选择文件会上传原件并引用文件 ID；图片选择仍使用本地压缩。支持 DeepSeek /files 及相同协议的服务。文件与聊天必须使用同一服务和同一账号，DeepSeek 请使用 deepseek-flash。文件将保留在服务端，解析可能计费；取消等待后服务端仍可能完成上传。</string>
     <string name="service_base_hint">留空跟随聊天地址。独立地址可填写 DeepSeek 官方或兼容服务；接口路径会追加到此地址。复用聊天密钥前，请确认该服务可信且支持此密钥。</string>
     <string name="service_reuse_key">复用聊天 API Key</string>
@@ -24,7 +26,8 @@
     <string name="service_text_only">仅识别文字</string>
     <string name="service_rich_layout">识别文字和插图</string>
     <string name="service_invalid_url">接口地址或路径无效。请填写 HTTP(S) 地址和以 / 开头的路径，不要包含账号、查询参数或相对路径。</string>
-    <string name="service_key_missing">工具 API 尚未配置密钥。请在设置 → API 配置中填写独立密钥，或启用复用聊天 API Key。</string>
+    <string name="service_key_missing">工具 API 尚未配置密钥。请在设置 → API 配置的独立工具 API 分组中填写独立密钥，或启用复用聊天 API Key。</string>
+    <string name="api_profile_edit">编辑配置</string>
     <string name="service_count_invalid">搜索结果数量无效。请输入 1 到 50 之间的整数。</string>
     <string name="service_bad_response">工具 API 返回了无法识别的数据。请检查接口路径和协议是否兼容 DeepSeek，或稍后重试。</string>
     <string name="service_file_too_large">文件超过 %1$d MiB。请拆分或压缩文件后重试。</string>

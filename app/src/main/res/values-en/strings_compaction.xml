@@ -1,0 +1,7 @@
+<resources>
+    <string name="compact_batch_source">Summarizing batch %1$d (%2$d%% of this stage)</string>
+    <string name="compact_batch_merge">Merging summaries (batch %1$d, %2$d%% of this stage)</string>
+    <string name="compact_batch_retry">Retrying: %1$s</string>
+    <string name="compact_request_timeout">The summary request timed out. Check the endpoint or retry later. Completed batches are kept.</string>
+    <string name="compact_no_new_history">No additional older messages to summarize. The current summary was kept.</string>
+</resources>

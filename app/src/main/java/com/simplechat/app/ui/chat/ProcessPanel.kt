@@ -123,7 +123,7 @@ fun ProcessPanel(
  * 且滚动到顶时会跳动。底部对齐 + 溢出裁切则是平滑的「日志尾巴」。
  */
 @Composable
-private fun TailContent(reasoning: String) {
+internal fun TailContent(reasoning: String) {
     val colors = LocalChatColors.current
     val density = LocalDensity.current
     val maxPx = with(density) { TailHeight.toPx() }

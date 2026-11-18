@@ -11,7 +11,6 @@ import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -147,39 +146,22 @@ internal fun MessageShareTools(
     )
 
     imageDocument?.let { snapshot ->
-        AlertDialog(
-            onDismissRequest = { imageDocument = null },
-            title = { Text(stringResource(R.string.share_image_layout)) },
-            text = {
-                Column {
-                    ShareImageMode.entries.forEach { mode ->
-                        Row(Modifier.fillMaxWidth().clickable { imageMode = mode }.padding(vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(selected = imageMode == mode, onClick = { imageMode = mode })
-                            Column(Modifier.padding(start = 8.dp)) {
-                                Text(stringResource(if (mode == ShareImageMode.LONG) R.string.share_image_long else R.string.share_image_pages),
-                                    style = MaterialTheme.typography.titleSmall)
-                                Text(stringResource(if (mode == ShareImageMode.LONG) R.string.share_image_long_hint else R.string.share_image_pages_hint),
-                                    style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                    }
-                    Row(Modifier.fillMaxWidth().clickable { hideBranding = !hideBranding }.padding(top = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = hideBranding, onCheckedChange = { hideBranding = it })
-                        Text(stringResource(R.string.share_image_hide_branding), Modifier.padding(start = 8.dp))
-                    }
+        MessageShareImageOptions(
+            mode = imageMode,
+            onModeChange = { imageMode = it },
+            hideBranding = hideBranding,
+            onHideBrandingChange = { hideBranding = it },
+            onDismiss = { imageDocument = null },
+            onGenerate = { hideReasoning ->
+                val mode = imageMode
+                val branding = hideBranding
+                imageDocument = null
+                runExport {
+                    images = exportSharedImages(context, snapshot, mode, accent, hideBranding = branding,
+                        hideReasoning = hideReasoning)
+                    preview = true
                 }
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    val mode = imageMode
-                    val hide = hideBranding
-                    imageDocument = null
-                    runExport { images = exportSharedImages(context, snapshot, mode, accent, hide); preview = true }
-                }) { Text(stringResource(R.string.share_image_generate)) }
-            },
-            dismissButton = { TextButton(onClick = { imageDocument = null }) { Text(stringResource(R.string.action_cancel)) } },
         )
     }
 

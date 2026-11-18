@@ -1,6 +1,7 @@
 package com.simplechat.app.ui.chat
 
 import com.simplechat.app.data.Attachment
+import com.simplechat.app.net.ReplyBlock
 import java.io.StringWriter
 import org.junit.Assert.*
 import org.junit.Test
@@ -67,6 +68,33 @@ class MessageShareTest {
         val writer = StringWriter()
         writeSharedMarkdown(MessageShareDocument("large", messageShareGroups(listOf(user("u", body)))), writer, "Me", "AI", "Image")
         assertTrue(writer.toString().contains(body))
+    }
+
+    @Test fun `image reasoning is hidden by default and timeline thinking is not duplicated`() {
+        val reply = answer("a", "BeforeAfter").copy(
+            reasoning = "First thoughtSecond thought",
+            timeline = listOf(
+                ReplyBlock.Text("Before"),
+                ReplyBlock.Thinking("First thought", signature = "PRIVATE_SIGNATURE"),
+                ReplyBlock.Thinking("Second thought"),
+                ReplyBlock.Text("After", citations = emptyList()),
+            ),
+        )
+        assertEquals(listOf(ShareImageText("BeforeAfter")), shareImageText(reply))
+        assertEquals(listOf(ShareImageText("Before"), ShareImageText("First thoughtSecond thought", reasoning = true),
+            ShareImageText("After")), shareImageText(reply, hideReasoning = false))
+    }
+
+    @Test fun `image reasoning falls back to legacy when timeline thinking is missing or blank`() {
+        val reply = answer("a", "Answer").copy(reasoning = "Legacy thought")
+        val expected = listOf(ShareImageText("Legacy thought", reasoning = true), ShareImageText("Answer"))
+        assertEquals(expected, shareImageText(reply, hideReasoning = false))
+        assertEquals(expected, shareImageText(reply.copy(timeline = listOf(ReplyBlock.Thinking(" "),
+            ReplyBlock.Text("Answer"))), hideReasoning = false))
+        assertEquals(listOf(ShareImageText("Timeline thought", reasoning = true), ShareImageText("Answer")),
+            shareImageText(reply.copy(timeline = listOf(ReplyBlock.Thinking("Timeline thought"))), hideReasoning = false))
+        assertEquals(listOf(ShareImageText("Answer")), shareImageText(reply.copy(reasoning = " "), hideReasoning = false))
+        assertEquals(listOf(ShareImageText("Answer")), shareImageText(reply.copy(role = MessageRole.USER), hideReasoning = false))
     }
 
     @Test fun `image code fences preserve code and do not swallow subsequent headings`() {

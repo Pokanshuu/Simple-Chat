@@ -1,5 +1,8 @@
 package com.simplechat.app.ui.chat
 
+import com.simplechat.app.net.IndependentFetchName
+import com.simplechat.app.net.IndependentSearchKind
+import com.simplechat.app.net.IndependentSearchName
 import com.simplechat.app.net.ReplyBlock
 import com.simplechat.app.net.WebSource
 
@@ -113,6 +116,9 @@ internal fun isImageSearchKind(kind: String): Boolean =
  * [streaming] 只影响"进行态"的判定：流还没结束时，缺少结果的工具块算 `WIP`，
  * 结束后一律算 `FAILED`（服务端没给结果就是失败了，不能永远转圈）。
  */
+private fun resultFor(block: ReplyBlock.ToolUse, results: Map<String, ReplyBlock>): ReplyBlock? =
+    results[block.id] ?: if (block.name == IndependentSearchName) results["independent-search"] else null
+
 internal fun buildTimelineView(blocks: List<ReplyBlock>, streaming: Boolean): TimelineView {
     val results = blocks.mapNotNull { block ->
         when (block) {
@@ -123,13 +129,26 @@ internal fun buildTimelineView(blocks: List<ReplyBlock>, streaming: Boolean): Ti
     }.toMap()
 
     val registry = SourceRegistry()
+    val independentSourceUrls = mutableSetOf<String>()
     // 第一遍：按"搜索结果 → 打开的网页"的**出现顺序**编号，与正文引用无关
     blocks.forEach { block ->
-        if (block !is ReplyBlock.ToolUse) return@forEach
-        when (val result = results[block.id]) {
-            is ReplyBlock.SearchResult -> result.results.forEach { registry.add(it) }
-            is ReplyBlock.FetchResult -> if (!result.failed && result.url.isNotBlank()) {
-                registry.add(WebSource(url = result.url, title = result.title, pageAge = result.publishedAt))
+        when (block) {
+            is ReplyBlock.ToolUse -> when (val result = resultFor(block, results)) {
+                is ReplyBlock.SearchResult -> result.results.forEach { source ->
+                    registry.add(source)
+                    if (block.name == IndependentSearchName) independentSourceUrls += source.url
+                }
+                is ReplyBlock.FetchResult -> if (!result.failed && result.url.isNotBlank()) {
+                    registry.add(WebSource(url = result.url, title = result.title, pageAge = result.publishedAt))
+                    if (block.name == IndependentFetchName) independentSourceUrls += result.url
+                }
+                else -> Unit
+            }
+            is ReplyBlock.SearchResult -> if (block.toolUseId == "independent-search") {
+                block.results.forEach { source ->
+                    registry.add(source)
+                    independentSourceUrls += source.url
+                }
             }
             else -> Unit
         }
@@ -138,8 +157,16 @@ internal fun buildTimelineView(blocks: List<ReplyBlock>, streaming: Boolean): Ti
     val steps = mutableListOf<TimelineStep>()
     var pending = mutableListOf<ReplyBlock.Text>()
 
-    // 用**下标**而不是对象去定位可合并的步骤：data class 的相等性会误合并同文步骤
-    var thinkingIndex: Int? = null
+    // Materialize a run of adjacent thinking blocks only once.
+    var pendingThinking: TimelineStep.Thinking? = null
+    var combinedThinking: StringBuilder? = null
+
+    fun flushThinking() {
+        val step = pendingThinking ?: return
+        steps += combinedThinking?.let { step.copy(text = it.toString()) } ?: step
+        pendingThinking = null
+        combinedThinking = null
+    }
     val searchIndexByKind = mutableMapOf<String, Int>()
 
     fun flushPreamble() {
@@ -154,32 +181,63 @@ internal fun buildTimelineView(blocks: List<ReplyBlock>, streaming: Boolean): Ti
     blocks.forEach { block ->
         when (block) {
             is ReplyBlock.Text -> {
-                thinkingIndex = null
+                flushThinking()
                 pending += block
             }
 
             is ReplyBlock.Thinking -> {
                 val active = streaming && block.endedAt == null
-                val at = thinkingIndex
-                if (at != null) {
-                    val current = steps[at] as TimelineStep.Thinking
-                    steps[at] = current.copy(text = current.text + block.thinking, active = active)
+                val current = pendingThinking
+                if (current != null) {
+                    (combinedThinking ?: StringBuilder(current.text).also { combinedThinking = it }).append(block.thinking)
+                    pendingThinking = current.copy(active = active)
                 } else if (block.thinking.isNotBlank()) {
                     flushPreamble()
-                    steps += TimelineStep.Thinking(
+                    pendingThinking = TimelineStep.Thinking(
                         key = "thinking-${steps.size}",
                         text = block.thinking,
                         active = active,
                     )
-                    thinkingIndex = steps.lastIndex
                 }
             }
 
             is ReplyBlock.ToolUse -> {
-                thinkingIndex = null
-                val result = results[block.id]
+                flushThinking()
+                val result = resultFor(block, results)
                 val status = statusOf(result, streaming)
-                when (block.action) {
+                when {
+                    block.name == IndependentSearchName && block.kind == IndependentSearchKind -> {
+                        flushPreamble()
+                        val search = result as? ReplyBlock.SearchResult
+                        val sources = search?.results?.map(registry::refFor).orEmpty()
+                        steps += TimelineStep.Search(
+                            key = block.id,
+                            kind = block.kind,
+                            queries = block.queries,
+                            sources = sources,
+                            status = status,
+                        )
+                    }
+                    block.name == IndependentFetchName && block.kind == "web_fetch" && block.action == "open_page" -> {
+                        val fetched = result as? ReplyBlock.FetchResult
+                        val url = block.url.ifBlank { fetched?.url.orEmpty() }
+                        val page = PageRef(
+                            url = url,
+                            title = fetched?.title?.takeIf { it.isNotBlank() } ?: url,
+                            failed = status == ToolStatus.FAILED,
+                        )
+                        if (status == ToolStatus.WIP) {
+                            val last = steps.lastOrNull() as? TimelineStep.ReadLink
+                            if (last != null) steps[steps.lastIndex] = last.copy(links = last.links + page)
+                            else steps += TimelineStep.ReadLink(listOf(page))
+                        } else {
+                            flushPreamble()
+                            val last = steps.lastOrNull() as? TimelineStep.Open
+                            if (last != null) steps[steps.lastIndex] = last.copy(pages = last.pages + page)
+                            else steps += TimelineStep.Open(listOf(page))
+                        }
+                    }
+                    else -> when (block.action) {
                     "search" -> {
                         flushPreamble()
                         val sources = (result as? ReplyBlock.SearchResult)
@@ -253,6 +311,7 @@ internal fun buildTimelineView(blocks: List<ReplyBlock>, streaming: Boolean): Ti
                             steps += TimelineStep.Find(listOf(item))
                         }
                     }
+                    }
                 }
             }
 
@@ -261,11 +320,12 @@ internal fun buildTimelineView(blocks: List<ReplyBlock>, streaming: Boolean): Ti
         }
     }
 
+    flushThinking()
     return TimelineView(
         steps = steps,
-        answer = joinText(pending, registry, withMarkers = true),
+        answer = joinText(pending, registry, withMarkers = true, independentSourceUrls = independentSourceUrls),
         sources = registry.list,
-        thinkingMillis = totalThinkingMillis(blocks, streaming),
+        thinkingMillis = totalThinkingMillis(blocks),
     )
 }
 
@@ -273,15 +333,16 @@ internal fun buildTimelineView(blocks: List<ReplyBlock>, streaming: Boolean): Ti
  * 思考总用时（毫秒）。各思考块用时之和；有块缺少起止时刻时返回 null
  * —— 那样只能显示「已深度思考」而不能给秒数，给一个编的数是骗人。
  */
-internal fun totalThinkingMillis(blocks: List<ReplyBlock>, streaming: Boolean): Long? {
-    val thinking = blocks.filterIsInstance<ReplyBlock.Thinking>()
-    if (thinking.isEmpty()) return null
-    var total = 0L
-    thinking.forEach { block ->
+internal fun totalThinkingMillis(blocks: List<ReplyBlock>): Long? {
+    var total: Long? = null
+    for (block in blocks) {
+        if (block !is ReplyBlock.Thinking) continue
         val start = block.startedAt ?: return null
-        total += (block.endedAt ?: if (streaming) System.currentTimeMillis() else start) - start
+        val end = block.endedAt ?: return null
+        // Both endpoints were captured in the same stream. Never subtract wall time from them.
+        total = (total ?: 0L) + (end - start).coerceAtLeast(0L)
     }
-    return total.coerceAtLeast(0)
+    return total
 }
 
 /** 把若干文本块拼成一段 markdown，引用处插入角标。 */
@@ -289,21 +350,50 @@ private fun joinText(
     blocks: List<ReplyBlock.Text>,
     registry: SourceRegistry,
     withMarkers: Boolean,
+    independentSourceUrls: Set<String> = emptySet(),
 ): String {
     val out = StringBuilder()
     blocks.forEach { block ->
+        val markdown = if (withMarkers) linkKnownSources(block.text, registry, independentSourceUrls) else block.text
         val indexes = block.citations.map { registry.add(it.url, it.title) }.distinct()
         if (!withMarkers || indexes.isEmpty()) {
-            out.append(block.text)
+            out.append(markdown)
         } else {
             // 引用挂在**块尾**，但块尾常带换行 —— 角标要插在换行之前
-            val trimmed = block.text.trimEnd()
+            val trimmed = markdown.trimEnd()
             out.append(trimmed)
             indexes.forEach { out.append(citationMark(it)) }
-            out.append(block.text.substring(trimmed.length))
+            out.append(markdown.substring(trimmed.length))
         }
     }
     return out.toString()
+}
+
+private val NumericMarkdownLink = Regex("\\[(\\d+)]\\((https?://[^\\s)]+)\\)")
+
+/** Convert explicit numeric links only when they point to an independent-search source. */
+private fun linkKnownSources(markdown: String, registry: SourceRegistry, independentUrls: Set<String>): String {
+    if (independentUrls.isEmpty() || !NumericMarkdownLink.containsMatchIn(markdown)) return markdown
+    val known = registry.list.asSequence().filter { it.url in independentUrls }.associateBy { it.url }
+    val lines = markdown.split('\n')
+    var inFence = false
+    val fence = Regex("^\\s*(```+|~~~+)")
+    return lines.map { line ->
+        if (fence.containsMatchIn(line)) {
+            inFence = !inFence
+            line
+        } else if (inFence) {
+            line
+        } else {
+            val codeRanges = Regex("`+[^`]*`+").findAll(line).map { it.range }.toList()
+            NumericMarkdownLink.replace(line) { match ->
+                if (codeRanges.any { match.range.first in it }) return@replace match.value
+                val url = match.groupValues[2]
+                val source = known[url] ?: return@replace match.value
+                citationMark(source.index)
+            }
+        }
+    }.joinToString("\n")
 }
 
 /**

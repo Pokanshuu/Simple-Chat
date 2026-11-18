@@ -376,6 +376,7 @@ fun ContextPanelContent(
     modifier: Modifier = Modifier,
     /** 服务端回报的**最近一次**请求用量；没发过请求时为 null。 */
     usage: RequestUsage? = null,
+    compactionStatus: String? = null,
 ) {
     val colors = LocalChatColors.current
 
@@ -480,6 +481,7 @@ fun ContextPanelContent(
             onCancelCompact = onCancelCompact,
             onClearCompaction = onClearCompaction,
             onUpdateSummary = onUpdateSummary,
+            compactionStatus = compactionStatus,
         )
     }
 }
@@ -541,6 +543,7 @@ internal fun CompactionSection(
     onCancelCompact: () -> Unit,
     onClearCompaction: () -> Unit,
     onUpdateSummary: (String) -> Unit,
+    compactionStatus: String? = null,
 ) {
     val colors = LocalChatColors.current
     var editing by remember { mutableStateOf(false) }
@@ -571,7 +574,7 @@ internal fun CompactionSection(
                 )
                 Spacer(Modifier.size(10.dp))
                 Text(
-                    text = stringResource(R.string.compact_running),
+                    text = compactionStatus ?: stringResource(R.string.compact_running),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f),

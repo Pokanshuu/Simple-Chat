@@ -13,7 +13,7 @@ import com.mikepenz.markdown.model.markdownInlineContent
 import com.simplechat.app.ui.theme.LocalIsDarkTheme
 import org.intellij.markdown.MarkdownElementTypes
 
-internal data class InlineMathDocument(val markdown: String, val formulas: Map<String, String>)
+internal data class InlineMathDocument(val markdown: String, val formulas: Map<String, ContentSegment.Formula>)
 
 /** Keep inline spans inside their original paragraph; only explicit display math splits a block. */
 internal fun displayMathSegments(source: String): List<ContentSegment> = buildList {
@@ -22,7 +22,7 @@ internal fun displayMathSegments(source: String): List<ContentSegment> = buildLi
     splitMath(source).forEach { segment -> when (segment) {
         is ContentSegment.Text -> paragraph.append(segment.text)
         is ContentSegment.Formula -> if (segment.display) { flush(); add(segment) }
-            else paragraph.append("\\(").append(segment.tex).append("\\)")
+            else paragraph.append(segment.source)
     } }
     flush()
 }
@@ -33,16 +33,27 @@ internal fun inlineMathDocument(source: String): InlineMathDocument {
     if (segments.none { it is ContentSegment.Formula && !it.display }) return InlineMathDocument(source, emptyMap())
     var prefix = "SCMATH"
     while (source.contains(prefix)) prefix += "X"
-    val formulas = linkedMapOf<String, String>()
+    val formulas = linkedMapOf<String, ContentSegment.Formula>()
     val markdown = buildString {
-        segments.forEach { segment -> when (segment) {
-            is ContentSegment.Text -> append(segment.text)
-            is ContentSegment.Formula -> if (segment.display) append("\\[").append(segment.tex).append("\\]") else {
+        var inToken = false
+        for (segment in segments) {
+            if (segment is ContentSegment.Formula && !segment.display) {
+                // Adjacent code-span markers would form a single longer backtick run.
+                append(if (inToken) ' ' else '`')
                 val id = "$prefix${formulas.size}"
-                formulas[id] = segment.tex
-                append('`').append(id).append('`')
+                formulas[id] = segment
+                append(id)
+                inToken = true
+            } else {
+                if (inToken) append('`')
+                inToken = false
+                append(when (segment) {
+                    is ContentSegment.Text -> segment.text
+                    is ContentSegment.Formula -> segment.source
+                })
             }
-        } }
+        }
+        if (inToken) append('`')
     }
     return InlineMathDocument(markdown, formulas)
 }
@@ -58,16 +69,18 @@ internal fun rememberInlineMath(document: InlineMathDocument): Pair<com.mikepenz
     val config = remember(dark, color, fonts, fontSize) { LatexConfig(fontSize = fontSize, fontFamilies = fonts,
         theme = if (dark) LatexTheme.dark(color = color) else LatexTheme.light(color = color)) }
     val measurer = rememberLatexMeasurer(config)
-    val inline = remember(document, measurer, config, dark) { document.formulas.mapNotNull { (id, tex) ->
-        val presentation = prepareLatexPresentation(tex)
+    val inline = remember(document, measurer, config, dark) { document.formulas.mapNotNull { (id, formula) ->
+        val presentation = prepareLatexPresentation(formula.tex)
         presentation.nativeTex?.let { measurer.inlineContent(it, config, dark) }?.let { id to it }
     }.toMap() }
     val annotator = remember(document, inline) { markdownAnnotator { content, child ->
         if (child.type != MarkdownElementTypes.CODE_SPAN) false else {
-            val token = content.substring(child.startOffset, child.endOffset).trim('`')
-            val tex = document.formulas[token]
-            if (tex == null) false else {
-                if (inline.containsKey(token)) appendInlineContent(token, tex) else append(tex)
+            val tokens = content.substring(child.startOffset, child.endOffset).trim('`').split(' ')
+            if (!tokens.all(document.formulas::containsKey)) false else {
+                for (token in tokens) {
+                    val formula = document.formulas.getValue(token)
+                    if (inline.containsKey(token)) appendInlineContent(token, formula.tex) else append(formula.source)
+                }
                 true
             }
         }

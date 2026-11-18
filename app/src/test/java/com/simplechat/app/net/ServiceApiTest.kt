@@ -15,8 +15,11 @@ import org.junit.Test
 
 class ServiceApiTest {
     @Test fun `independent search preserves incremental reasoning and answer in timeline`() {
-        val research = SearchAugmentation(sources = listOf(WebSource("https://example.com")))
-        val blocks = research.replyBlocks("reasoning delta", "answer delta")
+        val research = SearchAugmentation(blocks = listOf(
+            ReplyBlock.SearchResult("tool", IndependentSearchKind, listOf(WebSource("https://example.com"))),
+        ))
+        val blocks = research.replyBlocks("reasoning delta", "answer delta", 10, 20)
+        assertEquals(20L, (blocks[1] as ReplyBlock.Thinking).endedAt)
         assertTrue(blocks[0] is ReplyBlock.SearchResult)
         assertEquals("reasoning delta", (blocks[1] as ReplyBlock.Thinking).thinking)
         assertEquals("answer delta", (blocks[2] as ReplyBlock.Text).text)
@@ -66,13 +69,18 @@ class ServiceApiTest {
         }.build()
         val settings = StoredSettings(baseUrl = "https://chat.invalid", apiKey = "fixture-key",
             searchApi = ServiceApiConfig(enabled = true, baseUrl = "https://search.invalid"))
-        val result = searchAugmentation(settings, "Read https://example.com/article and explain", ServiceApi(client))
+        val progress = mutableListOf<List<ReplyBlock>>()
+        val result = searchAugmentation(settings, "Read https://example.com/article and explain", ServiceApi(client)) {
+            progress += it
+        }
         assertEquals(2, requests.size)
         assertTrue(requests.all { it.url.host == "search.invalid" && it.header("Authorization") == "Bearer fixture-key" })
         val sent = Buffer(); requests[1].body!!.writeTo(sent)
         assertEquals("https://example.com/article", Json.parseToJsonElement(sent.readUtf8()).jsonObject["url"]!!.jsonPrimitive.content)
         assertTrue(result.context.contains("Evidence") && result.context.contains("Fetched body"))
         assertEquals(2, result.sources.size)
+        assertTrue(progress.first().single() is ReplyBlock.ToolUse)
+        assertTrue(progress.last().any { it is ReplyBlock.FetchResult && !it.failed })
     }
 
     @Test fun `file references serialize for both protocols without embedding original`() {
