@@ -40,6 +40,34 @@ class ChatRequestEncodingTest {
         maxTokens = maxTokens,
     )
 
+    @Test
+    fun `the discovered image and reasoning route sends its own fields and caps output`() {
+        val catalog = parseRemoteModelCatalog(json, """{"models":{"vision-alias":{
+            "input_modalities":["text","image"],"supported_parameters":["reasoning"],"max_output_tokens":2048
+        }}}""")
+        val model = ModelCatalog.find(ProviderKind.CUSTOM, "vision-alias", catalog.contextWindows, catalog.metadata)
+        assertTrue(model.supportsVision)
+        val body = encode(buildChatRequest(model, listOf(OutMessageDto("user", MessageContent.withImages("",
+            listOf(ImageInput("data:image/png;base64,AAA"))))), true, "high", 4096))
+        assertTrue(body.contains("\"model\":\"vision-alias\""))
+        assertTrue(body.contains("\"image_url\""))
+        assertTrue(body.contains("\"reasoning\":{\"enabled\":true,\"effort\":\"high\"}"))
+        assertTrue(body.contains("\"max_tokens\":2048"))
+        assertFalse(body.contains("\"thinking\""))
+        assertFalse(body.contains("\"reasoning_effort\""))
+    }
+
+    @Test
+    fun `effort only routes never inherit the DeepSeek thinking payload`() {
+        val model = ModelCatalog.find(ProviderKind.CUSTOM, "openai/gpt-5-mini")
+        val body = encode(buildChatRequest(model, emptyList(), true, "high", 2048, 0.7, 0.99))
+        assertTrue(body.contains("\"reasoning_effort\":\"high\""))
+        assertTrue(body.contains("\"max_completion_tokens\":2048"))
+        assertFalse(body.contains("\"thinking\""))
+        assertFalse(body.contains("\"top_p\""))
+        assertFalse(body.contains("\"temperature\""))
+    }
+
     // ── 核心回归 ──────────────────────────────────────────
 
     @Test

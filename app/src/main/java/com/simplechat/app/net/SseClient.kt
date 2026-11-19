@@ -46,8 +46,9 @@ class SseClient(
         extraHeaders: Map<String, String> = emptyMap(),
         contextWindow: Int? = null,
         retryBeforeContent: Boolean = true,
+        maxOutputTokens: Int? = null,
     ): Flow<StreamEvent> = flow {
-        validateRequestBudget(estimatedInputTokens(request), request.maxTokens, contextWindow)
+        validateRequestBudget(estimatedInputTokens(request), request.maxTokens ?: request.maxCompletionTokens, contextWindow, maxOutputTokens)
         val body = StreamingJsonRequestBody(json, request)
         val largeRequest = body.contentLength() >= LargeRequestBytes
 

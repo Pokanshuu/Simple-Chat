@@ -123,6 +123,19 @@
     <string name="settings_chat_behavior">对话行为</string>
     <string name="settings_theme_mode">主题模式</string>
     <string name="settings_group_text">文字</string>
+    <string name="settings_loading_words">加载词</string>
+    <string name="loading_words_default">默认</string>
+    <string name="loading_words_count">自定义 · %1$d 条</string>
+    <string name="loading_words_empty">未添加自定义加载词，等待回复时会从 8 条默认文案中随机选择。</string>
+    <string name="loading_words_hint">等待回复时每轮随机显示一条自定义加载词。</string>
+    <string name="loading_words_use_theme_color">使用主题色</string>
+    <string name="loading_words_add">新增加载词</string>
+    <string name="loading_words_edit">编辑加载词</string>
+    <string name="loading_words_edit_item">编辑「%1$s」</string>
+    <string name="loading_words_delete_item">删除「%1$s」？</string>
+    <string name="loading_words_placeholder">例如：正在整理思路</string>
+    <string name="loading_words_invalid">请输入加载词</string>
+    <string name="loading_words_duplicate">这条加载词已存在</string>
     <string name="settings_group_display">显示</string>
     <string name="settings_group_search">搜索</string>
     <string name="settings_group_backup">备份</string>
@@ -159,6 +172,16 @@
     <string name="api_model_unset">未选择</string>
     <string name="api_model_empty_hint">还没有模型列表。先点「测试连接」拉取这个端点的模型，也可以手动填写。</string>
     <string name="api_model_manual">手动填写模型</string>
+    <string name="api_model_capabilities">模型能力</string>
+    <string name="api_model_vision">图像输入</string>
+    <string name="api_model_thinking">深度思考</string>
+    <string name="api_model_context">上下文上限（token）</string>
+    <string name="api_model_wire">思考请求格式</string>
+    <string name="api_model_automatic">自动</string>
+    <string name="api_model_enabled">支持</string>
+    <string name="api_model_disabled">不支持</string>
+    <string name="api_model_auto_window">自动：%1$d</string>
+    <string name="api_model_invalid_window">请输入正整数，或留空使用自动值。</string>
 
     <!-- ── 设置：导入导出 ───────────────────────────────── -->
     <string name="import_reading">读取中…（大文件需要一会儿）</string>
@@ -464,7 +487,16 @@
     <!-- ==== 来自 g3 组 ==== -->
 <!-- ── 消息列表 / 消息操作（MessageList.kt、MessageEditDialog.kt、MessageIndex.kt） ── -->
     <string name="msg_regenerate">重新生成</string>
-    <string name="reply_waiting">加载中</string>
+    <string-array name="reply_waiting_phrases" translatable="false">
+        <item>Simplifying…</item>
+        <item>Keeping it simple…</item>
+        <item>Less complex, more chat…</item>
+        <item>Simple thoughts in progress…</item>
+        <item>Trimming the fluff…</item>
+        <item>Just a simple chat…</item>
+        <item>Brewing a simple answer…</item>
+        <item>Making it simple…</item>
+    </string-array>
     <string name="msg_continue">继续生成</string>
     <string name="msg_fork_from_here">从这里新建对话</string>
     <string name="msg_expand_all">展开全部</string>
@@ -581,8 +613,19 @@
     <string name="voice_error_busy">识别服务正忙，请稍后再试</string>
     <string name="voice_error_server">识别服务出错了，请稍后再试</string>
     <string name="voice_permission_denied">未授予麦克风权限，语音输入不可用</string>
-    <string name="voice_listening">正在聆听…松手结束</string>
-    <string name="input_hint_hold_to_talk">点击输入文字或按住说话</string>
+    <string name="voice_listening">语音识别中，松手发送</string>
+    <string name="voice_release_cancel">松手取消</string>
+    <string name="voice_swipe_cancel">上滑取消</string>
+    <string name="voice_processing">正在转写…</string>
+    <string name="voice_tap_to_start">开始语音输入</string>
+    <string name="voice_tap_to_send">点击发送语音识别结果</string>
+    <string name="voice_source_official">DeepSeek 官方语音识别</string>
+    <string name="voice_source_system">Android 系统语音识别</string>
+    <string name="input_hint_hold_to_talk">发消息或按住说话</string>
+    <string name="hist_pinned_collapsed">已折叠</string>
+    <string name="hist_pinned_expanded">已展开</string>
+    <string name="hist_pinned_expand">展开置顶会话</string>
+    <string name="hist_pinned_collapse">折叠置顶会话</string>
 
     <!-- ── 朗读（系统 TTS） ──────────────────────────────── -->
     <string name="tts_speak">朗读</string>

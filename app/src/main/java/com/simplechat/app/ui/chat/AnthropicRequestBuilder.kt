@@ -65,6 +65,7 @@ internal fun buildAnthropicRequest(
     temperature: Double? = null,
     topP: Double? = null,
     reasoningEffort: String? = null,
+    outputLimit: Int? = null,
 ): AnthropicRequest {
     val messages = mutableListOf<AnthropicMessageParam>()
 
@@ -112,13 +113,16 @@ internal fun buildAnthropicRequest(
     } else {
         maxTokens?.takeIf { it > 0 } ?: AnthropicRequestDefaults.MaxTokens
     }
-    val vanillaThinking = !deepSeekExtensions && thinkingEnabled
+    effectiveMaxTokens = effectiveMaxTokens?.let { minOf(it, outputLimit ?: it) }
+    val vanillaThinking = !deepSeekExtensions && thinkingEnabled &&
+        (outputLimit == null || outputLimit > AnthropicRequestDefaults.MinThinkingBudgetTokens)
+    var thinkingBudget = AnthropicRequestDefaults.MaxThinkingBudgetTokens
     if (vanillaThinking) {
-        val budget = AnthropicRequestDefaults.MaxThinkingBudgetTokens
+        thinkingBudget = minOf(thinkingBudget, outputLimit?.minus(1) ?: thinkingBudget)
         // 给正文留出空间：max_tokens 至少要比预算多 1024
         effectiveMaxTokens = maxOf(
             effectiveMaxTokens ?: 0,
-            budget + AnthropicRequestDefaults.MinThinkingBudgetTokens,
+            minOf(thinkingBudget + AnthropicRequestDefaults.MinThinkingBudgetTokens, outputLimit ?: Int.MAX_VALUE),
         )
     }
 
@@ -167,7 +171,7 @@ internal fun buildAnthropicRequest(
             deepSeekExtensions && thinkingEnabled -> AnthropicThinking.Enabled
             deepSeekExtensions -> AnthropicThinking.Disabled
             vanillaThinking -> AnthropicThinking.enabledWithBudget(
-                AnthropicRequestDefaults.MaxThinkingBudgetTokens,
+                thinkingBudget,
             )
             // 原版：关闭思考 = **省略这个字段**（不接受 type=disabled）
             else -> null
@@ -186,7 +190,7 @@ internal fun buildAnthropicRequest(
         ) AnthropicTitle() else null,
         maxTokens = effectiveMaxTokens,
         // 原版 Anthropic 不允许同时改 temperature 与 top_p；这里只发 temperature
-        temperature = if (!deepSeekExtensions && !thinkingEnabled) temperature ?: 1.0 else null,
+        temperature = if (!deepSeekExtensions && !vanillaThinking) temperature ?: 1.0 else null,
         topP = if (deepSeekExtensions) topP else null,
         outputConfig = if (deepSeekExtensions && thinkingEnabled && reasoningEffort != null)
             com.simplechat.app.net.anthropic.AnthropicOutputConfig(reasoningEffort) else null,

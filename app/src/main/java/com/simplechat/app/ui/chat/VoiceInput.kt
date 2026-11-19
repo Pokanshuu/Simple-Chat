@@ -1,7 +1,10 @@
 package com.simplechat.app.ui.chat
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -11,174 +14,201 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.simplechat.app.R
 import com.simplechat.app.data.Res
+import com.simplechat.app.net.DeepSeekAsr
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
-/**
- * 语音输入状态。
- *
- * 刻意只有三档，与用户能看到的三种界面一一对应：
- * 没在录 / 正在录 / 刚出错。
- */
-data class VoiceInputState(
-    val listening: Boolean = false,
-    /** 识别中的中间结果，实时回显到输入框。 */
-    val partial: String = "",
-    /** 失败原因；非空时界面弹一次提示，之后由调用方清掉。 */
-    val error: String? = null,
-    /** 当前设备有没有可用的识别服务。没有就不该露出麦克风。 */
-    val available: Boolean = false,
-)
+internal data class VoiceInputState(
+    val systemAvailable: Boolean = false,
+    val holding: Boolean = false,
+    val processing: Boolean = false,
+) {
+    val active: Boolean get() = holding || processing
+}
 
-/**
- * 语音输入。用**系统**识别服务（`SpeechRecognizer`），不接服务端 ASR。
- *
- * ### 为什么用系统识别而不是官方 demo 的 `/v1/tools/asr`
- * 1. 官方那个端点只在 DeepSeek 官方域上提供，OpenCode Go / 自建端点没有；
- * 2. 走系统识别**不需要额外网络请求**，也不额外计费；
- * 3. 系统识别在多数机型上可用，且支持中文。
- *
- * 代价是识别质量取决于机型（有的走本地、有的走厂商云），以及**需要
- * `RECORD_AUDIO` 运行时权限** —— 本项目唯一的一个。
- *
- * ### 为什么把 partial 也回显
- * 录音时看得见字，用户才知道"它在听"，也才敢在识别错时立刻停下重说。
- */
-class VoiceInputController(
+internal class VoiceInputController(
     private val context: Context,
-    private val onText: (String) -> Unit,
+    private val scope: CoroutineScope,
 ) {
     var state by mutableStateOf(VoiceInputState())
         private set
+    var level by mutableStateOf(0f)
+        private set
 
-    private var recognizer: SpeechRecognizer? = null
+    private class Session(val onResult: (String) -> Unit, val onError: (String) -> Unit) {
+        val held = AtomicBoolean(true)
+        var recognizer: SpeechRecognizer? = null
+        var recording: Job? = null
+        var timeout: Job? = null
+        var outcome: Result<String>? = null
+    }
 
-    /** 本次录音已确认的文字（中间结果每次都是全量，不需要累加）。 */
-    private var committed: String? = null
+    private var session: Session? = null
 
     fun refreshAvailability() {
-        state = state.copy(available = runCatching {
-            SpeechRecognizer.isRecognitionAvailable(context)
+        state = state.copy(systemAvailable = runCatching {
+            onDeviceAvailable() || SpeechRecognizer.isRecognitionAvailable(context)
         }.getOrDefault(false))
     }
 
-    fun start() {
-        if (state.listening) return
-        if (!state.available) {
-            state = state.copy(error = Res.get(R.string.voice_unavailable))
+    private fun onDeviceAvailable(): Boolean = Build.VERSION.SDK_INT >= 31 &&
+        SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+
+    fun start(official: DeepSeekAsr.Config?, onResult: (String) -> Unit, onError: (String) -> Unit): Boolean {
+        if (session != null || (official == null && !state.systemAvailable)) return false
+        if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            onError(Res.get(R.string.voice_error_permission))
+            return false
+        }
+        val run = Session(onResult, onError)
+        session = run
+        state = state.copy(holding = true)
+        if (official != null) {
+            run.recording = scope.launch {
+                try {
+                    val wav = try {
+                        recordVoicePcm(run.held::get) { rms -> updateLevel(run, kotlin.math.sqrt(rms * 4f)) }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        complete(run, error(R.string.voice_error_audio))
+                        return@launch
+                    }
+                    // A recording limit can be reached before the finger lifts. Never upload until release.
+                    while (run.held.get()) delay(30)
+                    val outcome = if (wav == null) error(R.string.voice_empty) else {
+                        Result.success(DeepSeekAsr.transcribe(official, wav))
+                    }
+                    complete(run, outcome)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    complete(run, error(R.string.voice_error_server))
+                }
+            }
+        } else {
+            try {
+                val recognizer = if (SpeechRecognizer.isRecognitionAvailable(context)) {
+                    SpeechRecognizer.createSpeechRecognizer(context)
+                } else if (Build.VERSION.SDK_INT >= 31 && onDeviceAvailable()) {
+                    SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+                } else {
+                    cancel()
+                    onError(Res.get(R.string.voice_unavailable))
+                    return false
+                }
+                run.recognizer = recognizer
+                recognizer.setRecognitionListener(listener(run))
+                recognizer.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
+                })
+            } catch (_: RuntimeException) {
+                cancel()
+                onError(Res.get(R.string.voice_unavailable))
+                return false
+            }
+        }
+        return true
+    }
+
+    fun finish() {
+        val run = session ?: return
+        if (!run.held.getAndSet(false)) return
+        state = state.copy(holding = false, processing = true)
+        level = 0f
+        run.outcome?.let {
+            complete(run, it)
             return
         }
-        val engine = recognizer ?: createRecognizer().also { recognizer = it }
-        committed = null
-        state = state.copy(listening = true, partial = "", error = null)
-        runCatching { engine.startListening(intent()) }.onFailure {
-            state = state.copy(listening = false, error = it.message)
+        if (run.recognizer != null) {
+            run.timeout = scope.launch {
+                delay(6_000)
+                complete(run, error(R.string.voice_error_server))
+            }
+            runCatching { run.recognizer?.stopListening() }.onFailure {
+                complete(run, error(R.string.voice_error_server))
+            }
         }
     }
 
-    /** 主动结束录音：让引擎收尾并回一次结果，而不是丢弃。 */
-    fun stop() {
-        if (!state.listening) return
-        runCatching { recognizer?.stopListening() }
-    }
-
-    /** 放弃这次录音。 */
     fun cancel() {
-        runCatching { recognizer?.cancel() }
-        state = state.copy(listening = false, partial = "")
+        val run = session ?: return
+        session = null
+        state = state.copy(holding = false, processing = false)
+        level = 0f
+        run.held.set(false)
+        run.timeout?.cancel()
+        run.recording?.cancel()
+        runCatching { run.recognizer?.destroy() }
     }
 
-    fun consumeError() {
-        if (state.error != null) state = state.copy(error = null)
+    private fun updateLevel(run: Session, level: Float) {
+        if (session === run && state.holding) this.level = level.coerceIn(0f, 1f)
     }
 
-    fun release() {
-        runCatching { recognizer?.destroy() }
-        recognizer = null
-        state = state.copy(listening = false)
-    }
-
-    private fun createRecognizer(): SpeechRecognizer =
-        SpeechRecognizer.createSpeechRecognizer(context).apply {
-            setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) = Unit
-                override fun onBeginningOfSpeech() = Unit
-                override fun onRmsChanged(rmsdB: Float) = Unit
-                override fun onBufferReceived(buffer: ByteArray?) = Unit
-                override fun onEndOfSpeech() = Unit
-                override fun onEvent(eventType: Int, params: Bundle?) = Unit
-
-                override fun onPartialResults(partialResults: Bundle?) {
-                    val text = partialResults.firstResult()
-                    if (text.isNullOrBlank()) return
-                    state = state.copy(partial = text)
-                    // 中间结果同样写进输入框：用户能看到"它听成了什么"
-                    onText(text)
-                }
-
-                override fun onResults(results: Bundle?) {
-                    val text = results.firstResult().orEmpty()
-                    state = state.copy(listening = false, partial = "")
-                    if (text.isNotBlank()) {
-                        committed = text
-                        onText(text)
-                    } else if (committed.isNullOrBlank()) {
-                        // 一声都没识别出来：给个明确说法，别让按钮自己转回原样
-                        state = state.copy(error = Res.get(R.string.voice_empty))
-                    }
-                }
-
-                override fun onError(error: Int) {
-                    state = state.copy(listening = false, partial = "", error = describe(error))
-                }
-            })
+    private fun complete(run: Session, result: Result<String>) {
+        if (session !== run) return
+        if (run.held.get()) {
+            run.outcome = result
+            updateLevel(run, 0f)
+            return
         }
-
-    /** 识别参数：中文优先，也允许说英文；只要一段短语音。 */
-    private fun intent(): Intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-        putExtra(
-            RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
+        cancel()
+        result.fold(
+            onSuccess = { text ->
+                if (text.isBlank()) run.onError(Res.get(R.string.voice_empty)) else run.onResult(text.trim())
+            },
+            onFailure = { run.onError(it.message ?: Res.get(R.string.voice_error_server)) },
         )
-        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-        // 跟随界面语言：中文界面就按中文识别，不说人话的"中英混识"反而更差
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE, localeTag())
     }
 
-    private fun localeTag(): String =
-        if (Res.bool(R.bool.ui_is_cjk)) "zh-CN" else Locale.getDefault().toLanguageTag()
-
-    private fun describe(code: Int): String = when (code) {
-        SpeechRecognizer.ERROR_AUDIO -> Res.get(R.string.voice_error_audio)
-        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> Res.get(R.string.voice_error_permission)
-        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
-            Res.get(R.string.voice_error_network)
-        SpeechRecognizer.ERROR_NO_MATCH -> Res.get(R.string.voice_empty)
-        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> Res.get(R.string.voice_error_busy)
-        SpeechRecognizer.ERROR_SERVER -> Res.get(R.string.voice_error_server)
-        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> Res.get(R.string.voice_empty)
-        else -> Res.get(R.string.voice_unavailable)
+    private fun listener(run: Session) = object : RecognitionListener {
+        override fun onReadyForSpeech(params: Bundle?) = Unit
+        override fun onBeginningOfSpeech() = Unit
+        override fun onRmsChanged(rmsdB: Float) = updateLevel(run, ((rmsdB + 1f) / 12f))
+        override fun onBufferReceived(buffer: ByteArray?) = Unit
+        override fun onEndOfSpeech() = updateLevel(run, 0f)
+        override fun onEvent(eventType: Int, params: Bundle?) = Unit
+        override fun onPartialResults(partialResults: Bundle?) = Unit
+        override fun onResults(results: Bundle?) {
+            complete(run, Result.success(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                ?.firstOrNull().orEmpty()))
+        }
+        override fun onError(code: Int) {
+            complete(run, error(when (code) {
+                SpeechRecognizer.ERROR_AUDIO -> R.string.voice_error_audio
+                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> R.string.voice_error_permission
+                SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> R.string.voice_error_network
+                SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> R.string.voice_empty
+                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> R.string.voice_error_busy
+                else -> R.string.voice_error_server
+            }))
+        }
     }
+
+    private fun error(resource: Int): Result<String> = Result.failure(IllegalStateException(Res.get(resource)))
 }
 
-/** `Bundle` 里第一条识别结果。系统给的是 `ArrayList<String>`，取第一个。 */
-private fun Bundle?.firstResult(): String? =
-    this?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-
-/** 记住一个 [VoiceInputController]，并在离开界面时释放识别服务。 */
 @Composable
-fun rememberVoiceInput(onText: (String) -> Unit): VoiceInputController {
-    val context = LocalContext.current
-    // 用 applicationContext：识别服务会持有传入的 Context，拿 Activity 会把它一起留住
-    val appContext = remember(context) { context.applicationContext }
-    val controller = remember(appContext) { VoiceInputController(appContext, onText) }
+internal fun rememberVoiceInput(): VoiceInputController {
+    val context = LocalContext.current.applicationContext
+    val scope = rememberCoroutineScope()
+    val controller = remember(context, scope) { VoiceInputController(context, scope) }
     DisposableEffect(controller) {
         controller.refreshAvailability()
-        onDispose { controller.release() }
+        onDispose { controller.cancel() }
     }
     return controller
 }

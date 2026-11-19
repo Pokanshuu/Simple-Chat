@@ -1,5 +1,8 @@
 package com.simplechat.app.data
 
+import com.simplechat.app.net.ModelCapabilityOverride
+import com.simplechat.app.net.RemoteModelMetadata
+
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -15,6 +18,8 @@ data class ApiProfile(
     val apiStyleId: String = "AUTO",
     val modelIds: List<String> = emptyList(),
     val modelContextWindows: Map<String, Int> = emptyMap(),
+    val modelMetadata: Map<String, RemoteModelMetadata> = emptyMap(),
+    val modelOverrides: Map<String, ModelCapabilityOverride> = emptyMap(),
     val reasoningLevelId: String = "OFF",
     val temperature: Float = 1f,
     val topP: Float = 1f,

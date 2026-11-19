@@ -35,6 +35,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
@@ -85,6 +89,8 @@ fun HistoryDrawerContent(
     currentConversationId: String?,
     selectionMode: Boolean,
     selectedIds: List<String>,
+    pinnedGroupExpanded: Boolean,
+    onTogglePinnedGroup: () -> Unit,
     onSearchClick: () -> Unit,
     onClick: (ConversationEntity) -> Unit,
     onEnterSelection: (ConversationEntity) -> Unit,
@@ -141,9 +147,18 @@ fun HistoryDrawerContent(
                 ),
             ) {
                 grouped.forEach { (group, items) ->
+                    val isPinnedGroup = group == HistoryGroup.PINNED
                     item(key = "header-${group.name}") {
-                        GroupHeader(label = group.label)
+                        if (isPinnedGroup) {
+                            PinnedGroupHeader(
+                                expanded = pinnedGroupExpanded,
+                                onClick = onTogglePinnedGroup,
+                            )
+                        } else {
+                            GroupHeader(label = group.label)
+                        }
                     }
+                    if (isPinnedGroup && !pinnedGroupExpanded) return@forEach
                     items(items = items, key = { it.id }) { conversation ->
                         ConversationRow(
                             conversation = conversation,
@@ -349,6 +364,45 @@ private fun GroupHeader(label: String) {
         color = colors.placeholder,
         modifier = Modifier.padding(start = DrawerTextInset, top = 12.dp, bottom = 4.dp),
     )
+}
+
+@Composable
+private fun PinnedGroupHeader(expanded: Boolean, onClick: () -> Unit) {
+    val contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val stateLabel = stringResource(
+        if (expanded) R.string.hist_pinned_expanded else R.string.hist_pinned_collapsed,
+    )
+    val actionLabel = stringResource(
+        if (expanded) R.string.hist_pinned_collapse else R.string.hist_pinned_expand,
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = DrawerInset)
+            .clip(SoftShape)
+            .clickable(role = Role.Button, onClickLabel = actionLabel, onClick = onClick)
+            .semantics {
+                heading()
+                stateDescription = stateLabel
+            }
+            .heightIn(min = Space.Row)
+            .padding(horizontal = Space.Inline),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.IconGap),
+    ) {
+        Text(
+            text = stringResource(R.string.group_pinned),
+            style = MaterialTheme.typography.labelMedium,
+            color = contentColor,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            imageVector = if (expanded) AppIcons.ChevronUp else AppIcons.ChevronDown,
+            contentDescription = null,
+            tint = contentColor,
+            modifier = Modifier.size(Space.Icon),
+        )
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)

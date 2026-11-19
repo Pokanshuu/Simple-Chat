@@ -72,6 +72,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -87,7 +89,6 @@ import com.simplechat.app.data.userMessage
 import com.simplechat.app.net.ApiStyle
 import com.simplechat.app.ui.common.ReadAloudEnabled
 import com.simplechat.app.ui.common.SoftShape
-import com.simplechat.app.ui.common.VoiceInputEnabled
 import com.simplechat.app.ui.common.AppConfirmDialog
 import com.simplechat.app.ui.common.AppIcons
 import com.simplechat.app.ui.common.AppShadow
@@ -203,16 +204,17 @@ fun ChatScreen(
     var attachError by remember { mutableStateOf<String?>(null) }
     var fileUploads by remember { mutableStateOf(0) }
 
-    /*
-     * ── 语音输入 / 朗读 ──────────────────────────────────
-     *
-     * `voiceBase` 记住"按下麦克风之前输入框里已经有什么"：系统的中间结果是
-     * **累计全文**（不是增量），所以每次都用 base + 最新结果重写，
-     * 而不是往上追加 —— 否则说到第三个字时输入框里会出现三份前两个字。
-     */
-    var voiceBase by remember { mutableStateOf("") }
     var speechError by remember { mutableStateOf<String?>(null) }
-    val voice = rememberVoiceInput(onText = { text -> input = voiceBase + text })
+    var voiceCancelling by remember { mutableStateOf(false) }
+    var voiceTapMode by remember { mutableStateOf(false) }
+    val voice = rememberVoiceInput()
+    val officialAsr = vm.officialAsr
+    val haptics = LocalHapticFeedback.current
+    LaunchedEffect(officialAsr) {
+        voice.cancel()
+        voiceCancelling = false
+        voiceTapMode = false
+    }
     // 音色来自设置：设置里换一个，回到对话页立即生效（见 SpeechOutput 的 applyVoice）
     val speaker = rememberSpeechOutput(vm.ttsVoiceName, vm.officialTts)
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -225,68 +227,12 @@ fun ChatScreen(
 
     AutoReadAloudEffect(vm, ReadAloudEnabled && readAloudAvailable, speaker::read, speaker::stop)
 
-    /*
-     * 麦克风权限的当前状态。
-     *
-     * 要**可观察**：用户可能在系统设置里刚授权完回来，这时"长按说话"应该立刻可用，
-     * 而不是等下一次重组才悄悄生效。授权回调里也主动刷一次。
-     */
-    /** 松手后是否要直接发送；以及驱动发送的信号值。 */
-    var sendAfterVoice by remember { mutableStateOf(false) }
-    var voiceSendSignal by remember { mutableStateOf(0) }
-
-    var hasMicrophonePermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                PackageManager.PERMISSION_GRANTED,
-        )
-    }
     val microphonePermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        hasMicrophonePermission = granted
-        if (granted) {
-            voiceBase = input
-            voice.start()
-        } else {
-            speechError = Res.get(R.string.voice_permission_denied)
-        }
+        if (!granted) speechError = Res.get(R.string.voice_permission_denied)
     }
 
-    // 松手后：识别一结束就发送；没识别到字则提示，不弹键盘
-    LaunchedEffect(voice.state.listening) {
-        if (!voice.state.listening && sendAfterVoice) {
-            sendAfterVoice = false
-            if (input.isBlank()) {
-                speechError = Res.get(R.string.voice_empty)
-            } else {
-                voiceSendSignal++
-            }
-        }
-    }
-
-    /** 点麦克风：没在录 → 先确认权限再开录；正在录 → 收尾并出结果。 */
-    fun toggleVoice() {
-        if (voice.state.listening) {
-            voice.stop()
-            return
-        }
-        // 用可观察的那份状态，避免"设置里刚授权过、这里还认为没权限"
-        if (hasMicrophonePermission) {
-            voiceBase = input
-            voice.start()
-        } else {
-            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
-        }
-    }
-
-    // 识别失败 / 朗读失败都以 banner 告知：与附件报错同一套呈现
-    LaunchedEffect(voice.state.error) {
-        voice.state.error?.let {
-            speechError = it
-            voice.consumeError()
-        }
-    }
     LaunchedEffect(speaker.error) {
         speaker.error?.let {
             speechError = it
@@ -325,6 +271,9 @@ fun ChatScreen(
     fun draftToPersist(): String = if (editingMessage != null) inputBeforeEdit else input
 
     LaunchedEffect(vm.currentConversationId) {
+        voice.cancel()
+        voiceCancelling = false
+        voiceTapMode = false
         // ① 把上一份存回它自己的会话
         composerOwner?.let { previous ->
             vm.saveDraft(previous, draftToPersist())
@@ -376,7 +325,13 @@ fun ChatScreen(
             draftScope.launch { composerOwner?.let { vm.saveDraft(it, draftToPersist()) } }
         }
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) flush()
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                voice.cancel()
+                voiceCancelling = false
+                voiceTapMode = false
+                flush()
+            }
+            if (event == Lifecycle.Event.ON_RESUME) voice.refreshAvailability()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
@@ -408,6 +363,11 @@ fun ChatScreen(
     BackHandler(enabled = messageIndex.isOpen) { messageIndex.collapse() }
     BackHandler(enabled = editingMessage != null) { cancelEdit() }
     BackHandler(enabled = aiEditTarget != null) { aiEditTarget = null }
+    BackHandler(enabled = voice.state.active) {
+        voice.cancel()
+        voiceCancelling = false
+        voiceTapMode = false
+    }
 
 
 
@@ -1235,6 +1195,8 @@ fun ChatScreen(
                 } else {
                     MessageList(
                         messages = vm.messages,
+                        loadingLabelFor = vm::loadingLabelFor,
+                        loadingWordsUseThemeColor = vm.loadingWordsUseThemeColor,
                         textSelection = textSelection,
                         shareSelection = shareSelection,
                         onShare = { message ->
@@ -1498,6 +1460,81 @@ fun ChatScreen(
                     onOpen = { spec -> viewingImage = pending.filter { it.isImage } to spec },
                 )
 
+                fun submitComposer() {
+                    val target = editingMessage
+                    val attached = pending
+                    val submitted = input
+                    val draftKey = composerOwner
+                    val clearPersistedInput = {
+                        // Clear only the submitted draft, after the message transaction committed.
+                        if (composerOwner == draftKey && input == submitted && pending == attached) {
+                            input = ""
+                            pending = emptyList()
+                            editingMessage = null
+                            draftScope.launch { draftKey?.let { vm.clearDraft(it) } }
+                            dismissInput()
+                        }
+                    }
+
+                    /*
+                     * 模型不支持识图时**在这里拦住**，而不是让请求打到服务端换回 400。
+                     * 400 的原文（如 "image_url is not supported"）对用户没有指导意义，
+                     * 这里能直接告诉他"换个模型"。
+                     */
+                    if (attached.any { it.isImage } && !vm.settings.model.supportsVision) {
+                        attachError = Res.get(R.string.chat_vision_unsupported, vm.settings.model.displayName)
+                    } else {
+                        /*
+                         * 主动发消息 = "我要看新内容"：清掉"已离开底部"标记。
+                         *
+                         * ⚠️ **这里不能直接 `scrollToBottom()`** —— 消息是异步落库的，
+                         * 滚动发出时它还没进列表，下标 0 还是上一条回复；等它进来时
+                         * 下标整体后移，Compose 又按 key 把原条目钉住，于是人停在上条
+                         * 回复的结尾（实测就是这个 bug）。
+                         * 交给上面那个"条数变化才滚"的 effect —— 等它真的进列表再滚。
+                         */
+                        resumeFollowing()
+                        if (target != null) {
+                            // 输入栏的发送键就是「保存并发送」，不再让用户做二次选择
+                            requestResend(target, submitted, attached, clearPersistedInput)
+                        } else {
+                            vm.send(submitted, attached, clearPersistedInput)
+                        }
+                    }
+                }
+
+                val canUseVoice = !vm.isStreaming && editingMessage == null &&
+                    composerOwner == composerKey && (officialAsr != null || voice.state.systemAvailable)
+                fun startVoice(tapMode: Boolean): Boolean {
+                    if (!canUseVoice || input.isNotEmpty() || voice.state.active) return false
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
+                        PackageManager.PERMISSION_GRANTED
+                    ) {
+                        microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                        return false
+                    }
+                    val owner = composerKey
+                    speechError = null
+                    val started = voice.start(officialAsr, onResult = { transcript ->
+                        voiceTapMode = false
+                        if (owner == vm.currentConversationId.orEmpty() && composerOwner == owner &&
+                            input.isEmpty() && editingMessage == null
+                        ) {
+                            input = transcript
+                            submitComposer()
+                        }
+                    }, onError = {
+                        voiceTapMode = false
+                        speechError = it
+                    })
+                    if (started) {
+                        voiceTapMode = tapMode
+                        dismissInput()
+                        panel = InputPanelState.NONE
+                    }
+                    return started
+                }
+
                 InputBar(
                     text = input,
                     onTextChange = {
@@ -1511,31 +1548,23 @@ fun ChatScreen(
                     contextStats = vm.contextStats,
                     statsPanelOpen = panel == InputPanelState.STATS,
                     onOpenStatsPanel = { openPanel(InputPanelState.STATS) },
-                    /*
-                     * 语音输入：**暂时整体下线**（见 `VoiceInputEnabled`）。
-                     *
-                     * 开关关着时这里一律传 false —— 内部逻辑（识别回调、上滑取消、
-                     * 松手即发）全部保留，重新开启只需把常量改回 true，
-                     * 不用再翻一遍这里。
-                     */
-                    showVoice = VoiceInputEnabled && voice.state.available,
-                    voiceListening = voice.state.listening,
-                    onToggleVoice = { if (VoiceInputEnabled) toggleVoice() },
-                    holdToTalkEnabled = VoiceInputEnabled && voice.state.available && hasMicrophonePermission,
-                    onVoiceHoldStart = {
-                        voiceBase = input
-                        voice.start()
+                    holdToTalkEnabled = canUseVoice,
+                    voiceState = voice.state,
+                    voiceLevel = { voice.level },
+                    voiceSourceLabel = stringResource(
+                        if (officialAsr != null) R.string.voice_source_official else R.string.voice_source_system,
+                    ),
+                    voiceCancelling = voiceCancelling,
+                    voiceTapMode = voiceTapMode,
+                    onVoiceHoldStart = { startVoice(tapMode = false) },
+                    onVoiceHoldFinish = { send -> if (send) voice.finish() else voice.cancel() },
+                    onVoiceSlide = { cancelling ->
+                        voiceCancelling = cancelling
+                        if (cancelling && voice.state.holding) {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
                     },
-                    onVoiceHoldEnd = {
-                        // 松手：结束录音，并标记「识别完就发」
-                        sendAfterVoice = true
-                        voice.stop()
-                    },
-                    onVoiceHoldCancel = {
-                        sendAfterVoice = false
-                        voice.cancel()
-                    },
-                    sendSignal = voiceSendSignal,
+                    onVoiceTap = { if (voiceTapMode) voice.finish() else startVoice(tapMode = true) },
                     thinkingEnabled = vm.settings.thinkingEnabled,
                     // 搜索也在这个面板里，开着就算激活（见 InputBar 的说明）
                     webSearchEnabled = vm.supportsWebSearch && vm.webSearch,
@@ -1544,48 +1573,7 @@ fun ChatScreen(
                     settingsPanelOpen = panel == InputPanelState.SETTINGS,
                     onOpenSettingsPanel = { openPanel(InputPanelState.SETTINGS) },
                     streaming = vm.isStreaming,
-                    onSend = {
-                        val target = editingMessage
-                        val attached = pending
-                        val submitted = input
-                        val draftKey = composerOwner
-                        val clearPersistedInput = {
-                            // Clear only the submitted draft, after the message transaction committed.
-                            if (input == submitted && pending == attached) {
-                                input = ""
-                                pending = emptyList()
-                                editingMessage = null
-                                draftScope.launch { draftKey?.let { vm.clearDraft(it) } }
-                                dismissInput()
-                            }
-                        }
-
-                        /*
-                         * 模型不支持识图时**在这里拦住**，而不是让请求打到服务端换回 400。
-                         * 400 的原文（如 "image_url is not supported"）对用户没有指导意义，
-                         * 这里能直接告诉他"换个模型"。
-                         */
-                        if (attached.any { it.isImage } && !vm.settings.model.supportsVision) {
-                            attachError = Res.get(R.string.chat_vision_unsupported, vm.settings.model.displayName)
-                        } else {
-                            /*
-                             * 主动发消息 = "我要看新内容"：清掉"已离开底部"标记。
-                             *
-                             * ⚠️ **这里不能直接 `scrollToBottom()`** —— 消息是异步落库的，
-                             * 滚动发出时它还没进列表，下标 0 还是上一条回复；等它进来时
-                             * 下标整体后移，Compose 又按 key 把原条目钉住，于是人停在上条
-                             * 回复的结尾（实测就是这个 bug）。
-                             * 交给上面那个"条数变化才滚"的 effect —— 等它真的进列表再滚。
-                             */
-                            resumeFollowing()
-                            if (target != null) {
-                                // 输入栏的发送键就是「保存并发送」，不再让用户做二次选择
-                                requestResend(target, submitted, attached, clearPersistedInput)
-                            } else {
-                                vm.send(submitted, attached, clearPersistedInput)
-                            }
-                        }
-                    },
+                    onSend = ::submitComposer,
                     onStop = { vm.stop() },
                     // ⊕ 真的能用了：展开与其它面板同一个容器（浮在输入栏上方的卡片）
                     canAttach = true,

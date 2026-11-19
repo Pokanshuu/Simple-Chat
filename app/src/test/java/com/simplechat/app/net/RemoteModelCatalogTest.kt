@@ -29,6 +29,47 @@ class RemoteModelCatalogTest {
     }
 
     @Test
+    fun `gateway map keys are request IDs and explicit capabilities override the baseline`() {
+        val raw = """{"models":{
+            "deepseek-flash":{"id":"canonical-id","name":"Gateway Flash","contextWindow":1000000,
+                "limit":{"context":65536,"output":4096},"top_provider":{"max_completion_tokens":2048},
+                "input_modalities":["text"],"supports_thinking":false},
+            "alias":{"max_input_tokens":32768,"max_output_tokens":1024,"architecture":{"input_modalities":["text","image"]},
+                "supported_parameters":["reasoning"]},
+            "catalog_version":2
+        }}"""
+        val catalog = parseRemoteModelCatalog(ChatApi.defaultJson(), raw)
+        val models = ModelCatalog.pickerModels(ProviderKind.CUSTOM, catalog.ids, catalog.contextWindows, catalog.metadata)
+        assertEquals(listOf("deepseek-flash", "alias"), models.map { it.id })
+        assertEquals("Gateway Flash", models.first().displayName)
+        assertEquals(65_536, models.first().contextWindow)
+        assertEquals(2_048, models.first().maxOutputTokens)
+        assertEquals(false, models.first().supportsVision)
+        assertEquals(false, models.first().supportsThinking)
+        assertEquals(true, models.last().supportsVision)
+        assertEquals(true, models.last().supportsThinking)
+        assertEquals(32_768, models.last().contextWindow)
+        assertEquals(ReasoningWire.REASONING_OBJECT, models.last().reasoningWire)
+    }
+
+    @Test
+    fun `manual overrides beat advertised metadata and leave unrelated fields intact`() {
+        val catalog = parseRemoteModelCatalog(ChatApi.defaultJson(), """{"data":[
+            null, {"id":42}, {"id":"deepseek-flash","input_modalities":["text","image"],
+            "effort":{"supported_levels":["high","max"]},"context_window":65536,"maxTokens":2048}
+        ],"models":{"ignored":{}}}""")
+        val models = ModelCatalog.pickerModels(ProviderKind.CUSTOM, catalog.ids, catalog.contextWindows, catalog.metadata,
+            mapOf("deepseek-flash" to ModelCapabilityOverride(false, false, 32_768)))
+        val model = models.single()
+        assertEquals(false, model.supportsVision)
+        assertEquals(false, model.supportsThinking)
+        assertEquals(32_768, model.contextWindow)
+        assertEquals(2_048, model.maxOutputTokens)
+        assertEquals(listOf("high", "max"), model.effortLevels)
+        assertEquals("high", model.resolveReasoningEffort("low"))
+    }
+
+    @Test
     fun `Gemini fallback matches chat IDs without assuming every Gemini model has one million tokens`() {
         val kind = ProviderKind.CUSTOM
         assertEquals(1_048_576, ModelCatalog.find(kind, "google/gemini-2.5-flash-preview-09-2025").contextWindow)
