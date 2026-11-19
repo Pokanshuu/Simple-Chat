@@ -58,7 +58,8 @@ internal class SseLineParser(private val json: Json) {
         val events = mutableListOf<StreamEvent>()
 
         chunk.choices.firstOrNull()?.delta?.let { delta ->
-            delta.reasoningContent
+            (delta.reasoningContent?.takeIf(String::isNotEmpty)
+                ?: (delta.reasoning as? JsonPrimitive)?.takeIf { it.isString }?.content)
                 ?.takeIf { it.isNotEmpty() }
                 ?.let { events += StreamEvent.Reasoning(it) }
             delta.content

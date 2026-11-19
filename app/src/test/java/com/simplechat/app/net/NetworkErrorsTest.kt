@@ -91,6 +91,12 @@ class NetworkErrorsTest {
         assertNull(httpStatusRes(418))
     }
 
+    @Test
+    fun `preserves provider diagnosis for rejected messages`() {
+        assertEquals(R.string.error_provider_empty_messages,
+            providerHintRes("messages: at least one message is required (request_id: example)"))
+    }
+
     // ── providerHintRes：服务商自报原因 → 人话 ──────────────────────────
 
     @Test

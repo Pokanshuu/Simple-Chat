@@ -29,9 +29,9 @@ private fun contentTokens(content: JsonElement): Long = when (content) {
     }
 }
 
-internal fun validateRequestBudget(inputTokens: Long, maxTokens: Int?, contextWindow: Int?) {
+internal fun validateRequestBudget(inputTokens: Long, maxTokens: Int?, contextWindow: Int?, maxOutputTokens: Int? = null) {
     if (contextWindow == null || contextWindow <= 0) return
-    val outputTokens = maxTokens?.takeIf { it > 0 } ?: minOf(4096, contextWindow / 8)
+    val outputTokens = maxTokens?.takeIf { it > 0 } ?: minOf(4096, contextWindow / 8, maxOutputTokens ?: Int.MAX_VALUE)
     if (inputTokens + outputTokens > contextWindow.toLong()) {
         throw AppTextException(
             R.string.error_context_budget,

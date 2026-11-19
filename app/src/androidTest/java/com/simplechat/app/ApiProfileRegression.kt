@@ -37,7 +37,9 @@ internal object ApiProfileRegression {
         val a = stored.activeApiProfileId
         check(stored.apiProfiles.size == 1 && stored.apiProfiles.single().apiKeyEncrypted.isNotBlank())
         store.setApiStyle("ANTHROPIC")
-        store.setModelIds(listOf("a1", "a2"))
+        store.updateApiProfile(store.flow.first().activeApiProfileId) {
+            it.copy(modelIds = listOf("a1", "a2"), modelContextWindows = mapOf("a1" to 1_048_576))
+        }
         store.setTemperature(0.4f)
         store.setAutoReadAloud(true)
         store.createApiProfile("Server B")
@@ -47,17 +49,18 @@ internal object ApiProfileRegression {
         store.setBaseUrl("https://b.invalid/v1")
         store.setModel("b-model")
         store.setApiKey("fixture-key-b")
-        store.setModelIds(listOf("b1"))
+        store.updateApiProfile(b) { it.copy(modelIds = listOf("b1"), modelContextWindows = mapOf("b1" to 64_000)) }
         store.setApiStyle("OPENAI")
         store.selectApiProfile(a)
         stored = store.flow.first()
         check(stored.apiKey == "fixture-legacy-key" && stored.modelId == "legacy-model" && stored.apiStyleId == "ANTHROPIC")
         check(stored.modelIds == listOf("a1", "a2") && stored.temperature == 0.4f && stored.autoReadAloud)
-        store.setModelIds(listOf("stale-b-result"), b, "https://b.invalid/v1")
+        check(store.flow.first().modelContextWindows == mapOf("a1" to 1_048_576))
         check(store.flow.first().modelIds == listOf("a1", "a2"))
         store.selectApiProfile(b)
         check(store.flow.first().apiKey == "fixture-key-b")
         check(store.flow.first().modelIds == listOf("b1"))
+        check(store.flow.first().modelContextWindows == mapOf("b1" to 64_000))
         store.createApiProfile("B copy", copyCurrent = true)
         val copyId = store.flow.first().activeApiProfileId
         check(store.flow.first().apiKey == "fixture-key-b")

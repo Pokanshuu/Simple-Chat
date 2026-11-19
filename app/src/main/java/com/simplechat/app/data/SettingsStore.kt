@@ -2,7 +2,10 @@ package com.simplechat.app.data
 
 import android.content.Context
 import com.simplechat.app.net.ApiStyle
+import com.simplechat.app.net.ModelCapabilityOverride
+import com.simplechat.app.net.RemoteModelMetadata
 import com.simplechat.app.net.ProviderKind
+
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.MutablePreferences
@@ -140,7 +143,12 @@ data class StoredSettings(
      * 端点（服务商 / Base URL）一换就清空，见 [SettingsStore.setProvider]。
      */
     val modelIds: List<String> = emptyList(),
+    val modelContextWindows: Map<String, Int> = emptyMap(),
+    val modelMetadata: Map<String, RemoteModelMetadata> = emptyMap(),
+    val modelOverrides: Map<String, ModelCapabilityOverride> = emptyMap(),
     val onboardingComplete: Boolean = false,
+    val loadingWords: List<String> = emptyList(),
+    val loadingWordsUseThemeColor: Boolean = false,
 
 ) {
     val hasKey: Boolean get() = apiKey.isNotBlank()
@@ -210,7 +218,12 @@ class SettingsStore(
             ttsVoiceName = prefs[Keys.TTS_VOICE] ?: StoredSettings().ttsVoiceName,
             ttsVoiceLabel = prefs[Keys.TTS_VOICE_LABEL] ?: StoredSettings().ttsVoiceLabel,
             modelIds = ModelIdList.decode(prefs[Keys.MODEL_IDS]),
+            modelContextWindows = readModelContextWindows(prefs),
+            modelMetadata = readModelMap<RemoteModelMetadata>(prefs, Keys.MODEL_METADATA),
+            modelOverrides = readModelMap<ModelCapabilityOverride>(prefs, Keys.MODEL_OVERRIDES),
             onboardingComplete = prefs[Keys.ONBOARDING_COMPLETE] ?: false,
+            loadingWords = readLoadingWords(prefs),
+            loadingWordsUseThemeColor = prefs[Keys.LOADING_WORDS_USE_THEME_COLOR] ?: false,
 
         )
     }
@@ -220,7 +233,10 @@ class SettingsStore(
             // 换了端点，旧端点拉到的模型列表就不再成立
             val endpointChanged = prefs[Keys.PROVIDER] != providerId ||
                 prefs[Keys.BASE_URL] != baseUrl.trim()
-            if (endpointChanged) prefs.remove(Keys.MODEL_IDS)
+            if (endpointChanged) {
+                clearModelCatalog(prefs)
+                prefs.remove(Keys.MODEL_OVERRIDES)
+            }
             prefs[Keys.PROVIDER] = providerId
             prefs[Keys.BASE_URL] = baseUrl.trim()
             prefs[Keys.MODEL] = modelId
@@ -231,7 +247,10 @@ class SettingsStore(
         val trimmed = baseUrl.trim()
         editApi { prefs ->
             // 只改大小写 / 前后空格不算换端点；真的改了才丢掉旧列表
-            if (prefs[Keys.BASE_URL].orEmpty().trim() != trimmed) prefs.remove(Keys.MODEL_IDS)
+            if (prefs[Keys.BASE_URL].orEmpty().trim() != trimmed) {
+                clearModelCatalog(prefs)
+                prefs.remove(Keys.MODEL_OVERRIDES)
+            }
             prefs[Keys.BASE_URL] = trimmed
         }
     }
@@ -240,17 +259,20 @@ class SettingsStore(
         editApi(expectedProfileId) { it[Keys.MODEL] = modelId }
     }
 
-    /** 记下这个端点 `GET /models` 返回的 id（测试连接 / 对话面板刷新时调用）。 */
-    suspend fun setModelIds(ids: List<String>, expectedProfileId: String? = null, expectedBaseUrl: String? = null) {
-        editApi(expectedProfileId) { prefs ->
-            if (expectedBaseUrl != null && prefs[Keys.BASE_URL] != expectedBaseUrl) return@editApi
-            val encoded = ModelIdList.encode(ids)
-            if (encoded.isEmpty()) {
-                prefs.remove(Keys.MODEL_IDS)
-            } else {
-                prefs[Keys.MODEL_IDS] = encoded
-            }
-        }
+    private fun readModelContextWindows(prefs: Preferences): Map<String, Int> =
+        prefs[Keys.MODEL_CONTEXT_WINDOWS]?.let { raw ->
+            runCatching { apiProfileJson.decodeFromString<Map<String, Int>>(raw) }.getOrNull()
+        }.orEmpty()
+
+    private inline fun <reified T> readModelMap(prefs: Preferences, key: Preferences.Key<String>): Map<String, T> =
+        prefs[key]?.let { raw ->
+            runCatching { apiProfileJson.decodeFromString<Map<String, T>>(raw) }.getOrNull()
+        }.orEmpty()
+
+    private fun clearModelCatalog(prefs: MutablePreferences) {
+        prefs.remove(Keys.MODEL_IDS)
+        prefs.remove(Keys.MODEL_CONTEXT_WINDOWS)
+        prefs.remove(Keys.MODEL_METADATA)
     }
 
     suspend fun setApiKey(apiKey: String) {
@@ -260,7 +282,7 @@ class SettingsStore(
         val trimmed = ApiKey.normalize(apiKey)
         editApi { prefs ->
             // Different credentials at the same URL can expose a different model catalog.
-            prefs.remove(Keys.MODEL_IDS)
+            clearModelCatalog(prefs)
             if (trimmed.isEmpty()) {
                 prefs.remove(Keys.API_KEY_ENC)
             } else {
@@ -325,6 +347,23 @@ class SettingsStore(
         preferences.edit { it[Keys.FOLLOW_SYSTEM_FONT] = follow }
     }
 
+    private fun readLoadingWords(prefs: Preferences): List<String> =
+        prefs[Keys.LOADING_WORDS]?.let { raw ->
+            runCatching { apiProfileJson.decodeFromString<List<String>>(raw) }.getOrNull()
+        }.orEmpty().filter(String::isNotBlank).distinct()
+
+    internal suspend fun editLoadingWords(update: (List<String>) -> List<String>) {
+        preferences.edit { prefs ->
+            val words = update(readLoadingWords(prefs))
+            if (words.isEmpty()) prefs.remove(Keys.LOADING_WORDS)
+            else prefs[Keys.LOADING_WORDS] = apiProfileJson.encodeToString(words)
+        }
+    }
+
+    internal suspend fun setLoadingWordsUseThemeColor(enabled: Boolean) {
+        preferences.edit { it[Keys.LOADING_WORDS_USE_THEME_COLOR] = enabled }
+    }
+
     suspend fun setAutoCollapseThinking(enabled: Boolean) {
         preferences.edit { it[Keys.AUTO_COLLAPSE_THINKING] = enabled }
     }
@@ -338,7 +377,10 @@ class SettingsStore(
     }
 
     suspend fun setApiStyle(styleId: String) {
-        editApi { it[Keys.API_STYLE] = styleId }
+        editApi { prefs ->
+            if (prefs[Keys.API_STYLE] != styleId) clearModelCatalog(prefs)
+            prefs[Keys.API_STYLE] = styleId
+        }
     }
 
     suspend fun setWebSearch(enabled: Boolean) {
@@ -421,6 +463,9 @@ class SettingsStore(
         apiKeyEncrypted = prefs[Keys.API_KEY_ENC].orEmpty(),
         apiStyleId = prefs[Keys.API_STYLE] ?: "AUTO",
         modelIds = ModelIdList.decode(prefs[Keys.MODEL_IDS]),
+        modelContextWindows = readModelContextWindows(prefs),
+        modelMetadata = readModelMap<RemoteModelMetadata>(prefs, Keys.MODEL_METADATA),
+        modelOverrides = readModelMap<ModelCapabilityOverride>(prefs, Keys.MODEL_OVERRIDES),
         reasoningLevelId = prefs[Keys.REASONING] ?: "OFF",
         temperature = prefs[Keys.TEMPERATURE] ?: 1f, topP = prefs[Keys.TOP_P] ?: 1f,
         maxTokens = prefs[Keys.MAX_TOKENS] ?: 0, webSearch = prefs[Keys.WEB_SEARCH] ?: false,
@@ -465,6 +510,12 @@ class SettingsStore(
         prefs.remove(Keys.API_KEY)
         prefs[Keys.API_STYLE] = profile.apiStyleId
         prefs[Keys.MODEL_IDS] = ModelIdList.encode(profile.modelIds)
+        if (profile.modelContextWindows.isEmpty()) prefs.remove(Keys.MODEL_CONTEXT_WINDOWS)
+        else prefs[Keys.MODEL_CONTEXT_WINDOWS] = apiProfileJson.encodeToString(profile.modelContextWindows)
+        if (profile.modelMetadata.isEmpty()) prefs.remove(Keys.MODEL_METADATA)
+        else prefs[Keys.MODEL_METADATA] = apiProfileJson.encodeToString(profile.modelMetadata)
+        if (profile.modelOverrides.isEmpty()) prefs.remove(Keys.MODEL_OVERRIDES)
+        else prefs[Keys.MODEL_OVERRIDES] = apiProfileJson.encodeToString(profile.modelOverrides)
         prefs[Keys.REASONING] = profile.reasoningLevelId
         prefs[Keys.TEMPERATURE] = profile.temperature
         prefs[Keys.TOP_P] = profile.topP
@@ -568,6 +619,8 @@ class SettingsStore(
         val FILES_API = stringPreferencesKey("files_api_config")
         val ACTIVE_PROFILE = stringPreferencesKey("active_api_profile")
         val IMAGE_SKIP_NOTICE = booleanPreferencesKey("show_image_skip_notice")
+        val LOADING_WORDS = stringPreferencesKey("loading_words")
+        val LOADING_WORDS_USE_THEME_COLOR = booleanPreferencesKey("loading_words_use_theme_color")
         val SEARCH_INACTIVE_BRANCHES = booleanPreferencesKey("search_inactive_branches")
         val AUTO_READ_ALOUD = booleanPreferencesKey("auto_read_aloud")
         val PROVIDER = stringPreferencesKey("provider_id")
@@ -601,6 +654,9 @@ class SettingsStore(
 
         /** 当前端点 `/models` 拉回来的 id，换行分隔（[ModelIdList]）。 */
         val MODEL_IDS = stringPreferencesKey("model_ids")
+        val MODEL_CONTEXT_WINDOWS = stringPreferencesKey("model_context_windows")
+        val MODEL_METADATA = stringPreferencesKey("model_metadata")
+        val MODEL_OVERRIDES = stringPreferencesKey("model_overrides")
         val ONBOARDING_COMPLETE = booleanPreferencesKey("onboarding_complete")
 
     }

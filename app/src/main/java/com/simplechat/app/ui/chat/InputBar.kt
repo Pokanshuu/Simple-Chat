@@ -1,14 +1,13 @@
 package com.simplechat.app.ui.chat
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,8 +20,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
@@ -33,6 +30,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.text.TextRange
@@ -41,7 +39,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -49,16 +46,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.withTimeoutOrNull
 import com.simplechat.app.R
 import com.simplechat.app.ui.common.ContainerShape
 import com.simplechat.app.ui.common.layeredShadow
@@ -66,6 +63,7 @@ import com.simplechat.app.ui.common.AppIcons
 import com.simplechat.app.ui.common.AppShadow
 import com.simplechat.app.data.TokenEstimate
 import com.simplechat.app.data.Res
+import com.simplechat.app.ui.common.FoldAnimMs
 import com.simplechat.app.ui.common.IconCircleButton
 import com.simplechat.app.ui.common.MotionEasing
 import com.simplechat.app.ui.common.PillShape
@@ -85,7 +83,7 @@ import com.simplechat.app.ui.theme.LocalChatColors
  * 两个入口都会在输入栏下方展开面板（与选图面板同一机制），输入栏随之上移。
  */
 @Composable
-fun InputBar(
+internal fun InputBar(
     text: String,
     onTextChange: (String) -> Unit,
     thinkingEnabled: Boolean,
@@ -121,26 +119,16 @@ fun InputBar(
     contextStats: ContextStats,
     statsPanelOpen: Boolean,
     onOpenStatsPanel: () -> Unit,
-    /** 设备有没有可用的语音识别服务。没有就不露麦克风。 */
-    showVoice: Boolean = false,
-    /** 是否正在录音 —— 按钮换成"结束"状态。 */
-    voiceListening: Boolean = false,
-    onToggleVoice: () -> Unit = {},
-    /**
-     * 是否开启「长按输入框说话」。
-     *
-     * 由调用方决定：**设备有识别服务 + 已授权 + 扩展通道可用** 时才为 true。
-     * 关掉时输入框一个手势都不多挂。
-     */
     holdToTalkEnabled: Boolean = false,
-    /** 长按开始（手指按住不放）。 */
-    onVoiceHoldStart: () -> Unit = {},
-    /** 松手结束。 */
-    onVoiceHoldEnd: () -> Unit = {},
-    /** 按住后上滑取消：不发送、丢弃识别结果。 */
-    onVoiceHoldCancel: () -> Unit = {},
-    /** 外部请求「现在发送一次」。值一变就触发，复用同一条发送路径。 */
-    sendSignal: Int = 0,
+    voiceState: VoiceInputState = VoiceInputState(),
+    voiceLevel: () -> Float = { 0f },
+    voiceSourceLabel: String = "",
+    voiceCancelling: Boolean = false,
+    voiceTapMode: Boolean = false,
+    onVoiceHoldStart: () -> Boolean = { false },
+    onVoiceHoldFinish: (Boolean) -> Unit = {},
+    onVoiceSlide: (Boolean) -> Unit = {},
+    onVoiceTap: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalChatColors.current
@@ -155,10 +143,34 @@ fun InputBar(
      */
     val holdToTalkActive = holdToTalkEnabled && text.isEmpty()
 
-    // 语音说完自动发送：外部把 sendSignal 改一下，这里复用同一条发送路径
-    LaunchedEffect(sendSignal) {
-        if (sendSignal > 0) onSend()
+    val focusOnTap by rememberUpdatedState<() -> Unit> {
+        if (!voiceState.active) {
+            focusRequester.requestFocus()
+            keyboard?.show()
+        }
     }
+    val startVoice by rememberUpdatedState(onVoiceHoldStart)
+    val finishVoice by rememberUpdatedState(onVoiceHoldFinish)
+    val slideVoice by rememberUpdatedState(onVoiceSlide)
+    val background by animateColorAsState(
+        targetValue = when {
+            voiceCancelling && voiceState.holding -> MaterialTheme.colorScheme.error
+            voiceState.active -> MaterialTheme.colorScheme.primary
+            else -> colors.card
+        },
+        animationSpec = tween(if (voiceState.active) 140 else FoldAnimMs, easing = MotionEasing),
+        label = "composerColor",
+    )
+    // Let the solid voice color start receding before the dark text and controls reappear.
+    val composerReveal by animateFloatAsState(
+        targetValue = if (voiceState.active) 0f else 1f,
+        animationSpec = if (voiceState.active) snap() else tween(
+            durationMillis = FoldAnimMs - ComposerRevealDelayMs,
+            delayMillis = ComposerRevealDelayMs,
+            easing = MotionEasing,
+        ),
+        label = "composerReveal",
+    )
 
     // 面板展开 → 投影淡出；收起 → 淡入。否则接缝处会同时压着两条阴影。
     val shadowElevation by animateDpAsState(
@@ -202,29 +214,14 @@ fun InputBar(
                     contactColor = AppShadow.PanelContactColor,
                 )
                 .clip(shape)
-                .background(colors.card)
-                /*
-                 * 按住说话：挂在**整条输入栏**上，而不是输入框上。
-                 *
-                 * 挂在输入框上会跟文本框自己的长按（选词 / 光标）打架 ——
-                 * 那正是"打字和说话互相抢"的来源。这里只在**空输入框**时响应，
-                 * 且**不消费**短按：点一下照常聚焦、光标照常落位。
-                 */
-                .pointerInput(holdToTalkActive) {
-                    if (!holdToTalkActive) return@pointerInput
-                    awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = false)
-                        // 先松手就是普通点击，交给文本框
-                        val releasedEarly = withTimeoutOrNull(
-                            viewConfiguration.longPressTimeoutMillis,
-                        ) { waitForUpOrCancellation() }
-                        if (releasedEarly != null) return@awaitEachGesture
-                        onVoiceHoldStart()
-                        waitForUpOrCancellation()
-                        onVoiceHoldEnd()
-                    }
-                }
-                .border(1.dp, colors.outline, shape)
+                .background(background)
+                .border(
+                    width = 1.dp,
+                    color = if (voiceState.active) Color.Transparent else colors.outline.copy(
+                        alpha = colors.outline.alpha * composerReveal,
+                    ),
+                    shape = shape,
+                )
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         ) {
             // ── 「修改输入」标题行 ─────────────────────────
@@ -264,84 +261,70 @@ fun InputBar(
                     fieldValue = TextFieldValue(text = text, selection = TextRange(text.length))
                 }
             }
-            BasicTextField(
-                value = fieldValue,
-                onValueChange = {
-                    fieldValue = it
-                    if (it.text != text) onTextChange(it.text)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 26.dp, max = 160.dp)
-                    .focusRequester(focusRequester)
-                    /*
-                     * 按住说话：只挂在**空输入框**上，且不消费短按 ——
-                     * 点一下照常聚焦、光标照常落位，打字与说话不会互相抢。
-                     */
-                    .pointerInput(holdToTalkActive) {
-                        if (!holdToTalkActive) return@pointerInput
-                        val cancelSlop = VoiceCancelSlop.toPx()
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            val releasedEarly = withTimeoutOrNull(
-                                viewConfiguration.longPressTimeoutMillis,
-                            ) { waitForUpOrCancellation() }
-                            if (releasedEarly != null) return@awaitEachGesture
-
-                            onVoiceHoldStart()
-                            /*
-                             * 按住期间向上滑超过 [VoiceCancelSlop] 就算取消 ——
-                             * 松手时不发送、也不保留识别结果。这是"说错了想撤回"
-                             * 唯一的即时出口：不给它，用户只能等发出去再删。
-                             */
-                            var cancelled = false
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                if (!change.pressed) break
-                                if (down.position.y - change.position.y > cancelSlop) {
-                                    cancelled = true
-                                }
-                                change.consume()
+            Box(Modifier.fillMaxWidth()) {
+                if (voiceState.active) {
+                    VoiceComposer(voiceState, voiceLevel, voiceCancelling, voiceTapMode, onVoiceTap)
+                } else {
+                    val startLabel = stringResource(R.string.voice_tap_to_start)
+                    BasicTextField(
+                        value = fieldValue,
+                        onValueChange = {
+                            fieldValue = it
+                            if (it.text != text) onTextChange(it.text)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 26.dp, max = 160.dp)
+                            .graphicsLayer { alpha = composerReveal }
+                            .focusRequester(focusRequester)
+                            .onFocusChanged { if (it.isFocused) onTextFieldFocused() }
+                            .then(if (holdToTalkActive) Modifier.semantics {
+                                customActions = listOf(CustomAccessibilityAction("$startLabel · $voiceSourceLabel") {
+                                    onVoiceTap()
+                                    true
+                                })
+                            } else Modifier),
+                        textStyle = LocalTextStyle.current.merge(
+                            MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                        ),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        maxLines = 6,
+                        decorationBox = { inner ->
+                            Box {
+                                if (text.isEmpty()) Text(
+                                    text = stringResource(if (holdToTalkActive) R.string.input_hint_hold_to_talk else R.string.input_hint),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = colors.placeholder,
+                                )
+                                inner()
                             }
-                            if (cancelled) onVoiceHoldCancel() else onVoiceHoldEnd()
-                        }
-                    }
-                    // 用户点回输入框时收起面板，避免键盘与面板同时占屏
-                    .onFocusChanged { if (it.isFocused) onTextFieldFocused() },
-                textStyle = LocalTextStyle.current.merge(
-                    MaterialTheme.typography.bodyLarge.copy(
-                        color = MaterialTheme.colorScheme.onSurface,
-                    ),
-                ),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                maxLines = 6,
-                decorationBox = { inner ->
-                    Box {
-                        if (text.isEmpty()) {
-                            Text(
-                                text = when {
-                                    voiceListening -> stringResource(R.string.voice_listening)
-                                    holdToTalkActive -> stringResource(R.string.input_hint_hold_to_talk)
-                                    else -> stringResource(R.string.input_hint)
-                                },
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = if (voiceListening) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    colors.placeholder
-                                },
-                            )
-                        }
-                        inner()
-                    }
-                },
-            )
+                        },
+                    )
+                }
+
+                // Keep this touch target above both states so an empty-field hold never
+                // reaches the text field's selection or paste gesture detector.
+                if (holdToTalkActive && !voiceTapMode) {
+                    Box(
+                        Modifier.matchParentSize().holdToSpeak(
+                            onTap = { focusOnTap() },
+                            start = { startVoice() },
+                            finish = { finishVoice(it) },
+                            onSlide = { slideVoice(it) },
+                        ),
+                    )
+                }
+            }
+
+            if (voiceState.active) return@Column
 
             Spacer(Modifier.size(12.dp))
 
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().graphicsLayer {
+                    alpha = composerReveal
+                    translationY = 4.dp.toPx() * (1f - composerReveal)
+                },
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -430,11 +413,10 @@ fun InputBar(
     }
 }
 
+private const val ComposerRevealDelayMs = 40
+
 /** 输入栏第二行的统一控件高度。 */
 private val RowButtonSize = 32.dp
-
-/** 按住说话时，上滑超过这个距离即视为取消。 */
-private val VoiceCancelSlop = 56.dp
 
 /**
  * 思考档位入口。

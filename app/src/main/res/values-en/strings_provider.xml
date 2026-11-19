@@ -24,6 +24,7 @@
     <string name="error_provider_model_not_found">The provider does not have this model. Switch models or double-check the Base URL</string>
 
     <!-- Context window exceeded -->
+    <string name="error_provider_empty_messages">The provider did not recognize any conversation messages. If retrying fails, try the other compatible API in API settings</string>
     <string name="error_provider_context_length">This turn exceeds the model context limit. Compact the context or remove attachments</string>
 
     <!-- Diagnostic detail kept for troubleshooting; %1$s is truncated to 300 characters in code -->

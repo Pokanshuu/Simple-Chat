@@ -141,6 +141,8 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
 
     /** 抽屉是否处于搜索态。见类注释：它是抽屉的状态，不是一条路由。 */
     var searchMode by rememberSaveable { mutableStateOf(false) }
+    // 搜索切换会移除普通抽屉列表，折叠状态留在根界面。
+    var pinnedGroupExpanded by rememberSaveable { mutableStateOf(true) }
     var readingSearchResult by rememberSaveable { mutableStateOf(false) }
     var openingSearchResult by remember { mutableStateOf(false) }
     var selectedSearchResultKey by rememberSaveable { mutableStateOf<String?>(null) }
@@ -306,6 +308,8 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                             currentConversationId = chatViewModel.currentConversationId,
                             selectionMode = historyViewModel.selectionMode,
                             selectedIds = historyViewModel.selectedIds.toList(),
+                            pinnedGroupExpanded = pinnedGroupExpanded,
+                            onTogglePinnedGroup = { pinnedGroupExpanded = !pinnedGroupExpanded },
                             onSearchClick = { readingSearchResult = false; searchMode = true },
                             onClick = { conversation ->
                                 closeDrawer()

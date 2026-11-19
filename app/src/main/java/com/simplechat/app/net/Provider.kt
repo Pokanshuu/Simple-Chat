@@ -3,6 +3,8 @@ package com.simplechat.app.net
 import androidx.annotation.StringRes
 import com.simplechat.app.R
 import com.simplechat.app.data.Res
+import kotlinx.serialization.Serializable
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * 服务商。三选一，见设计文档 §5.2。
@@ -43,6 +45,15 @@ enum class ProviderKind(
  *
  * 能力不全的模型（尤其自定义端点）由用户在设置里手动勾选覆盖。
  */
+@Serializable
+enum class ReasoningWire {
+    DEEPSEEK, EFFORT, REASONING_OBJECT, ENABLE_THINKING;
+
+    companion object {
+        internal val offLevels = setOf("none", "off", "disabled")
+    }
+}
+
 data class ModelInfo(
     val id: String,
     val displayName: String = id,
@@ -50,7 +61,27 @@ data class ModelInfo(
     val supportsThinking: Boolean = false,
     /** 上下文窗口，用于占用进度条、发送预算与压缩分批（§9.1.1③）。 */
     val contextWindow: Int = DEFAULT_CONTEXT_WINDOW,
+    val maxOutputTokens: Int? = null,
+    val effortLevels: List<String>? = null,
+    val reasoningWire: ReasoningWire = ReasoningWire.DEEPSEEK,
+    val completionTokenField: Boolean = false,
 ) {
+    fun clampOutputTokens(requested: Int?): Int? = requested?.takeIf { it > 0 }?.let {
+        minOf(it, maxOutputTokens ?: it)
+    }
+
+    /** Match the nearest advertised enabled effort, preserving the selected one when accepted. */
+    fun resolveReasoningEffort(requested: String?): String? {
+        val wanted = requested ?: return null
+        val levels = effortLevels ?: return wanted
+        val enabled = levels.filterNot { it in ReasoningWire.offLevels }
+        if (wanted in enabled) return wanted
+        val ordered = listOf("minimal", "low", "medium", "high", "xhigh", "max")
+        val index = ordered.indexOf(wanted)
+        return enabled.filter { it in ordered }.minByOrNull { kotlin.math.abs(ordered.indexOf(it) - index) }
+            ?: enabled.firstOrNull()
+    }
+
     companion object {
         const val DEFAULT_CONTEXT_WINDOW = 128_000
     }
@@ -149,15 +180,66 @@ object ModelCatalog {
      * OpenCode Go 那张里明确标了不支持识图 —— 那是上游实测的路由结果），
      * 当前服务商的记录更可信。
      *
-     * 全局表都没有的 id 一律回落到 [ModelInfo] 默认值（128K / 不支持识图与思考）。
-     * **刻意不按 id 的字面去猜**：把上下文窗口猜大，压缩就不会及时触发，最后是
-     * 服务端 400（`maximum context length`）；猜小只是早点压缩。识图/思考同理 ——
-     * 猜错会直接发出模型不接受的参数。这三样都必须靠"确知"或用户手动填。
+     * 窗口优先采用当前端点提供的值，再查内置能力表和已知 Gemini 聊天模型。
+     * 未知模型仍使用保守默认值；第三方端点可能比官方模型限制更低。
      */
-    fun find(kind: ProviderKind, modelId: String): ModelInfo =
-        knownModels(kind).firstOrNull { it.id == modelId }
-            ?: allKnown[modelId]
-            ?: ModelInfo(id = modelId)
+    fun find(
+        kind: ProviderKind,
+        modelId: String,
+        contextWindows: Map<String, Int> = emptyMap(),
+        metadata: Map<String, RemoteModelMetadata> = emptyMap(),
+        overrides: Map<String, ModelCapabilityOverride> = emptyMap(),
+    ): ModelInfo {
+        val normalized = modelId.lowercase()
+        val canonical = normalized.removePrefix("deepseek/")
+        val baseline = knownModels(kind).firstOrNull { it.id == canonical } ?: allKnown[canonical]
+            ?: compatibleBaseline(normalized)
+        val remote = metadata[modelId]
+        val manual = overrides[modelId]
+        val wire = manual?.reasoningWire ?: remote?.reasoningWire ?: baseline?.reasoningWire
+            ?: ReasoningWire.EFFORT
+        return ModelInfo(
+            id = modelId,
+            displayName = remote?.name ?: baseline?.displayName ?: modelId,
+            supportsVision = manual?.vision ?: remote?.supportsVision ?: baseline?.supportsVision ?: false,
+            supportsThinking = manual?.thinking ?: remote?.supportsThinking ?: baseline?.supportsThinking ?: false,
+            contextWindow = manual?.contextWindow?.takeIf { it > 0 } ?: contextWindows[modelId]?.takeIf { it > 0 }
+                ?: baseline?.contextWindow ?: ModelInfo.DEFAULT_CONTEXT_WINDOW,
+            maxOutputTokens = remote?.maxOutputTokens ?: baseline?.maxOutputTokens,
+            effortLevels = remote?.effortLevels?.takeUnless { manual?.thinking == true && remote.supportsThinking == false }
+                ?: baseline?.effortLevels,
+            reasoningWire = wire,
+            completionTokenField = baseline?.completionTokenField == true && wire == ReasoningWire.EFFORT,
+        )
+    }
+
+    // Match documented chat model IDs only; Gemini image, Live and embedding variants differ.
+    private val geminiMillionTokenModels = setOf(
+        "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
+        "gemini-3-pro", "gemini-3-flash", "gemini-3.1-pro", "gemini-3.1-flash-lite",
+        "gemini-3.5-flash",
+    )
+    private val geminiPreviewSuffix = Regex("-preview(?:-\\d{2}-\\d{2,4})?$")
+
+    private fun compatibleBaseline(id: String): ModelInfo? {
+        val gemini = id.removePrefix("google/").removePrefix("models/").replace(geminiPreviewSuffix, "")
+        if (gemini in geminiMillionTokenModels) return ModelInfo(id, supportsVision = true,
+            supportsThinking = true, contextWindow = 1_048_576, reasoningWire = ReasoningWire.EFFORT)
+        val openAi = id.removePrefix("openai/").replace(Regex("-\\d{4}-\\d{2}-\\d{2}$"), "")
+        return when (openAi) {
+            "deepseek-chat" -> ModelInfo(id, contextWindow = 128_000)
+            "deepseek-reasoner", "deepseek-r1" -> ModelInfo(id, supportsThinking = true, contextWindow = 128_000)
+            "deepseek-v4.1-flash" -> deepSeek.first()
+            "gpt-4o", "gpt-4o-mini" -> ModelInfo(id, supportsVision = true, contextWindow = 128_000)
+            "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano" -> ModelInfo(id, supportsVision = true,
+                contextWindow = 1_047_576)
+            "o3", "o4-mini" -> ModelInfo(id, supportsVision = true, supportsThinking = true,
+                contextWindow = 200_000, reasoningWire = ReasoningWire.EFFORT, completionTokenField = true)
+            "gpt-5", "gpt-5-mini", "gpt-5-nano" -> ModelInfo(id, supportsVision = true, supportsThinking = true,
+                contextWindow = 400_000, reasoningWire = ReasoningWire.EFFORT, completionTokenField = true)
+            else -> null
+        }
+    }
 
     /**
      * 把运行时拉取到的模型 id 与已知能力表合并。
@@ -181,16 +263,14 @@ object ModelCatalog {
      * `CUSTOM` 没有内置目录，于是「远端列表为空」时这里就是空 —— 界面必须给出
      * 空态提示和一个手动填写的入口，而不是弹一个只有标题的白框。
      */
-    fun pickerModels(kind: ProviderKind, remoteIds: List<String>): List<ModelInfo> {
-        val ids = remoteIds
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .distinct()
-        if (ids.isEmpty()) return knownModels(kind)
-        val merged = merge(kind, ids)
-        val seen = merged.mapTo(HashSet()) { it.id }
-        return merged + knownModels(kind).filter { it.id !in seen }
-    }
+    fun pickerModels(
+        kind: ProviderKind,
+        remoteIds: List<String>,
+        contextWindows: Map<String, Int> = emptyMap(),
+        metadata: Map<String, RemoteModelMetadata> = emptyMap(),
+        overrides: Map<String, ModelCapabilityOverride> = emptyMap(),
+    ): List<ModelInfo> = (remoteIds.map(String::trim).filter(String::isNotEmpty) + knownModels(kind).map { it.id })
+        .distinct().map { find(kind, it, contextWindows, metadata, overrides) }
 }
 
 /** 服务商配置。 */
@@ -253,7 +333,7 @@ enum class ApiStyle {
          */
         fun resolve(kind: ProviderKind, configuredId: String?, baseUrl: String): ApiStyle =
             fromId(configuredId) ?: run {
-                val official = baseUrl.trim().trimEnd('/').contains("api.deepseek.com")
+                val official = isOfficialDeepSeekEndpoint(baseUrl)
                 if (kind == ProviderKind.DEEPSEEK && official) ANTHROPIC else OPENAI
             }
     }
@@ -268,7 +348,7 @@ fun chatCompletionsUrl(baseUrl: String): String {
 /** 拼装 `/models` 地址。 */
 fun modelsUrl(baseUrl: String): String {
     val base = baseUrl.trim().trimEnd('/')
-    return if (base.endsWith("/models")) base else "$base/models"
+    return if (base.endsWith("/models")) base else "${base.removeSuffix("/chat/completions")}/models"
 }
 /**
  * Base URL 是否指向 **DeepSeek 官方域**。
@@ -278,4 +358,4 @@ fun modelsUrl(baseUrl: String): String {
  * 发出去只会 400 或 404。所有"要不要发官方专有东西"的判断都走这一个函数。
  */
 fun isOfficialDeepSeekEndpoint(baseUrl: String): Boolean =
-    baseUrl.trim().trimEnd('/').contains("api.deepseek.com")
+    baseUrl.trim().toHttpUrlOrNull()?.host == "api.deepseek.com"

@@ -1,6 +1,7 @@
 package com.simplechat.app.data
 
 import android.app.Application
+import androidx.annotation.ArrayRes
 import androidx.annotation.BoolRes
 import androidx.annotation.StringRes
 import com.simplechat.app.R
@@ -38,6 +39,9 @@ object Res {
         val context = LocaleHelper.localizedContext(app)
         return if (args.isEmpty()) context.getString(resId) else context.getString(resId, *args)
     }
+
+    internal fun strings(@ArrayRes resId: Int): Array<String> =
+        checkNotNull(app).resources.getStringArray(resId)
 
     internal fun nameOrNull(@StringRes id: Int?) = id?.let { app?.resources?.getResourceEntryName(it) }
 

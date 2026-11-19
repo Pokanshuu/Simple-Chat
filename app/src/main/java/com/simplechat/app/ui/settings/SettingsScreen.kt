@@ -83,10 +83,14 @@ import com.simplechat.app.data.ImportMode
 import com.simplechat.app.data.Res
 import com.simplechat.app.data.StoredSettings
 import com.simplechat.app.data.SettingsStore
+import com.simplechat.app.data.normalizeLoadingWord
 import com.simplechat.app.data.ApiProfile
 import com.simplechat.app.data.userMessage
 import com.simplechat.app.data.copyExportFile
 import com.simplechat.app.data.stageArchive
+import com.simplechat.app.net.ApiStyle
+import com.simplechat.app.net.ModelCapabilityOverride
+import com.simplechat.app.net.ReasoningWire
 import com.simplechat.app.net.ModelCatalog
 import com.simplechat.app.net.DeepSeekTts
 import com.simplechat.app.net.ProviderKind
@@ -143,6 +147,7 @@ private enum class SettingsPage(private val parentName: String?) {
     FONT("APPEARANCE"),
     /** 对话行为：思考折叠、搜索范围等开关。 */
     CHAT("ROOT"),
+    LOADING_WORDS("CHAT"),
     /** 朗读音色（系统 TTS）。 */
     VOICE("ROOT"),
     ABOUT("ROOT"),
@@ -154,12 +159,19 @@ private enum class SettingsPage(private val parentName: String?) {
     val depth: Int get() = parent?.let { it.depth + 1 } ?: 0
 }
 
+private enum class ModelCapabilityField(val label: Int) {
+    VISION(R.string.api_model_vision), THINKING(R.string.api_model_thinking),
+    CONTEXT(R.string.api_model_context), WIRE(R.string.api_model_wire),
+}
+
 private sealed interface SettingsDialog {
     data object Provider : SettingsDialog
     data object BaseUrl : SettingsDialog
     data object Model : SettingsDialog
     /** 手动填写模型 id：端点没实现 `/models`、或列表里没有目标模型时的出口。 */
     data object ModelManual : SettingsDialog
+    data object ModelCapabilities : SettingsDialog
+    data class ModelCapability(val field: ModelCapabilityField) : SettingsDialog
     data object ApiKey : SettingsDialog
     data class ApiProfileName(val profile: ApiProfile? = null, val copyCurrent: Boolean = false) : SettingsDialog
     data class DeleteApiProfile(val profile: ApiProfile) : SettingsDialog
@@ -235,6 +247,9 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
     val editingSettings = editingProfile?.let { profile ->
         stored.copy(providerId = profile.providerId, baseUrl = profile.baseUrl,
             modelId = profile.modelId, apiStyleId = profile.apiStyleId, modelIds = profile.modelIds,
+            modelContextWindows = profile.modelContextWindows,
+            modelMetadata = profile.modelMetadata,
+            modelOverrides = profile.modelOverrides,
             webSearch = profile.webSearch, searchApi = profile.searchApi)
     }
     var savingService by remember { mutableStateOf(false) }
@@ -254,6 +269,19 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
             try { action(); profileError = null }
             catch (error: CancellationException) { throw error }
             catch (error: Exception) { profileError = error.userMessage() }
+        }
+    }
+    var loadingWordsError by remember { mutableStateOf<String?>(null) }
+    fun updateLoadingWordsSettings(save: suspend () -> Unit) {
+        scope.launch {
+            try {
+                save()
+                loadingWordsError = null
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                loadingWordsError = error.userMessage()
+            }
         }
     }
     var dataMessage by remember { mutableStateOf<String?>(null) }
@@ -559,6 +587,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                 SettingsPage.APPEARANCE -> stringResource(R.string.settings_appearance)
                 SettingsPage.FONT -> stringResource(R.string.settings_font_size)
                 SettingsPage.CHAT -> stringResource(R.string.settings_chat_behavior)
+                SettingsPage.LOADING_WORDS -> stringResource(R.string.settings_loading_words)
                 SettingsPage.VOICE -> stringResource(R.string.tts_voice)
                 SettingsPage.ABOUT -> stringResource(R.string.settings_about)
                 SettingsPage.LICENSES -> stringResource(R.string.about_licenses)
@@ -627,6 +656,19 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                             onToggleSearchInactiveBranches = {
                                 scope.launch { store.setSearchInactiveBranches(it) }
                             },
+                            onOpenLoadingWords = { page = SettingsPage.LOADING_WORDS },
+                        )
+
+                        SettingsPage.LOADING_WORDS -> if (settingsLoaded) LoadingWordsPage(
+                            words = stored.loadingWords,
+                            useThemeColor = stored.loadingWordsUseThemeColor,
+                            onUseThemeColorChange = { enabled ->
+                                updateLoadingWordsSettings { store.setLoadingWordsUseThemeColor(enabled) }
+                            },
+                            error = loadingWordsError,
+                            onChange = { update ->
+                                updateLoadingWordsSettings { store.editLoadingWords(update) }
+                            },
                         )
 
                         SettingsPage.DATA -> DataPage(
@@ -665,23 +707,24 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                                 val source = editingProfile
                                 scope.launch {
                                     try {
-                                    val result = container.chatApi.fetchModels(
+                                    val result = container.chatApi.fetchModelCatalog(
                                         baseUrl = source.baseUrl.ifBlank { provider.defaultBaseUrl },
-                                        apiKey = store.readApiKeyForProfile(source.id),
+                                        apiKey = if (provider.modelListNeedsAuth) store.readApiKeyForProfile(source.id) else "",
+                                        apiStyle = ApiStyle.resolve(provider, source.apiStyleId, source.baseUrl.ifBlank { provider.defaultBaseUrl }),
                                     )
                                     // 拉到的列表**必须落库**：它就是「模型」选择器的数据源，
                                     // 早先只报了个条数、列表丢掉，于是自定义端点明明"连接成功"，
                                     // 点开「模型」却是一个只有标题的白框。
-                                    result.onSuccess { ids ->
+                                    result.onSuccess { catalog ->
                                         store.updateApiProfile(source.id) {
                                             if (it.baseUrl == source.baseUrl && it.providerId == source.providerId &&
-                                                it.apiKeyEncrypted == source.apiKeyEncrypted) it.copy(modelIds = ids) else it
+                                                it.apiKeyEncrypted == source.apiKeyEncrypted && it.apiStyleId == source.apiStyleId) it.copy(modelIds = catalog.ids, modelContextWindows = catalog.contextWindows, modelMetadata = catalog.metadata) else it
                                         }
                                     }
                                     if (page == SettingsPage.API_PROFILE && editingProfileId == source.id &&
                                         stored.apiProfiles.any { it.id == source.id && it.baseUrl == source.baseUrl &&
-                                            it.providerId == source.providerId && it.apiKeyEncrypted == source.apiKeyEncrypted }) testResult = result.fold(
-                                        onSuccess = { Res.get(R.string.api_test_ok, it.size) },
+                                            it.providerId == source.providerId && it.apiKeyEncrypted == source.apiKeyEncrypted && it.apiStyleId == source.apiStyleId }) testResult = result.fold(
+                                        onSuccess = { Res.get(R.string.api_test_ok, it.ids.size) },
                                         onFailure = { Res.get(R.string.api_test_failed, it.userMessage()) },
                                     )
                                     } catch (error: CancellationException) { throw error }
@@ -773,7 +816,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
             onDismiss = { dialog = null },
             onSelect = { picked ->
                 dialog = null
-                editProfile { if (it.providerId == picked.name) it else it.copy(providerId = picked.name, baseUrl = picked.defaultBaseUrl, modelId = picked.defaultModel, modelIds = emptyList()) }
+                editProfile { if (it.providerId == picked.name) it else it.copy(providerId = picked.name, baseUrl = picked.defaultBaseUrl, modelId = picked.defaultModel, modelIds = emptyList(), modelContextWindows = emptyMap(), modelMetadata = emptyMap(), modelOverrides = emptyMap()) }
             },
         )
 
@@ -816,7 +859,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
             onDismiss = { dialog = null },
             onConfirm = { value ->
                 dialog = null
-                editProfile { if (it.baseUrl == value.trim()) it else it.copy(baseUrl = value.trim(), modelIds = emptyList()) }
+                editProfile { if (it.baseUrl == value.trim()) it else it.copy(baseUrl = value.trim(), modelIds = emptyList(), modelContextWindows = emptyMap(), modelMetadata = emptyMap(), modelOverrides = emptyMap()) }
             },
         )
 
@@ -828,7 +871,8 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
              * 于是「测试连接」显示"可用模型 45 个"、点开「模型」却什么都没有 ——
              * 拉取结果根本没进界面。
              */
-            val models = ModelCatalog.pickerModels(provider, profileSettings.modelIds)
+            val models = ModelCatalog.pickerModels(provider, profileSettings.modelIds, profileSettings.modelContextWindows,
+                profileSettings.modelMetadata, profileSettings.modelOverrides)
             ChoiceDialog(
                 title = stringResource(R.string.label_model),
                 options = models.map { it to it.displayName },
@@ -859,6 +903,77 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
             },
         )
 
+        SettingsDialog.ModelCapabilities -> {
+            val automatic = ModelCatalog.find(provider, profileSettings.modelId,
+                profileSettings.modelContextWindows, profileSettings.modelMetadata)
+            val manual = profileSettings.modelOverrides[profileSettings.modelId] ?: ModelCapabilityOverride()
+            val auto = stringResource(R.string.api_model_automatic)
+            val fields = listOf(
+                ModelCapabilityField.VISION to "${stringResource(R.string.api_model_vision)} · ${capabilityLabel(manual.vision, automatic.supportsVision)}",
+                ModelCapabilityField.THINKING to "${stringResource(R.string.api_model_thinking)} · ${capabilityLabel(manual.thinking, automatic.supportsThinking)}",
+                ModelCapabilityField.CONTEXT to "${stringResource(R.string.api_model_context)} · " +
+                    (manual.contextWindow?.toString() ?: stringResource(R.string.api_model_auto_window, automatic.contextWindow)),
+            ) + if (profileSettings.resolvedApiStyle == ApiStyle.OPENAI) {
+                listOf(ModelCapabilityField.WIRE to "${stringResource(R.string.api_model_wire)} · ${manual.reasoningWire?.let(::reasoningWireLabel) ?: auto}")
+            } else emptyList()
+            ChoiceDialog(
+                title = stringResource(R.string.api_model_capabilities),
+                options = fields,
+                selected = null,
+                onDismiss = { dialog = null },
+                onSelect = { dialog = SettingsDialog.ModelCapability(it) },
+            )
+        }
+
+        is SettingsDialog.ModelCapability -> {
+            val id = profileSettings.modelId
+            val title = stringResource(activeDialog.field.label)
+            val manual = profileSettings.modelOverrides[id] ?: ModelCapabilityOverride()
+            val automatic = ModelCatalog.find(provider, id, profileSettings.modelContextWindows, profileSettings.modelMetadata)
+            val auto = stringResource(R.string.api_model_automatic)
+            fun save(change: (ModelCapabilityOverride) -> ModelCapabilityOverride) {
+                editProfile { profile ->
+                    val next = change(profile.modelOverrides[id] ?: ModelCapabilityOverride())
+                    val updated = if (next == ModelCapabilityOverride()) profile.modelOverrides - id
+                        else profile.modelOverrides + (id to next)
+                    profile.copy(modelOverrides = updated)
+                }
+                dialog = SettingsDialog.ModelCapabilities
+            }
+            val back = { dialog = SettingsDialog.ModelCapabilities }
+            when (activeDialog.field) {
+                ModelCapabilityField.CONTEXT -> {
+                    val invalid = stringResource(R.string.api_model_invalid_window)
+                    TextInputDialog(
+                        title = title,
+                        initial = manual.contextWindow?.toString().orEmpty(),
+                        placeholder = stringResource(R.string.api_model_auto_window, automatic.contextWindow),
+                        onDismiss = back,
+                        validate = { raw -> if (raw.isBlank() || (raw.trim().toIntOrNull() ?: 0) > 0) null else invalid },
+                        onConfirm = { raw -> save { it.copy(contextWindow = raw.trim().toIntOrNull()) } },
+                    )
+                }
+                ModelCapabilityField.WIRE -> ChoiceDialog(
+                    title = title,
+                    options = listOf(null to auto) + ReasoningWire.entries.map { it to reasoningWireLabel(it) },
+                    selected = manual.reasoningWire,
+                    onDismiss = back,
+                    onSelect = { value -> save { it.copy(reasoningWire = value) } },
+                )
+                ModelCapabilityField.VISION, ModelCapabilityField.THINKING -> {
+                    val vision = activeDialog.field == ModelCapabilityField.VISION
+                    ChoiceDialog(
+                        title = title,
+                        options = listOf(null to auto, true to stringResource(R.string.api_model_enabled),
+                            false to stringResource(R.string.api_model_disabled)),
+                        selected = if (vision) manual.vision else manual.thinking,
+                        onDismiss = back,
+                        onSelect = { value -> save { if (vision) it.copy(vision = value) else it.copy(thinking = value) } },
+                    )
+                }
+            }
+        }
+
         SettingsDialog.ApiKey -> TextInputDialog(
             title = "API Key",
             initial = keyDialogValue,
@@ -885,7 +1000,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
             onConfirm = { value ->
                 dialog = null
                 keyDialogValue = ""
-                editProfile { it.copy(apiKeyEncrypted = if (ApiKey.normalize(value).isEmpty()) "" else store.encryptServiceKey(value), modelIds = emptyList()) }
+                editProfile { it.copy(apiKeyEncrypted = if (ApiKey.normalize(value).isEmpty()) "" else store.encryptServiceKey(value), modelIds = emptyList(), modelContextWindows = emptyMap(), modelMetadata = emptyMap()) }
             },
         )
 
@@ -896,7 +1011,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
             onDismiss = { dialog = null },
             onSelect = { picked ->
                 dialog = null
-                editProfile { it.copy(apiStyleId = picked.name) }
+                editProfile { if (it.apiStyleId == picked.name) it else it.copy(apiStyleId = picked.name, modelIds = emptyList(), modelContextWindows = emptyMap(), modelMetadata = emptyMap()) }
             },
         )
 
@@ -1231,6 +1346,7 @@ private fun ChatBehaviorPage(
     stored: StoredSettings,
     onToggleAutoCollapse: (Boolean) -> Unit,
     onToggleSearchInactiveBranches: (Boolean) -> Unit,
+    onOpenLoadingWords: () -> Unit,
 ) {
     SettingsSectionLabel(stringResource(R.string.settings_group_display))
 
@@ -1240,6 +1356,14 @@ private fun ChatBehaviorPage(
             label = stringResource(R.string.settings_auto_collapse),
             checked = stored.autoCollapseThinking,
             onCheckedChange = onToggleAutoCollapse,
+        )
+        RowDivider()
+        SettingsNavRow(
+            icon = AppIcons.Edit,
+            label = stringResource(R.string.settings_loading_words),
+            value = if (stored.loadingWords.isEmpty()) stringResource(R.string.loading_words_default)
+                else stringResource(R.string.loading_words_count, stored.loadingWords.size),
+            onClick = onOpenLoadingWords,
         )
     }
 
@@ -1251,6 +1375,118 @@ private fun ChatBehaviorPage(
             label = stringResource(R.string.settings_search_inactive_branches),
             checked = stored.searchInactiveBranches,
             onCheckedChange = onToggleSearchInactiveBranches,
+        )
+    }
+}
+
+@Composable
+private fun LoadingWordsPage(
+    words: List<String>,
+    useThemeColor: Boolean,
+    onUseThemeColorChange: (Boolean) -> Unit,
+    error: String?,
+    onChange: ((List<String>) -> List<String>) -> Unit,
+) {
+    // Null closes the editor. An empty initial value opens it in add mode.
+    var editing by rememberSaveable { mutableStateOf<String?>(null) }
+    var deleting by rememberSaveable { mutableStateOf<String?>(null) }
+    val colors = LocalChatColors.current
+
+    Text(
+        text = stringResource(if (words.isEmpty()) R.string.loading_words_empty else R.string.loading_words_hint),
+        style = MaterialTheme.typography.bodySmall,
+        color = colors.placeholder,
+        modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
+    )
+    SettingsCard {
+        SettingsSwitchRow(
+            icon = AppIcons.Palette,
+            label = stringResource(R.string.loading_words_use_theme_color),
+            checked = useThemeColor,
+            onCheckedChange = onUseThemeColorChange,
+        )
+        RowDivider()
+        SettingsNavRow(
+            icon = AppIcons.PlusCircle,
+            label = stringResource(R.string.loading_words_add),
+            value = null,
+            onClick = { editing = "" },
+        )
+        words.forEach { word ->
+            RowDivider(inset = Space.Screen)
+            Row(
+                modifier = Modifier.fillMaxWidth().heightIn(min = Space.Row)
+                    .padding(start = Space.Screen, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = word,
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f).padding(vertical = Space.RowPadY),
+                )
+                IconCircleButton(
+                    icon = AppIcons.Edit,
+                    contentDescription = stringResource(R.string.loading_words_edit_item, word),
+                    onClick = { editing = word },
+                    size = 48.dp,
+                    iconSize = 18.dp,
+                )
+                IconCircleButton(
+                    icon = AppIcons.Trash,
+                    contentDescription = stringResource(R.string.loading_words_delete_item, word),
+                    onClick = { deleting = word },
+                    size = 48.dp,
+                    iconSize = 18.dp,
+                    tint = colors.danger,
+                )
+            }
+        }
+    }
+    error?.let {
+        Text(it, color = colors.danger, style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp))
+    }
+    Spacer(Modifier.height(24.dp))
+
+    editing?.let { original ->
+        val blank = stringResource(R.string.loading_words_invalid)
+        val duplicate = stringResource(R.string.loading_words_duplicate)
+        TextInputDialog(
+            title = stringResource(if (original.isEmpty()) R.string.loading_words_add else R.string.loading_words_edit),
+            initial = original,
+            placeholder = stringResource(R.string.loading_words_placeholder),
+            onDismiss = { editing = null },
+            validate = { raw ->
+                val word = normalizeLoadingWord(raw)
+                when {
+                    word.isEmpty() -> blank
+                    word != original && word in words -> duplicate
+                    else -> null
+                }
+            },
+            onConfirm = { raw ->
+                val word = normalizeLoadingWord(raw)
+                onChange { current ->
+                    when {
+                        word == original || word in current -> current
+                        original.isEmpty() -> current + word
+                        else -> current.map { if (it == original) word else it }
+                    }
+                }
+                editing = null
+            },
+        )
+    }
+    deleting?.let { word ->
+        AppConfirmDialog(
+            title = stringResource(R.string.loading_words_delete_item, word),
+            confirmText = stringResource(R.string.action_delete),
+            onDismiss = { deleting = null },
+            onConfirm = {
+                onChange { it - word }
+                deleting = null
+            },
+            destructive = true,
         )
     }
 }
@@ -1638,6 +1874,12 @@ private fun ApiPage(
             value = stored.modelId.ifBlank { stringResource(R.string.api_model_unset) },
             onClick = { onPick(SettingsDialog.Model) },
         )
+        if (stored.modelId.isNotBlank()) {
+            RowDivider(inset = 16.dp)
+            SettingsNavRow(null, stringResource(R.string.api_model_capabilities), null) {
+                onPick(SettingsDialog.ModelCapabilities)
+            }
+        }
     }
 
     SettingsSectionLabel(stringResource(R.string.settings_group_auth))
@@ -2731,6 +2973,19 @@ private fun InfoRow(label: String, value: String) {
 // ══════════════════════════════════════════════════════════
 //  弹窗
 // ══════════════════════════════════════════════════════════
+
+@Composable
+private fun capabilityLabel(manual: Boolean?, automatic: Boolean): String {
+    val status = stringResource(if (manual ?: automatic) R.string.api_model_enabled else R.string.api_model_disabled)
+    return if (manual == null) "${stringResource(R.string.api_model_automatic)} ($status)" else status
+}
+
+private fun reasoningWireLabel(wire: ReasoningWire): String = when (wire) {
+    ReasoningWire.DEEPSEEK -> "thinking (DeepSeek)"
+    ReasoningWire.EFFORT -> "reasoning_effort"
+    ReasoningWire.REASONING_OBJECT -> "reasoning"
+    ReasoningWire.ENABLE_THINKING -> "enable_thinking"
+}
 
 @Composable
 private fun <T> ChoiceDialog(

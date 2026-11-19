@@ -74,22 +74,7 @@ class ChatApi(
         extraHeaders: Map<String, String> = emptyMap(),
         retryBeforeContent: Boolean = true,
     ): Flow<StreamEvent> {
-        val thinkingActive = model.supportsThinking && thinkingEnabled
-
-        val request = ChatRequestDto(
-            model = model.id,
-            messages = messages,
-            stream = true,
-            thinking = when {
-                !model.supportsThinking -> null
-                thinkingEnabled -> ThinkingDto.Enabled
-                else -> ThinkingDto.Disabled
-            },
-            reasoningEffort = if (thinkingActive) reasoningEffort else null,
-            maxTokens = maxTokens,
-            temperature = if (thinkingActive) null else temperature,
-            topP = if (thinkingActive) topP else null,
-        )
+        val request = buildChatRequest(model, messages, thinkingEnabled, reasoningEffort, maxTokens, temperature, topP)
 
         return sseClient.stream(
             url = chatCompletionsUrl(baseUrl),
@@ -98,6 +83,7 @@ class ChatApi(
             extraHeaders = extraHeaders,
             contextWindow = model.contextWindow,
             retryBeforeContent = retryBeforeContent,
+            maxOutputTokens = model.maxOutputTokens,
         )
     }
 
@@ -106,20 +92,22 @@ class ChatApi(
      * 失败不抛异常，由调用方决定提示方式。
      */
     suspend fun fetchModels(baseUrl: String, apiKey: String): Result<List<String>> =
+        fetchModelCatalog(baseUrl, apiKey).map { it.ids }
+
+    internal suspend fun fetchModelCatalog(
+        baseUrl: String,
+        apiKey: String,
+        apiStyle: ApiStyle = ApiStyle.OPENAI,
+    ): Result<RemoteModelCatalog> =
         withContext(Dispatchers.IO) {
             runCatching {
-                val builder = Request.Builder().url(modelsUrl(baseUrl)).get()
-                if (apiKey.isNotBlank()) {
-                    builder.header("Authorization", "Bearer $apiKey")
-                }
-                client.newCall(builder.build()).execute().use { response ->
+                val builder = modelListingRequest(baseUrl, apiKey, apiStyle)
+                client.newCall(builder).execute().use { response ->
                     if (!response.isSuccessful) {
                         error("HTTP ${response.code}")
                     }
                     val text = response.body?.string().orEmpty()
-                    json.decodeFromString(ModelListDto.serializer(), text)
-                        .data
-                        .map { it.id }
+                    parseRemoteModelCatalog(json, text)
                 }
             }
         }
@@ -167,6 +155,59 @@ class ChatApi(
             explicitNulls = false
         }
     }
+}
+
+internal fun modelListingRequest(baseUrl: String, apiKey: String, apiStyle: ApiStyle): Request {
+    val official = isOfficialDeepSeekEndpoint(baseUrl)
+    val nativeAnthropic = apiStyle == ApiStyle.ANTHROPIC && !official
+    val url = when {
+        nativeAnthropic -> anthropicMessagesUrl(baseUrl).removeSuffix("/messages") + "/models"
+        official -> modelsUrl(baseUrl.trim().trimEnd('/').substringBefore("/anthropic"))
+        else -> modelsUrl(baseUrl)
+    }
+    return Request.Builder().url(url).get().header("Accept", "application/json").apply {
+        if (nativeAnthropic) {
+            header("anthropic-version", "2023-06-01")
+            if (apiKey.isNotBlank()) header("x-api-key", apiKey)
+        } else if (apiKey.isNotBlank()) {
+            header("Authorization", "Bearer $apiKey")
+        }
+    }.build()
+}
+
+/** Build only the reasoning fields understood by the configured OpenAI-compatible route. */
+internal fun buildChatRequest(
+    model: ModelInfo,
+    messages: List<OutMessageDto>,
+    thinkingEnabled: Boolean,
+    reasoningEffort: String? = null,
+    maxTokens: Int? = null,
+    temperature: Double? = null,
+    topP: Double? = null,
+): ChatRequestDto {
+    val wire = model.reasoningWire.takeIf { model.supportsThinking }
+    val effort = when {
+        wire == null -> null
+        thinkingEnabled -> model.resolveReasoningEffort(reasoningEffort ?: "high")
+        wire == ReasoningWire.EFFORT -> model.effortLevels?.firstOrNull { it in ReasoningWire.offLevels }
+        else -> null
+    }
+    val output = model.clampOutputTokens(maxTokens)
+    return ChatRequestDto(
+        model = model.id,
+        messages = messages,
+        stream = true,
+        thinking = if (wire == ReasoningWire.DEEPSEEK) {
+            if (thinkingEnabled) ThinkingDto.Enabled else ThinkingDto.Disabled
+        } else null,
+        reasoningEffort = effort.takeIf { wire == ReasoningWire.DEEPSEEK || wire == ReasoningWire.EFFORT },
+        reasoning = if (wire == ReasoningWire.REASONING_OBJECT) ReasoningDto(thinkingEnabled, effort) else null,
+        enableThinking = thinkingEnabled.takeIf { wire == ReasoningWire.ENABLE_THINKING },
+        maxTokens = output.takeUnless { model.completionTokenField },
+        maxCompletionTokens = output.takeIf { model.completionTokenField },
+        temperature = temperature.takeUnless { model.completionTokenField || (wire != null && thinkingEnabled) },
+        topP = topP.takeIf { wire == ReasoningWire.DEEPSEEK && thinkingEnabled },
+    )
 }
 
 /** 构造消息 `content`。文本 → 字符串；带图 → content block 数组。 */

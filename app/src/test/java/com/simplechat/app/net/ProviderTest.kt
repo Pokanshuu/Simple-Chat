@@ -73,6 +73,21 @@ class ProviderTest {
         )
     }
 
+    @Test
+    fun `discovery follows configured listing protocol and uses the official DeepSeek catalog`() {
+        val openAi = modelListingRequest("https://gw.example/route/v1/chat/completions", "test-key", ApiStyle.OPENAI)
+        assertEquals("https://gw.example/route/v1/models", openAi.url.toString())
+        assertEquals("Bearer test-key", openAi.header("Authorization"))
+        assertEquals(null, openAi.header("x-api-key"))
+        val anthropic = modelListingRequest("https://gw.example/route/v1/messages", "test-key", ApiStyle.ANTHROPIC)
+        assertEquals("https://gw.example/route/v1/models", anthropic.url.toString())
+        assertEquals("test-key", anthropic.header("x-api-key"))
+        assertEquals("2023-06-01", anthropic.header("anthropic-version"))
+        val official = modelListingRequest("https://api.deepseek.com/anthropic/v1", "test-key", ApiStyle.ANTHROPIC)
+        assertEquals("https://api.deepseek.com/models", official.url.toString())
+        assertEquals("Bearer test-key", official.header("Authorization"))
+    }
+
     // ── 模型能力表 ────────────────────────────────────────
 
     @Test

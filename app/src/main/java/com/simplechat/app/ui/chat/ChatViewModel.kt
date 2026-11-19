@@ -36,6 +36,9 @@ import com.simplechat.app.data.userMessage
 import com.simplechat.app.db.CompactionEntity
 import com.simplechat.app.db.DraftEntity
 import com.simplechat.app.net.ChatApi
+import com.simplechat.app.net.RemoteModelMetadata
+import com.simplechat.app.net.ModelCapabilityOverride
+import com.simplechat.app.net.DeepSeekAsr
 import com.simplechat.app.net.DeepSeekTts
 import com.simplechat.app.net.ApiStyle
 import com.simplechat.app.net.MessageContent
@@ -96,6 +99,14 @@ class ChatViewModel(
 ) : ViewModel() {
 
     val messages = mutableStateListOf<UiMessage>()
+
+    private var loadingLabel by mutableStateOf<Pair<String, String>?>(null)
+
+    internal var loadingWordsUseThemeColor by mutableStateOf(false)
+        private set
+
+    internal fun loadingLabelFor(messageId: String): String? =
+        loadingLabel?.takeIf { it.first == messageId }?.second
 
     /** 当前会话 id；为空表示尚未落库的新对话。 */
     var currentConversationId by mutableStateOf<String?>(null)
@@ -242,6 +253,9 @@ class ChatViewModel(
     var officialTts by mutableStateOf<DeepSeekTts.Config?>(null)
         private set
 
+    internal var officialAsr by mutableStateOf<DeepSeekAsr.Config?>(null)
+        private set
+
     /**
      * 实际生效的协议通道。
      *
@@ -333,6 +347,9 @@ class ChatViewModel(
 
     /** 上一次见到的远端模型列表（落库的那份），同理只用来比较。 */
     private var previousModelIds: List<String> = emptyList()
+    private var previousModelContextWindows: Map<String, Int> = emptyMap()
+    private var previousModelMetadata: Map<String, RemoteModelMetadata> = emptyMap()
+    private var previousModelOverrides: Map<String, ModelCapabilityOverride> = emptyMap()
 
     private val providerKind: ProviderKind
         get() = runCatching { ProviderKind.valueOf(stored.providerId) }
@@ -395,28 +412,35 @@ class ChatViewModel(
          * 一进设置、或重启一次，列表就空了。
          */
         val endpointChanged = kind != previousProviderKind || value.baseUrl != previousBaseUrl
-        if (endpointChanged || value.modelIds != previousModelIds) {
+        if (endpointChanged || value.modelIds != previousModelIds || value.modelContextWindows != previousModelContextWindows ||
+            value.modelMetadata != previousModelMetadata || value.modelOverrides != previousModelOverrides) {
             previousProviderKind = kind
             previousBaseUrl = value.baseUrl
             previousModelIds = value.modelIds
-            models = ModelCatalog.pickerModels(kind, value.modelIds)
+            previousModelContextWindows = value.modelContextWindows
+            previousModelMetadata = value.modelMetadata
+            previousModelOverrides = value.modelOverrides
+            models = ModelCatalog.pickerModels(kind, value.modelIds, value.modelContextWindows,
+                value.modelMetadata, value.modelOverrides)
             // 端点换了，上一轮的"已拉取 N 个"不再成立；只是列表更新则保留提示
             if (endpointChanged) modelHint = null
         }
         apiStyle = ApiStyle.resolve(kind, value.apiStyleId, value.baseUrl)
         webSearch = value.webSearch
         autoCollapseThinking = value.autoCollapseThinking
+        loadingWordsUseThemeColor = value.loadingWordsUseThemeColor
         ttsVoiceName = value.ttsVoiceName
         autoReadAloud = value.autoReadAloud
         showImageSkipNotice = value.showImageSkipNotice
         if (!showImageSkipNotice) imageSkipNotice = null
+        officialAsr = DeepSeekAsr.configFor(value.providerId, value.baseUrl, value.apiKey)
         officialTts = if (DeepSeekTts.isOfficialTtsVoiceAvailable(value.providerId, value.apiKey)) {
             DeepSeekTts.Config(value.apiKey)
         } else {
             null
         }
         settings = settings.copy(
-            model = ModelCatalog.find(kind, value.modelId),
+            model = ModelCatalog.find(kind, value.modelId, value.modelContextWindows, value.modelMetadata, value.modelOverrides),
             reasoningLevel = runCatching { ReasoningLevel.valueOf(value.reasoningLevelId) }
                 .getOrDefault(ReasoningLevel.OFF),
             temperature = value.temperature,
@@ -658,25 +682,34 @@ class ChatViewModel(
         refreshingModels = true
         modelHint = null
         val source = stored
+        val profile = source.apiProfiles.firstOrNull { it.id == source.activeApiProfileId }
         viewModelScope.launch {
-            val result = chatApi.fetchModels(
+            val result = chatApi.fetchModelCatalog(
                 baseUrl = source.baseUrl.ifBlank { providerKind.defaultBaseUrl },
-                apiKey = source.apiKey,
+                apiKey = if (providerKind.modelListNeedsAuth) source.apiKey else "",
+                apiStyle = source.resolvedApiStyle,
             )
-            if (stored.activeApiProfileId != source.activeApiProfileId || stored.baseUrl != source.baseUrl) {
+            if (stored.activeApiProfileId != source.activeApiProfileId || stored.baseUrl != source.baseUrl ||
+                stored.providerId != source.providerId || stored.apiKey != source.apiKey || stored.apiStyleId != source.apiStyleId) {
                 refreshingModels = false
                 return@launch
             }
-            result.onSuccess { ids ->
-                models = ModelCatalog.pickerModels(providerKind, ids)
-                modelHint = Res.get(R.string.models_fetched, ids.size)
+            result.onSuccess { catalog ->
+                modelHint = Res.get(R.string.models_fetched, catalog.ids.size)
             }
             result.onFailure { error ->
                 modelHint = Res.get(R.string.models_fetch_failed, error.userMessage()) +
                     if (!stored.hasKey) Res.get(R.string.models_fetch_needs_key) else ""
             }
             // 落库：设置页的「模型」选择器读的是这份，重启后也还在
-            result.getOrNull()?.let { settingsStore.setModelIds(it, source.activeApiProfileId, source.baseUrl) }
+            result.getOrNull()?.let { catalog ->
+                settingsStore.updateApiProfile(source.activeApiProfileId) { current ->
+                    if (profile != null && current.baseUrl == profile.baseUrl && current.providerId == profile.providerId &&
+                        current.apiKeyEncrypted == profile.apiKeyEncrypted && current.apiStyleId == profile.apiStyleId) {
+                        current.copy(modelIds = catalog.ids, modelContextWindows = catalog.contextWindows, modelMetadata = catalog.metadata)
+                    } else current
+                }
+            }
             refreshingModels = false
         }
     }
@@ -920,7 +953,7 @@ class ChatViewModel(
                                     model = model.id, systemPrompt = prompts.system,
                                     path = listOf(UiMessage("compact", MessageRole.USER, material)),
                                     searchEnabled = false, thinkingEnabled = false, requestTitle = false,
-                                    latestReminder = null, maxTokens = maxTokens, temperature = 0.3,
+                                    latestReminder = null, maxTokens = maxTokens, outputLimit = model.maxOutputTokens, temperature = 0.3,
                                     deepSeekExtensions = isOfficialDeepSeekEndpoint(baseUrl),
                                 ).copy(tools = emptyList()),
                                 extraHeaders = headers, contextWindow = model.contextWindow, retryBeforeContent = false,
@@ -1428,6 +1461,10 @@ class ChatViewModel(
             return
         }
         val generation = ++streamGeneration
+        if (prefix == null) {
+            val phrase = stored.loadingWords.randomOrNull() ?: Res.strings(R.array.reply_waiting_phrases).random()
+            loadingLabel = replyId to phrase
+        }
         isStreaming = true
         // 生成期间把进程提到前台服务优先级：退到后台 / 熄屏也继续收
         BackgroundGeneration.sync(true)
@@ -1846,11 +1883,12 @@ class ChatViewModel(
             systemPrompt = system,
             path = path,
             searchEnabled = webSearch && !stored.searchApi.enabled,
-            reasoningEffort = settings.reasoningEffort,
+            reasoningEffort = settings.model.resolveReasoningEffort(settings.reasoningEffort),
             thinkingEnabled = settings.thinkingEnabled,
             requestTitle = requestTitle,
             latestReminder = latestReminder(),
             maxTokens = settings.maxTokens,
+            outputLimit = settings.model.maxOutputTokens,
             prefix = prefix,
             deepSeekExtensions = officialDeepSeek,
             temperature = settings.temperature.toDouble(),

@@ -167,6 +167,8 @@ fun MessageList(
     textSelection: MessageTextSelection = remember { MessageTextSelection() },
     shareSelection: MessageShareSelection? = null,
     onShare: ((UiMessage) -> Unit)? = null,
+    loadingLabelFor: (String) -> String? = { null },
+    loadingWordsUseThemeColor: Boolean = false,
 ) {
     /*
      * 「谁被碰过」。
@@ -261,6 +263,8 @@ fun MessageList(
             val row: @Composable () -> Unit = {
             MessageRow(
                 message = message,
+                loadingLabel = if (message.streaming) loadingLabelFor(message.id) else null,
+                loadingWordsUseThemeColor = message.streaming && loadingWordsUseThemeColor,
                 search = searchTarget?.takeIf { it.messageId == message.id },
                 onDismissSearch = onDismissSearch,
                 peeked = peekedId == message.id,
@@ -326,6 +330,8 @@ fun MessageList(
 @Composable
 private fun MessageRow(
     message: UiMessage,
+    loadingLabel: String?,
+    loadingWordsUseThemeColor: Boolean,
     search: SearchTarget?,
     onDismissSearch: () -> Unit,
     peeked: Boolean,
@@ -500,6 +506,8 @@ private fun MessageRow(
 
             MessageRole.ASSISTANT -> AssistantBlock(
                 message = message,
+                loadingLabel = loadingLabel,
+                loadingWordsUseThemeColor = loadingWordsUseThemeColor,
                 interactive = actionable && !selectionActive,
                 selecting = selecting,
                 selectionState = selectionState,
@@ -846,6 +854,8 @@ fun AssistantBlock(
     onFoldToggle: () -> Unit = {},
     /** 思考内容是否自动收起；见 `MessageList` 的同名参数。 */
     autoCollapseThinking: Boolean = true,
+    loadingLabel: String? = null,
+    loadingWordsUseThemeColor: Boolean = false,
 ) {
     /*
      * 初态由设置决定（`TODO.md` 里那条"只写不读"的开关就是这里接上的）：
@@ -921,7 +931,7 @@ fun AssistantBlock(
          * 「加载中…」过渡，第一段内容一出现就自动让位。
          */
         if (message.streaming && answer.isBlank() && !hasReasoning && timeline == null) {
-            WaitingIndicator()
+            WaitingIndicator(loadingLabel, useThemeColor = loadingWordsUseThemeColor)
             Spacer(Modifier.size(MessageGap))
         }
 

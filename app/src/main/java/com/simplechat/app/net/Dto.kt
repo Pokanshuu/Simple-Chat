@@ -30,7 +30,13 @@ data class ChatRequestDto(
     @SerialName("top_p") val topP: Double? = null,
     /** 仅用于 KVCache 隔离与内容安全标识，可选。 */
     @SerialName("user_id") val userId: String? = null,
+    val reasoning: ReasoningDto? = null,
+    @SerialName("enable_thinking") val enableThinking: Boolean? = null,
+    @SerialName("max_completion_tokens") val maxCompletionTokens: Int? = null,
 )
+
+@Serializable
+data class ReasoningDto(val enabled: Boolean, val effort: String? = null)
 
 @Serializable
 data class ThinkingDto(val type: String) {
@@ -73,6 +79,7 @@ data class DeltaDto(
     val content: String? = null,
     /** 思维链增量。与 `content` 同级（设计文档 §11.5）。 */
     @SerialName("reasoning_content") val reasoningContent: String? = null,
+    val reasoning: kotlinx.serialization.json.JsonElement? = null,
 )
 
 @Serializable
@@ -93,14 +100,4 @@ data class ErrorBodyDto(
     val message: String? = null,
     val type: String? = null,
     val code: String? = null,
-)
-
-/** `GET /models` 响应（OpenCode Go 的模型列表无需鉴权即可访问）。 */
-@Serializable
-data class ModelListDto(val data: List<ModelEntryDto> = emptyList())
-
-@Serializable
-data class ModelEntryDto(
-    val id: String,
-    @SerialName("owned_by") val ownedBy: String? = null,
 )

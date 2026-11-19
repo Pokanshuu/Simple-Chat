@@ -121,6 +121,19 @@
     <string name="settings_chat_behavior">Conversation</string>
     <string name="settings_theme_mode">Theme</string>
     <string name="settings_group_text">Text</string>
+    <string name="settings_loading_words">Loading phrases</string>
+    <string name="loading_words_default">Default</string>
+    <string name="loading_words_count">Custom · %1$d</string>
+    <string name="loading_words_empty">Add a custom phrase or use the eight default phrases while waiting for replies.</string>
+    <string name="loading_words_hint">One custom phrase is randomly selected for each reply.</string>
+    <string name="loading_words_use_theme_color">Use theme accent color</string>
+    <string name="loading_words_add">Add loading phrase</string>
+    <string name="loading_words_edit">Edit loading phrase</string>
+    <string name="loading_words_edit_item">Edit “%1$s”</string>
+    <string name="loading_words_delete_item">Delete “%1$s”?</string>
+    <string name="loading_words_placeholder">For example: Finding the right words</string>
+    <string name="loading_words_invalid">Enter a loading phrase</string>
+    <string name="loading_words_duplicate">This phrase already exists</string>
     <string name="settings_group_display">Display</string>
     <string name="settings_group_search">Search</string>
     <string name="settings_group_backup">Backup</string>
@@ -157,6 +170,16 @@
     <string name="api_model_unset">Not set</string>
     <string name="api_model_empty_hint">No models yet. Tap “Test connection” to fetch this endpoint’s models, or enter one manually.</string>
     <string name="api_model_manual">Enter model manually</string>
+    <string name="api_model_capabilities">Model capabilities</string>
+    <string name="api_model_vision">Image input</string>
+    <string name="api_model_thinking">Deep thinking</string>
+    <string name="api_model_context">Context limit (tokens)</string>
+    <string name="api_model_wire">Reasoning request format</string>
+    <string name="api_model_automatic">Automatic</string>
+    <string name="api_model_enabled">Supported</string>
+    <string name="api_model_disabled">Unsupported</string>
+    <string name="api_model_auto_window">Automatic: %1$d</string>
+    <string name="api_model_invalid_window">Enter a positive integer, or leave it blank for the automatic value.</string>
 
     <!-- ── Settings: import & export ────────────────────── -->
     <string name="import_reading">Reading… (large files take a while)</string>
@@ -460,7 +483,6 @@
     <!-- ==== from group g3 ==== -->
 <!-- ── Message list / message actions ─────────────────────── -->
     <string name="msg_regenerate">Regenerate</string>
-    <string name="reply_waiting">Loading</string>
     <string name="msg_continue">Continue generating</string>
     <string name="msg_fork_from_here">Start a new chat from here</string>
     <string name="msg_expand_all">Expand all</string>
@@ -579,8 +601,19 @@
     <string name="voice_error_busy">The recognition service is busy, try again shortly</string>
     <string name="voice_error_server">The recognition service failed, try again shortly</string>
     <string name="voice_permission_denied">Microphone permission denied, voice input unavailable</string>
-    <string name="voice_listening">Listening… release to finish</string>
-    <string name="input_hint_hold_to_talk">Tap to type, or hold to speak</string>
+    <string name="voice_listening">Listening · Release to send</string>
+    <string name="voice_release_cancel">Release to cancel</string>
+    <string name="voice_swipe_cancel">Swipe up to cancel</string>
+    <string name="voice_processing">Transcribing…</string>
+    <string name="voice_tap_to_start">Start voice input</string>
+    <string name="voice_tap_to_send">Send voice transcript</string>
+    <string name="voice_source_official">DeepSeek speech recognition</string>
+    <string name="voice_source_system">Android speech recognition</string>
+    <string name="input_hint_hold_to_talk">Send a message or hold to speak</string>
+    <string name="hist_pinned_collapsed">Collapsed</string>
+    <string name="hist_pinned_expanded">Expanded</string>
+    <string name="hist_pinned_expand">Expand pinned conversations</string>
+    <string name="hist_pinned_collapse">Collapse pinned conversations</string>
 
     <!-- ── Read aloud (system TTS) ──────────────────────── -->
     <string name="tts_speak">Read aloud</string>

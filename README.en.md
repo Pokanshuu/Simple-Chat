@@ -44,10 +44,12 @@ Good for:
 - **Two protocol channels**: the official DeepSeek endpoint can use the **Anthropic-compatible** extended channel (web search / link reading / citations / server-side titles / time-and-place reminder), while every other endpoint stays on OpenAI-compatible. Both coexist and can be pinned manually.
 - **Smart search**: `deepseek_web_search`. The process renders as a timeline (search / browse pages / find in page / read links), the answer carries `[ⁿ]` citation marks, and the source strip and source sheet share one numbering.
 - Streaming output: SSE token by token, live Markdown rendering, pixel-identical before and after finalisation.
+- **Loading phrases**: while waiting for the first token, the app picks one phrase per reply and animates the trailing dots. Under Settings → Conversation behavior → Display → Loading phrases, add, edit, or delete phrases and optionally apply the theme accent to the text, spinner, and dots. An empty custom list uses the eight built-in phrases.
 - Thinking panel: `reasoning_content` shown collapsed, timing counts real thinking time only, folds as soon as the answer starts (can be turned off).
 - **Continue generating**: a reply you stopped, or one cut off by the output limit, can be continued in place (trailing-assistant prefix).
 - **Math**: `$…$` / `$$…$$` / `\[…\]` rendered natively by Compose (no WebView + KaTeX).
 - **Mermaid diagrams**: ```mermaid fences render as diagrams with a switch back to source; the script ships in the APK, so it works offline.
+- **Hold to speak**: press and hold the empty composer to record. Release to transcribe and send, or swipe up and release to cancel. Official DeepSeek connections use DeepSeek ASR for recordings up to 120 seconds. Other connections use the Android speech recognizer when available.
 - **Read aloud**: replies are spoken by the system TTS engine — no backend, no permission. Pick a voice (with preview) in Settings; code blocks and tables are stripped before reading.
 - **Automatic reading**: the speaker switch next to New chat reads newly completed replies using the selected voice. Turning it off stops playback immediately.
 - **API profiles**: save independent URLs, models, protocols and encrypted keys; create, copy, rename, delete or switch profiles. Changes save automatically and existing settings are preserved.
@@ -60,10 +62,11 @@ Good for:
   conversations. See [context compaction and recovery](docs/22-上下文压缩与恢复.md).
 - Attachments: camera / gallery / files, none of which need runtime permission; images, plain text, docx and PDF. Imported images are stored as files in app-private storage, with only the file name kept in the database. Oversized messages use chunked reads; capacity depends on available device storage and memory. Tapping an image opens a full-screen viewer with swipe between images.
 - **Images are validated before sending**: the real format is detected from the file header, formats the server does not accept are transcoded to JPEG locally, and unreadable images are skipped with a notice instead of breaking the conversation forever.
-- Model capability aware: when the selected model does not accept images, they are skipped with a notice instead of being rejected by the server.
+- **Model discovery**: reads context and output limits, image input, and reasoning support from the provider’s model list. If a gateway returns only IDs, the app looks up known models. Use Model capabilities in the API profile to override the selected model’s context window, image support, or reasoning settings.
 - Data out: JSON backup, **ZIP archive** (backup plus a Markdown document per conversation) and Markdown export; imports this app's backups, ZIP archives, Chatbox backups and DeepSeek official exports (deepseek_data-*.zip), with three import modes: add new only, overwrite same name, or keep both. Import results are reconciled item by item (how many in the archive, how many imported, which ones failed and why), so nothing disappears silently.
 - Sharing: select question-and-answer groups and export a long image, paginated images, or Markdown. Copy text or use Android sharing. Image exports retain tables and math.
 - Attachments support selecting multiple images or files. Items are imported in order, and a failed item does not remove successful imports.
+- **Pinned chats**: tap the Pinned header to collapse or expand the group. The sidebar keeps that state when closed and reopened.
 - Search: full-text over titles and bodies, with hit snippets and an option to include inactive branches.
 - Long messages: collapsed past 10 lines, whole message stays tappable once expanded.
 - Settings: Appearance groups theme, accent color, and font size. Conversation groups thinking-panel behavior and search scope.
@@ -180,12 +183,12 @@ app/src/main/java/com/simplechat/app/
 ## Privacy & security
 
 - The API key is stored as AES-256-GCM ciphertext under Android Keystore, with keys isolated per UID. The repository contains no keys.
-- Requests go straight from the device to your endpoint; no third party in between.
+- Chat requests go directly to your configured endpoint. Voice input sends audio to DeepSeek ASR or hands it to Android’s speech recognizer, whose network use depends on the device configuration.
 - Database migrations are explicit; `fallbackToDestructiveMigration` is not used.
 
 ## Documentation
 
-Design documents, implementation records and the changelog are indexed in [`docs/README.md`](docs/README.md). The `§` references in code comments point to these documents. Historical records describe the version and verification scope at the time; current release notes are in [`RELEASE_NOTES_v1.1.5.md`](RELEASE_NOTES_v1.1.5.md).
+Design documents, implementation records and the changelog are indexed in [`docs/README.md`](docs/README.md). The `§` references in code comments point to these documents. Historical records describe each version and what was verified. The [v1.2.2 prerelease notes](RELEASE_NOTES_v1.2.2.md) cover the current branch.
 
 - [`TODO.md`](TODO.md): current status and to-dos.
 
