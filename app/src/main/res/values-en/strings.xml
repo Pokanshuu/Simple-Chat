@@ -146,6 +146,7 @@
     <string name="settings_appearance">Appearance</string>
     <string name="settings_accent">Accent color</string>
     <string name="settings_auto_collapse">Auto-collapse thinking</string>
+    <string name="settings_hold_to_talk">Hold input to talk</string>
     <string name="settings_search_inactive_branches">Search inactive branches</string>
     <string name="generation_channel">Generation progress</string>
     <string name="generation_running_title">Generating reply</string>

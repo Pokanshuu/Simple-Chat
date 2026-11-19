@@ -98,6 +98,8 @@ data class StoredSettings(
     val followSystemFont: Boolean = true,
     /** 思考内容是否自动折叠（关闭则默认展开，需手动收起）。 */
     val autoCollapseThinking: Boolean = true,
+    /** 长按输入框开始语音输入（关闭后长按不再触发）。 */
+    val holdToTalk: Boolean = true,
     /** 新对话默认模式：CREATIVE / ROLEPLAY。 */
     val defaultModeId: String = "CREATIVE",
     /** 界面语言：AppLanguage 的枚举名，见 data/LocaleHelper.kt。 */
@@ -210,6 +212,7 @@ class SettingsStore(
                 ?: StoredSettings().followSystemFont,
             autoCollapseThinking = prefs[Keys.AUTO_COLLAPSE_THINKING]
                 ?: StoredSettings().autoCollapseThinking,
+            holdToTalk = prefs[Keys.HOLD_TO_TALK] ?: StoredSettings().holdToTalk,
             defaultModeId = prefs[Keys.DEFAULT_MODE] ?: StoredSettings().defaultModeId,
             languageId = prefs[LANGUAGE_KEY] ?: StoredSettings().languageId,
             apiStyleId = prefs[Keys.API_STYLE] ?: StoredSettings().apiStyleId,
@@ -366,6 +369,10 @@ class SettingsStore(
 
     suspend fun setAutoCollapseThinking(enabled: Boolean) {
         preferences.edit { it[Keys.AUTO_COLLAPSE_THINKING] = enabled }
+    }
+
+    suspend fun setHoldToTalk(enabled: Boolean) {
+        preferences.edit { it[Keys.HOLD_TO_TALK] = enabled }
     }
 
     suspend fun setDefaultMode(modeId: String) {
@@ -645,6 +652,7 @@ class SettingsStore(
         val FONT_SCALE = floatPreferencesKey("font_scale")
         val FOLLOW_SYSTEM_FONT = booleanPreferencesKey("follow_system_font")
         val AUTO_COLLAPSE_THINKING = booleanPreferencesKey("auto_collapse_thinking")
+        val HOLD_TO_TALK = booleanPreferencesKey("hold_to_talk")
         val DEFAULT_MODE = stringPreferencesKey("default_mode")
         val API_STYLE = stringPreferencesKey("api_style")
         val WEB_SEARCH = booleanPreferencesKey("web_search")

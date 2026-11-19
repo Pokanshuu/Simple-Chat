@@ -1468,7 +1468,7 @@ fun ChatScreen(
                     contextStats = vm.contextStats,
                     statsPanelOpen = panel == InputPanelState.STATS,
                     onOpenStatsPanel = { openPanel(InputPanelState.STATS) },
-                    holdToTalkEnabled = canUseVoice,
+                    holdToTalkEnabled = canUseVoice && vm.holdToTalk,
                     voiceState = voice.state,
                     voiceLevel = { voice.level },
                     voiceSourceLabel = stringResource(
