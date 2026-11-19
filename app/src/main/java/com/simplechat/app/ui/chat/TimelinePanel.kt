@@ -125,15 +125,14 @@ fun TimelinePanel(
 @Composable
 private fun timelineHeader(view: TimelineView, streaming: Boolean): String? {
     if (view.hasAnswer) {
+        // 只有真实思考文本才显示标题。网关可在正文之后才送来摘要，此时没有思考时长。
+        if (view.steps.none { it is TimelineStep.Thinking }) return null
         val seconds = view.thinkingSeconds()
-        /*
-         * 有正文了：只有**真的思考过**才写「已思考（用时 N 秒）」。
-         *
-         * 这一轮可能压根没开思考（只有搜索），以前这里会退回"正在思考" ——
-         * 于是正文都写完了，标题还挂着"正在思考"，纯属谎报。
-         * 没思考过就返回 null：不显示标题，让下面的搜索/浏览行自己说话。
-         */
-        return seconds?.let { stringResource(R.string.thinking_done_seconds, it) }
+        return if (seconds != null) {
+            stringResource(R.string.thinking_done_seconds, seconds)
+        } else {
+            stringResource(R.string.thinking_done)
+        }
     }
     if (!streaming) return stringResource(R.string.thinking_stopped)
     val last = view.steps.lastOrNull()

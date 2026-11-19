@@ -196,6 +196,7 @@ private sealed interface SettingsDialog {
 private enum class ApiStylePreference(val labelRes: Int) {
     AUTO(R.string.api_style_auto),
     OPENAI(R.string.api_style_openai),
+    OPENAI_RESPONSES(R.string.api_style_openai_responses),
     ANTHROPIC(R.string.api_style_anthropic),
     ;
 

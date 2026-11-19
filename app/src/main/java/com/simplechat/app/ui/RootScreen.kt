@@ -7,6 +7,8 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -14,6 +16,13 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,6 +42,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
@@ -41,6 +51,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -82,6 +93,9 @@ private enum class Route(val depth: Int) {
 
 /** 抽屉平时的宽度。 */
 private const val DrawerWidthFraction = 0.78f
+private const val WideChatMinWidthDp = 720
+private val WideSidebarWidth = 256.dp
+private val WideChatMaxWidth = 800.dp
 
 /** 抽屉圆角。撑满时必须收成 0，否则全屏面板会在四角露出底下的内容。 */
 private val DrawerCorner = 16.dp
@@ -131,6 +145,14 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
     val conversations by historyViewModel.conversations.collectAsStateWithLifecycle()
     val searchPage by historyViewModel.searchPage.collectAsStateWithLifecycle()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val configuration = LocalConfiguration.current
+    val wideChatLayout = configuration.screenWidthDp >= WideChatMinWidthDp &&
+        configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    var wideSidebarVisible by rememberSaveable { mutableStateOf(true) }
+    var searchWasDocked by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(wideChatLayout) {
+        if (wideChatLayout && drawerState.targetValue == DrawerValue.Open) drawerState.close()
+    }
 
     /*
      * `rememberSaveable` 而不是 `remember`：换语言是 `recreate()` 整页重建，
@@ -176,28 +198,100 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
         route = Route.CHAT
     }
 
-    // Android's edge-back gesture and the back button return to the same search session.
-    BackHandler(enabled = route == Route.CHAT && readingSearchResult && !drawerState.isOpen) {
-        scope.launch { drawerState.open() }
-    }
-
-    /*
-     * ⚠️ 这条不能省，而且**不是** Material3 帮我们做的。
-     *
-     * 实测：抽屉打开时按返回键，`ModalNavigationDrawer` 不消费、上面那条也
-     * 是 disabled，事件一路落空到 Activity → 直接 `finish()`，用户被丢出 App。
-     * （旧版本同样如此，只是没人从抽屉里按过返回键。）
-     */
-    BackHandler(enabled = drawerState.isOpen) {
-        closeDrawer()
-    }
-
-    // 搜索态按返回 → 回抽屉列表。抽屉**保持打开** —— 用户本来就是从那儿进来的。
-    BackHandler(enabled = searchMode && drawerState.isOpen) {
+    fun exitSearch() {
         historyViewModel.updateQuery("")
         searchMode = false
         readingSearchResult = false
         selectedSearchResultKey = null
+        if (searchWasDocked) wideSidebarVisible = true
+        searchWasDocked = false
+    }
+
+    BackHandler(enabled = !wideChatLayout && route == Route.CHAT && readingSearchResult && !drawerState.isOpen) {
+        scope.launch { drawerState.open() }
+    }
+    BackHandler(enabled = !wideChatLayout && drawerState.isOpen) { closeDrawer() }
+    BackHandler(enabled = wideChatLayout && route == Route.CHAT && wideSidebarVisible && historyViewModel.selectionMode) {
+        historyViewModel.exitSelection()
+    }
+    BackHandler(enabled = route == Route.CHAT && searchMode &&
+        (if (wideChatLayout) (wideSidebarVisible || searchWasDocked) else drawerState.isOpen)) {
+        exitSearch()
+    }
+
+    val sidebarContent: @Composable (Boolean) -> Unit = { docked ->
+        Crossfade(
+            targetState = searchMode,
+            modifier = Modifier.fillMaxSize(),
+            animationSpec = tween(MotionDurationMs, easing = MotionEasing),
+            label = "historySearch",
+        ) { searching ->
+            if (searching) {
+                val displayedPage = searchPage
+                ConversationSearchPage(
+                    hits = displayedPage.hits,
+                    isLoading = displayedPage.isLoading,
+                    hasMore = displayedPage.hasMore,
+                    onLoadMore = historyViewModel::loadMoreSearchResults,
+                    listState = searchListState,
+                    autoFocus = !readingSearchResult && (docked || drawerState.targetValue == DrawerValue.Open),
+                    selectedResultKey = selectedSearchResultKey,
+                    query = displayedPage.query,
+                    onQueryChange = { selectedSearchResultKey = null; historyViewModel.updateQuery(it) },
+                    onBack = { exitSearch() },
+                    onClick = { hit ->
+                        if (!openingSearchResult && displayedPage.query == historyViewModel.query) {
+                            openingSearchResult = true
+                            selectedSearchResultKey = hit.searchResultKey
+                            readingSearchResult = true
+                            historyViewModel.exitSelection()
+                            scope.launch {
+                                try {
+                                    if (!docked) drawerState.close()
+                                    chatViewModel.openConversation(hit.conversation.id, hit.messageId, displayedPage.query.trim())
+                                } finally {
+                                    openingSearchResult = false
+                                }
+                            }
+                        }
+                    },
+                    onRename = { renameTarget = it },
+                    onTogglePin = historyViewModel::togglePin,
+                    onDelete = { deleteTarget = it },
+                )
+            } else {
+                HistoryDrawerContent(
+                    conversations = conversations,
+                    currentConversationId = chatViewModel.currentConversationId,
+                    selectionMode = historyViewModel.selectionMode,
+                    selectedIds = historyViewModel.selectedIds.toList(),
+                    pinnedGroupExpanded = pinnedGroupExpanded,
+                    onTogglePinnedGroup = { pinnedGroupExpanded = !pinnedGroupExpanded },
+                    onSearchClick = {
+                        readingSearchResult = false
+                        searchWasDocked = docked
+                        searchMode = true
+                    },
+                    onClick = { conversation ->
+                        if (!docked) closeDrawer()
+                        else if (searchMode) exitSearch()
+                        chatViewModel.openConversation(conversation.id)
+                    },
+                    onEnterSelection = { historyViewModel.enterSelection(it.id) },
+                    onToggleSelection = historyViewModel::toggleSelection,
+                    onRename = { renameTarget = it },
+                    onTogglePin = historyViewModel::togglePin,
+                    onDelete = { deleteTarget = it },
+                    onExitSelection = historyViewModel::exitSelection,
+                    onPinSelected = historyViewModel::pinSelected,
+                    onDeleteSelected = { confirmBatchDelete = true },
+                    onOpenSettings = {
+                        closeDrawer()
+                        route = Route.SETTINGS
+                    },
+                )
+            }
+        }
     }
 
     // ── 抽屉：搜索时把面板从 78% 撑满 ──────────────────────
@@ -227,13 +321,13 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
             },
         drawerState = drawerState,
         // 撑满时禁止拖动：那时它已经不是"抽屉"了，往左拖会把它拖成一个奇怪的宽度
-        gesturesEnabled = !horizontalRegionPressed && route == Route.CHAT && (!searchMode || (readingSearchResult && !drawerState.isOpen)),
+        gesturesEnabled = !wideChatLayout && !horizontalRegionPressed && route == Route.CHAT && (!searchMode || (readingSearchResult && !drawerState.isOpen)),
         // 遮罩由下面 content 里的显式 scrim 画，内置 scrim 关掉，避免双层遮罩。
         scrimColor = Color.Transparent,
         drawerContent = {
             ModalDrawerSheet(
                 modifier = Modifier
-                    .fillMaxWidth(sheetFraction)
+                    .fillMaxWidth(if (wideChatLayout) 0f else sheetFraction)
                     .fillMaxHeight()
                     // 抽屉自己也要"浮起来"，否则右边缘是一道生硬的白灰交界
                     .shadow(
@@ -254,82 +348,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                  */
                 windowInsets = WindowInsets(0, 0, 0, 0),
             ) {
-                /*
-                 * 列表 ↔ 搜索交叉淡入。
-                 *
-                 * 宽度正在变，内容如果硬切会像"闪一下"；
-                 * 叠一层淡入淡出，视觉上就是"同一块面板换了个内容"。
-                 */
-                Crossfade(
-                    targetState = searchMode,
-                    modifier = Modifier.fillMaxSize(),
-                    animationSpec = tween(MotionDurationMs, easing = MotionEasing),
-                    label = "drawerContent",
-                ) { searching ->
-                    if (searching) {
-                        ConversationSearchPage(
-                            hits = searchPage.hits,
-                            hasMore = searchPage.hasMore,
-                            onLoadMore = historyViewModel::loadMoreSearchResults,
-                            listState = searchListState,
-                            autoFocus = !readingSearchResult && drawerState.targetValue == DrawerValue.Open,
-                            selectedResultKey = selectedSearchResultKey,
-                            query = historyViewModel.query,
-                            onQueryChange = { selectedSearchResultKey = null; historyViewModel.updateQuery(it) },
-                            onBack = {
-                                historyViewModel.updateQuery("")
-                                searchMode = false
-                                readingSearchResult = false
-                                selectedSearchResultKey = null
-                            },
-                            onClick = { hit ->
-                                val keyword = historyViewModel.query.trim()
-                                if (!openingSearchResult) {
-                                    openingSearchResult = true
-                                    selectedSearchResultKey = hit.searchResultKey
-                                    readingSearchResult = true
-                                    historyViewModel.exitSelection()
-                                    scope.launch {
-                                        try {
-                                            // Let the drawer and keyboard leave before locating visible text.
-                                            drawerState.close()
-                                            chatViewModel.openConversation(hit.conversation.id, hit.messageId, keyword)
-                                        } finally { openingSearchResult = false }
-                                    }
-                                }
-                            },
-                            onRename = { renameTarget = it },
-                            onTogglePin = { historyViewModel.togglePin(it) },
-                            onDelete = { deleteTarget = it },
-                        )
-                    } else {
-                        HistoryDrawerContent(
-                            conversations = conversations,
-                            currentConversationId = chatViewModel.currentConversationId,
-                            selectionMode = historyViewModel.selectionMode,
-                            selectedIds = historyViewModel.selectedIds.toList(),
-                            pinnedGroupExpanded = pinnedGroupExpanded,
-                            onTogglePinnedGroup = { pinnedGroupExpanded = !pinnedGroupExpanded },
-                            onSearchClick = { readingSearchResult = false; searchMode = true },
-                            onClick = { conversation ->
-                                closeDrawer()
-                                chatViewModel.openConversation(conversation.id)
-                            },
-                            onEnterSelection = { historyViewModel.enterSelection(it.id) },
-                            onToggleSelection = { historyViewModel.toggleSelection(it) },
-                            onRename = { renameTarget = it },
-                            onTogglePin = { historyViewModel.togglePin(it) },
-                            onDelete = { deleteTarget = it },
-                            onExitSelection = { historyViewModel.exitSelection() },
-                            onPinSelected = { pinned -> historyViewModel.pinSelected(pinned) },
-                            onDeleteSelected = { confirmBatchDelete = true },
-                            onOpenSettings = {
-                                closeDrawer()
-                                route = Route.SETTINGS
-                            },
-                        )
-                    }
-                }
+                if (!wideChatLayout) sidebarContent(false)
             }
         },
     ) {
@@ -353,17 +372,67 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
             ) { target ->
                 pageStates.SaveableStateProvider(target) {
                     when (target) {
-                        Route.CHAT -> ChatScreen(
-                            vm = chatViewModel,
-                            onOpenDrawer = { scope.launch { drawerState.open() } },
-                            onNewConversation = {
-                                readingSearchResult = false
-                                selectedSearchResultKey = null
-                                searchMode = false
-                                historyViewModel.updateQuery("")
-                                chatViewModel.newConversation()
-                            },
-                        )
+                        Route.CHAT -> Row(
+                            modifier = Modifier.fillMaxSize().then(
+                                if (wideChatLayout) Modifier.windowInsetsPadding(
+                                    WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+                                ) else Modifier
+                            ),
+                        ) {
+                            AnimatedVisibility(
+                                visible = wideChatLayout && (wideSidebarVisible || searchWasDocked),
+                                enter = expandHorizontally(tween(MotionDurationMs, easing = MotionEasing), Alignment.Start) + fadeIn(),
+                                exit = shrinkHorizontally(tween(MotionDurationMs, easing = MotionEasing), Alignment.Start) + fadeOut(),
+                            ) {
+                                Row(Modifier.width(WideSidebarWidth).fillMaxHeight()) {
+                                    Box(Modifier.weight(1f).fillMaxHeight().background(LocalChatColors.current.card)) {
+                                        if (searchMode) {
+                                            SearchContent(
+                                                searchPage = searchPage,
+                                                listState = searchListState,
+                                                autoFocus = true,
+                                                selectedSearchResultKey = selectedSearchResultKey,
+                                                historyViewModel = historyViewModel,
+                                                onBack = { exitSearch() },
+                                                onOpenSearchResult = { hit, keyword ->
+                                                    if (!openingSearchResult) {
+                                                        openingSearchResult = true
+                                                        selectedSearchResultKey = hit.searchResultKey
+                                                        readingSearchResult = true
+                                                        scope.launch {
+                                                            try {
+                                                                chatViewModel.openConversation(hit.conversation.id, hit.messageId, keyword)
+                                                                if (!searchWasDocked) exitSearch()
+                                                            } finally { openingSearchResult = false }
+                                                        }
+                                                    }
+                                                },
+                                                onRename = { renameTarget = it },
+                                                onTogglePin = historyViewModel::togglePin,
+                                                onDelete = { deleteTarget = it },
+                                            )
+                                        } else sidebarContent(true)
+                                    }
+                                    Box(Modifier.width(1.dp).fillMaxHeight().background(LocalChatColors.current.outline))
+                                }
+                            }
+                            Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
+                                ChatScreen(
+                                    vm = chatViewModel,
+                                    onOpenDrawer = {
+                                        if (wideChatLayout) {
+                                            if (wideSidebarVisible) historyViewModel.exitSelection()
+                                            wideSidebarVisible = !wideSidebarVisible
+                                        } else scope.launch { drawerState.open() }
+                                    },
+                                    onNewConversation = {
+                                        exitSearch()
+                                        chatViewModel.newConversation()
+                                    },
+                                    modifier = if (wideChatLayout) Modifier.widthIn(max = WideChatMaxWidth).fillMaxWidth() else Modifier,
+                                )
+                            }
+                        }
 
                         Route.SETTINGS -> SettingsScreen(onBack = { route = Route.CHAT })
                     }
@@ -382,7 +451,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                 derivedStateOf { drawerState.targetValue != DrawerValue.Closed }
             }
             AnimatedVisibility(
-                visible = drawerShown,
+                visible = !wideChatLayout && drawerShown,
                 enter = fadeIn(tween(MotionDurationMs, easing = MotionEasing)),
                 exit = fadeOut(tween(MotionDurationMs, easing = MotionEasing)),
             ) {

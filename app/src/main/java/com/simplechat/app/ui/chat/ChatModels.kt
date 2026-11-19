@@ -243,6 +243,7 @@ data class UiMessage(
     val stopReason: String? = null,
 ) {
     val streaming: Boolean get() = status == MessageStatus.STREAMING
+    internal val hasReasoning: Boolean get() = !reasoning.isNullOrBlank()
 
     /**
      * 思维链是否**还在**生成。
@@ -251,5 +252,5 @@ data class UiMessage(
      * 而思维链结束得早得多。用错的后果：正文都快写完了，思考栏还挂在
      * 「正在思考」的尾巴模式上，看起来模型还在想。
      */
-    val reasoningStreaming: Boolean get() = streaming && !reasoningDone
+    val reasoningStreaming: Boolean get() = hasReasoning && streaming && !reasoningDone
 }

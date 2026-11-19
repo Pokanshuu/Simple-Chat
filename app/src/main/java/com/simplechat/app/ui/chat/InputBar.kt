@@ -15,12 +15,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
@@ -33,19 +33,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
-import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
@@ -55,7 +55,10 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.util.lerp
 import com.simplechat.app.R
 import com.simplechat.app.ui.common.ContainerShape
 import com.simplechat.app.ui.common.layeredShadow
@@ -69,6 +72,7 @@ import com.simplechat.app.ui.common.MotionEasing
 import com.simplechat.app.ui.common.PillShape
 import com.simplechat.app.ui.common.ProgressRing
 import com.simplechat.app.ui.theme.LocalChatColors
+import kotlin.math.ceil
 
 /**
  * 输入区。
@@ -84,8 +88,9 @@ import com.simplechat.app.ui.theme.LocalChatColors
  */
 @Composable
 internal fun InputBar(
-    text: String,
-    onTextChange: (String) -> Unit,
+    fieldState: TextFieldState,
+    expanded: Boolean,
+    onToggleExpanded: (() -> Unit)?,
     thinkingEnabled: Boolean,
     thinkingPanelOpen: Boolean,
     /**
@@ -133,6 +138,23 @@ internal fun InputBar(
 ) {
     val colors = LocalChatColors.current
     val shape = ContainerShape
+    val text = fieldState.text
+    val density = LocalDensity.current
+    var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    val visualLines = textLayout?.lineCount ?: 0
+    val showExpand = !voiceState.active &&
+        (expanded || (text.isNotEmpty() && visualLines >= ExpandAtVisualLines))
+    val expansion = animateFloatAsState(
+        targetValue = if (expanded) 1f else 0f,
+        animationSpec = tween(FoldAnimMs, easing = MotionEasing),
+        label = "composerExpansion",
+    )
+    val compactMax = textLayout?.takeIf { it.lineCount >= 6 }?.let {
+        with(density) { ceil(it.getLineBottom(5)).toDp().coerceIn(26.dp, 160.dp) }
+    } ?: 160.dp
+    val compactHeight = textLayout?.let {
+        with(density) { it.size.height.toDp().coerceIn(26.dp, compactMax) }
+    } ?: 26.dp
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
 
@@ -141,7 +163,7 @@ internal fun InputBar(
      *
      * 有字时长按要让位给**选词** —— 那是文本框自己的默认语义，抢掉它编辑会变得很难用。
      */
-    val holdToTalkActive = holdToTalkEnabled && text.isEmpty()
+    val holdToTalkActive = holdToTalkEnabled && text.isEmpty() && !expanded
 
     val focusOnTap by rememberUpdatedState<() -> Unit> {
         if (!voiceState.active) {
@@ -249,32 +271,30 @@ internal fun InputBar(
                 }
             }
 
-            /*
-             * 光标：**外部换文本**（恢复草稿 / 切会话）时放到末尾 —— 那是"接着往下写"；
-             * 用户自己打字时光标不动。
-             *
-             * `BasicTextField` 的 `String` 重载不保证换文本后光标落在哪，这里自己钉住。
-             */
-            var fieldValue by remember { mutableStateOf(TextFieldValue(text = text)) }
-            LaunchedEffect(text) {
-                if (fieldValue.text != text) {
-                    fieldValue = TextFieldValue(text = text, selection = TextRange(text.length))
-                }
-            }
             Box(Modifier.fillMaxWidth()) {
                 if (voiceState.active) {
                     VoiceComposer(voiceState, voiceLevel, voiceCancelling, voiceTapMode, onVoiceTap)
                 } else {
                     val startLabel = stringResource(R.string.voice_tap_to_start)
                     BasicTextField(
-                        value = fieldValue,
-                        onValueChange = {
-                            fieldValue = it
-                            if (it.text != text) onTextChange(it.text)
-                        },
+                        state = fieldState,
+                        onTextLayout = { textLayout = it() },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 26.dp, max = 160.dp)
+                            .layout { measurable, constraints ->
+                                // Measure the viewport without recomposing the editor or toolbar each frame.
+                                val available = (constraints.maxHeight - 44.dp.roundToPx()).coerceAtLeast(0)
+                                val collapsedMax = compactMax.roundToPx().coerceAtMost(available)
+                                val collapsedMin = 26.dp.roundToPx().coerceAtMost(collapsedMax)
+                                val expandedHeight = maxOf(compactHeight.roundToPx(), available - 20.dp.roundToPx())
+                                    .coerceAtMost(available)
+                                val fraction = expansion.value
+                                val placeable = measurable.measure(constraints.copy(
+                                    minHeight = lerp(collapsedMin, expandedHeight, fraction),
+                                    maxHeight = lerp(collapsedMax, expandedHeight, fraction),
+                                ))
+                                layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
+                            }
                             .graphicsLayer { alpha = composerReveal }
                             .focusRequester(focusRequester)
                             .onFocusChanged { if (it.isFocused) onTextFieldFocused() }
@@ -288,9 +308,8 @@ internal fun InputBar(
                             MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                         ),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        maxLines = 6,
-                        decorationBox = { inner ->
-                            Box {
+                        decorator = { inner ->
+                            Box(Modifier.fillMaxWidth(), propagateMinConstraints = true) {
                                 if (text.isEmpty()) Text(
                                     text = stringResource(if (holdToTalkActive) R.string.input_hint_hold_to_talk else R.string.input_hint),
                                     style = MaterialTheme.typography.bodyLarge,
@@ -299,6 +318,23 @@ internal fun InputBar(
                                 inner()
                             }
                         },
+                    )
+                }
+
+                // Overlay above the text. This control never changes the wrapping width or
+                // takes keyboard focus away from the text field.
+                if (showExpand && onToggleExpanded != null) {
+                    IconCircleButton(
+                        icon = if (expanded) AppIcons.CollapseComposer else AppIcons.ExpandComposer,
+                        contentDescription = stringResource(if (expanded) R.string.composer_collapse else R.string.composer_expand),
+                        onClick = onToggleExpanded,
+                        modifier = Modifier.align(Alignment.TopEnd)
+                            .focusProperties { canFocus = false }
+                            .graphicsLayer { alpha = composerReveal },
+                        size = 28.dp,
+                        iconSize = 16.dp,
+                        background = colors.card.copy(alpha = 0.8f),
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
                     )
                 }
 
@@ -414,6 +450,7 @@ internal fun InputBar(
 }
 
 private const val ComposerRevealDelayMs = 40
+private const val ExpandAtVisualLines = 4
 
 /** 输入栏第二行的统一控件高度。 */
 private val RowButtonSize = 32.dp

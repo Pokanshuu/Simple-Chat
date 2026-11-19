@@ -73,7 +73,15 @@ class ChatApi(
         topP: Double? = null,
         extraHeaders: Map<String, String> = emptyMap(),
         retryBeforeContent: Boolean = true,
+        apiStyle: ApiStyle = ApiStyle.OPENAI,
     ): Flow<StreamEvent> {
+        if (apiStyle == ApiStyle.OPENAI_RESPONSES) {
+            return sseClient.streamResponses(
+                url = responsesUrl(baseUrl), apiKey = apiKey,
+                request = buildResponsesRequest(model, messages, thinkingEnabled, reasoningEffort, maxTokens, temperature),
+                messages = messages, model = model, extraHeaders = extraHeaders, retryBeforeContent = retryBeforeContent,
+            )
+        }
         val request = buildChatRequest(model, messages, thinkingEnabled, reasoningEffort, maxTokens, temperature, topP)
 
         return sseClient.stream(

@@ -66,7 +66,7 @@ internal object SearchRenderingRegression {
                                 CompositionLocalProvider(LocalSearchHighlightObserver provides { highlightState.set(it) }) {
                                 MessageList(listOf(message), Modifier.fillMaxSize(), listState = rememberLazyListState(),
                                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = overlayPadding + 16.dp),
-                                    searchTarget = target.value, searchBottomObstructionPx = overlayHeight,
+                                    searchTarget = target.value, searchBottomObstructionPx = { overlayHeight },
                                     onDismissSearch = { target.value = null; finished = true })
                                 }
                                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()

@@ -309,11 +309,13 @@ fun ProviderKind.headersFor(sessionId: String): Map<String, String> = when (this
  */
 enum class ApiStyle {
     OPENAI,
+    OPENAI_RESPONSES,
     ANTHROPIC;
 
     companion object {
         fun fromId(id: String?): ApiStyle? = when (id) {
             "OPENAI" -> OPENAI
+            "OPENAI_RESPONSES" -> OPENAI_RESPONSES
             "ANTHROPIC" -> ANTHROPIC
             // "AUTO" 与未知值都交给下面的按端点解析
             else -> null
@@ -334,7 +336,11 @@ enum class ApiStyle {
         fun resolve(kind: ProviderKind, configuredId: String?, baseUrl: String): ApiStyle =
             fromId(configuredId) ?: run {
                 val official = isOfficialDeepSeekEndpoint(baseUrl)
-                if (kind == ProviderKind.DEEPSEEK && official) ANTHROPIC else OPENAI
+                when {
+                    baseUrl.trim().toHttpUrlOrNull()?.encodedPath?.trimEnd('/')?.endsWith("/responses") == true -> OPENAI_RESPONSES
+                    kind == ProviderKind.DEEPSEEK && official -> ANTHROPIC
+                    else -> OPENAI
+                }
             }
     }
 }
@@ -348,7 +354,7 @@ fun chatCompletionsUrl(baseUrl: String): String {
 /** 拼装 `/models` 地址。 */
 fun modelsUrl(baseUrl: String): String {
     val base = baseUrl.trim().trimEnd('/')
-    return if (base.endsWith("/models")) base else "${base.removeSuffix("/chat/completions")}/models"
+    return if (base.endsWith("/models")) base else "${base.removeSuffix("/chat/completions").removeSuffix("/responses")}/models"
 }
 /**
  * Base URL 是否指向 **DeepSeek 官方域**。

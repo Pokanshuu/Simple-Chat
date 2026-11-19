@@ -595,6 +595,7 @@
     <string name="settings_api_style">协议通道</string>
     <string name="api_style_auto">自动（按端点选择）</string>
     <string name="api_style_openai">OpenAI 兼容</string>
+    <string name="api_style_openai_responses">OpenAI Responses</string>
     <string name="api_style_anthropic">Anthropic 兼容（扩展）</string>
     <string name="settings_web_search">智能搜索</string>
     <string name="settings_web_search_hint">开启后模型可按需联网搜索；仅在扩展通道上可用。</string>

@@ -2,7 +2,10 @@ package com.simplechat.app
 
 import android.content.Context
 import android.content.ContextWrapper
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.simplechat.app.data.*
@@ -12,7 +15,47 @@ import kotlinx.coroutines.flow.first
 import java.io.File
 
 internal object ApiProfileRegression {
+    private suspend fun verifyOnboardingMigration(context: Context) {
+        val file = File(context.cacheDir, "onboarding-${java.util.UUID.randomUUID()}.preferences_pb")
+        val complete = booleanPreferencesKey("onboarding_complete")
+        suspend fun open(block: suspend (SettingsStore, DataStore<Preferences>) -> Unit) {
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            val preferences = PreferenceDataStoreFactory.create(scope = scope, produceFile = { file })
+            try {
+                block(SettingsStore(context, preferences), preferences)
+            } finally {
+                scope.coroutineContext[Job]!!.cancelAndJoin()
+            }
+        }
+        try {
+            open { store, _ ->
+                store.migrateApiProfiles()
+                check(!store.flow.first().onboardingComplete)
+            }
+            open { store, prefs ->
+                store.migrateApiProfiles()
+                check(!store.flow.first().onboardingComplete) { "A second launch must not skip onboarding" }
+                prefs.edit { it[complete] = true } // Simulate the old build's false completion.
+            }
+            open { store, prefs ->
+                check(!store.flow.first().onboardingComplete) { "Do not show chat before repairing old state" }
+                store.migrateApiProfiles()
+                check(prefs.data.first()[complete] == false)
+                store.setAccentColor("BLUE") // The final step always saves an accent, even without an API key.
+                check(!store.flow.first().onboardingComplete)
+                store.setOnboardingComplete()
+            }
+            open { store, _ ->
+                store.migrateApiProfiles()
+                check(store.flow.first().onboardingComplete) { "Explicit completion must survive a restart" }
+            }
+        } finally {
+            file.delete()
+        }
+    }
+
     suspend fun run(context: Context) {
+        verifyOnboardingMigration(context)
         val root = File(context.cacheDir, "profile-regression-${java.util.UUID.randomUUID()}").apply { mkdirs() }
         val ctx = object : ContextWrapper(context) {
             override fun getFilesDir() = root
@@ -34,6 +77,7 @@ internal object ApiProfileRegression {
         store.migrateApiProfiles()
         var stored = store.flow.first()
         check(stored.apiKey == "fixture-legacy-key" && stored.modelId == "legacy-model")
+        check(stored.onboardingComplete) { "An existing configured installation should skip onboarding" }
         val a = stored.activeApiProfileId
         check(stored.apiProfiles.size == 1 && stored.apiProfiles.single().apiKeyEncrypted.isNotBlank())
         store.setApiStyle("ANTHROPIC")

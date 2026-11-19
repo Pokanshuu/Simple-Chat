@@ -2,6 +2,7 @@ package com.simplechat.app.net
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 
 /**
  * OpenAI 兼容 `/chat/completions` 的传输层数据类。
@@ -36,6 +37,23 @@ data class ChatRequestDto(
 )
 
 @Serializable
+data class ResponsesRequestDto(
+    val model: String,
+    val input: List<ResponsesInputMessage>,
+    val stream: Boolean,
+    val store: Boolean = false,
+    @SerialName("max_output_tokens") val maxOutputTokens: Int? = null,
+    val temperature: Double? = null,
+    val reasoning: ResponsesReasoningDto? = null,
+)
+
+@Serializable
+data class ResponsesReasoningDto(val effort: String, val summary: String? = null)
+
+@Serializable
+data class ResponsesInputMessage(val role: String, val content: kotlinx.serialization.json.JsonElement)
+
+@Serializable
 data class ReasoningDto(val enabled: Boolean, val effort: String? = null)
 
 @Serializable
@@ -55,7 +73,7 @@ data class ThinkingDto(val type: String) {
 @Serializable
 data class OutMessageDto(
     val role: String,
-    val content: kotlinx.serialization.json.JsonElement,
+    val content: JsonElement,
 )
 
 @Serializable
@@ -77,9 +95,13 @@ data class ChunkChoiceDto(
 data class DeltaDto(
     val role: String? = null,
     val content: String? = null,
-    /** 思维链增量。与 `content` 同级（设计文档 §11.5）。 */
-    @SerialName("reasoning_content") val reasoningContent: String? = null,
-    val reasoning: kotlinx.serialization.json.JsonElement? = null,
+    /** 网关可能发送字符串、结构化摘要或元数据，按字段单独提取文本。 */
+    @SerialName("reasoning_content") val reasoningContent: JsonElement? = null,
+    val reasoning: JsonElement? = null,
+    @SerialName("reasoning_text") val reasoningText: JsonElement? = null,
+    @SerialName("reasoning_summary") val reasoningSummary: JsonElement? = null,
+    @SerialName("reasoning_details") val reasoningDetails: JsonElement? = null,
+    val refusal: JsonElement? = null,
 )
 
 @Serializable

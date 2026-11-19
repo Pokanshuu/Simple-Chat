@@ -21,6 +21,7 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.ui.theme.LocalChatColors
 import kotlinx.coroutines.delay
@@ -84,6 +85,18 @@ suspend fun LazyListState.scrollToBottom() {
  * 不依赖任何一条的高度、也不需要减总高。
  */
 fun LazyListState.isAtBottom(): Boolean = !canScrollForward
+
+/** Keep a bottom-aligned conversation in place as the composer takes more space. */
+internal fun LazyListState.advanceBottomForObstruction(growthPx: Int) {
+    val info = layoutInfo
+    val last = info.visibleItemsInfo.lastOrNull() ?: return
+    val unusedSpace = (info.viewportEndOffset - info.afterContentPadding - last.offset - last.size)
+        .coerceAtLeast(0)
+    val advance = growthPx - unusedSpace
+    if (advance > 0) {
+        requestScrollToItem(firstVisibleItemIndex, firstVisibleItemScrollOffset + advance)
+    }
+}
 
 /**
  * 到列表底部还差多少像素。
@@ -206,29 +219,37 @@ fun VerticalScrollBar(
         modifier = modifier
             .padding(horizontal = 3.dp)
             .width(ScrollBarWidth)
+            // Bound draw invalidations from scrolling/fading to this narrow display list.
+            .graphicsLayer()
             .drawWithCache {
-                val radius = size.width / 2
-                val minThumb = ScrollBarMinThumb.toPx()
+                val corner = CornerRadius(size.width / 2)
+                val track = size.height
+                val minThumb = ScrollBarMinThumb.toPx().coerceAtMost(track)
                 onDrawBehind {
                     /*
                      * 这里的快照读（`fade`、`state.layoutInfo`）都落在**绘制阶段**：
                      * 只让这一层重画，不触发重组与重新布局。
                      */
-                    if (fade <= 0.01f) return@onDrawBehind
+                    val alpha = fade
+                    if (alpha <= 0.01f || track <= 0f) return@onDrawBehind
+                    val canScrollBackward = state.canScrollBackward
+                    val canScrollForward = state.canScrollForward
+                    if (!canScrollBackward && !canScrollForward) return@onDrawBehind
                     val info = state.layoutInfo
                     val total = info.totalItemsCount
-                    if (total <= 0 || (!state.canScrollBackward && !state.canScrollForward)) return@onDrawBehind
-                    val first = info.visibleItemsInfo.firstOrNull() ?: return@onDrawBehind
-                    val last = info.visibleItemsInfo.lastOrNull() ?: return@onDrawBehind
+                    val visible = info.visibleItemsInfo
+                    if (total <= 0 || visible.isEmpty()) return@onDrawBehind
+                    val first = visible.first()
+                    val last = visible.last()
 
-                    val start = if (state.canScrollBackward) scrollBarItemPosition(
+                    val start = if (canScrollBackward) scrollBarItemPosition(
                         index = first.index,
                         offset = first.offset,
                         extent = first.size + if (first.index == total - 1) info.afterContentPadding else info.mainAxisItemSpacing,
                         viewportEdge = info.viewportStartOffset,
                         leadingPadding = if (first.index == 0) info.beforeContentPadding else 0,
                     ) else 0f
-                    val end = if (state.canScrollForward) scrollBarItemPosition(
+                    val end = if (canScrollForward) scrollBarItemPosition(
                         index = last.index,
                         offset = last.offset,
                         extent = last.size + if (last.index == total - 1) info.afterContentPadding else info.mainAxisItemSpacing,
@@ -236,25 +257,27 @@ fun VerticalScrollBar(
                         leadingPadding = if (last.index == 0) info.beforeContentPadding else 0,
                     ) else total.toFloat()
 
-                    val track = size.height
-                    if (track <= 0f) return@onDrawBehind
-                    val visibleFraction = ((end - start) / total).coerceIn(0f, 1f)
-                    val thumbHeight = (track * visibleFraction).coerceIn(minThumb.coerceAtMost(track), track)
-                    // Scale the remaining travel so the thumb reaches both ends even at its minimum size.
-                    val scrollableItems = (total - (end - start)).coerceAtLeast(0f)
-                    val progress = if (scrollableItems > 0f) (start / scrollableItems).coerceIn(0f, 1f) else 0f
-                    val top = (track - thumbHeight) * progress
+                    val visibleSpan = end - start
+                    val visibleFraction = (visibleSpan / total).coerceIn(0f, 1f)
+                    val thumbHeight = (track * visibleFraction).coerceIn(minThumb, track)
+                    val top = scrollBarThumbTop(start, visibleSpan, total, track - thumbHeight)
 
                     drawRoundRect(
                         color = thumbColor,
                         topLeft = Offset(0f, top),
                         size = Size(size.width, thumbHeight),
-                        cornerRadius = CornerRadius(radius),
-                        alpha = 0.38f * fade,
+                        cornerRadius = corner,
+                        alpha = 0.38f * alpha,
                     )
                 }
             },
     )
+}
+
+/** Scale item-space progress to the travel left after reserving the (possibly minimum-size) thumb. */
+internal fun scrollBarThumbTop(start: Float, visibleSpan: Float, total: Int, travel: Float): Float {
+    val scrollableItems = total - visibleSpan
+    return if (scrollableItems > 0f) travel * (start / scrollableItems).coerceIn(0f, 1f) else 0f
 }
 
 /** Map a viewport edge into item units, including the item's share of spacing and padding. */

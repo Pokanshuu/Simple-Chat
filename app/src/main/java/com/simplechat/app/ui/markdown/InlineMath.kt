@@ -16,15 +16,29 @@ import org.intellij.markdown.MarkdownElementTypes
 internal data class InlineMathDocument(val markdown: String, val formulas: Map<String, ContentSegment.Formula>)
 
 /** Keep inline spans inside their original paragraph; only explicit display math splits a block. */
-internal fun displayMathSegments(source: String): List<ContentSegment> = buildList {
-    val paragraph = StringBuilder()
-    fun flush() { if (paragraph.isNotEmpty()) { add(ContentSegment.Text(paragraph.toString())); paragraph.clear() } }
-    splitMath(source).forEach { segment -> when (segment) {
-        is ContentSegment.Text -> paragraph.append(segment.text)
-        is ContentSegment.Formula -> if (segment.display) { flush(); add(segment) }
-            else paragraph.append(segment.source)
-    } }
-    flush()
+internal fun displayMathSegments(source: String): List<ContentSegment> {
+    if (source.isEmpty()) return emptyList()
+    if (!source.contains("$$") && !source.contains("\\[")) return listOf(ContentSegment.Text(source))
+    return buildList {
+        val paragraph = StringBuilder()
+        fun flush() {
+            if (paragraph.isEmpty()) return
+            add(ContentSegment.Text(paragraph.toString()))
+            paragraph.clear()
+        }
+        for (segment in splitMath(source)) {
+            when (segment) {
+                is ContentSegment.Text -> paragraph.append(segment.text)
+                is ContentSegment.Formula -> if (segment.display) {
+                    flush()
+                    add(segment)
+                } else {
+                    paragraph.append(segment.source)
+                }
+            }
+        }
+        flush()
+    }
 }
 
 /** Replace only closed inline math with AST-safe tokens, preserving surrounding Markdown containers. */

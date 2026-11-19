@@ -249,9 +249,13 @@ internal object HotfixRegression {
             withContext(Dispatchers.Main) { history.loadMoreSearchResults() }
             val all = withTimeout(10_000) { history.searchPage.first { it.hits.size == 109 } }
             check(!all.hasMore && all.hits.map { it.messageId ?: it.conversation.id }.distinct().size == 109)
-            withContext(Dispatchers.Main) { history.updateQuery("not-present-keyword") }
-            withTimeout(10_000) { history.searchPage.first { it.hits.isEmpty() } }
-            status("search pagination: first 100 results expose load-more, all 109 available without duplicate IDs, new query cancels previous results")
+            withContext(Dispatchers.Main) {
+                history.updateQuery("not-present-keyword")
+                check(history.searchPage.value.isLoading) { "A new query must enter loading immediately" }
+                check(history.searchPage.value.hits.isEmpty()) { "Stale results must not appear for a new query" }
+            }
+            withTimeout(10_000) { history.searchPage.first { !it.isLoading && it.hits.isEmpty() } }
+            status("search shows loading before the empty result, clears stale hits, and loads all 109 hits without duplicates")
         } finally {
             withContext(Dispatchers.Main) { vm.stop(); activity.finish() }
             scope.coroutineContext[Job]!!.cancelAndJoin()

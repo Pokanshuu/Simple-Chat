@@ -59,6 +59,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,7 +71,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.Layout
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -79,6 +82,8 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.R
@@ -95,7 +100,6 @@ import com.simplechat.app.ui.common.AppShadow
 import com.simplechat.app.ui.common.IconCircleButton
 import com.simplechat.app.ui.common.MotionEasing
 import com.simplechat.app.ui.common.dismissKeyboardOnTouch
-import com.simplechat.app.ui.markdown.warmMarkdownCache
 import com.simplechat.app.ui.theme.LocalChatColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filter
@@ -130,14 +134,6 @@ private const val HugeMessageChars = 20_000
 
 /** 换会话时，慢过这么久才显示转圈 —— 短会话不该闪一下圈圈。 */
 private const val SpinnerDelayMs = 120L
-
-/**
- * 预热 Markdown 解析时，尾部消息超过这么多字符就不预热。
- *
- * 预热的意义是"打开就能看到的那一条不用现场解析"；一条几万字的消息本身就要
- * 几百毫秒解析，替它预热只会把后台线程占满、让真正的首屏更晚。
- */
-private const val WarmTailMaxChars = 24_000
 
 /** 等新会话内容就位的兜底上限。超过就当它已经好了，不能让界面停在透明态。 */
 private const val SwitchLoadTimeoutMs = 2_000L
@@ -182,7 +178,11 @@ fun ChatScreen(
     val context = LocalContext.current
 
     var panel by remember { mutableStateOf(InputPanelState.NONE) }
-    var input by remember { mutableStateOf("") }
+    val inputState = remember { TextFieldState() }
+    val input by remember { derivedStateOf { inputState.text.toString() } }
+    fun replaceInput(text: String) {
+        inputState.setTextAndPlaceCursorAtEnd(text)
+    }
     var deleteTarget by remember { mutableStateOf<UiMessage?>(null) }
 
     /**
@@ -257,6 +257,7 @@ fun ChatScreen(
      * 输入状态在溶解动画开始前就已经换好了。
      */
     val composerKey = vm.currentConversationId.orEmpty()
+    var composerExpanded by remember(composerKey) { mutableStateOf(false) }
     val pendingByConversation = remember { mutableStateMapOf<String, List<Attachment>>() }
     val editingByConversation = remember { mutableStateMapOf<String, UiMessage?>() }
     val draftBeforeEditByConversation = remember { mutableStateMapOf<String, String>() }
@@ -282,7 +283,7 @@ fun ChatScreen(
             draftBeforeEditByConversation[previous] = inputBeforeEdit
         }
         // ② 取来这一份：草稿走库（进程被杀也还在），其余是瞬时状态、留在内存
-        input = vm.loadDraft(composerKey).orEmpty()
+        replaceInput(vm.loadDraft(composerKey).orEmpty())
         pending = pendingByConversation[composerKey].orEmpty()
         editingMessage = editingByConversation[composerKey]
         inputBeforeEdit = draftBeforeEditByConversation[composerKey].orEmpty()
@@ -343,7 +344,7 @@ fun ChatScreen(
     /** 收起「修改输入」并还原编辑前的草稿。 */
     fun cancelEdit() {
         editingMessage = null
-        input = inputBeforeEdit
+        replaceInput(inputBeforeEdit)
         pending = emptyList()
     }
 
@@ -362,6 +363,7 @@ fun ChatScreen(
     BackHandler(enabled = panel != InputPanelState.NONE) { panel = InputPanelState.NONE }
     BackHandler(enabled = messageIndex.isOpen) { messageIndex.collapse() }
     BackHandler(enabled = editingMessage != null) { cancelEdit() }
+    BackHandler(enabled = composerExpanded && panel == InputPanelState.NONE) { composerExpanded = false }
     BackHandler(enabled = aiEditTarget != null) { aiEditTarget = null }
     BackHandler(enabled = voice.state.active) {
         voice.cancel()
@@ -631,9 +633,12 @@ fun ChatScreen(
     }
 
     val density = LocalDensity.current
-    /** 输入区实测高度（含系统栏内边距）—— 消息列表据此让出底部空间。 */
-    var inputAreaHeight by remember { mutableStateOf(0) }
-    val inputAreaPadding = with(density) { inputAreaHeight.toDp() }
+    val inputAreaHeight = remember { mutableStateOf(0) }
+    val messagePadding = remember(density, inputAreaHeight) {
+        object : PaddingValues by PaddingValues(horizontal = 16.dp, vertical = 12.dp) {
+            override fun calculateBottomPadding() = with(density) { inputAreaHeight.value.toDp() } + 12.dp
+        }
+    }
 
     /** 正在切换会话。此时列表被整份替换，禁止切换逻辑之外的打扰（见下方切换 LaunchedEffect）。 */
     var switchingConversation by remember { mutableStateOf(false) }
@@ -766,46 +771,16 @@ fun ChatScreen(
      * `ScrollToBottom.followBottom`。
      */
     LaunchedEffect(listState) {
+        fun needsFollow() = !detached && vm.searchTarget == null && !vm.switching && !pathRebuilding &&
+            !switchingConversation && !listState.isScrollInProgress && listState.canScrollForward
         while (true) {
-            /*
-             * 「贴底就粘住」：只要用户没主动上翻（`!detached`）、没在滚动、
-             * 且下面真的还有内容（`canScrollForward`），就把它钉在末尾。
-             *
-             * 不只在流式时跑 —— 长消息的文字布局要好几帧才排出真实高度，
-             * 只在流式时跑会漏掉"加载完但还在长"的那几帧（实测：第一次
-             * atBottom=true 之后高度又长了一截，就再也没人跟了）。
-             *
-             * `pathRebuilding` / `switchingConversation` 期间让位 ——
-             * 那两种是**故意**要把视口挪到别处去的，别和它们抢。
-             */
-            if (!detached && vm.searchTarget == null && !vm.switching && !pathRebuilding && !switchingConversation &&
-                !listState.isScrollInProgress && listState.canScrollForward
-            ) {
-                // 向底部**逼近**一帧，不是一把跳过去 —— 见 ScrollToBottom.followBottom
+            // Wake on layout growth or resumed following, not on every frame spent reading history.
+            if (!needsFollow()) snapshotFlow { needsFollow() }.first { it }
+            while (needsFollow()) {
                 listState.followBottom()
+                withFrameNanos { }
             }
-            withFrameNanos { }
         }
-    }
-
-    /*
-     * 预热 Markdown 解析缓存（**后台线程**）。
-     *
-     * ⚠️ **只预热末尾这一条**，不是整个会话。
-     *
-     * 早先这里是 `vm.messages.asReversed().map { it.content }.forEach { warm(it) }` ——
-     * 而 effect 的 key 是 `messages.size`：**每来一条新消息，就把全部历史重新解析一遍**。
-     * 一千条的会话里，每轮回复都要在后台把上百万字重新解析一次，解析结果还因为缓存
-     * 容量被反复冲刷（见 `MarkdownStateCache`）。这正是"长会话越聊越卡"的直接原因之一。
-     *
-     * 真正需要的只有"贴底打开时立刻能看到的那一条"，其余交给惰性渲染：
-     * 滚进视口才解析，解析结果进 LRU 缓存。
-     */
-    LaunchedEffect(vm.currentConversationId, vm.messages.size) {
-        val tail = vm.messages.lastOrNull() ?: return@LaunchedEffect
-        // 超长消息不预热：解析它本身就要几百毫秒，预热反而把后台线程占满
-        if (tail.content.length > WarmTailMaxChars) return@LaunchedEffect
-        withContext(Dispatchers.Default) { warmMarkdownCache(tail.content) }
     }
 
     /** 追加新消息后跟到底部（用户没离开时）。 */
@@ -825,48 +800,6 @@ fun ChatScreen(
          */
         if (pathRebuilding) return@LaunchedEffect
         listState.scrollToBottom()
-    }
-
-    /*
-     * 键盘弹起会抬高输入栏 → 列表底部留白跟着变大 → 整块正文被顶上去。
-     *
-     * **贴底时这是想要的**（最后一条要让出输入栏的位置）；但用户上翻读上文时
-     * 不该被顶 —— 对齐官方：非贴底状态下正文不随键盘抬高。
-     *
-     * ⚠️ **补偿必须和留白变化落在同一帧**，否则会闪一下：
-     * 留白变大那一帧内容先被顶上去、下一帧才被拉回来 —— 一帧的整屏位移，
-     * 看起来就是闪。
-     *
-     * 所以用 `SideEffect` + `requestScrollToItem` 这一对：
-     * - `SideEffect` 在**组合之后、布局之前**跑（`LaunchedEffect` 要等下一帧）
-     * - `requestScrollToItem` 在**同一次测量**里生效，且不是动画
-     *
-     * 于是"被顶上去"的那一帧压根不会被画出来。
-     */
-    val padPx = inputAreaHeight
-    var lastPadPx by remember { mutableStateOf(-1) }
-    val padDelta = if (lastPadPx >= 0) padPx - lastPadPx else 0
-    SideEffect {
-        lastPadPx = padPx
-        // 首次测量只记基线（0 → 实测值那一跳不是键盘引起的）
-        if (padDelta == 0 || detached || vm.searchTarget != null || vm.switching || switchingConversation) return@SideEffect
-        /*
-         * ★ 顶部为原点：底部留白变化**不推**内容。
-         *
-         * 锚点是"最上面那条可见项的顶边"，它和底部留白无关 —— 非贴底时什么都不用做。
-         * 只有贴底时要主动跟：留白变大 = 内容末尾离视口底更远 = 最后一条会被输入栏盖住，
-         * 得重新贴到新的末尾。
-         *
-         * `isAtBottom()` 在这里读到的是**上一次布局**的结果 = 变化前的状态，正是要的。
-         */
-        if (listState.isAtBottom()) {
-            val owner = vm.currentConversationId
-            scope.launch {
-                if (owner == vm.currentConversationId && !detached && vm.searchTarget == null && !vm.switching) {
-                    listState.scrollToBottom()
-                }
-            }
-        }
     }
 
     /*
@@ -1121,6 +1054,7 @@ fun ChatScreen(
 
     /** 展开面板时收起键盘 —— 键盘与面板同时占屏会让输入区几乎没有空间。 */
     fun openPanel(target: InputPanelState) {
+        composerExpanded = false
         dismissInput()
         panel = if (panel == target) InputPanelState.NONE else target
     }
@@ -1164,270 +1098,251 @@ fun ChatScreen(
             modifier = Modifier.dismissKeyboardOnTouch(clearFocus = { !textSelection.isActive }),
         )
 
-        /*
-         * 消息区 + **浮在它上面的**输入区。
-         *
-         * 输入栏不占列表的位，而是盖在列表上方 —— 长文滚动时正文会从输入栏
-         * 底下穿过去，而不是被一道硬边界截断。列表底部用等高的 contentPadding
-         * 让出空间，最后一条仍然滚得出来。
-         */
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .then(if (shareSelection.active) Modifier else Modifier.messageIndexDrag(messageIndex)),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer { alpha = dissolve.value }
-                    // 点消息区空白处收键盘；不消费事件，气泡照常可点
-                    .dismissKeyboardOnTouch(clearFocus = { !textSelection.isActive })
-            ) {
-                if (vm.messages.isEmpty()) {
-                    // 空态也要避开输入栏，否则"一起创作吧"会压在输入框上
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(bottom = inputAreaPadding),
-                    ) {
-                        EmptyState(modifier = Modifier.align(Alignment.Center))
-                    }
-                } else {
-                    MessageList(
-                        messages = vm.messages,
-                        loadingLabelFor = vm::loadingLabelFor,
-                        loadingWordsUseThemeColor = vm.loadingWordsUseThemeColor,
-                        textSelection = textSelection,
-                        shareSelection = shareSelection,
-                        onShare = { message ->
-                            textSelection.dismiss()
-                            dismissInput()
-                            panel = InputPanelState.NONE
-                            messageIndex.collapse()
-                            detached = true
-                            vm.dismissSearch()
-                            shareSelection.begin(message.id, shareGroups)
-                        },
-                        searchTarget = vm.searchTarget,
-                        searchBottomObstructionPx = inputAreaHeight,
-                        searchPlacementReset = searchPlacementReset,
-                        onDismissSearch = vm::dismissSearch,
-                        listState = listState,
-                        /*
-                         * 展开 / 收起**任何**折叠块（思考面板、超长用户气泡）时，
-                         * 立刻停止自动跟底。
-                         *
-                         * 折叠块都在视口**下方**：跟底会马上把这一屏往上推，
-                         * 于是"展开"这个动作先把**被点的那个按钮**顶走了 ——
-                         * 用户点的就是它、视线也在它上面，它必须原地不动。
-                         * 停下来之后新长出来的内容往**下**长，正是"掀开"的观感。
-                         *
-                         * 而且停下来是**持续的**：`detached` 只在用户重新滚回底部时
-                         * 才被清掉（见跟底循环里那条恢复条件），所以展开后可以
-                         * 慢慢往下读，不会被反复拽走。
-                         *
-                         * 反过来说，这也是"点开来看"与"等新内容"两种意图的分界：
-                         * 点折叠 = 我在读已经有的东西；跟底只在流式那种
-                         * "我在等新字"的场合才对。
-                         */
-                        onFoldToggle = { detached = true },
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(
-                            start = 16.dp,
-                            end = 16.dp,
-                            top = 12.dp,
-                            bottom = inputAreaPadding + 12.dp,
-                        ),
-                        onCopy = { message -> copyToClipboard(context, message.content) },
-                        onRegenerate = { message ->
-                            /*
-                             * ⚠️ **重新生成不锚**，交给跟底。
-                             *
-                             * 它把这条换成一条**空的**流式回复 —— 高度会先塌到十几像素
-                             * （实测 18355px → 12px），此时"原来的阅读位置"在新内容里
-                             * 根本不存在，锚不住；硬锚只会把视口钳到内容末尾 = 往上跳。
-                             *
-                             * 而用户按「重新生成」就是想**看新回复**，跟到底部才对。
-                             * （对照：「切版本」是看已完成的兄弟版本，那里才锚。）
-                             */
-                            resumeFollowing()
-                            vm.regenerate(message)
-                        },
-                        onContinue = { message ->
-                            /*
-                             * 续写**跟底**：新内容接在这条末尾，用户按它就是想看接下来写什么。
-                             * 与「重新生成」同一个判断（那条把内容清空，锚不住）。
-                             */
-                            resumeFollowing()
-                            vm.continueMessage(message)
-                        },
-                        // 朗读暂时下线（见 ReadAloudEnabled）：开关关着时按钮不出现、
-                        // TTS 引擎也不会被初始化
-                        speakingId = if (ReadAloudEnabled && readAloudAvailable) speaker.speakingId else null,
-                        readAloudAvailable = ReadAloudEnabled && readAloudAvailable,
-                        autoCollapseThinking = vm.autoCollapseThinking,
-                        onSpeak = { message ->
-                            // 朗读正文（不是时间线里的过程文字）：用户要听的是回答本身
-                            if (ReadAloudEnabled) speaker.toggle(message.id, message.content)
-                        },
-                        onEdit = { message ->
-                            if (message.role == MessageRole.USER) {
-                                if (editingMessage == null) inputBeforeEdit = input
-                                editingMessage = message
-                                input = message.content
-                                // 附件跟着进输入栏 —— 改错别字不该顺手把图丢了
-                                pending = message.attachments
-                                panel = InputPanelState.NONE
-                            } else {
-                                aiEditTarget = message
-                            }
-                        },
-                        onDelete = { message -> deleteTarget = message },
-                        onFork = { message -> vm.forkFrom(message) },
-                        onVariantChange = { message, index ->
-                            // 切版本也重建路径（旧分支下游让位）—— 锚住操作栏那一行，
-                            // 换完视口不动，连点 `‹ ›` 才点得准。详见 anchorOnPathChange。
-                            anchorOnPathChange(message)
-                            vm.switchVariant(message, index)
-                        },
-                        onOpenImage = { message, attachment ->
-                            viewingImage = message.attachments.filter { it.isImage } to attachment
-                        },
-                        onRetry = { message ->
-                            // 同「重新生成」：换成一条空的流式回复 → 不锚，跟到底部看它写
-                            resumeFollowing()
-                            vm.retryMessage(message)
-                        },
-                    )
-                }
-            }
-
-            /*
-             * 回到底部。
-             *
-             * 只在离开底部时出现 —— 一直挂着会平白挡住正文，而它贴底时毫无用处。
-             * 点它会**恢复自动跟随**：用户的意图显然是"我要看最新的"。
-             */
-            /*
-             * 换会话时的白屏转圈。
-             *
-             * 只在"切换会话"且**等了一小会儿还没就位**时出现：短会话一闪而过，
-             * 没必要闪个圈；长消息排版慢，这时给个明确的"在加载"，
-             * 比让人看着列表自己往下滑要好。
-             */
-            if (showLoading) {
-                CircularProgressIndicator(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .size(28.dp),
-                    strokeWidth = 3.dp,
-                    color = LocalChatColors.current.processText,
-                )
-            }
-
-            /*
-             * 安卓原生的那种细滚动条：滚动时出现、停手淡出。
-             *
-             * 放在消息区这一层、贴右缘；输入栏浮在它上面，淡出后也不碍事。
-             */
-            VerticalScrollBar(
-                state = listState,
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .fillMaxHeight(),
-            )
-
-            val atBottom by rememberIsAtBottom(listState)
-            BackToBottomButton(
-                /*
-                 * ★ 显隐判据里必须有 `detached`（用户主动离开底部），**不能只有 `!atBottom`**。
-                 *
-                 * `!atBottom` 在**跟随过程中**会以内容到达的节奏来回翻：每来一批字
-                 * `canScrollForward` 变真 → 按钮冒出来；跟底把它吃掉 → 又变假 → 按钮消失。
-                 * 表现就是"一触发跟底，按钮就不停闪烁"。
-                 *
-                 * `detached` 是**意图**而不是**位置**：跟随期间它一直是假，
-                 * 所以跟底时这个按钮压根不存在 —— 正是要的。
-                 * 留 `!atBottom` 只是为了避免"明明已经在底部还挂着一个回到底部"。
-                 */
-                visible = !shareSelection.active && vm.messages.isNotEmpty() && detached && !atBottom,
-                // 生成中在按钮外圈转一圈进度环；生成完自动消失
-                generating = vm.isStreaming,
-                onClick = {
-                    // 用户显式要"看最新的" —— 这是少数几个该主动滚动的地方之一
-                    resumeFollowing()
-                    scope.launch {
-                        // Remove the search-only padding before computing the normal content bottom.
-                        withFrameNanos { }
-                        listState.scrollToBottom()
-                    }
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = inputAreaPadding + 12.dp),
-            )
-
-            /*
-             * 面板展开时，点消息区任意处即可关闭。
-             *
-             * 这层是**透明**的、只在面板展开时存在，并且会吃掉这一击 ——
-             * 否则用户点空白处关面板，顺手还点开了底下那条消息。
-             */
-            if (panel != InputPanelState.NONE) {
+        val backdrop: @Composable () -> Unit = {
+            Box(Modifier.fillMaxSize()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) {
-                            dismissInput()
-                            panel = InputPanelState.NONE
-                        },
-                )
-            }
-
-            /*
-             * 输入栏**下面**那一层渐变：只铺屏幕最底部的一条，正文滚到这里就化开。
-             *
-             * 输入栏以上**一律不铺** —— 之前那层从输入栏顶边往上羽化的带子，
-             * 会把正在读的那行字从中间洗掉，比硬边还难看。正文应该一直清晰到
-             * 输入栏的边，然后被输入栏自己盖住。
-             */
-            if (inputAreaHeight > 0) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .height(BottomFadeHeight)
-                        .background(
-                            Brush.verticalGradient(
+                        .graphicsLayer { alpha = dissolve.value }
+                        // 点消息区空白处收键盘；不消费事件，气泡照常可点
+                        .dismissKeyboardOnTouch(clearFocus = { !textSelection.isActive })
+                ) {
+                    if (vm.messages.isEmpty()) {
+                        // 空态也要避开输入栏，否则"一起创作吧"会压在输入框上
+                        EmptyState(
+                            modifier = Modifier.fillMaxSize(),
+                            bottomObstruction = { inputAreaHeight.value },
+                        )
+                    } else {
+                        MessageList(
+                            messages = vm.messages,
+                            loadingLabelFor = vm::loadingLabelFor,
+                            loadingWordsUseThemeColor = vm.loadingWordsUseThemeColor,
+                            textSelection = textSelection,
+                            shareSelection = shareSelection,
+                            onShare = { message ->
+                                textSelection.dismiss()
+                                dismissInput()
+                                panel = InputPanelState.NONE
+                                messageIndex.collapse()
+                                detached = true
+                                vm.dismissSearch()
+                                shareSelection.begin(message.id, shareGroups)
+                            },
+                            searchTarget = vm.searchTarget,
+                            searchBottomObstructionPx = { inputAreaHeight.value },
+                            searchPlacementReset = searchPlacementReset,
+                            onDismissSearch = vm::dismissSearch,
+                            listState = listState,
+                            /*
+                             * 展开 / 收起**任何**折叠块（思考面板、超长用户气泡）时，
+                             * 立刻停止自动跟底。
+                             *
+                             * 折叠块都在视口**下方**：跟底会马上把这一屏往上推，
+                             * 于是"展开"这个动作先把**被点的那个按钮**顶走了 ——
+                             * 用户点的就是它、视线也在它上面，它必须原地不动。
+                             * 停下来之后新长出来的内容往**下**长，正是"掀开"的观感。
+                             *
+                             * 而且停下来是**持续的**：`detached` 只在用户重新滚回底部时
+                             * 才被清掉（见跟底循环里那条恢复条件），所以展开后可以
+                             * 慢慢往下读，不会被反复拽走。
+                             *
+                             * 反过来说，这也是"点开来看"与"等新内容"两种意图的分界：
+                             * 点折叠 = 我在读已经有的东西；跟底只在流式那种
+                             * "我在等新字"的场合才对。
+                             */
+                            onFoldToggle = { detached = true },
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = messagePadding,
+                            onCopy = { message -> copyToClipboard(context, message.content) },
+                            onRegenerate = { message ->
                                 /*
-                                 * 起点不透明 0 而是 0.28，末段再收满：
-                                 * 两段线性的渐变在中间那一段太"透"，正文走到这里
-                                 * 会有半截字一直若隐若现。加中间站之后是**越往下越实**，
-                                 * 而不是"忽然开始变淡"。
+                                 * ⚠️ **重新生成不锚**，交给跟底。
+                                 *
+                                 * 它把这条换成一条**空的**流式回复 —— 高度会先塌到十几像素
+                                 * （实测 18355px → 12px），此时"原来的阅读位置"在新内容里
+                                 * 根本不存在，锚不住；硬锚只会把视口钳到内容末尾 = 往上跳。
+                                 *
+                                 * 而用户按「重新生成」就是想**看新回复**，跟到底部才对。
+                                 * （对照：「切版本」是看已完成的兄弟版本，那里才锚。）
                                  */
-                                colorStops = arrayOf(
-                                    0f to colors.pageBackground.copy(alpha = 0f),
-                                    0.35f to colors.pageBackground.copy(alpha = 0.28f),
-                                    0.68f to colors.pageBackground.copy(alpha = 0.68f),
-                                    1f to colors.pageBackground,
+                                resumeFollowing()
+                                vm.regenerate(message)
+                            },
+                            onContinue = { message ->
+                                /*
+                                 * 续写**跟底**：新内容接在这条末尾，用户按它就是想看接下来写什么。
+                                 * 与「重新生成」同一个判断（那条把内容清空，锚不住）。
+                                 */
+                                resumeFollowing()
+                                vm.continueMessage(message)
+                            },
+                            // 朗读暂时下线（见 ReadAloudEnabled）：开关关着时按钮不出现、
+                            // TTS 引擎也不会被初始化
+                            speakingId = if (ReadAloudEnabled && readAloudAvailable) speaker.speakingId else null,
+                            readAloudAvailable = ReadAloudEnabled && readAloudAvailable,
+                            autoCollapseThinking = vm.autoCollapseThinking,
+                            onSpeak = { message ->
+                                // 朗读正文（不是时间线里的过程文字）：用户要听的是回答本身
+                                if (ReadAloudEnabled) speaker.toggle(message.id, message.content)
+                            },
+                            onEdit = { message ->
+                                if (message.role == MessageRole.USER) {
+                                    if (editingMessage == null) inputBeforeEdit = input
+                                    editingMessage = message
+                                    replaceInput(message.content)
+                                    // 附件跟着进输入栏 —— 改错别字不该顺手把图丢了
+                                    pending = message.attachments
+                                    panel = InputPanelState.NONE
+                                } else {
+                                    aiEditTarget = message
+                                }
+                            },
+                            onDelete = { message -> deleteTarget = message },
+                            onFork = { message -> vm.forkFrom(message) },
+                            onVariantChange = { message, index ->
+                                // 切版本也重建路径（旧分支下游让位）—— 锚住操作栏那一行，
+                                // 换完视口不动，连点 `‹ ›` 才点得准。详见 anchorOnPathChange。
+                                anchorOnPathChange(message)
+                                vm.switchVariant(message, index)
+                            },
+                            onOpenImage = { message, attachment ->
+                                viewingImage = message.attachments.filter { it.isImage } to attachment
+                            },
+                            onRetry = { message ->
+                                // 同「重新生成」：换成一条空的流式回复 → 不锚，跟到底部看它写
+                                resumeFollowing()
+                                vm.retryMessage(message)
+                            },
+                        )
+                    }
+                }
+
+                /*
+                 * 回到底部。
+                 *
+                 * 只在离开底部时出现 —— 一直挂着会平白挡住正文，而它贴底时毫无用处。
+                 * 点它会**恢复自动跟随**：用户的意图显然是"我要看最新的"。
+                 */
+                /*
+                 * 换会话时的白屏转圈。
+                 *
+                 * 只在"切换会话"且**等了一小会儿还没就位**时出现：短会话一闪而过，
+                 * 没必要闪个圈；长消息排版慢，这时给个明确的"在加载"，
+                 * 比让人看着列表自己往下滑要好。
+                 */
+                if (showLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .size(28.dp),
+                        strokeWidth = 3.dp,
+                        color = LocalChatColors.current.processText,
+                    )
+                }
+
+                /*
+                 * 安卓原生的那种细滚动条：滚动时出现、停手淡出。
+                 *
+                 * 放在消息区这一层、贴右缘；输入栏浮在它上面，淡出后也不碍事。
+                 */
+                VerticalScrollBar(
+                    state = listState,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .fillMaxHeight(),
+                )
+
+                val atBottom by rememberIsAtBottom(listState)
+                BackToBottomButton(
+                    /*
+                     * ★ 显隐判据里必须有 `detached`（用户主动离开底部），**不能只有 `!atBottom`**。
+                     *
+                     * `!atBottom` 在**跟随过程中**会以内容到达的节奏来回翻：每来一批字
+                     * `canScrollForward` 变真 → 按钮冒出来；跟底把它吃掉 → 又变假 → 按钮消失。
+                     * 表现就是"一触发跟底，按钮就不停闪烁"。
+                     *
+                     * `detached` 是**意图**而不是**位置**：跟随期间它一直是假，
+                     * 所以跟底时这个按钮压根不存在 —— 正是要的。
+                     * 留 `!atBottom` 只是为了避免"明明已经在底部还挂着一个回到底部"。
+                     */
+                    visible = !shareSelection.active && vm.messages.isNotEmpty() && detached && !atBottom,
+                    // 生成中在按钮外圈转一圈进度环；生成完自动消失
+                    generating = vm.isStreaming,
+                    onClick = {
+                        // 用户显式要"看最新的" —— 这是少数几个该主动滚动的地方之一
+                        resumeFollowing()
+                        scope.launch {
+                            // Remove the search-only padding before computing the normal content bottom.
+                            withFrameNanos { }
+                            listState.scrollToBottom()
+                        }
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 16.dp, bottom = 12.dp)
+                        .offset { IntOffset(0, -inputAreaHeight.value) },
+                )
+
+                /*
+                 * 面板展开时，点消息区任意处即可关闭。
+                 *
+                 * 这层是**透明**的、只在面板展开时存在，并且会吃掉这一击 ——
+                 * 否则用户点空白处关面板，顺手还点开了底下那条消息。
+                 */
+                if (panel != InputPanelState.NONE) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) {
+                                dismissInput()
+                                panel = InputPanelState.NONE
+                            },
+                    )
+                }
+
+                /*
+                 * 输入栏**下面**那一层渐变：只铺屏幕最底部的一条，正文滚到这里就化开。
+                 *
+                 * 输入栏以上**一律不铺** —— 之前那层从输入栏顶边往上羽化的带子，
+                 * 会把正在读的那行字从中间洗掉，比硬边还难看。正文应该一直清晰到
+                 * 输入栏的边，然后被输入栏自己盖住。
+                 */
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(BottomFadeHeight)
+                            .background(
+                                Brush.verticalGradient(
+                                    /*
+                                     * 起点不透明 0 而是 0.28，末段再收满：
+                                     * 两段线性的渐变在中间那一段太"透"，正文走到这里
+                                     * 会有半截字一直若隐若现。加中间站之后是**越往下越实**，
+                                     * 而不是"忽然开始变淡"。
+                                     */
+                                    colorStops = arrayOf(
+                                        0f to colors.pageBackground.copy(alpha = 0f),
+                                        0.35f to colors.pageBackground.copy(alpha = 0.28f),
+                                        0.68f to colors.pageBackground.copy(alpha = 0.68f),
+                                        1f to colors.pageBackground,
+                                    ),
                                 ),
                             ),
-                        ),
-                )
+                    )
             }
+        }
 
+        val composer: @Composable () -> Unit = {
             if (shareSelection.active) {
                 MessageShareTools(shareSelection, shareGroups, vm.conversationTitle(),
-                    modifier = Modifier.align(Alignment.BottomCenter).onSizeChanged { inputAreaHeight = it.height })
+                    modifier = Modifier.fillMaxWidth())
             } else Column(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    // 先量高度再让位：消息列表的底部留白要跟它一致
-                    .onSizeChanged { inputAreaHeight = it.height }
                     .navigationBarsPadding()
                     .imePadding(),
             ) {
@@ -1468,7 +1383,8 @@ fun ChatScreen(
                     val clearPersistedInput = {
                         // Clear only the submitted draft, after the message transaction committed.
                         if (composerOwner == draftKey && input == submitted && pending == attached) {
-                            input = ""
+                            replaceInput("")
+                            composerExpanded = false
                             pending = emptyList()
                             editingMessage = null
                             draftScope.launch { draftKey?.let { vm.clearDraft(it) } }
@@ -1520,7 +1436,7 @@ fun ChatScreen(
                         if (owner == vm.currentConversationId.orEmpty() && composerOwner == owner &&
                             input.isEmpty() && editingMessage == null
                         ) {
-                            input = transcript
+                            replaceInput(transcript)
                             submitComposer()
                         }
                     }, onError = {
@@ -1536,11 +1452,15 @@ fun ChatScreen(
                 }
 
                 InputBar(
-                    text = input,
-                    onTextChange = {
-                        input = it
-                        if (panel != InputPanelState.NONE) panel = InputPanelState.NONE
-                    },
+                    fieldState = inputState,
+                    expanded = composerExpanded,
+                    onToggleExpanded = if (composerOwner == composerKey) {
+                        {
+                            panel = InputPanelState.NONE
+                            textSelection.dismiss()
+                            composerExpanded = !composerExpanded
+                        }
+                    } else null,
                     editingLabel = if (editingMessage != null) stringResource(R.string.msg_edit_input) else null,
                     onCancelEdit = { cancelEdit() },
                     // 面板展开时输入栏投影淡出，两块合看成一体
@@ -1686,6 +1606,9 @@ fun ChatScreen(
                 Spacer(Modifier.size(8.dp))
             }
 
+        }
+
+        val overlay: @Composable () -> Unit = {
             /*
              * 消息索引（§34）—— **盖在最上面**：索引开着的时候输入栏、回到底部、
              * 面板统统按不动，用户就是在找路。点遮罩即收。
@@ -1715,8 +1638,39 @@ fun ChatScreen(
                 modifier = Modifier.fillMaxSize(),
             )
         }
+        Layout(
+            modifier = Modifier
+                .weight(1f)
+                .then(if (shareSelection.active) Modifier else Modifier.messageIndexDrag(messageIndex)),
+            contents = listOf(backdrop, composer, overlay),
+        ) { (backdrop, composer, overlay), constraints ->
+            val input = composer.single().measure(constraints.copy(minHeight = 0))
+            val height = input.height
+            val previousHeight = Snapshot.withoutReadObservation {
+                inputAreaHeight.value
+            }
+            if (height != previousHeight) {
+                // Reserve space and preserve the old bottom anchor in the same measure pass.
+                // A reader who scrolled up keeps the visible message anchored to the top.
+                Snapshot.withoutReadObservation {
+                    if (height > previousHeight && previousHeight > 0 && !detached &&
+                        vm.searchTarget == null && !vm.switching && !switchingConversation &&
+                        listState.isAtBottom()
+                    ) {
+                        listState.advanceBottomForObstruction(height - previousHeight)
+                    }
+                }
+                inputAreaHeight.value = height
+            }
+            val background = backdrop.single().measure(constraints)
+            val foreground = overlay.single().measure(constraints)
+            layout(background.width, background.height) {
+                background.placeRelative(0, 0)
+                input.placeRelative(0, background.height - height)
+                foreground.placeRelative(0, 0)
+            }
+        }
     }
-
     // ── AI 回复编辑：只有这一处需要区分「保存」与「保存并发送」────
 
     aiEditTarget?.let { target ->
@@ -1936,6 +1890,5 @@ internal fun BannerBar(message: String, onDismiss: () -> Unit, onNeverRemind: ((
         )
     }
 }
-
 
 

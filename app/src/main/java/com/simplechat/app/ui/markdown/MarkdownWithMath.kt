@@ -45,13 +45,12 @@ fun MarkdownWithMath(
     modifier: Modifier = Modifier,
     streaming: Boolean = false,
 ) {
-    // 切分是纯字符串操作，跟着内容走；正文没变就不重切
-    val segments = remember(content) { splitMath(content) }
-
-    // 没有公式：直接走原来的路径，一个字节的额外开销都没有
-    if (segments.none { it is ContentSegment.Formula && it.display }) {
+    // 一个回复共用同一条显示进度。公式闭合或插入新段落时继续沿用这条进度。
+    val revealed = rememberSmoothReveal(streaming = streaming, value = content)
+    val segments = remember(revealed) { displayMathSegments(revealed) }
+    if (segments.none { it is ContentSegment.Formula }) {
         MarkdownText(
-            content = content,
+            content = revealed,
             modifier = modifier,
             streaming = streaming,
         )
@@ -76,12 +75,11 @@ fun MarkdownWithMath(
     }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        val grouped = remember(content) { displayMathSegments(content) }
-        grouped.forEach { segment ->
+        segments.forEachIndexed { index, segment ->
             when (segment) {
                 is ContentSegment.Text -> MarkdownText(
                     content = segment.text,
-                    streaming = streaming,
+                    streaming = streaming && index == segments.lastIndex,
                 )
 
                 is ContentSegment.Formula -> CompatibleFormula(segment, LatexConfig(fontSize = fontSize, theme = latexTheme))

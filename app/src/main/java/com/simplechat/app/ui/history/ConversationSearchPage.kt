@@ -73,6 +73,7 @@ fun ConversationSearchPage(
     autoFocus: Boolean = true,
     selectedResultKey: String? = null,
     modifier: Modifier = Modifier,
+    isLoading: Boolean = false,
 ) {
     val colors = LocalChatColors.current
     val focusRequester = remember { FocusRequester() }
@@ -178,10 +179,10 @@ fun ConversationSearchPage(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = if (query.isBlank()) {
-                        stringResource(R.string.search_prompt)
-                    } else {
-                        stringResource(R.string.search_no_result)
+                    text = when {
+                        query.isBlank() -> stringResource(R.string.search_prompt)
+                        isLoading -> stringResource(R.string.search_loading)
+                        else -> stringResource(R.string.search_no_result)
                     },
                     style = MaterialTheme.typography.labelMedium,
                     color = colors.placeholder,
@@ -221,7 +222,11 @@ fun ConversationSearchPage(
                     )
                 }
                 if (hasMore) item {
-                    TextButton(onClick = onLoadMore, modifier = Modifier.fillMaxWidth()) {
+                    TextButton(
+                        onClick = onLoadMore,
+                        enabled = !isLoading,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
                         Text(stringResource(R.string.search_load_more))
                     }
                 }

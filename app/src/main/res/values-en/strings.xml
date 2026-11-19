@@ -583,6 +583,7 @@
     <string name="settings_api_style">Protocol channel</string>
     <string name="api_style_auto">Auto (decide by endpoint)</string>
     <string name="api_style_openai">OpenAI compatible</string>
+    <string name="api_style_openai_responses">OpenAI Responses</string>
     <string name="api_style_anthropic">Anthropic compatible (extended)</string>
     <string name="settings_web_search">Smart search</string>
     <string name="settings_web_search_hint">Let the model search the web when needed. Only available on the extended channel.</string>

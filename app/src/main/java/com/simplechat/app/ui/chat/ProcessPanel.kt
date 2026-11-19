@@ -49,6 +49,7 @@ import com.simplechat.app.ui.common.MotionEasing
 import com.simplechat.app.ui.common.PillShape
 import com.simplechat.app.ui.theme.LocalChatColors
 import com.simplechat.app.ui.theme.ProcessTextStyle
+import com.simplechat.app.ui.markdown.rememberSmoothReveal
 
 /**
  * 过程面板（深度思考 / 未来的工具调用）。
@@ -136,7 +137,9 @@ internal fun TailContent(reasoning: String) {
      * 等于每 50ms 把全部行重排一遍。思考越长这一笔越贵，主线程扛不住就掉帧，
      * 表现就是"思考内容滚起来一卡一卡"。
      */
-    val tail = remember(reasoning) { visibleTailOf(reasoning) }
+    // 先推进整段思考的显示位置，再截取窗口，否则窗口滑动会被误判为文本替换。
+    val revealed = rememberSmoothReveal(streaming = true, value = reasoning)
+    val tail = remember(revealed) { visibleTailOf(revealed) }
 
     var contentPx by remember { mutableIntStateOf(0) }
     val overflowing = contentPx > maxPx + 1
@@ -236,9 +239,12 @@ private const val TailKeepChars = 1200
  * 只有"整段没有任何换行"时才会退化成按字符切 —— 那也只有**最上面那一行**
  * 可能不同，而它正好在顶部渐隐遮罩底下。
  */
-private fun visibleTailOf(reasoning: String): String {
+internal fun visibleTailOf(reasoning: String): String {
     if (reasoning.length <= TailKeepChars) return reasoning
     val cut = reasoning.length - TailKeepChars
     val newline = reasoning.indexOf('\n', cut)
-    return if (newline >= 0) reasoning.substring(newline + 1) else reasoning.substring(cut)
+    // 长段落末尾刚收到换行时，不能把仍在视口内的上一段整段截掉。
+    if (newline in cut until cut + TailKeepChars / 2) return reasoning.substring(newline + 1)
+    val start = if (reasoning[cut].isLowSurrogate() && reasoning[cut - 1].isHighSurrogate()) cut - 1 else cut
+    return reasoning.substring(start)
 }

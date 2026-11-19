@@ -221,7 +221,7 @@ class SettingsStore(
             modelContextWindows = readModelContextWindows(prefs),
             modelMetadata = readModelMap<RemoteModelMetadata>(prefs, Keys.MODEL_METADATA),
             modelOverrides = readModelMap<ModelCapabilityOverride>(prefs, Keys.MODEL_OVERRIDES),
-            onboardingComplete = prefs[Keys.ONBOARDING_COMPLETE] ?: false,
+            onboardingComplete = prefs[Keys.ONBOARDING_COMPLETE] == true && prefs.hasSettingsBeyondProfileSeed(),
             loadingWords = readLoadingWords(prefs),
             loadingWordsUseThemeColor = prefs[Keys.LOADING_WORDS_USE_THEME_COLOR] ?: false,
 
@@ -426,15 +426,19 @@ class SettingsStore(
 
 
 
-    /** Seed the registry in one edit, preserving the existing active configuration and encrypted key. */
+    /** Seed the registry without mistaking the automatic default profile for a legacy setup. */
     suspend fun migrateApiProfiles() {
-        preferences.edit {
-            val hadExistingSettings = it.asMap().isNotEmpty()
-            ensureProfiles(it)
-            if (hadExistingSettings && Keys.ONBOARDING_COMPLETE !in it) {
-                it[Keys.ONBOARDING_COMPLETE] = true
-            }
+        preferences.edit { prefs ->
+            val hasExistingSettings = prefs.hasSettingsBeyondProfileSeed()
+            val onboardingComplete = prefs[Keys.ONBOARDING_COMPLETE]
+            // Build 36 could mark a seed-only install complete on its second launch.
+            prefs[Keys.ONBOARDING_COMPLETE] = (onboardingComplete ?: true) && hasExistingSettings
+            ensureProfiles(prefs)
         }
+    }
+
+    private fun Preferences.hasSettingsBeyondProfileSeed(): Boolean = asMap().keys.any {
+        it != Keys.PROFILES && it != Keys.ACTIVE_PROFILE && it != Keys.ONBOARDING_COMPLETE
     }
 
     suspend fun setShowImageSkipNotice(enabled: Boolean) {

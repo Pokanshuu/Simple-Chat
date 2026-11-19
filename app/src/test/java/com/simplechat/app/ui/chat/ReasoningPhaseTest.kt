@@ -65,6 +65,39 @@ class ReasoningPhaseTest {
         assertFalse(msg.reasoningStreaming)
     }
 
+    @Test
+    fun `absent and blank reasoning never show a thinking panel or tail`() {
+        for (reasoning in listOf(null, "", " \n\t")) {
+            val msg = message(MessageStatus.STREAMING, reasoningDone = false, reasoning = reasoning)
+                .copy(reasoningSeconds = 5)
+
+            assertFalse(msg.hasReasoning)
+            assertFalse(msg.reasoningStreaming)
+        }
+    }
+
+    @Test
+    fun `a late summary shows a settled thinking panel even without timing`() {
+        val msg = message(MessageStatus.STREAMING, reasoningDone = true, reasoning = "思考摘要", content = "正文")
+
+        assertTrue(msg.hasReasoning)
+        assertFalse(msg.reasoningStreaming)
+    }
+
+    @Test
+    fun `a newline after a long thinking paragraph keeps the preceding lines visible`() {
+        val paragraph = "想".repeat(1400)
+        val tail = visibleTailOf("$paragraph\n")
+        assertTrue(tail.endsWith("想想\n"))
+        assertTrue(tail.length < paragraph.length)
+    }
+
+    @Test
+    fun `thinking window starts on a complete emoji`() {
+        val suffix = "想".repeat(1199)
+        assertEquals("🧠$suffix", visibleTailOf("前🧠$suffix"))
+    }
+
     // ── 秒数取整 ────────────────────────────────────────────
 
     @Test

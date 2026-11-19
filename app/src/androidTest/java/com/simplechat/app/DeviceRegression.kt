@@ -38,6 +38,9 @@ class DeviceRegression : Instrumentation() {
     private var compactionTests = false
     private var serviceTests = false
     private var mathTests = false
+    private var composerTests = false
+    private var codeFoldTests = false
+    private var historyScrollTests = false
     override fun onCreate(arguments: Bundle?) {
         realArchive = arguments?.getString("source")
         uiOnly = arguments?.getString("ui") == "true"
@@ -52,6 +55,9 @@ class DeviceRegression : Instrumentation() {
         compactionTests = arguments?.getString("compaction") == "true"
         serviceTests = arguments?.getString("services") == "true"
         mathTests = arguments?.getString("math") == "true"
+        composerTests = arguments?.getString("composer") == "true"
+        codeFoldTests = arguments?.getString("codeFold") == "true"
+        historyScrollTests = arguments?.getString("historyScroll") == "true"
         super.onCreate(arguments)
         start()
     }
@@ -60,7 +66,10 @@ class DeviceRegression : Instrumentation() {
         try {
             runBlocking {
                 val source = realArchive
-                if (mathTests) MathLayoutRegression.run(this@DeviceRegression, ::passed)
+                if (historyScrollTests) HistoryScrollRegression.run(this@DeviceRegression, ::passed)
+                else if (composerTests) ComposerRegression.run(this@DeviceRegression, ::passed)
+                else if (codeFoldTests) CodeFoldRegression.run(this@DeviceRegression, ::passed)
+                else if (mathTests) MathLayoutRegression.run(this@DeviceRegression, ::passed)
                 else if (serviceTests) {
                     ServiceApiRegression.run(targetContext, ::passed)
                     ServiceConfigUiRegression.run(this@DeviceRegression, ::passed)

@@ -12,6 +12,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 
 /**
  * OpenAI 兼容的 SSE 流式客户端。
@@ -47,9 +48,33 @@ class SseClient(
         contextWindow: Int? = null,
         retryBeforeContent: Boolean = true,
         maxOutputTokens: Int? = null,
-    ): Flow<StreamEvent> = flow {
+    ): Flow<StreamEvent> = streamRequest(url, apiKey, extraHeaders, retryBeforeContent) {
         validateRequestBudget(estimatedInputTokens(request), request.maxTokens ?: request.maxCompletionTokens, contextWindow, maxOutputTokens)
-        val body = StreamingJsonRequestBody(json, request)
+        StreamingJsonRequestBody(json, request)
+    }
+
+    internal fun streamResponses(
+        url: String,
+        apiKey: String,
+        request: ResponsesRequestDto,
+        messages: List<OutMessageDto>,
+        model: ModelInfo,
+        extraHeaders: Map<String, String>,
+        retryBeforeContent: Boolean,
+    ): Flow<StreamEvent> = streamRequest(url, apiKey, extraHeaders, retryBeforeContent, responses = true) {
+        validateRequestBudget(estimatedInputTokens(messages), request.maxOutputTokens, model.contextWindow, model.maxOutputTokens)
+        StreamingRequestBody(json, ResponsesRequestDto.serializer(), request)
+    }
+
+    private fun streamRequest(
+        url: String,
+        apiKey: String,
+        extraHeaders: Map<String, String>,
+        retryBeforeContent: Boolean,
+        responses: Boolean = false,
+        prepareBody: () -> RequestBody,
+    ): Flow<StreamEvent> = flow {
+        val body = prepareBody()
         val largeRequest = body.contentLength() >= LargeRequestBytes
 
         val builder = Request.Builder()
@@ -71,8 +96,7 @@ class SseClient(
             val handle = call.cancelWithCoroutine()
             try {
                 call.execute().use { response ->
-                    val source = response.body?.source()
-                    if (!response.isSuccessful || source == null) {
+                    if (!response.isSuccessful) {
                         val raw = runCatching { response.body.readErrorText() }.getOrNull()
                         // 已知状态码 → 一句人话；否则用服务端自己给的文案；再否则带状态码兜底
                         val serverMessage = parser.parseErrorMessage(raw)
@@ -88,6 +112,8 @@ class SseClient(
                         return@use
                     }
 
+                    val source = response.body.source()
+                    val responsesParser = if (responses) ResponsesSseLineParser(json) else null
                     var finished = false
                     var receivedStop = false
                     while (!finished) {
@@ -98,11 +124,14 @@ class SseClient(
                             if (!receivedStop) throw java.io.EOFException("Stream ended before completion")
                             finished = true
                         } else {
-                            when (val result = parser.parse(line)) {
+                            when (val result = responsesParser?.parse(line) ?: parser.parse(line)) {
                                 is SseLineParser.Result.Events -> result.events.forEach {
                                     emit(it)
                                     emittedAny = true
-                                    if (it is StreamEvent.Stopped || it is StreamEvent.Error) receivedStop = true
+                                    if (it is StreamEvent.Stopped || it is StreamEvent.Error) {
+                                        receivedStop = true
+                                        if (responses) finished = true
+                                    }
                                 }
 
                                 SseLineParser.Result.Done -> finished = true

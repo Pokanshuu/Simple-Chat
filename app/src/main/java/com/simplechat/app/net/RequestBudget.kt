@@ -10,8 +10,10 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /** Estimates the actual outgoing payload, including system prompts, attachments and continuation. */
-internal fun estimatedInputTokens(request: ChatRequestDto): Long =
-    request.messages.sumOf { 8L + contentTokens(it.content) }
+internal fun estimatedInputTokens(request: ChatRequestDto): Long = estimatedInputTokens(request.messages)
+
+internal fun estimatedInputTokens(messages: List<OutMessageDto>): Long =
+    messages.sumOf { 8L + contentTokens(it.content) }
 
 internal fun estimatedInputTokens(request: AnthropicRequest): Long =
     TokenEstimate.of(request.system).toLong() +

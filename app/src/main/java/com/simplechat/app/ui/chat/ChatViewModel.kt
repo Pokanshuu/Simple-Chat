@@ -80,17 +80,6 @@ import kotlinx.coroutines.sync.Mutex
  *   （≈ 一帧一次，对齐官方 demo 的 rAF 节拍），避免每个 token 都触发列表重组（§8）。
  * - **不发送 `reasoning_content`**：本期不带 `tools`，官方明确无需回传（§11.1）。
  */
-/** 换会话时后台预热的尾部消息条数：贴底打开先看到的就是这几条。 */
-private const val WarmTailMessages = 10
-
-/**
- * 预热时单条消息的长度上限。
- *
- * 一条几万字的消息解析要几百毫秒；替它预热不会让首屏更快（列表本身也要等它排版），
- * 只会把后台线程占满、拖慢真正该快的那几条。
- */
-private const val WarmTailMaxChars = 24_000
-
 class ChatViewModel(
     private val chatApi: ChatApi,
     private val settingsStore: SettingsStore,
@@ -560,14 +549,9 @@ class ChatViewModel(
              * 再 publish 给界面。列表真正组合时只命中缓存，主线程保持空闲，
              * 转圈因此是顺的。
              */
-            withContext(Dispatchers.Default) {
-                loaded.asReversed()
-                    .take(WarmTailMessages)
-                    // 超长消息不预热：解析它本身就要几百毫秒，预热只会把后台线程占满
-                    .filter { it.content.length <= WarmTailMaxChars }
-                    .forEach { message -> warmMarkdownCache(message.content) }
+            if (targetMessageId == null) withContext(Dispatchers.Default) {
+                for (body in historyPrewarmBodies(loaded, before = loaded.size)) warmMarkdownCache(body)
             }
-
 
             if (generation != switchGeneration) return@launch
 
@@ -880,7 +864,8 @@ class ChatViewModel(
         val baseUrl = stored.baseUrl.ifBlank { providerKind.defaultBaseUrl }
         val apiKey = stored.apiKey
         val headers = providerKind.headersFor(openCodeSessionId)
-        val extended = apiStyle == ApiStyle.ANTHROPIC
+        val selectedApiStyle = apiStyle
+        val extended = selectedApiStyle == ApiStyle.ANTHROPIC
         val promptsByStyle = CompactionStyle.entries.associateWith { style -> Res.get(when (style) {
             CompactionStyle.CREATIVE -> R.string.prompt_compact_creative
             CompactionStyle.TECHNICAL -> R.string.prompt_compact_technical
@@ -916,7 +901,7 @@ class ChatViewModel(
                     val segments = compactionSegments(toSummarize, existing?.summary, prompts)
                     val fingerprint = compactionFingerprint(sequenceOf(
                         "hierarchical-compaction-v1", conversationId, model.id, model.contextWindow.toString(),
-                        baseUrl, apiKey, extended.toString(), headers.toSortedMap().toString(), prompts.system,
+                        baseUrl, apiKey, selectedApiStyle.name, headers.toSortedMap().toString(), prompts.system,
                         existing?.throughMessageId.orEmpty(),
                     ) + toSummarize.asSequence().map { it.id } + segments)
                     val checkpoint = repository.loadCompactionCheckpoint(conversationId, fingerprint)
@@ -960,6 +945,7 @@ class ChatViewModel(
                             )
                         } else {
                             chatApi.streamChat(
+                                apiStyle = selectedApiStyle,
                                 baseUrl = baseUrl, apiKey = apiKey, model = model,
                                 messages = listOf(
                                     OutMessageDto("system", MessageContent.text(prompts.system)),
@@ -1469,7 +1455,8 @@ class ChatViewModel(
         // 生成期间把进程提到前台服务优先级：退到后台 / 熄屏也继续收
         BackgroundGeneration.sync(true)
         stoppedByUser = false
-        val extended = apiStyle == ApiStyle.ANTHROPIC
+        val selectedApiStyle = apiStyle
+        val extended = selectedApiStyle == ApiStyle.ANTHROPIC
 
         streamJob = viewModelScope.launch {
             val startedAt = SystemClock.elapsedRealtime()
@@ -1489,6 +1476,7 @@ class ChatViewModel(
             var reasoningText = ""
             var contentText = ""
             val reasonBuf = StringBuilder()
+            var hasReasoningText = false
             val contentBuf = StringBuilder()
 
             /*
@@ -1511,7 +1499,7 @@ class ChatViewModel(
                     reasoningText = accumulator.thinking
                     contentText = accumulator.answer
                 } else {
-                    if (reasonBuf.length != reasoningText.length) reasoningText = reasonBuf.toString()
+                    if (hasReasoningText && reasonBuf.length != reasoningText.length) reasoningText = reasonBuf.toString()
                     if (contentBuf.length != contentText.length) contentText = contentBuf.toString()
                     if (research.blocks.isNotEmpty()) {
                         timeline = research.replyBlocks(reasoningText, contentText, reasoningStartedAt, reasoningEndedAt)
@@ -1641,6 +1629,7 @@ class ChatViewModel(
                     }
                 } else {
                     chatApi.streamChat(
+                        apiStyle = selectedApiStyle,
                         baseUrl = stored.baseUrl.ifBlank { providerKind.defaultBaseUrl },
                         apiKey = stored.apiKey,
                         model = settings.model,
@@ -1654,22 +1643,14 @@ class ChatViewModel(
                     ).collect { event ->
                         when (event) {
                             is StreamEvent.Reasoning -> {
-                                /*
-                                 * 用户选了「关闭思考」就不收思考内容。
-                                 *
-                                 * 请求里已经带了 `thinking.type = disabled`，但**有些模型 / 网关
-                                 * 仍会吐 `reasoning_content`** —— 实测：opencode 那边已停用的
-                                 * `deepseek-v4-flash` 会被路由到 `deepseek-flash`，而网关不认
-                                 * 我们发过去的 disabled。
-                                 *
-                                 * 既然用户选的是关闭，就当它没来过：不落库、不显示，
-                                 * 界面与设置保持一致。（服务端是否真的少算这部分 token，
-                                 * 客户端管不着 —— 那是上游的事。）
-                                 */
-                                if (!settings.reasoningLevel.enabled) return@collect
-                                noteThinking()
+                                // 请求档位控制发送参数，显示以服务端实际返回为准。
+                                // 保留空白分片，等收到可见文字才开始计时和发布思考内容。
                                 reasonBuf.append(event.text)
-                                dirty = true
+                                if (!hasReasoningText && event.text.isNotBlank()) {
+                                    hasReasoningText = true
+                                    noteThinking()
+                                }
+                                if (hasReasoningText) dirty = true
                             }
 
                             is StreamEvent.Content -> {
@@ -1981,6 +1962,7 @@ class ChatViewModel(
             val collected = StringBuilder()
             runCatching {
                 chatApi.streamChat(
+                    apiStyle = if (apiStyle == ApiStyle.OPENAI_RESPONSES) apiStyle else ApiStyle.OPENAI,
                     baseUrl = stored.baseUrl.ifBlank { providerKind.defaultBaseUrl },
                     apiKey = stored.apiKey,
                     model = model,

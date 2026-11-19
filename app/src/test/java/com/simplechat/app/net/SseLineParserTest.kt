@@ -61,6 +61,84 @@ class SseLineParserTest {
         assertTrue(result.isEmpty())
     }
 
+    @Test
+    fun `reasoning 字符串作为别名且不会重复派发`() {
+        assertEquals(
+            listOf(StreamEvent.Reasoning("primary")),
+            events("""data: {"choices":[{"delta":{"reasoning_content":"primary","reasoning":"alias"}}]}"""),
+        )
+        assertEquals(
+            listOf(StreamEvent.Reasoning("alias")),
+            events("""data: {"choices":[{"delta":{"reasoning_content":" ","reasoning":"alias"}}]}"""),
+        )
+        assertEquals(
+            listOf(StreamEvent.Reasoning("\n")),
+            events("""data: {"choices":[{"delta":{"reasoning":"\n"}}]}"""),
+        )
+    }
+
+    @Test
+    fun `解析显式摘要文本和已知摘要块`() {
+        assertEquals(
+            listOf(StreamEvent.Reasoning("摘要"), StreamEvent.Content("正文")),
+            events("""data: {"choices":[{"delta":{"reasoning_summary":"摘要","content":"正文"}}]}"""),
+        )
+        assertEquals(
+            listOf(StreamEvent.Reasoning("摘要 第二部分")),
+            events("""data: {"choices":[{"delta":{"reasoning":{"summary":[{"type":"summary_text","text":"摘要"},{"type":"summary_text","text":" 第二部分"}]}}}]}"""),
+        )
+        assertEquals(
+            listOf(StreamEvent.Reasoning("结构化摘要")),
+            events("""data: {"choices":[{"delta":{"reasoning_content":{"summary":"结构化摘要"}}}]}"""),
+        )
+    }
+
+    @Test
+    fun `reasoning_details 只派发显式摘要`() {
+        assertEquals(
+            listOf(StreamEvent.Reasoning("摘要")),
+            events("""data: {"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.encrypted","data":"opaque"},{"type":"reasoning.summary","summary":"摘要"}]}}]}"""),
+        )
+    }
+
+    @Test
+    fun `未知对象不显示为思考且不吞同帧正文用量或终止原因`() {
+        val result = events(
+            """data: {"choices":[{"delta":{"reasoning_content":{"encrypted_content":"opaque"},"reasoning":{"effort":"high"},"reasoning_summary":null,"content":"正文"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":4}}""",
+        )
+        assertEquals(listOf(StreamEvent.Content("正文"), StreamEvent.Usage(3, 4, null), StreamEvent.Stopped("stop")), result)
+        assertTrue(events("""data: {"choices":[{"delta":{"reasoning":false,"reasoning_summary":[]}}]}""").isEmpty())
+    }
+
+    @Test
+    fun `只有 refusal 文本时当作正文且保留同帧 content 优先级`() {
+        assertEquals(
+            listOf(StreamEvent.Content("无法回答")),
+            events("""data: {"choices":[{"delta":{"content":null,"refusal":"无法回答"}}]}"""),
+        )
+        assertEquals(
+            listOf(StreamEvent.Content("正文")),
+            events("""data: {"choices":[{"delta":{"content":"正文","refusal":"无法回答"}}]}"""),
+        )
+        assertEquals(
+            listOf(StreamEvent.Content("结构化拒绝")),
+            events("""data: {"choices":[{"delta":{"refusal":{"type":"refusal","text":"结构化拒绝"}}}]}"""),
+        )
+        assertTrue(events("""data: {"choices":[{"delta":{"refusal":{"reason":"metadata"}}}]}""").isEmpty())
+    }
+
+    @Test
+    fun `reasoning_text is a fallback and preserves content in the same frame`() {
+        assertEquals(
+            listOf(StreamEvent.Reasoning("Summary"), StreamEvent.Content("Answer")),
+            events("""data: {"choices":[{"delta":{"reasoning_content":null,"reasoning":{"effort":"high"},"reasoning_text":"Summary","content":"Answer"}}]}"""),
+        )
+        assertEquals(
+            listOf(StreamEvent.Reasoning("First")),
+            events("""data: {"choices":[{"delta":{"reasoning_content":"First","reasoning":"Second","reasoning_text":"Third"}}]}"""),
+        )
+    }
+
     // ── 用量 ─────────────────────────────────────────────
 
     @Test

@@ -17,6 +17,8 @@ import com.simplechat.app.ui.markdown.LocalSearchViewport
 import com.simplechat.app.ui.markdown.SearchViewport
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -162,7 +164,7 @@ fun MessageList(
     autoCollapseThinking: Boolean = true,
     searchTarget: SearchTarget? = null,
     onDismissSearch: () -> Unit = {},
-    searchBottomObstructionPx: Int = 0,
+    searchBottomObstructionPx: () -> Int = { 0 },
     searchPlacementReset: Long = 0,
     textSelection: MessageTextSelection = remember { MessageTextSelection() },
     shareSelection: MessageShareSelection? = null,
@@ -207,8 +209,10 @@ fun MessageList(
     }
 
     var viewport by remember { mutableStateOf(Rect.Zero) }
-    val visibleBounds = Rect(viewport.left, viewport.top, viewport.right,
-        (viewport.bottom - searchBottomObstructionPx).coerceAtLeast(viewport.top))
+    val visibleBounds = if (searchTarget != null) {
+        Rect(viewport.left, viewport.top, viewport.right,
+            (viewport.bottom - searchBottomObstructionPx()).coerceAtLeast(viewport.top))
+    } else viewport
     val searchViewport = remember(visibleBounds, listState) {
         SearchViewport(visibleBounds) { listState.scrollBy(it) }
     }
@@ -218,12 +222,13 @@ fun MessageList(
         if (searchTarget != null) searchSpacePx = visibleBounds.height
     }
     val searchSpace = with(LocalDensity.current) { searchSpacePx.toDp() }
-    val searchContentPadding = PaddingValues(
-        start = contentPadding.calculateLeftPadding(androidx.compose.ui.platform.LocalLayoutDirection.current),
-        end = contentPadding.calculateRightPadding(androidx.compose.ui.platform.LocalLayoutDirection.current),
-        top = contentPadding.calculateTopPadding() + searchSpace * 0.38f,
-        bottom = contentPadding.calculateBottomPadding() + searchSpace * 0.62f,
-    )
+    val searchContentPadding = remember(contentPadding, searchSpace) {
+        object : PaddingValues by contentPadding {
+            override fun calculateTopPadding() = contentPadding.calculateTopPadding() + searchSpace * 0.38f
+            override fun calculateBottomPadding() = contentPadding.calculateBottomPadding() + searchSpace * 0.62f
+        }
+    }
+    HistoryPrewarmEffect(listState, messages)
     CompositionLocalProvider(LocalSearchViewport provides searchViewport) {
     LazyColumn(
         state = listState,
@@ -468,7 +473,8 @@ private fun MessageRow(
         }
     }
 
-    CompositionLocalProvider(com.simplechat.app.ui.markdown.LocalSelectionTextHits provides selectionHits) {
+    // Coordinate tracking is needed only after this row enters selection, not during normal scrolling.
+    CompositionLocalProvider(com.simplechat.app.ui.markdown.LocalSelectionTextHits provides selectionHits.takeIf { selecting }) {
     SearchHighlightHost(search, onDismissSearch) {
     Column(modifier = Modifier.fillMaxWidth().then(windowPressListener)) {
         if (message.content.length > LARGE_MESSAGE_CHARS || (message.reasoning?.length ?: 0) > LARGE_MESSAGE_CHARS) {
@@ -868,7 +874,10 @@ fun AssistantBlock(
     var reasoningExpanded by remember(autoCollapseThinking) {
         androidx.compose.runtime.mutableStateOf(!autoCollapseThinking)
     }
-    val hasReasoning = !message.reasoning.isNullOrBlank()
+    val hasReasoning = message.hasReasoning
+    // 只在等待中的消息首次收到思考文本时渐入，已载入的历史消息直接显示。
+    val reasoningVisibility = remember(message.id) { MutableTransitionState(hasReasoning) }
+    reasoningVisibility.targetState = hasReasoning
 
     /*
      * 扩展通道的回复带**内容块时间线**，渲染成「思考 / 搜索 / 浏览 / 正文」的交错结构；
@@ -949,26 +958,27 @@ fun AssistantBlock(
                 )
                 Spacer(Modifier.size(MessageGap))
             }
-        } else if (hasReasoning) {
-            ProcessPanel(
-                reasoning = message.reasoning.orEmpty(),
-                /*
-                 * 只看**思维链**的进度，不看整条回复的进度 ——
-                 * 正文一开始写，思考栏就该收起来（见 ProcessPanel 的注释）。
-                 */
-                reasoningStreaming = message.reasoningStreaming,
-                reasoningSeconds = message.reasoningSeconds,
-                expanded = reasoningExpanded,
-                /*
-                 * 一旦点开，先告诉外层"别再跟底" —— 否则展开长出来的高度
-                 * 会立刻被跟底吃掉，被点的这一行标题就跑了。
-                 */
-                onToggleExpand = {
-                    reasoningExpanded = !reasoningExpanded
-                    onFoldToggle()
-                },
-            )
-            Spacer(Modifier.size(MessageGap))
+        } else {
+            AnimatedVisibility(
+                visibleState = reasoningVisibility,
+                enter = fadeIn(tween(FoldAnimMs, easing = MotionEasing)),
+                exit = ExitTransition.None,
+            ) {
+                Column {
+                    ProcessPanel(
+                        reasoning = message.reasoning.orEmpty(),
+                        reasoningStreaming = message.reasoningStreaming,
+                        reasoningSeconds = message.reasoningSeconds,
+                        expanded = reasoningExpanded,
+                        // 点开后先停跟底，避免展开的内容把标题推到屏幕外。
+                        onToggleExpand = {
+                            reasoningExpanded = !reasoningExpanded
+                            onFoldToggle()
+                        },
+                    )
+                    Spacer(Modifier.size(MessageGap))
+                }
+            }
         }
 
         /*
