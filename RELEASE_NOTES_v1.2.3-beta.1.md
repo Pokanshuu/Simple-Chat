@@ -1,6 +1,6 @@
 # SimpleChat v1.2.3-beta.1
 
-这是 SimpleChat v1.2.3 的首个预发布版本。本版改进 DeepSeek API 兼容性、大请求恢复和对话文本操作。
+这是 SimpleChat v1.2.3 的首个预发布版本。本次更新替换了同 tag 的构建号 38，修正文案和深色模式显示问题。
 
 ## 新增与改进
 
@@ -9,6 +9,8 @@
 - 双击对话顶栏可返回顶部。
 - 输入框获得焦点时禁用按住说话，并显示“发消息”。
 - 缓存命中统计支持 DeepSeek 与 OpenAI 格式的缓存 token 字段。
+- 无效 API Key 只显示 Key 错误提示，不再叠加 HTTP 状态或重复的鉴权错误。
+- 修复未指定文字颜色的界面文案在深色模式下继承黑色、无法阅读的问题。
 
 ## 修复
 
@@ -23,10 +25,10 @@ DeepSeek 的多种兼容端点在模型能力、请求参数和 usage 字段上�
 ## 验证与产物
 
 - 单元测试：768 项，0 失败，10 项因既有条件跳过。
-- Android 构建号：38。
+- Android 构建号：39（替换构建号 38）。
 - 安装包：`SimpleChat-1.2.3-beta.1-release.apk`。
 - APK 大小：4,495,789 字节。
-- SHA-256：`4588c49954d814f1c7b15365c0161c16a2912a33d571cf07aa641c5e00657cc8`。
-- 签名：APK Signature Scheme v2；证书 SHA-256：`46d810b1adcb570831f39a9475cf9994e80c89c1b844f3ec0e6c218d3f744b52`。
+- SHA-256：`cfdba8f47bde1b5e73e22266721ddcba7b74388f4cd1ccfd96e087f13582e832`。
+- 签名：APK Signature Scheme v2；发布证书保持不变。
 
 这是预发布版本。GitHub Latest 稳定版仍为 v1.2.2。

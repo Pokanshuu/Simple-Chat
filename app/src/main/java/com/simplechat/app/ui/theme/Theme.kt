@@ -3,6 +3,7 @@ package com.simplechat.app.ui.theme
 import androidx.annotation.StringRes
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -276,7 +277,8 @@ fun SimpleChatTheme(
         MaterialTheme(
             colorScheme = scheme,
             typography = SimpleChatTypography,
-            content = content,
-        )
+        ) {
+            CompositionLocalProvider(LocalContentColor provides scheme.onBackground, content = content)
+        }
     }
 }

@@ -118,9 +118,12 @@ class NetworkErrorsTest {
     fun `鉴权失败`() {
         // 用户反馈原文：`Authentication Fails (governor)`
         assertEquals(R.string.error_provider_auth, providerHintRes("Authentication Fails (governor)"))
-        assertEquals(R.string.error_provider_auth, providerHintRes("invalid api key"))
-        assertEquals(R.string.error_provider_auth, providerHintRes("invalid_api_key"))
-        assertEquals(R.string.error_provider_auth, providerHintRes("Incorrect API key provided"))
+        assertEquals(R.string.error_http_unauthorized, providerHintRes("invalid api key"))
+        assertEquals(R.string.error_http_unauthorized, providerHintRes("invalid_api_key"))
+        assertEquals(R.string.error_http_unauthorized, providerHintRes("Incorrect API key provided"))
+        assertEquals(R.string.error_http_unauthorized, providerHintRes("API key is not valid"))
+        assertEquals(R.string.error_http_unauthorized, providerHintRes("key is invalid"))
+        assertEquals(R.string.error_provider_auth, providerHintRes("Authentication Fails (governor)"))
         assertEquals(R.string.error_provider_auth, providerHintRes("Unauthorized"))
     }
 

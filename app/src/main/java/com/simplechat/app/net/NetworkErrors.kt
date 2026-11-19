@@ -90,6 +90,7 @@ internal fun providerHintRes(serverMessage: String?): Int? {
         text.contains("file") && text.containsAny(listOf("not found", "expired", "does not exist")) -> R.string.service_file_expired
         text.containsAny(listOf("unsupported file", "password-protected", "failed to parse", "file format")) -> R.string.service_file_format
         text.contains("purpose") -> R.string.error_http_bad_request
+        text.containsAny(INVALID_API_KEY_KEYWORDS) -> R.string.error_http_unauthorized
         text.containsAny(AUTH_KEYWORDS) -> R.string.error_provider_auth
         text.containsAny(NO_CHANNEL_KEYWORDS) -> R.string.error_provider_no_channel
         text.containsAny(MODEL_MISSING_KEYWORDS) -> R.string.error_provider_model_not_found
@@ -112,6 +113,18 @@ private fun String.containsAny(keywords: List<String>): Boolean = keywords.any {
 private fun String.looksLikeQuotaProblem(): Boolean =
     containsAny(QUOTA_KEYWORDS) ||
         (contains("balance") && containsAny(BALANCE_SHORTFALL_KEYWORDS))
+
+private val INVALID_API_KEY_KEYWORDS = listOf(
+    "invalid api key",
+    "invalid_api_key",
+    "invalid api-key",
+    "incorrect api key",
+    "api key is invalid",
+    "api key is not valid",
+    "api_key_invalid",
+    "invalid key",
+    "key is invalid",
+)
 
 private val AUTH_KEYWORDS = listOf(
     "authentication fails", // OpenCode Zen：`Authentication Fails (governor)`
@@ -210,6 +223,9 @@ private val PAYLOAD_KEYWORDS = listOf(
 internal fun httpErrorText(code: Int, serverMessage: String?, largeRequest: Boolean = false): String {
     val raw = serverMessage?.trim()?.takeIf { it.isNotEmpty() }
     val providerRes = providerHintRes(raw)
+    if (code == 401 || providerRes == R.string.error_http_unauthorized) {
+        return Res.get(R.string.error_http_unauthorized)
+    }
     if (providerRes == null) {
         // 没认出上游原因 → 一字不改地走老逻辑，避免影响现有表现
         if (code in listOf(400, 422) && raw != null) {
@@ -281,6 +297,7 @@ internal fun serverErrorText(serverMessage: String?): String {
     val raw = serverMessage?.trim()?.takeIf { it.isNotEmpty() }
         ?: return Res.get(R.string.error_network)
     val hintRes = providerHintRes(raw) ?: return raw
+    if (hintRes == R.string.error_http_unauthorized) return Res.get(hintRes)
     return composeProviderErrorText(
         statusHint = null,
         providerHint = Res.get(hintRes),

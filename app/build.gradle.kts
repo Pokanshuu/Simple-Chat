@@ -30,7 +30,7 @@ val hasReleaseSigning = keystorePropertiesFile.exists()
  * 以前 `versionName` 一个字面量、发布页上的文件名手动改，两边天然会漂；
  * 现在改一次，包名与「关于」页（读 `BuildConfig.VERSION_NAME`）同时跟上。
  */
-val appVersionCode = 38
+val appVersionCode = 39
 val appVersionName = "1.2.3-beta.1"
 
 android {
