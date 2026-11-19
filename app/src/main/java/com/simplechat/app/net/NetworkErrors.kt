@@ -325,10 +325,10 @@ private val RAW_NETWORK_ERROR_HINTS = listOf(
 )
 
 /** 网络异常落成文字（供流式客户端在 `catch (IOException)` 里用）。 */
-internal fun Throwable.networkText(largeRequestBeforeResponse: Boolean = false): String {
+internal fun Throwable.networkText(largeRequestBeforeResponse: Boolean = false, receivedHeaders: Boolean = false): String {
     val hint = Res.get(networkFailureRes(this))
     return if (needsLargeRequestHint(this, largeRequestBeforeResponse)) {
-        Res.get(R.string.error_large_request_interrupted, hint)
+        Res.get(if (receivedHeaders) R.string.error_large_stream_before_reply else R.string.error_large_send_before_reply)
     } else hint
 }
 

@@ -414,6 +414,7 @@
 
     <!-- ==== 来自 g2 组 ==== -->
 <!-- 输入栏（InputBar） -->
+    <item type="string" name="input_hint_message">@string/input_hint</item>
     <string name="input_hint">发消息</string>
     <string name="input_cancel_edit">取消编辑</string>
     <string name="input_settings">对话设置</string>

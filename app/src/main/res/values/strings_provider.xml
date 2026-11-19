@@ -42,4 +42,6 @@
     <string name="error_parameter_detail">服务商拒绝了请求（HTTP %1$d）。%2$s</string>
     <string name="pro_top_p_hint">Pro 的思考模式由服务端固定采样范围</string>
     <string name="error_choose_model">选择模型</string>
+    <string name="error_large_send_before_reply">长请求在收到服务端响应头前断开，无法确认服务端是否已处理。可以手动重试；若同一会话反复中断，点输入栏的上下文圆环压缩后再试。</string>
+    <string name="error_large_stream_before_reply">服务端已响应，但在返回回复内容前连接中断。可以手动重试；若长会话反复中断，点输入栏的上下文圆环压缩后再试。</string>
 </resources>

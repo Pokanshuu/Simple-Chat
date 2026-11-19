@@ -150,6 +150,14 @@ class SseLineParserTest {
     }
 
     @Test
+    fun `支持 OpenAI cached_tokens 用量字段`() {
+        val result = events(
+            """data: {"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":12,"prompt_tokens_details":{"cached_tokens":80}}}""",
+        )
+        assertEquals(listOf(StreamEvent.Usage(120, 12, 80)), result)
+    }
+
+    @Test
     fun `usage 缺失缓存字段时为 null`() {
         val result = events(
             """data: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2}}""",

@@ -1094,6 +1094,7 @@ fun ChatScreen(
                 // 新对话 = "我要看新的"，恢复跟随
                 resumeFollowing()
             },
+            onDoubleTap = { scope.launch { listState.animateScrollToItem(0) } },
             // 点顶栏任意处也收键盘
             modifier = Modifier.dismissKeyboardOnTouch(clearFocus = { !textSelection.isActive }),
         )

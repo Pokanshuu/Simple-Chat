@@ -25,10 +25,16 @@ internal open class StreamingRequestBody<T>(
         counter.count
     }
 
+    @Volatile private var writeStarted = false
+
+    // A reset after upload starts can leave the server processing the original conversation.
+    internal fun canReplayOnDisconnect(): Boolean = !writeStarted || contentLength() < LargeRequestBytes
+
     override fun contentType() = "application/json; charset=utf-8".toMediaType()
     override fun contentLength(): Long = byteCount
     override fun isOneShot() = true
     override fun writeTo(sink: BufferedSink) {
+        writeStarted = true
         json.encodeToStream(serializer, value, sink.outputStream())
     }
 }

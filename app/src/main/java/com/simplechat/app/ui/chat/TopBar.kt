@@ -1,6 +1,8 @@
 package com.simplechat.app.ui.chat
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,6 +19,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
@@ -32,6 +37,7 @@ fun ChatTopBar(
     title: String,
     onMenu: () -> Unit,
     onNewChat: () -> Unit,
+    onDoubleTap: () -> Unit = {},
     modifier: Modifier = Modifier,
     autoReadAloud: Boolean = false,
     readAloudAvailable: Boolean = true,
@@ -39,6 +45,38 @@ fun ChatTopBar(
 ) {
     Row(
         modifier = modifier
+            .pointerInput(onDoubleTap) {
+                var lastTapUp = 0L
+                var lastTapPosition: androidx.compose.ui.geometry.Offset? = null
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    var moved = false
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) moved = true
+                        if (change.changedToUpIgnoreConsumed()) {
+                            if (!moved) {
+                                val now = change.uptimeMillis
+                                val previousPosition = lastTapPosition
+                                val isSecondTap = lastTapUp > 0L &&
+                                    now - lastTapUp <= viewConfiguration.doubleTapTimeoutMillis &&
+                                    previousPosition != null &&
+                                    (change.position - previousPosition).getDistance() <= viewConfiguration.touchSlop
+                                if (isSecondTap) {
+                                    lastTapUp = 0L
+                                    lastTapPosition = null
+                                    onDoubleTap()
+                                } else {
+                                    lastTapUp = now
+                                    lastTapPosition = change.position
+                                }
+                            }
+                            break
+                        }
+                    }
+                }
+            }
             .fillMaxWidth()
             .statusBarsPadding()
             .height(56.dp)

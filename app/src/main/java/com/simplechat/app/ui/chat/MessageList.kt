@@ -1007,11 +1007,16 @@ fun AssistantBlock(
             }
         }
         SelectableText(selecting, selectionState) {
-            CompositionLocalProvider(LocalCitationClick provides onCitationClick) {
-                MarkdownWithMath(
-                    content = answer,
-                    streaming = message.streaming,
+            if (selecting) {
+                Text(
+                    text = com.simplechat.app.ui.markdown.selectionCopyText(answer),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
+            } else {
+                CompositionLocalProvider(LocalCitationClick provides onCitationClick) {
+                    MarkdownWithMath(content = answer, streaming = message.streaming)
+                }
             }
         }
 

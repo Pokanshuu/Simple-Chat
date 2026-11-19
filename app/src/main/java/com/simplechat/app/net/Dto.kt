@@ -118,11 +118,17 @@ data class DeltaDto(
 
 @Serializable
 data class UsageDto(
-    @SerialName("prompt_tokens") val promptTokens: Int = 0,
-    @SerialName("completion_tokens") val completionTokens: Int = 0,
+    @SerialName("prompt_tokens") val promptTokens: Int? = null,
+    @SerialName("completion_tokens") val completionTokens: Int? = null,
     @SerialName("total_tokens") val totalTokens: Int = 0,
     /** DeepSeek 的缓存命中 token 数，用于成本可视化（可选字段）。 */
     @SerialName("prompt_cache_hit_tokens") val cacheHitTokens: Int? = null,
+    @SerialName("prompt_tokens_details") val promptTokensDetails: PromptTokensDetailsDto? = null,
+)
+
+@Serializable
+data class PromptTokensDetailsDto(
+    @SerialName("cached_tokens") val cachedTokens: Int? = null,
 )
 
 /** 错误响应体。 */

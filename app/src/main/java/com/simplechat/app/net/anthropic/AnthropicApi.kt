@@ -76,9 +76,11 @@ class AnthropicApi(
             attempt++
             val call = client.newCall(httpRequest)
             val handle = call.cancelWithCoroutine()
+            var receivedHeaders = false
             var retryHttp = false
             try {
                 call.execute().use { response ->
+                    receivedHeaders = true
                     val source = response.body?.source()
                     if (!response.isSuccessful || source == null) {
                         val raw = runCatching { response.body.readErrorText() }.getOrNull()
@@ -142,13 +144,13 @@ class AnthropicApi(
                 // 用户主动取消造成的 IOException 不应报告为错误
                 if (!currentCoroutineContext().isActive) return@flow
                 // 一个字都还没发出去 → 重发是安全的（与 SseClient 同一条规则，见那里的说明）
-                if (retryBeforeContent && !emittedAny && attempt < StreamMaxAttempts) {
+                if (retryBeforeContent && !emittedAny && attempt < StreamMaxAttempts && body.canReplayOnDisconnect()) {
                     android.util.Log.w(ChatStreamLogTag, "stream reset before any event; retrying", e)
                     delay(StreamRetryDelayMs)
                     continue
                 }
                 android.util.Log.w(ChatStreamLogTag, "stream interrupted", e)
-                emit(StreamEvent.Error(e.networkText(largeRequest && !emittedAny), retryable = true))
+                emit(StreamEvent.Error(e.networkText(largeRequest && !emittedAny, receivedHeaders), retryable = true))
                 return@flow
             } finally {
                 handle.cancel()

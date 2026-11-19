@@ -59,14 +59,36 @@ class StreamingRequestTest {
     }
 
     @Test
+    fun `ambiguous disconnect cannot replay a large body after writing starts`() {
+        val json = ChatApi.defaultJson()
+        for (size in listOf(16, LargeRequestBytes.toInt())) {
+            val text = "x".repeat(size)
+            val request = ChatRequestDto(DEEPSEEK_PRO, listOf(OutMessageDto("user", MessageContent.text(text))), true)
+            val body = StreamingJsonRequestBody(json, request)
+            body.contentLength() // Measuring bytes is not an upload.
+            assertTrue(body.canReplayOnDisconnect())
+            body.writeTo(Buffer())
+            assertEquals(size < LargeRequestBytes, body.canReplayOnDisconnect())
+        }
+    }
+
+    @Test
     fun `large requests on both protocols send complete fixed length UTF8 and use longer upload timeout`() = runBlocking {
         val json = ChatApi.defaultJson()
         for (anthropic in listOf(false, true)) {
             for (large in listOf(false, true)) {
-                val content = "中文 😀 \"\n\u0000".repeat(if (large) 70_000 else 1)
-                val request = ChatRequestDto("model", listOf(OutMessageDto("user", MessageContent.text(content))), true)
-                val extendedRequest = buildAnthropicRequest("model", "summary",
-                    listOf(UiMessage("u", MessageRole.USER, content)), false, false, false, null)
+                val content = if (large) "文".repeat(300_000) + "\n".repeat(96_000) else "中文 😀 \"\n\u0000"
+                if (large) assertEquals(224_000, com.simplechat.app.data.TokenEstimate.of(content))
+                val history = listOf(
+                    UiMessage("u1", MessageRole.USER, "开篇"),
+                    UiMessage("a1", MessageRole.ASSISTANT, content),
+                    UiMessage("u2", MessageRole.USER, "继续"),
+                )
+                val model = ModelCatalog.find(ProviderKind.DEEPSEEK, DEEPSEEK_PRO)
+                val request = buildChatRequest(model, history.map {
+                    OutMessageDto(if (it.role == MessageRole.USER) "user" else "assistant", MessageContent.text(it.content))
+                }, thinkingEnabled = false, officialDeepSeek = true)
+                val extendedRequest = buildAnthropicRequest(model.id, "summary", history, true, false, true, null)
                 val expected = if (anthropic) json.encodeToString(com.simplechat.app.net.anthropic.AnthropicRequest.serializer(), extendedRequest)
                     else json.encodeToString(ChatRequestDto.serializer(), request)
                 val timeout = AtomicInteger()
@@ -109,8 +131,8 @@ class StreamingRequestTest {
                         }.build()
                         val url = "http://127.0.0.1:${server.localPort}/chat"
                         val stream = if (anthropic) com.simplechat.app.net.anthropic.AnthropicApi(client, json)
-                            .streamMessage(url, "", extendedRequest)
-                        else SseClient(client, json).stream(url, "", request)
+                            .streamMessage(url, "", extendedRequest, contextWindow = model.contextWindow)
+                        else SseClient(client, json).stream(url, "", request, contextWindow = model.contextWindow)
                         assertEquals(listOf(StreamEvent.Done), stream.toList())
                         val (headers, body) = received.get(5, TimeUnit.SECONDS)
                         assertEquals(expected, body)

@@ -1434,6 +1434,7 @@ class ChatViewModel(
 
     private fun startStream(conversationId: String, replyId: String, prefix: UiMessage? = null) {
         if (conversationId != currentConversationId) return
+        lastUsage = null
         /*
          * ★ **发请求之前先验 Key 的字符集。**
          *

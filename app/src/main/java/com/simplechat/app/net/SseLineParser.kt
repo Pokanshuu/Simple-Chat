@@ -70,9 +70,9 @@ internal class SseLineParser(private val json: Json) {
 
         chunk.usage?.let {
             events += StreamEvent.Usage(
-                promptTokens = it.promptTokens,
-                completionTokens = it.completionTokens,
-                cacheHitTokens = it.cacheHitTokens,
+                promptTokens = it.promptTokens ?: 0,
+                completionTokens = it.completionTokens ?: 0,
+                cacheHitTokens = it.cacheHitTokens ?: it.promptTokensDetails?.cachedTokens,
             )
         }
 

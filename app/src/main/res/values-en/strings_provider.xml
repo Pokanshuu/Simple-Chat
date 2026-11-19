@@ -38,4 +38,6 @@
     <string name="error_parameter_detail">The provider rejected the request (HTTP %1$d). %2$s</string>
     <string name="pro_top_p_hint">Pro uses fixed sampling in thinking mode</string>
     <string name="error_choose_model">Choose model</string>
+    <string name="error_large_send_before_reply">The connection closed before response headers arrived. The server may have received the request. Retry manually. If this keeps happening, tap the context ring to compact the conversation first.</string>
+    <string name="error_large_stream_before_reply">The server responded, but the stream closed before a reply arrived. Retry manually. If this keeps happening, tap the context ring to compact the conversation first.</string>
 </resources>

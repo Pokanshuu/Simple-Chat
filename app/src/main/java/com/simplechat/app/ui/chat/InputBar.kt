@@ -156,6 +156,7 @@ internal fun InputBar(
         with(density) { it.size.height.toDp().coerceIn(26.dp, compactMax) }
     } ?: 26.dp
     val focusRequester = remember { FocusRequester() }
+    var fieldFocused by remember { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
 
     /**
@@ -163,7 +164,7 @@ internal fun InputBar(
      *
      * 有字时长按要让位给**选词** —— 那是文本框自己的默认语义，抢掉它编辑会变得很难用。
      */
-    val holdToTalkActive = holdToTalkEnabled && text.isEmpty() && !expanded
+    val holdToTalkActive = holdToTalkEnabled && text.isEmpty() && !expanded && !fieldFocused
 
     val focusOnTap by rememberUpdatedState<() -> Unit> {
         if (!voiceState.active) {
@@ -297,7 +298,10 @@ internal fun InputBar(
                             }
                             .graphicsLayer { alpha = composerReveal }
                             .focusRequester(focusRequester)
-                            .onFocusChanged { if (it.isFocused) onTextFieldFocused() }
+                            .onFocusChanged {
+                                fieldFocused = it.isFocused
+                                if (it.isFocused) onTextFieldFocused()
+                            }
                             .then(if (holdToTalkActive) Modifier.semantics {
                                 customActions = listOf(CustomAccessibilityAction("$startLabel · $voiceSourceLabel") {
                                     onVoiceTap()
@@ -311,7 +315,7 @@ internal fun InputBar(
                         decorator = { inner ->
                             Box(Modifier.fillMaxWidth(), propagateMinConstraints = true) {
                                 if (text.isEmpty()) Text(
-                                    text = stringResource(if (holdToTalkActive) R.string.input_hint_hold_to_talk else R.string.input_hint),
+                                    text = stringResource(if (fieldFocused) R.string.input_hint else if (holdToTalkActive) R.string.input_hint_hold_to_talk else R.string.input_hint),
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = colors.placeholder,
                                 )

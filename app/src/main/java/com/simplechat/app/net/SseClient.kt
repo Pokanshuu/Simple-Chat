@@ -12,7 +12,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody
 
 /**
  * OpenAI 兼容的 SSE 流式客户端。
@@ -72,7 +71,7 @@ class SseClient(
         extraHeaders: Map<String, String>,
         retryBeforeContent: Boolean,
         responses: Boolean = false,
-        prepareBody: () -> RequestBody,
+        prepareBody: () -> StreamingRequestBody<*>,
     ): Flow<StreamEvent> = flow {
         val body = prepareBody()
         val largeRequest = body.contentLength() >= LargeRequestBytes
@@ -94,8 +93,10 @@ class SseClient(
             attempt++
             val call = client.newCall(httpRequest)
             val handle = call.cancelWithCoroutine()
+            var receivedHeaders = false
             try {
                 call.execute().use { response ->
+                    receivedHeaders = true
                     if (!response.isSuccessful) {
                         val raw = runCatching { response.body.readErrorText() }.getOrNull()
                         // 已知状态码 → 一句人话；否则用服务端自己给的文案；再否则带状态码兜底
@@ -147,7 +148,7 @@ class SseClient(
             } catch (e: IOException) {
                 // 用户主动取消造成的 IOException 不应报告为错误
                 if (!currentCoroutineContext().isActive) return@flow
-                if (retryBeforeContent && !emittedAny && attempt < StreamMaxAttempts) {
+                if (retryBeforeContent && !emittedAny && attempt < StreamMaxAttempts && body.canReplayOnDisconnect()) {
                     // 一个字都还没发出去 → 重发是安全的（不会出现两份内容）
                     android.util.Log.w(ChatStreamLogTag, "stream reset before any event; retrying", e)
                     delay(StreamRetryDelayMs)
@@ -155,7 +156,7 @@ class SseClient(
                 }
                 // 原始异常进日志（排查要用），界面拿到的是"连接被中断、请重试"这类人话
                 android.util.Log.w(ChatStreamLogTag, "stream interrupted", e)
-                emit(StreamEvent.Error(e.networkText(largeRequest && !emittedAny), retryable = true))
+                emit(StreamEvent.Error(e.networkText(largeRequest && !emittedAny, receivedHeaders), retryable = true))
                 return@flow
             } finally {
                 handle.cancel()
