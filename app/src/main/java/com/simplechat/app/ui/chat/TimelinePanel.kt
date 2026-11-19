@@ -161,36 +161,25 @@ private fun timelineHeader(view: TimelineView, streaming: Boolean): String? {
     }
 }
 
-/** 思考片段：左侧圆点 + 竖线，小号正文。 */
+/**
+ * 思考片段：左侧圆点 + 竖线，小号正文。
+ *
+ * **进行中与已思考共用同一个引导列**（[ThinkingGutter]）：流式期间走尾巴模式
+ * （只排版最后几行、底部对齐、不跳动），写完就是完整正文 —— 但两种状态的
+ * 左缘、线宽、线色、圆点位置完全一致，切换时不会跳版。
+ */
 @Composable
 private fun ThinkingStep(step: TimelineStep.Thinking) {
     if (step.active) {
-        TailContent(step.text)
+        TailContent(step.text, gutter = true)
         return
     }
     val colors = LocalChatColors.current
     Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
-        Column(
-            modifier = Modifier.width(16.dp).fillMaxHeight(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Box(
-                modifier = Modifier
-                    .padding(top = 6.dp)
-                    .size(7.dp)
-                    .clip(CircleShape)
-                    .background(if (step.active) colors.processBar else colors.processText.copy(alpha = 0.5f)),
-            )
-            Box(
-                modifier = Modifier
-                    .width(2.dp)
-                    .fillMaxHeight()
-                    .padding(vertical = 4.dp)
-                    .clip(RoundedCornerShape(1.dp))
-                    .background(colors.processBar.copy(alpha = 0.45f)),
-            )
-        }
-        Spacer(Modifier.width(10.dp))
+        ThinkingGutter(
+            modifier = Modifier.width(ThinkingGutterWidth).fillMaxHeight(),
+        )
+        Spacer(Modifier.width(ThinkingGutterGap))
         Text(
             text = step.text,
             style = ProcessTextStyle,

@@ -122,9 +122,14 @@ fun ProcessPanel(
  *
  * 之所以不用固定高度 + 滚动：固定高度在内容短时会留下大片空白，
  * 且滚动到顶时会跳动。底部对齐 + 溢出裁切则是平滑的「日志尾巴」。
+ *
+ * @param gutter 是否改用时间线的「圆点 + 细竖线」引导列（[ThinkingGutter]）。
+ *   扩展通道的思考块定稿后就是这个样子，流式期间必须长成同一副，
+ *   否则「正在思考 → 已思考」切换的那一帧整块内容会往右跳。
+ *   OpenAI 通道保持默认的 3dp 竖线 —— 它的展开态也是 3dp，两态自洽。
  */
 @Composable
-internal fun TailContent(reasoning: String) {
+internal fun TailContent(reasoning: String, gutter: Boolean = false) {
     val colors = LocalChatColors.current
     val density = LocalDensity.current
     val maxPx = with(density) { TailHeight.toPx() }
@@ -158,6 +163,7 @@ internal fun TailContent(reasoning: String) {
                 .onSizeChanged { contentPx = it.height }
                 // 左侧竖线用绘制实现：内容高度是动态的，用 fillMaxHeight 会拿不到约束
                 .drawBehind {
+                    if (gutter) return@drawBehind
                     val barWidth = 3.dp.toPx()
                     drawRoundRect(
                         color = colors.processBar,
@@ -165,7 +171,7 @@ internal fun TailContent(reasoning: String) {
                         cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f),
                     )
                 }
-                .padding(start = 15.dp),
+                .padding(start = if (gutter) ThinkingContentInset else 15.dp),
         ) {
             Text(
                 text = tail,
@@ -187,6 +193,15 @@ internal fun TailContent(reasoning: String) {
                         ),
                     ),
             )
+        }
+
+        /*
+         * 引导列画在**最上层**，高度取盒子（而不是全文）：
+         * 内容向上溢出时只有文字被裁掉，圆点固定在盒子顶部。
+         * 放在渐隐之后，避免圆点被遮罩冲淡。
+         */
+        if (gutter) {
+            ThinkingGutter(modifier = Modifier.matchParentSize())
         }
     }
 }
