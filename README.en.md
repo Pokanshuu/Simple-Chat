@@ -4,7 +4,7 @@
 
 **[中文](README.md) | English**
 
-[![Version](https://img.shields.io/badge/version-1.2.1-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
+[![Version](https://img.shields.io/badge/version-1.2.2-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## Introduction
@@ -188,7 +188,7 @@ app/src/main/java/com/simplechat/app/
 
 ## Documentation
 
-Design documents, implementation records and the changelog are indexed in [`docs/README.md`](docs/README.md). The `§` references in code comments point to these documents. Historical records describe each version and what was verified. The [v1.2.2 prerelease notes](RELEASE_NOTES_v1.2.2.md) cover the current branch.
+Design documents, implementation records and the changelog are indexed in [`docs/README.md`](docs/README.md). The `§` references in code comments point to these documents. Historical records describe each version and what was verified. The [v1.2.2 release notes](RELEASE_NOTES_v1.2.2.md) cover the current version.
 
 - [`TODO.md`](TODO.md): current status and to-dos.
 
