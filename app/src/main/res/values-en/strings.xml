@@ -586,7 +586,7 @@
     <string name="api_style_openai_responses">OpenAI Responses</string>
     <string name="api_style_anthropic">Anthropic compatible (extended)</string>
     <string name="settings_web_search">Smart search</string>
-    <string name="settings_web_search_hint">Let the model search the web when needed. Only available on the extended channel.</string>
+    <string name="settings_web_search_hint">Official Flash supports built-in search. Other models can use a separate Search API configured in this profile.</string>
     <string name="settings_location">Region</string>
     <string name="settings_location_hint_short">Used for the time reminder</string>
     <string name="settings_location_placeholder">City or country, e.g. “Hangzhou”</string>
@@ -692,8 +692,8 @@
     <string name="onboarding_key_invalid">Check that the key starts with sk- and contains only English characters</string>
     <string name="onboarding_key_rejected">Verification failed. Check the key, account status, and network connection.</string>
     <string name="onboarding_model_title">Choose a model</string>
-    <string name="onboarding_model_pro">Better writing for complex tasks</string>
-    <string name="onboarding_model_flash">Faster responses at lower cost</string>
+    <string name="onboarding_model_pro">For complex text tasks. Web access requires a separate Search API.</string>
+    <string name="onboarding_model_flash">Supports images, built-in web search and link reading.</string>
     <string name="onboarding_model_note">Change models and reasoning effort anytime in the ✨ menu</string>
     <string name="onboarding_backup_title">Import your backup</string>
     <string name="onboarding_backup_hint">Supports SimpleChat, Chatbox, and official DeepSeek ZIP backups</string>

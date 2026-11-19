@@ -558,18 +558,18 @@ fun ChatScreen(
         val owner = composerKey
         val source = vm.attachmentSettings
         scope.launch {
-            if (source.filesApi.enabled) fileUploads++
+            if (source.useRemoteFiles) fileUploads++
             try {
             /*
              * 一个入口认三种东西：PDF（渲染成图）、docx（抽文本）、
              * 以及其余一律按纯文本试。格式按**文件头**判定，不看扩展名。
              */
             importBatch(owner, uris) { uri ->
-                val imported = if (source.filesApi.enabled) com.simplechat.app.data.RemoteFileImport.document(context, uri, source)
+                val imported = if (source.useRemoteFiles) com.simplechat.app.data.RemoteFileImport.document(context, uri, source)
                     else AttachmentImport.document(context, uri)
                 imported.map { it.attachments to it.note }
             }
-            } finally { if (source.filesApi.enabled) fileUploads-- }
+            } finally { if (source.useRemoteFiles) fileUploads-- }
         }
     }
 
@@ -1169,6 +1169,7 @@ fun ChatScreen(
                                 resumeFollowing()
                                 vm.regenerate(message)
                             },
+                            supportsContinuation = vm.apiStyle == ApiStyle.ANTHROPIC,
                             onContinue = { message ->
                                 /*
                                  * 续写**跟底**：新内容接在这条末尾，用户按它就是想看接下来写什么。
@@ -1209,6 +1210,7 @@ fun ChatScreen(
                             onOpenImage = { message, attachment ->
                                 viewingImage = message.attachments.filter { it.isImage } to attachment
                             },
+                            onChooseModel = { openPanel(InputPanelState.THINKING) },
                             onRetry = { message ->
                                 // 同「重新生成」：换成一条空的流式回复 → 不锚，跟到底部看它写
                                 resumeFollowing()
@@ -1574,6 +1576,8 @@ fun ChatScreen(
                 ) {
                     ConversationSettingsPanelContent(
                         settings = vm.settings,
+                        officialPro = vm.settings.model.id == com.simplechat.app.net.DEEPSEEK_PRO &&
+                            com.simplechat.app.net.isOfficialDeepSeekEndpoint(vm.attachmentSettings.baseUrl),
                         onSettingsChange = { vm.updateSettings(it) },
                         presets = vm.presets,
                         conversationId = vm.currentConversationId,

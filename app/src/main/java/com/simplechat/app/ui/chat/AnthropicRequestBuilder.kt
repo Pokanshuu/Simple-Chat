@@ -2,6 +2,7 @@ package com.simplechat.app.ui.chat
 
 import com.simplechat.app.data.ApiImage
 import com.simplechat.app.data.Attachment
+import com.simplechat.app.net.DEEPSEEK_FLASH
 import com.simplechat.app.net.ReplyBlock
 import com.simplechat.app.net.anthropic.AnthropicMessageParam
 import com.simplechat.app.net.anthropic.AnthropicRequestDefaults
@@ -67,6 +68,7 @@ internal fun buildAnthropicRequest(
     reasoningEffort: String? = null,
     outputLimit: Int? = null,
 ): AnthropicRequest {
+    val flashExtensions = deepSeekExtensions && model == DEEPSEEK_FLASH
     val messages = mutableListOf<AnthropicMessageParam>()
 
     path.forEach { message ->
@@ -76,7 +78,7 @@ internal fun buildAnthropicRequest(
             val content = assistantContent(
                 message,
                 keepThinking = deepSeekExtensions && thinkingEnabled,
-                deepSeekBlocks = deepSeekExtensions,
+                deepSeekBlocks = flashExtensions,
             )
             // 一条既没正文也没工具痕迹的 assistant 发出去就是空块，服务端会 400
             if (isSendable(content)) {
@@ -92,7 +94,7 @@ internal fun buildAnthropicRequest(
         val content = assistantContent(
             tail,
             keepThinking = deepSeekExtensions && thinkingEnabled,
-            deepSeekBlocks = deepSeekExtensions,
+            deepSeekBlocks = flashExtensions,
         )
         if (isSendable(content)) {
             messages += AnthropicMessageParam(
@@ -148,7 +150,7 @@ internal fun buildAnthropicRequest(
         it.role == AnthropicMessageParam.RoleUser
     }
     // A compacted history may start with the current question. Keep its first role standard.
-    if (reminderAnchor > 0 && reminder != null) {
+    if (flashExtensions && reminderAnchor > 0 && reminder != null) {
         outgoingMessages.add(reminderAnchor, AnthropicMessageParam(
             role = AnthropicMessageParam.RoleReminder,
             content = JsonPrimitive(reminder),
@@ -157,12 +159,20 @@ internal fun buildAnthropicRequest(
     val effectiveSystem = buildString {
         val configured = systemPrompt.trim()
         append(if (deepSeekExtensions && configured.isBlank()) DefaultSystemPrompt else configured)
-        if (reminderAnchor == 0 && reminder != null) {
+        if (reminder != null && (reminderAnchor == 0 || !flashExtensions)) {
             append("\n\nCurrent chat metadata (date, weekday, location, platform, language): ")
             append(reminder)
         }
     }
 
+    val tools = buildList {
+        if (!flashExtensions) return@buildList
+        val latestUser = path.lastOrNull { it.role == MessageRole.USER }
+        if (latestUser != null && HttpLink.containsMatchIn(latestUser.content)) add(AnthropicTool.ReadUrl)
+        if (searchEnabled) add(AnthropicTool.WebSearch)
+    }
+    val title = if (flashExtensions && requestTitle && titleFitsInline(effectiveSystem, outgoingMessages)) AnthropicTitle() else null
+    val serverSampling = tools.isNotEmpty() || title != null
     return AnthropicRequest(
         model = model,
         system = effectiveSystem,
@@ -176,22 +186,17 @@ internal fun buildAnthropicRequest(
             // 原版：关闭思考 = **省略这个字段**（不接受 type=disabled）
             else -> null
         },
-        tools = if (deepSeekExtensions) {
-            buildList {
-                val latestUser = path.lastOrNull { it.role == MessageRole.USER }
-                if (latestUser != null && HttpLink.containsMatchIn(latestUser.content)) add(AnthropicTool.ReadUrl)
-                if (searchEnabled) add(AnthropicTool.WebSearch)
-            }
-        } else {
-            emptyList()
-        },
-        title = if (deepSeekExtensions && requestTitle &&
-            titleFitsInline(effectiveSystem, outgoingMessages)
-        ) AnthropicTitle() else null,
+        tools = tools,
+        title = title,
         maxTokens = effectiveMaxTokens,
         // 原版 Anthropic 不允许同时改 temperature 与 top_p；这里只发 temperature
-        temperature = if (!deepSeekExtensions && !vanillaThinking) temperature ?: 1.0 else null,
-        topP = if (deepSeekExtensions) topP else null,
+        temperature = when {
+            serverSampling -> null
+            deepSeekExtensions -> temperature.takeUnless { thinkingEnabled }
+            !vanillaThinking -> temperature ?: 1.0
+            else -> null
+        },
+        topP = topP.takeIf { deepSeekExtensions && !serverSampling && com.simplechat.app.net.adjustableTopP(model, thinkingEnabled) },
         outputConfig = if (deepSeekExtensions && thinkingEnabled && reasoningEffort != null)
             com.simplechat.app.net.anthropic.AnthropicOutputConfig(reasoningEffort) else null,
     )
@@ -202,7 +207,7 @@ internal fun buildAnthropicRequest(
  * 此时用一句助手身份说明兜底 —— 与官方 Chat Demo 发给服务端的同一句。
  */
 internal const val DefaultSystemPrompt = "该助手为DeepSeek，由深度求索公司创造。"
-private val HttpLink = Regex("https?://[^\\s<>]+", RegexOption.IGNORE_CASE)
+internal val HttpLink = Regex("https?://[^\\s<>]+", RegexOption.IGNORE_CASE)
 
 // 含附件的输入无法从请求体估算；这类会话和长正文交给独立标题流程。
 private fun titleFitsInline(system: String, messages: List<AnthropicMessageParam>): Boolean {

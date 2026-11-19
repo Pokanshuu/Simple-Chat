@@ -74,15 +74,29 @@ class ChatApi(
         extraHeaders: Map<String, String> = emptyMap(),
         retryBeforeContent: Boolean = true,
         apiStyle: ApiStyle = ApiStyle.OPENAI,
+        search: Boolean = false,
+        readLink: Boolean = false,
+        requestTitle: Boolean = false,
     ): Flow<StreamEvent> {
+        val flash = isOfficialDeepSeekEndpoint(baseUrl) && model.id == DEEPSEEK_FLASH
+        val tools = if (flash) buildList {
+            if (search) add(DeepSeekTool("deepseek_web_search"))
+            if (readLink) add(DeepSeekTool("deepseek_read_url"))
+        }.ifEmpty { null } else null
+        val title = if (flash && requestTitle && messages.sumOf {
+            ((it.content as? JsonPrimitive)?.content?.length ?: 8_001).toLong() + 32
+        } <= 8_000) DeepSeekTitle() else null
         if (apiStyle == ApiStyle.OPENAI_RESPONSES) {
             return sseClient.streamResponses(
                 url = responsesUrl(baseUrl), apiKey = apiKey,
-                request = buildResponsesRequest(model, messages, thinkingEnabled, reasoningEffort, maxTokens, temperature),
+                request = buildResponsesRequest(model, messages, thinkingEnabled, reasoningEffort, maxTokens, temperature).let { request ->
+                    request.copy(tools = tools, title = title, reasoning = if (isOfficialDeepSeekEndpoint(baseUrl) && !thinkingEnabled) ResponsesReasoningDto("none") else request.reasoning)
+                },
                 messages = messages, model = model, extraHeaders = extraHeaders, retryBeforeContent = retryBeforeContent,
             )
         }
-        val request = buildChatRequest(model, messages, thinkingEnabled, reasoningEffort, maxTokens, temperature, topP)
+        val request = buildChatRequest(model, messages, thinkingEnabled, reasoningEffort, maxTokens, temperature, topP, isOfficialDeepSeekEndpoint(baseUrl))
+            .let { if (tools == null && title == null) it else it.copy(tools = tools, title = title, temperature = null, topP = null) }
 
         return sseClient.stream(
             url = chatCompletionsUrl(baseUrl),
@@ -170,7 +184,7 @@ internal fun modelListingRequest(baseUrl: String, apiKey: String, apiStyle: ApiS
     val nativeAnthropic = apiStyle == ApiStyle.ANTHROPIC && !official
     val url = when {
         nativeAnthropic -> anthropicMessagesUrl(baseUrl).removeSuffix("/messages") + "/models"
-        official -> modelsUrl(baseUrl.trim().trimEnd('/').substringBefore("/anthropic"))
+        official -> modelsUrl(officialChatRoot(baseUrl) ?: baseUrl)
         else -> modelsUrl(baseUrl)
     }
     return Request.Builder().url(url).get().header("Accept", "application/json").apply {
@@ -192,6 +206,7 @@ internal fun buildChatRequest(
     maxTokens: Int? = null,
     temperature: Double? = null,
     topP: Double? = null,
+    officialDeepSeek: Boolean = false,
 ): ChatRequestDto {
     val wire = model.reasoningWire.takeIf { model.supportsThinking }
     val effort = when {
@@ -214,7 +229,7 @@ internal fun buildChatRequest(
         maxTokens = output.takeUnless { model.completionTokenField },
         maxCompletionTokens = output.takeIf { model.completionTokenField },
         temperature = temperature.takeUnless { model.completionTokenField || (wire != null && thinkingEnabled) },
-        topP = topP.takeIf { wire == ReasoningWire.DEEPSEEK && thinkingEnabled },
+        topP = topP.takeIf { wire == ReasoningWire.DEEPSEEK && if (officialDeepSeek) adjustableTopP(model.id, thinkingEnabled) else thinkingEnabled },
     )
 }
 

@@ -12,6 +12,12 @@ import kotlinx.serialization.json.JsonElement
  */
 
 @Serializable
+data class DeepSeekTool(val type: String)
+
+@Serializable
+data class DeepSeekTitle(val enabled: Boolean = true)
+
+@Serializable
 data class ChatRequestDto(
     val model: String,
     val messages: List<OutMessageDto>,
@@ -23,6 +29,8 @@ data class ChatRequestDto(
      * 服务端随即返回非流式的一整块 JSON —— 表现是「流跑完了但内容为空、也不报错」。
      */
     val stream: Boolean,
+    val tools: List<DeepSeekTool>? = null,
+    val title: DeepSeekTitle? = null,
     /** DeepSeek 思考模式开关。不支持的模型不能带此字段。 */
     val thinking: ThinkingDto? = null,
     @SerialName("reasoning_effort") val reasoningEffort: String? = null,
@@ -41,6 +49,8 @@ data class ResponsesRequestDto(
     val model: String,
     val input: List<ResponsesInputMessage>,
     val stream: Boolean,
+    val tools: List<DeepSeekTool>? = null,
+    val title: DeepSeekTitle? = null,
     val store: Boolean = false,
     @SerialName("max_output_tokens") val maxOutputTokens: Int? = null,
     val temperature: Double? = null,
@@ -101,6 +111,8 @@ data class DeltaDto(
     @SerialName("reasoning_text") val reasoningText: JsonElement? = null,
     @SerialName("reasoning_summary") val reasoningSummary: JsonElement? = null,
     @SerialName("reasoning_details") val reasoningDetails: JsonElement? = null,
+    val title: String? = null,
+    val annotations: JsonElement? = null,
     val refusal: JsonElement? = null,
 )
 

@@ -598,7 +598,7 @@
     <string name="api_style_openai_responses">OpenAI Responses</string>
     <string name="api_style_anthropic">Anthropic 兼容（扩展）</string>
     <string name="settings_web_search">智能搜索</string>
-    <string name="settings_web_search_hint">开启后模型可按需联网搜索；仅在扩展通道上可用。</string>
+    <string name="settings_web_search_hint">官方 Flash 可使用内置搜索。其他模型可在此配置中启用独立搜索 API。</string>
     <string name="settings_location">地区</string>
     <string name="settings_location_hint_short">用于时间地点提醒</string>
     <string name="settings_location_placeholder">城市或国家，例如「杭州」</string>
@@ -701,8 +701,8 @@
     <string name="onboarding_key_invalid">请检查 Key 格式，确认以 sk- 开头且只包含英文字符</string>
     <string name="onboarding_key_rejected">验证失败，请检查 Key、账户状态和网络连接</string>
     <string name="onboarding_model_title">选择常用模型</string>
-    <string name="onboarding_model_pro">文笔更好，适合复杂任务</string>
-    <string name="onboarding_model_flash">响应更快，使用更经济</string>
+    <string name="onboarding_model_pro">适合复杂文本任务。联网需启用独立搜索 API。</string>
+    <string name="onboarding_model_flash">支持识图、内置联网搜索和读链接。</string>
     <string name="onboarding_model_note">之后可随时在 ✨ 菜单切换模型并调整思考强度</string>
     <string name="onboarding_backup_title">导入您的备份</string>
     <string name="onboarding_backup_hint">支持 SimpleChat、Chatbox、DeepSeek 官方 ZIP 备份</string>

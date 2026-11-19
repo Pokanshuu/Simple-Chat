@@ -230,7 +230,8 @@ fun anthropicMessagesUrl(baseUrl: String): String {
         base.endsWith("/anthropic/v1") -> "$base/messages"
         base.endsWith("/anthropic") -> "$base/v1/messages"
         // DeepSeek 官方：扩展协议挂在 /anthropic 前缀下
-        base.contains("api.deepseek.com") -> "$base/anthropic/v1/messages"
+        com.simplechat.app.net.isOfficialDeepSeekEndpoint(base) ->
+            "${com.simplechat.app.net.officialChatRoot(base)?.removeSuffix("/v1") ?: base}/anthropic/v1/messages"
         // 其余 Anthropic 兼容端点（自建网关 / Claude 中转）：标准路径
         base.endsWith("/v1") -> "$base/messages"
         else -> "$base/v1/messages"

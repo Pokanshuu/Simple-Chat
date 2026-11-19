@@ -32,4 +32,10 @@
 
     <!-- Joins hint segments; English uses a half-width colon plus a space -->
     <string name="error_provider_separator">": "</string>
+    <string name="error_deepseek_file_model">This conversation contains an attachment stored only in the Files API. Switch to DeepSeek V4.1 Flash and retry, or paste the file text into a new Pro chat.</string>
+    <string name="error_deepseek_flash_feature">For built-in search, link reading or server-generated titles, select DeepSeek V4.1 Flash in the model menu and retry. Pro supports text chat.</string>
+    <string name="deepseek_pro_search_hint">Enable the separate Search API for web access on Pro, or switch to Flash for built-in search and link reading.</string>
+    <string name="error_parameter_detail">The provider rejected the request (HTTP %1$d). %2$s</string>
+    <string name="pro_top_p_hint">Pro uses fixed sampling in thinking mode</string>
+    <string name="error_choose_model">Choose model</string>
 </resources>

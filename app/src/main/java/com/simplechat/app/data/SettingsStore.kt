@@ -1,6 +1,9 @@
 package com.simplechat.app.data
 
 import android.content.Context
+import com.simplechat.app.net.DEEPSEEK_FLASH
+import com.simplechat.app.net.effectiveModelId
+import com.simplechat.app.net.isOfficialDeepSeekEndpoint
 import com.simplechat.app.net.ApiStyle
 import com.simplechat.app.net.ModelCapabilityOverride
 import com.simplechat.app.net.RemoteModelMetadata
@@ -169,7 +172,10 @@ data class StoredSettings(
         )
 
     /** 当前通道是否支持联网搜索。 */
-    val supportsWebSearch: Boolean get() = searchApi.enabled || resolvedApiStyle == ApiStyle.ANTHROPIC
+    val officialFlash: Boolean get() = isOfficialDeepSeekEndpoint(baseUrl) && effectiveModelId(baseUrl, modelId) == DEEPSEEK_FLASH
+    val supportsWebSearch: Boolean get() = searchApi.enabled || officialFlash
+    val supportsFileReferences: Boolean get() = !isOfficialDeepSeekEndpoint(baseUrl) || officialFlash
+    val useRemoteFiles: Boolean get() = filesApi.enabled && supportsFileReferences
 }
 
 /**
@@ -189,9 +195,9 @@ class SettingsStore(
         StoredSettings(
             providerId = prefs[Keys.PROVIDER] ?: StoredSettings().providerId,
             baseUrl = prefs[Keys.BASE_URL] ?: StoredSettings().baseUrl,
-            modelId = prefs[Keys.MODEL] ?: StoredSettings().modelId,
+            modelId = effectiveModelId(prefs[Keys.BASE_URL] ?: ProviderKind.DEEPSEEK.defaultBaseUrl, prefs[Keys.MODEL] ?: DEEPSEEK_FLASH),
             apiKey = readApiKey(prefs),
-            apiProfiles = profileRows(prefs),
+            apiProfiles = profileRows(prefs).map { it.copy(modelId = effectiveModelId(it.baseUrl, it.modelId)) },
             activeApiProfileId = prefs[Keys.ACTIVE_PROFILE] ?: "legacy",
             searchApi = readService(prefs, Keys.SEARCH_API),
             filesApi = readService(prefs, Keys.FILES_API),
@@ -463,7 +469,7 @@ class SettingsStore(
         id = id, name = name,
         providerId = prefs[Keys.PROVIDER] ?: "DEEPSEEK",
         baseUrl = prefs[Keys.BASE_URL] ?: "https://api.deepseek.com",
-        modelId = prefs[Keys.MODEL] ?: "deepseek-flash",
+        modelId = effectiveModelId(prefs[Keys.BASE_URL] ?: ProviderKind.DEEPSEEK.defaultBaseUrl, prefs[Keys.MODEL] ?: DEEPSEEK_FLASH),
         apiKeyEncrypted = prefs[Keys.API_KEY_ENC].orEmpty(),
         apiStyleId = prefs[Keys.API_STYLE] ?: "AUTO",
         modelIds = ModelIdList.decode(prefs[Keys.MODEL_IDS]),

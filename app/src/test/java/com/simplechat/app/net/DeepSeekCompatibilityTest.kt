@@ -1,0 +1,77 @@
+package com.simplechat.app.net
+
+import com.simplechat.app.R
+import com.simplechat.app.data.ServiceApiConfig
+import com.simplechat.app.data.StoredSettings
+import com.simplechat.app.net.anthropic.AnthropicApi
+import com.simplechat.app.net.anthropic.anthropicMessagesUrl
+import com.simplechat.app.ui.chat.*
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.*
+import okhttp3.*
+import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
+import org.junit.Assert.*
+import org.junit.Test
+
+class DeepSeekCompatibilityTest {
+    private val official = ProviderKind.DEEPSEEK.defaultBaseUrl
+    private val json = ChatApi.defaultJson()
+
+    @Test fun oldOfficialProfileAndFullUrls() {
+        val messages = "$official/anthropic/v1/messages"
+        val chat = "$official/v1/chat/completions"
+        assertEquals(ApiStyle.OPENAI, ApiStyle.resolve(ProviderKind.DEEPSEEK, "AUTO", chat))
+        assertEquals(messages, anthropicMessagesUrl(chat))
+        assertEquals("$official/chat/completions", chatCompletionsUrl(messages))
+        assertEquals("$official/files", ServiceApiConfig().endpoint(messages, "/files"))
+        assertEquals(DEEPSEEK_FLASH, effectiveModelId(chat, "deepseek-v4-flash"))
+        assertEquals("deepseek-v4-flash", effectiveModelId("https://gw.example/v1", "deepseek-v4-flash"))
+        val pro = StoredSettings(modelId = DEEPSEEK_PRO, webSearch = true, filesApi = ServiceApiConfig(enabled = true))
+        assertFalse(pro.supportsWebSearch)
+        assertFalse(pro.useRemoteFiles)
+        assertTrue(pro.copy(searchApi = ServiceApiConfig(enabled = true)).supportsWebSearch)
+        assertFalse(pro.copy(baseUrl = "https://gw.example/api.deepseek.com", modelId = DEEPSEEK_FLASH, apiStyleId = "ANTHROPIC").supportsWebSearch)
+    }
+
+    @Test fun proCannotInheritFlashToolsOrSignedHistory() {
+        val history = listOf(UiMessage("u", MessageRole.USER, "hi"),
+            UiMessage("a", MessageRole.ASSISTANT, "previous answer", model = DEEPSEEK_FLASH,
+                timeline = listOf(ReplyBlock.ToolUse("tool", "deepseek_read_url", "read_link", "read_link"),
+                    ReplyBlock.FetchResult("tool", "read_link", "https://example.org", signature = "old-signature"))),
+            UiMessage("u2", MessageRole.USER, "read https://example.org"))
+        val request = buildAnthropicRequest(DEEPSEEK_PRO, "", history, true, true, true, "today", reasoningEffort = "high")
+        val wire = json.encodeToJsonElement(request).jsonObject
+        assertFalse("title" in wire || "tools" in wire)
+        assertFalse(wire.toString().contains("old-signature"))
+        assertTrue(wire.toString().contains("previous answer"))
+        assertEquals("high", request.outputConfig?.effort)
+    }
+
+    @Test fun flashAndProOnBothOpenAiProtocols() = runBlocking {
+        for (style in listOf(ApiStyle.OPENAI, ApiStyle.OPENAI_RESPONSES)) for (id in listOf(DEEPSEEK_FLASH, DEEPSEEK_PRO)) {
+            val captured = Buffer()
+            val client = OkHttpClient.Builder().addInterceptor { chain ->
+                chain.request().body!!.writeTo(captured)
+                val data = if (style == ApiStyle.OPENAI) """{"choices":[{"delta":{"title":"Example"},"finish_reason":"stop"}]}"""
+                    else """{"type":"response.completed","response":{"title":"Example"}}"""
+                Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                    .body("data: $data\n\ndata: [DONE]\n\n".toResponseBody()).build()
+            }.build()
+            val api = ChatApi(client, SseClient(client, json), AnthropicApi(client, json), json)
+            val events = api.streamChat(official, "test", ModelCatalog.find(ProviderKind.DEEPSEEK, id),
+                listOf(OutMessageDto("user", JsonPrimitive("hi"))), false, apiStyle = style,
+                search = true, readLink = true, requestTitle = true).toList()
+            val wire = json.parseToJsonElement(captured.readUtf8()).jsonObject
+            assertEquals(id, wire["model"]?.jsonPrimitive?.content)
+            assertEquals(id == DEEPSEEK_FLASH, "title" in wire)
+            assertEquals(if (id == DEEPSEEK_FLASH) 2 else null, wire["tools"]?.jsonArray?.size)
+            assertTrue(StreamEvent.Title("Example") in events)
+        }
+    }
+
+    @Test fun providerErrorExplainsHowToRecover() {
+        assertEquals(R.string.error_deepseek_flash_feature, providerHintRes("The server-side tool calls (deepseek_web_search, deepseek_read_url) and the title generation feature are unavailable for model deepseek-v4-pro. Please use deepseek-flash instead."))
+    }
+}

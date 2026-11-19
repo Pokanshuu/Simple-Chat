@@ -60,6 +60,8 @@ internal class SseLineParser(private val json: Json) {
         val events = mutableListOf<StreamEvent>()
 
         chunk.choices.firstOrNull()?.delta?.let { delta ->
+            events += citationEvents(delta.annotations)
+            delta.title?.takeIf(String::isNotBlank)?.let { events += StreamEvent.Title(it) }
             delta.displayReasoning()?.let { events += StreamEvent.Reasoning(it) }
             // 有些兼容端点通过独立字段返回拒绝文本。
             (delta.content?.takeIf(String::isNotEmpty) ?: delta.refusal.refusalDelta())
@@ -146,3 +148,14 @@ internal class SseLineParser(private val json: Json) {
         const val MAX_RAW_ERROR_LENGTH = 300
     }
 }
+
+/** Chat Completions nests the citation payload. Responses puts the same fields on the annotation. */
+internal fun citationEvents(annotations: JsonElement?): List<StreamEvent.CitationDelta> =
+    (annotations as? JsonArray).orEmpty().mapNotNull { value ->
+        val annotation = value as? JsonObject ?: return@mapNotNull null
+        if ((annotation["type"] as? JsonPrimitive)?.contentOrNull != "url_citation") return@mapNotNull null
+        val fields = annotation["url_citation"] as? JsonObject ?: annotation
+        val url = (fields["url"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
+        if (!url.startsWith("https://") && !url.startsWith("http://")) return@mapNotNull null
+        StreamEvent.CitationDelta(0, Citation(url, (fields["title"] as? JsonPrimitive)?.contentOrNull))
+    }

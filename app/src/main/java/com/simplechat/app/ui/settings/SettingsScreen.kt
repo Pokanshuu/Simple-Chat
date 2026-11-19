@@ -251,7 +251,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
             modelContextWindows = profile.modelContextWindows,
             modelMetadata = profile.modelMetadata,
             modelOverrides = profile.modelOverrides,
-            webSearch = profile.webSearch, searchApi = profile.searchApi)
+            webSearch = profile.webSearch, searchApi = profile.searchApi, filesApi = profile.filesApi)
     }
     var savingService by remember { mutableStateOf(false) }
     var serviceBack by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -1939,6 +1939,8 @@ private fun ApiPage(
                 checked = stored.webSearch,
                 onCheckedChange = onWebSearch,
             )
+        } else if (com.simplechat.app.net.isOfficialDeepSeekEndpoint(stored.baseUrl) && stored.modelId == com.simplechat.app.net.DEEPSEEK_PRO) {
+            Text(stringResource(R.string.deepseek_pro_search_hint), modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
         }
         RowDivider(inset = 16.dp)
         SettingsNavRow(

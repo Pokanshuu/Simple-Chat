@@ -21,7 +21,8 @@ data class ServiceApiConfig(
     override fun toString() = "ServiceApiConfig(enabled=$enabled, reuseChatKey=$reuseChatKey)"
 
     fun endpoint(chatBaseUrl: String, path: String): String {
-        val base = baseUrl.ifBlank { chatBaseUrl }.trim().trimEnd('/')
+        val configured = baseUrl.ifBlank { chatBaseUrl }
+        val base = (com.simplechat.app.net.officialChatRoot(configured) ?: configured).trim().trimEnd('/')
             .removeSuffix("/anthropic/v1").removeSuffix("/anthropic")
         val url = base.toHttpUrlOrNull() ?: throw AppTextException(R.string.service_invalid_url)
         if (url.username.isNotEmpty() || url.password.isNotEmpty() || url.query != null || url.fragment != null ||

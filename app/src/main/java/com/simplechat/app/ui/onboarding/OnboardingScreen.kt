@@ -119,7 +119,7 @@ fun OnboardingScreen(settingsStore: SettingsStore, chatApi: ChatApi, repository:
     val scope = rememberCoroutineScope()
     var step by remember { mutableStateOf(OnboardingStep.WELCOME) }
     var apiKey by remember { mutableStateOf("") }
-    var selectedModel by remember { mutableStateOf("deepseek-v4-flash") }
+    var selectedModel by remember { mutableStateOf(ProviderKind.DEEPSEEK.defaultModel) }
     var selectedTheme by remember { mutableStateOf(AccentColor.BLUE) }
     var busy by remember { mutableStateOf(false) }
     val progressFlow = remember { MutableStateFlow<Float?>(null) }
@@ -616,7 +616,7 @@ private fun ModelPage(selected: String, onSelect: (String) -> Unit) {
         Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(Space.Inline)) {
             listOf(
                 Triple("deepseek-v4-pro", R.string.onboarding_model_pro_name, R.string.onboarding_model_pro),
-                Triple("deepseek-v4-flash", R.string.onboarding_model_flash_name, R.string.onboarding_model_flash),
+                Triple(ProviderKind.DEEPSEEK.defaultModel, R.string.onboarding_model_flash_name, R.string.onboarding_model_flash),
             ).forEach { (id, name, description) ->
                 ModelOption(
                     id = id,

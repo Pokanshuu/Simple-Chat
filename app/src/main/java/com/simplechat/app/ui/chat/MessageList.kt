@@ -128,6 +128,7 @@ fun MessageList(
     onRegenerate: (UiMessage) -> Unit = {},
     /** 继续生成：接着这条回复往下写（只有扩展通道能续，见 `ContinuePolicy`）。 */
     onContinue: (UiMessage) -> Unit = {},
+    supportsContinuation: Boolean = true,
     /** 朗读这条回复（系统 / DeepSeek 官方 TTS）。 */
     onSpeak: (UiMessage) -> Unit = {},
     /**
@@ -145,6 +146,7 @@ fun MessageList(
     onVariantChange: (UiMessage, Int) -> Unit = { _, _ -> },
     onOpenImage: (UiMessage, Attachment) -> Unit = { _, _ -> },
     onRetry: (UiMessage) -> Unit = {},
+    onChooseModel: (() -> Unit)? = null,
     /**
      * 用户展开 / 收起某个折叠块（思考面板、超长用户气泡）时调用。
      *
@@ -285,7 +287,7 @@ fun MessageList(
                  * 能不能续写由**位置 + 状态**共同决定（见 `ContinuePolicy`）。
                  * 「最后一条」在这里判最准：列表本身就是活跃路径。
                  */
-                canContinue = canContinueReply(message, isLastOnPath = index == messages.lastIndex),
+                canContinue = supportsContinuation && canContinueReply(message, isLastOnPath = index == messages.lastIndex),
                 speakingId = speakingId,
                 readAloudAvailable = readAloudAvailable,
                 autoCollapseThinking = autoCollapseThinking,
@@ -314,6 +316,7 @@ fun MessageList(
                 onVariantChange = { onVariantChange(message, it) },
                 onOpenImage = { onOpenImage(message, it) },
                 onRetry = { onRetry(message) },
+                onChooseModel = onChooseModel,
             )
             }
             if (shareSelection?.active == true && sharedGroup != null) {
@@ -361,6 +364,7 @@ private fun MessageRow(
     onVariantChange: (Int) -> Unit,
     onOpenImage: (Attachment) -> Unit,
     onRetry: () -> Unit,
+    onChooseModel: (() -> Unit)?,
     onFoldToggle: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -524,6 +528,7 @@ private fun MessageRow(
                 onDoubleClick = { selectionFromMenu = false; onSelectingChange(selectionState) },
                 onOpenImage = onOpenImage,
                 onRetry = onRetry,
+                onChooseModel = onChooseModel,
                 menu = menu,
                 pressListener = pressListener,
                 // 与用户气泡同一条补偿：展开思考内容时"上方固定、向下展开"
@@ -852,6 +857,7 @@ fun AssistantBlock(
     onDoubleClick: (() -> Unit)? = null,
     onOpenImage: (Attachment) -> Unit = {},
     onRetry: () -> Unit = {},
+    onChooseModel: (() -> Unit)? = null,
     menu: @Composable () -> Unit = {},
     pressListener: Modifier = Modifier,
     /**
@@ -1024,25 +1030,13 @@ fun AssistantBlock(
 
         message.errorMessage?.let { error ->
             Spacer(Modifier.size(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = error,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = LocalChatColors.current.danger,
-                    modifier = Modifier.weight(1f),
-                )
-                /*
-                 * 重试按钮**无条件**出现，不做"可重试才显示"的判断。
-                 *
-                 * `StreamEvent.retryable` 判断的是传输层值不值得自动重试，
-                 * 而这里是用户在**手动**点 —— 联网恢复了、API Key 改对了、
-                 * 换了个模型，任何一种都可能让刚才的错误不再发生。
-                 * 按 retryable 藏起来反而会把路堵死。
-                 */
-                Spacer(Modifier.size(10.dp))
+            Text(text = error, style = MaterialTheme.typography.labelMedium, color = LocalChatColors.current.danger)
+            Spacer(Modifier.size(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (onChooseModel != null) {
+                    CapsuleButton(text = stringResource(R.string.error_choose_model), onClick = onChooseModel)
+                    Spacer(Modifier.size(8.dp))
+                }
                 CapsuleButton(
                     text = stringResource(R.string.action_retry),
                     onClick = onRetry,

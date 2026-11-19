@@ -12,7 +12,7 @@ import kotlinx.coroutines.withContext
 internal class FileApiTextCache(private val context: Context, private val api: ServiceApi = ServiceApi()) {
     suspend fun prepare(text: String, attachments: List<Attachment>, settings: StoredSettings): Pair<String, List<Attachment>> =
         withContext(Dispatchers.IO) {
-            if (!settings.filesApi.enabled) return@withContext text to attachments
+            if (!settings.useRemoteFiles) return@withContext text to attachments
             val config = settings.filesApi
             if (text.length < config.longTextChars && attachments.none {
                 it.kind == Attachment.Kind.TEXT && it.fileId == null && it.data.length >= config.longTextChars

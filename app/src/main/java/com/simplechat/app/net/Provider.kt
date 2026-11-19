@@ -21,7 +21,7 @@ enum class ProviderKind(
     DEEPSEEK(
         nameRes = R.string.provider_name_deepseek,
         defaultBaseUrl = "https://api.deepseek.com",
-        defaultModel = "deepseek-flash",
+        defaultModel = DEEPSEEK_FLASH,
     ),
     OPENCODE_GO(
         nameRes = R.string.provider_name_opencode,
@@ -92,7 +92,7 @@ object ModelCatalog {
 
     private val deepSeek = listOf(
         ModelInfo(
-            id = "deepseek-flash",
+            id = DEEPSEEK_FLASH,
             displayName = "DeepSeek V4.1 Flash",
             supportsVision = true,
             supportsThinking = true,
@@ -273,6 +273,29 @@ object ModelCatalog {
         .distinct().map { find(kind, it, contextWindows, metadata, overrides) }
 }
 
+const val DEEPSEEK_FLASH = "deepseek-flash"
+const val DEEPSEEK_PRO = "deepseek-v4-pro"
+
+internal fun adjustableTopP(model: String, thinking: Boolean): Boolean =
+    if (model == DEEPSEEK_PRO) !thinking else thinking
+
+/** Old onboarding versions saved a gateway ID in official profiles. */
+internal fun effectiveModelId(baseUrl: String, id: String): String =
+    if (id in setOf("deepseek-v4-flash", "deepseek-v4.1-flash") && isOfficialDeepSeekEndpoint(baseUrl)) DEEPSEEK_FLASH else id
+
+/** Only strip known API routes on the official host. Preserve /beta and gateway prefixes. */
+internal fun officialChatRoot(baseUrl: String): String? {
+    val url = baseUrl.trim().toHttpUrlOrNull() ?: return null
+    if (!isOfficialDeepSeekEndpoint(baseUrl) || url.query != null || url.fragment != null) return null
+    val path = url.encodedPath.trimEnd('/')
+    val root = when (path) {
+        "/anthropic", "/anthropic/v1", "/anthropic/v1/messages", "/responses", "/models", "/chat/completions" -> ""
+        "/v1/chat/completions", "/v1/responses", "/v1/models" -> "/v1"
+        else -> path
+    }
+    return url.newBuilder().encodedPath(root.ifEmpty { "/" }).build().toString().trimEnd('/')
+}
+
 /** 服务商配置。 */
 data class ProviderConfig(
     val kind: ProviderKind,
@@ -335,9 +358,12 @@ enum class ApiStyle {
          */
         fun resolve(kind: ProviderKind, configuredId: String?, baseUrl: String): ApiStyle =
             fromId(configuredId) ?: run {
+                val path = baseUrl.trim().toHttpUrlOrNull()?.encodedPath?.trimEnd('/').orEmpty()
                 val official = isOfficialDeepSeekEndpoint(baseUrl)
                 when {
-                    baseUrl.trim().toHttpUrlOrNull()?.encodedPath?.trimEnd('/')?.endsWith("/responses") == true -> OPENAI_RESPONSES
+                    path.endsWith("/responses") -> OPENAI_RESPONSES
+                    path.endsWith("/chat/completions") -> OPENAI
+                    path.endsWith("/messages") || (official && path.startsWith("/anthropic")) -> ANTHROPIC
                     kind == ProviderKind.DEEPSEEK && official -> ANTHROPIC
                     else -> OPENAI
                 }
@@ -347,7 +373,7 @@ enum class ApiStyle {
 
 /** 拼装 `/chat/completions` 地址，兼容用户填不填 `/v1`、末尾带不带斜杠。 */
 fun chatCompletionsUrl(baseUrl: String): String {
-    val base = baseUrl.trim().trimEnd('/')
+    val base = officialChatRoot(baseUrl) ?: baseUrl.trim().trimEnd('/')
     return if (base.endsWith("/chat/completions")) base else "$base/chat/completions"
 }
 
@@ -364,4 +390,4 @@ fun modelsUrl(baseUrl: String): String {
  * 发出去只会 400 或 404。所有"要不要发官方专有东西"的判断都走这一个函数。
  */
 fun isOfficialDeepSeekEndpoint(baseUrl: String): Boolean =
-    baseUrl.trim().toHttpUrlOrNull()?.host == "api.deepseek.com"
+    baseUrl.trim().toHttpUrlOrNull()?.let { it.isHttps && it.host == "api.deepseek.com" && it.port == 443 } == true

@@ -817,6 +817,7 @@ fun ConversationSettingsPanelContent(
     onExportMarkdown: (() -> Unit)? = null,
     onExportJson: (() -> Unit)? = null,
     exportHint: String? = null,
+    officialPro: Boolean = false,
 ) {
     val colors = LocalChatColors.current
     var promptPreviewExpanded by remember { mutableStateOf(false) }
@@ -1017,9 +1018,9 @@ fun ConversationSettingsPanelContent(
             label = "top_p",
             valueText = formatFloat(settings.topP),
             value = settings.topP,
-            range = 0.95f..1f,
-            enabled = settings.thinkingEnabled,
-            disabledHint = stringResource(R.string.input_param_top_p_disabled),
+            range = if (officialPro) 0.01f..1f else 0.95f..1f,
+            enabled = if (officialPro) !settings.thinkingEnabled else settings.thinkingEnabled,
+            disabledHint = stringResource(if (officialPro) R.string.pro_top_p_hint else R.string.input_param_top_p_disabled),
             onValueChange = { onSettingsChange(settings.copy(topP = it)) },
         )
 

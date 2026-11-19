@@ -85,6 +85,8 @@ internal fun providerHintRes(serverMessage: String?): Int? {
     val text = serverMessage?.trim()?.lowercase()
     if (text.isNullOrEmpty()) return null
     return when {
+        "deepseek-v4-pro" in text && "unavailable" in text &&
+            text.containsAny(listOf("deepseek_web_search", "deepseek_read_url", "title generation")) -> R.string.error_deepseek_flash_feature
         text.contains("file") && text.containsAny(listOf("not found", "expired", "does not exist")) -> R.string.service_file_expired
         text.containsAny(listOf("unsupported file", "password-protected", "failed to parse", "file format")) -> R.string.service_file_format
         text.contains("purpose") -> R.string.error_http_bad_request
@@ -210,6 +212,9 @@ internal fun httpErrorText(code: Int, serverMessage: String?, largeRequest: Bool
     val providerRes = providerHintRes(raw)
     if (providerRes == null) {
         // 没认出上游原因 → 一字不改地走老逻辑，避免影响现有表现
+        if (code in listOf(400, 422) && raw != null) {
+            return Res.get(R.string.error_parameter_detail, code, abbreviateProviderMessage(raw)) + " " + Res.get(R.string.error_http_bad_request)
+        }
         val hint = httpStatusRes(code)?.let { Res.get(it) }
             ?: raw
             ?: Res.get(R.string.error_http_status, code)
@@ -218,7 +223,7 @@ internal fun httpErrorText(code: Int, serverMessage: String?, largeRequest: Bool
         } else hint
     }
 
-    val statusHint = httpStatusRes(code)?.let { Res.get(it) }
+    val statusHint = httpStatusRes(code)?.takeUnless { it == R.string.error_http_bad_request }?.let { Res.get(it) }
     val providerHint = Res.get(providerRes)
     // 原文与提示文字完全一样就不再重复（“与提示不同”才附）
     val rawDetail = raw

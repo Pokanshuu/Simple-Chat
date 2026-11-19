@@ -52,13 +52,17 @@ private fun responsesInputContent(content: JsonElement): JsonElement {
                 put("image_url", checkNotNull(image.text("url")))
                 image.text("detail")?.let { put("detail", it) }
             }
+            "file" -> buildJsonObject {
+                put("type", "input_file")
+                put("file_id", checkNotNull(block.text("file_id")))
+            }
             else -> error("Unsupported input content block")
         }
     })
 }
 
 internal fun responsesUrl(baseUrl: String): String {
-    val base = requireNotNull(baseUrl.trim().toHttpUrlOrNull()) { "Invalid base URL" }
+    val base = requireNotNull((officialChatRoot(baseUrl) ?: baseUrl.trim()).toHttpUrlOrNull()) { "Invalid base URL" }
     val root = base.encodedPath.trimEnd('/').removeSuffix("/responses").removeSuffix("/chat/completions")
     return base.newBuilder().encodedPath("$root/responses").build().toString()
 }
@@ -104,6 +108,7 @@ internal class ResponsesSseLineParser(private val json: Json) {
                 (response?.get("output") as? JsonArray)?.forEachIndexed { index, value ->
                     item(value as? JsonObject, index, events)
                 }
+                response?.text("title")?.let { events += StreamEvent.Title(it) }
                 val usage = response?.get("usage") as? JsonObject
                 if (usage != null) events += StreamEvent.Usage(
                     usage.int("input_tokens") ?: 0,
@@ -152,7 +157,10 @@ internal class ResponsesSseLineParser(private val json: Json) {
             "message" -> (item["content"] as? JsonArray)?.forEachIndexed { index, value ->
                 val part = value as? JsonObject
                 when (part?.text("type")) {
-                    "output_text" -> snapshot(Part(Kind.TEXT, output, index), part.text("text"), events)
+                    "output_text" -> {
+                        snapshot(Part(Kind.TEXT, output, index), part.text("text"), events)
+                        events += citationEvents(part["annotations"])
+                    }
                     "refusal" -> snapshot(Part(Kind.REFUSAL, output, index), part.text("refusal"), events)
                 }
             }

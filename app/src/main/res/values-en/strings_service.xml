@@ -34,5 +34,5 @@
     <string name="service_file_format">Unable to parse the file. Use a supported format, remove password protection, or convert it to PDF, DOCX or plain text.</string>
     <string name="service_file_expired">The file is missing, expired or inaccessible to this account. Switch to its original service and account, or remove and upload the attachment again.</string>
     <string name="service_file_endpoint_mismatch">This attachment belongs to a different file service. Switch back, or remove it and upload it to the current service.</string>
-    <string name="error_http_bad_request">The API rejected the request parameters. Check the model capabilities, endpoint path and file format, then retry.</string>
+    <string name="error_http_bad_request">Check the model and protocol in Settings → API profiles, test the connection, then retry.</string>
 </resources>

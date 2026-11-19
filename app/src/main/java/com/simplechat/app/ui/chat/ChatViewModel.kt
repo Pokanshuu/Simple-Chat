@@ -261,8 +261,8 @@ class ChatViewModel(
      * 搜索走的是扩展通道的工具（`deepseek_web_search`），OpenAI 兼容通道没有等价入口。
      * 所以通道不支持时干脆不显示，而不是留一个按下去什么都不发生的开关。
      */
-    val supportsWebSearch: Boolean get() = stored.supportsWebSearch
-    val attachmentSettings: StoredSettings get() = stored
+    val supportsWebSearch: Boolean get() = attachmentSettings.supportsWebSearch
+    val attachmentSettings: StoredSettings get() = stored.copy(modelId = settings.model.id)
 
     /** 智能搜索开关：这一轮要不要向服务端声明 `deepseek_web_search`。 */
     var webSearch by mutableStateOf(false)
@@ -328,7 +328,7 @@ class ChatViewModel(
     private var switchGeneration = 0
 
     private var stoppedByUser = false
-    private var stored: StoredSettings = StoredSettings()
+    private var stored by mutableStateOf(StoredSettings())
     private var previousProviderKind: ProviderKind? = null
 
     /** 上一次见到的端点，用来判断"模型列表该不该作废 / 换一份"。 */
@@ -1211,7 +1211,7 @@ class ChatViewModel(
      * 扩展通道回复才允许续写。不满足就静默返回 —— 按钮本来也不该出现。
      */
     fun continueMessage(target: UiMessage) {
-        if (isStreaming) return
+        if (isStreaming || apiStyle != ApiStyle.ANTHROPIC) return
         val conversationId = currentConversationId ?: return
         val index = messages.indexOfFirst { it.id == target.id }
         if (index < 0) return
@@ -1458,6 +1458,10 @@ class ChatViewModel(
         val selectedApiStyle = apiStyle
         val extended = selectedApiStyle == ApiStyle.ANTHROPIC
 
+        val route = attachmentSettings
+        val options = settings
+        val routeProvider = providerKind
+        val searchRequested = webSearch
         streamJob = viewModelScope.launch {
             val startedAt = SystemClock.elapsedRealtime()
             var lastCheckpointAt = startedAt
@@ -1491,6 +1495,7 @@ class ChatViewModel(
             if (accumulator != null && prefix != null) accumulator.seed(prefix.timeline)
             var timeline: List<ReplyBlock> = prefix?.timeline.orEmpty()
             var research = com.simplechat.app.net.SearchAugmentation()
+            val citations = linkedMapOf<String, com.simplechat.app.net.Citation>()
             var dirty = false
 
             fun refreshBuffered() {
@@ -1501,8 +1506,10 @@ class ChatViewModel(
                 } else {
                     if (hasReasoningText && reasonBuf.length != reasoningText.length) reasoningText = reasonBuf.toString()
                     if (contentBuf.length != contentText.length) contentText = contentBuf.toString()
-                    if (research.blocks.isNotEmpty()) {
-                        timeline = research.replyBlocks(reasoningText, contentText, reasoningStartedAt, reasoningEndedAt)
+                    if (research.blocks.isNotEmpty() || citations.isNotEmpty()) {
+                        timeline = research.replyBlocks(reasoningText, contentText, reasoningStartedAt, reasoningEndedAt).map { block ->
+                            if (block is ReplyBlock.Text) block.copy(citations = citations.values.toList()) else block
+                        }
                     }
                 }
             }
@@ -1564,10 +1571,10 @@ class ChatViewModel(
             var serverTitle: String? = null
 
             try {
-                if (webSearch && stored.searchApi.enabled) {
+                if (searchRequested && route.searchApi.enabled) {
                     val question = messages.lastOrNull { it.role == MessageRole.USER }?.content.orEmpty()
                     val previousBlocks = prefix?.timeline.orEmpty()
-                    research = com.simplechat.app.net.searchAugmentation(stored, question) { progress ->
+                    research = com.simplechat.app.net.searchAugmentation(route, question) { progress ->
                         research = research.copy(blocks = progress)
                         timeline = previousBlocks + progress
                         accumulator?.seed(timeline)
@@ -1576,13 +1583,13 @@ class ChatViewModel(
                 }
                 if (accumulator != null) {
                     chatApi.streamMessage(
-                        baseUrl = stored.baseUrl.ifBlank { providerKind.defaultBaseUrl },
-                        apiKey = stored.apiKey,
-                        request = buildAnthropicRequestNow(prefix, research.context),
-                        extraHeaders = providerKind.headersFor(openCodeSessionId) +
-                            if (stored.filesApi.enabled || messages.any { message -> message.attachments.any { it.fileId != null } })
+                        baseUrl = route.baseUrl.ifBlank { routeProvider.defaultBaseUrl },
+                        apiKey = route.apiKey,
+                        request = buildAnthropicRequestNow(prefix, research.context, route, options, searchRequested),
+                        extraHeaders = routeProvider.headersFor(openCodeSessionId) +
+                            if (route.supportsFileReferences && (route.filesApi.enabled || messages.any { message -> message.attachments.any { it.fileId != null } }))
                                 mapOf("anthropic-beta" to "files-api-2025-04-14") else emptyMap(),
-                        contextWindow = settings.model.contextWindow,
+                        contextWindow = options.model.contextWindow,
                     ).collect { event ->
                         when (event) {
                             is StreamEvent.BlockStart -> {
@@ -1630,16 +1637,19 @@ class ChatViewModel(
                 } else {
                     chatApi.streamChat(
                         apiStyle = selectedApiStyle,
-                        baseUrl = stored.baseUrl.ifBlank { providerKind.defaultBaseUrl },
-                        apiKey = stored.apiKey,
-                        model = settings.model,
-                        messages = buildRequestMessages(research.context),
-                        thinkingEnabled = settings.reasoningLevel.enabled,
-                        reasoningEffort = settings.reasoningEffort,
-                        maxTokens = settings.maxTokens,
-                        temperature = settings.temperature.toDouble(),
-                        topP = settings.topP.toDouble(),
-                        extraHeaders = providerKind.headersFor(openCodeSessionId),
+                        baseUrl = route.baseUrl.ifBlank { routeProvider.defaultBaseUrl },
+                        apiKey = route.apiKey,
+                        model = options.model,
+                        messages = buildRequestMessages(research.context, route, options),
+                        search = searchRequested && !route.searchApi.enabled,
+                        readLink = messages.lastOrNull { it.role == MessageRole.USER }?.content?.let(HttpLink::containsMatchIn) == true,
+                        requestTitle = shouldRequestTitle(),
+                        thinkingEnabled = options.reasoningLevel.enabled,
+                        reasoningEffort = options.reasoningEffort,
+                        maxTokens = options.maxTokens,
+                        temperature = options.temperature.toDouble(),
+                        topP = options.topP.toDouble(),
+                        extraHeaders = routeProvider.headersFor(openCodeSessionId),
                     ).collect { event ->
                         when (event) {
                             is StreamEvent.Reasoning -> {
@@ -1657,6 +1667,12 @@ class ChatViewModel(
                                 noteBody()
                                 contentBuf.append(event.text)
                                 contentChars += event.text.length
+                                dirty = true
+                            }
+
+                            is StreamEvent.Title -> serverTitle = event.text
+                            is StreamEvent.CitationDelta -> {
+                                citations[event.citation.url] = event.citation
                                 dirty = true
                             }
 
@@ -1819,11 +1835,11 @@ class ChatViewModel(
      * 与 [`buildRequestMessages`] 的差别不只是协议：扩展通道的 `system` 只有一个字符串，
      * 所以压缩摘要只能**拼进系统提示词**，不能像 OpenAI 通道那样再塞一条 system 消息。
      */
-    private suspend fun buildAnthropicRequestNow(prefix: UiMessage?, research: String = ""): AnthropicRequest {
+    private suspend fun buildAnthropicRequestNow(prefix: UiMessage?, research: String, route: StoredSettings, options: ConversationSettings, searchRequested: Boolean): AnthropicRequest {
         skippedNoVision = 0; skippedUnreadable = 0
         val active = validCompaction(messages, compaction)
         val system = buildString {
-            append(settings.composedSystemPrompt(presets))
+            append(options.composedSystemPrompt(presets))
             if (research.isNotBlank()) appendLine().appendLine(research)
             if (active != null && active.summary.isNotBlank()) {
                 if (isNotEmpty()) appendLine().appendLine()
@@ -1848,7 +1864,7 @@ class ChatViewModel(
              * `unsupported image`，而且每一轮都复现（v1.1.2 的真实事故）。
              */
             .map { message ->
-                if (message.role != MessageRole.USER) message else prepareOutgoingUser(message)
+                if (message.role != MessageRole.USER) message else prepareOutgoingUser(message, route, options.model)
             }
 
         /*
@@ -1857,23 +1873,23 @@ class ChatViewModel(
          * 遇到这些会 400，而不是"忽略" —— 见 `buildAnthropicRequest` 的说明。
          */
         val officialDeepSeek = isOfficialDeepSeekEndpoint(
-            stored.baseUrl.ifBlank { providerKind.defaultBaseUrl },
+            route.baseUrl,
         )
         return buildAnthropicRequest(
-            model = settings.model.id,
+            model = options.model.id,
             systemPrompt = system,
             path = path,
-            searchEnabled = webSearch && !stored.searchApi.enabled,
-            reasoningEffort = settings.model.resolveReasoningEffort(settings.reasoningEffort),
-            thinkingEnabled = settings.thinkingEnabled,
+            searchEnabled = searchRequested && !route.searchApi.enabled,
+            reasoningEffort = options.model.resolveReasoningEffort(options.reasoningEffort),
+            thinkingEnabled = options.thinkingEnabled,
             requestTitle = requestTitle,
             latestReminder = latestReminder(),
-            maxTokens = settings.maxTokens,
-            outputLimit = settings.model.maxOutputTokens,
+            maxTokens = options.maxTokens,
+            outputLimit = options.model.maxOutputTokens,
             prefix = prefix,
             deepSeekExtensions = officialDeepSeek,
-            temperature = settings.temperature.toDouble(),
-            topP = settings.topP.toDouble(),
+            temperature = options.temperature.toDouble(),
+            topP = options.topP.toDouble(),
         ).also { request ->
             if (request.messages.none { it.role == "user" }) throw com.simplechat.app.data.AppTextException(R.string.error_no_sendable_messages)
             if (request.title != null) serverTitleRequestedFor = currentConversationId
@@ -1929,6 +1945,8 @@ class ChatViewModel(
      * 3. 每个会话只尝试一次。
      */
     private fun maybeGenerateTitle(conversationId: String) {
+        // Official routes already requested an eligible inline title. Keep the local title otherwise.
+        if (isOfficialDeepSeekEndpoint(stored.baseUrl) || apiStyle == ApiStyle.ANTHROPIC) return
         if (titleGeneratedFor == conversationId) return
         if (isStreaming) return
 
@@ -2031,19 +2049,24 @@ class ChatViewModel(
      * 以前用视觉模型聊过的）。让整条对话因为一张旧图发不出去，代价太大 ——
      * 所以按模型能力过滤，并给一句普通提醒（不是错误）。
      */
-    private suspend fun outgoingAttachments(attachments: List<Attachment>): List<Attachment> {
+    private suspend fun outgoingAttachments(attachments: List<Attachment>, route: StoredSettings, model: ModelInfo): List<Attachment> {
         if (attachments.isEmpty()) return attachments
-        attachments.filter { it.fileId != null }.forEach { file ->
-            val endpoint = stored.filesApi.endpoint(stored.baseUrl, stored.filesApi.filesPath)
-            val chatHost = java.net.URI(stored.baseUrl).host
+        val compatible = if (route.supportsFileReferences) attachments else attachments.map { file ->
+            if (file.fileId == null) file
+            else if (!file.remoteImage && file.data.isNotBlank()) file.copy(fileId = null, fileEndpoint = null, fileAccount = null)
+            else throw com.simplechat.app.data.AppTextException(R.string.error_deepseek_file_model)
+        }
+        compatible.filter { it.fileId != null }.forEach { file ->
+            val endpoint = route.filesApi.endpoint(route.baseUrl, route.filesApi.filesPath)
+            val chatHost = java.net.URI(route.baseUrl).host
             val fileHost = java.net.URI(endpoint).host
-            val account = com.simplechat.app.data.FileApiTextCache.fingerprint(stored.filesApi.key(stored.apiKey))
+            val account = com.simplechat.app.data.FileApiTextCache.fingerprint(route.filesApi.key(route.apiKey))
             if (file.fileEndpoint != endpoint || chatHost != fileHost || file.fileAccount != account)
                 throw com.simplechat.app.data.AppTextException(R.string.service_file_endpoint_mismatch)
         }
-        var filtered = attachments
-        if (!settings.model.supportsVision) {
-            filtered = attachments.filterNot { it.isImage }
+        var filtered = compatible
+        if (!model.supportsVision) {
+            filtered = compatible.filterNot { it.isImage }
             val dropped = attachments.size - filtered.size
             skippedNoVision += dropped
         }
@@ -2060,17 +2083,17 @@ class ChatViewModel(
         return prepared
     }
 
-    private suspend fun prepareOutgoingUser(message: UiMessage): UiMessage {
-        val (text, attachments) = repository.prepareLongTextForRequest(message.content, message.attachments, stored)
-        return message.copy(content = text, attachments = outgoingAttachments(attachments))
+    private suspend fun prepareOutgoingUser(message: UiMessage, route: StoredSettings, model: ModelInfo): UiMessage {
+        val (text, attachments) = repository.prepareLongTextForRequest(message.content, message.attachments, route)
+        return message.copy(content = text, attachments = outgoingAttachments(attachments, route, model))
     }
 
-    private suspend fun buildRequestMessages(research: String = ""): List<OutMessageDto> {
+    private suspend fun buildRequestMessages(research: String, route: StoredSettings, options: ConversationSettings): List<OutMessageDto> {
         skippedNoVision = 0; skippedUnreadable = 0
         val request = mutableListOf<OutMessageDto>()
         if (research.isNotBlank()) request += OutMessageDto("system", MessageContent.text(research))
 
-        val system = settings.composedSystemPrompt(presets)
+        val system = options.composedSystemPrompt(presets)
         if (system.isNotBlank()) {
             request += OutMessageDto(role = "system", content = MessageContent.text(system))
         }
@@ -2097,7 +2120,7 @@ class ChatViewModel(
              * 一条空消息不值得让整段历史发不出去（见 `isSendableOutgoing`）。
              */
             val outgoing = if (message.role == MessageRole.USER) {
-                prepareOutgoingUser(message)
+                prepareOutgoingUser(message, route, options.model)
             } else message
             if (!isSendableOutgoing(outgoing)) return@forEach
             request += OutMessageDto(
