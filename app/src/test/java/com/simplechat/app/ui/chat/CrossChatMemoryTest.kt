@@ -1,8 +1,10 @@
 package com.simplechat.app.ui.chat
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -169,6 +171,26 @@ class CrossChatMemoryTest {
         assertTrue("应保留英文词", tokens.contains("hello"))
         assertFalse("应过滤停用词", tokens.contains("我们"))
         assertFalse("应过滤停用词", tokens.contains("什么"))
+    }
+
+    @Test
+    fun `取消读取时不再扫描其他会话`() {
+        val loaded = mutableListOf<String>()
+        assertThrows(CancellationException::class.java) {
+            runBlocking {
+                CrossChatMemory.build(
+                    query = "我们之前聊过什么",
+                    currentConversationId = "current",
+                    limit = 4,
+                    sessions = listOf(session("a", "A"), session("b", "B")),
+                    loadMessages = { id ->
+                        loaded += id
+                        throw CancellationException("Stopped")
+                    },
+                )
+            }
+        }
+        assertEquals(listOf("a"), loaded)
     }
 
     @Test

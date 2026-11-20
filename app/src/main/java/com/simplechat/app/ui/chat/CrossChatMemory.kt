@@ -1,5 +1,8 @@
 package com.simplechat.app.ui.chat
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -26,6 +29,10 @@ object CrossChatMemory {
     private const val MAX_ROUNDS_PER_SESSION = 2
     private const val RECENT_FALLBACK_LIMIT = 3
     private const val MAX_SCAN_SESSIONS = 50
+
+    private val LATIN_TOKEN = Regex("[a-z0-9_.-]{2,}")
+    private val HAN_RUN = Regex("[\\u4e00-\\u9fff]+")
+    private val WHITESPACE = Regex("\\s+")
 
     private val STOP_WORDS = setOf(
         "the", "and", "for", "with", "that", "this", "from", "what", "when", "where",
@@ -104,7 +111,14 @@ object CrossChatMemory {
         }
 
         val docs = candidates.mapNotNull { ref ->
-            val shown = runCatching { loadMessages(ref.id) }.getOrNull() ?: return@mapNotNull null
+            currentCoroutineContext().ensureActive()
+            val shown = try {
+                loadMessages(ref.id)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                return@mapNotNull null
+            }
             index(ref, shown)
         }.filter { it.rounds.isNotEmpty() }
         if (docs.isEmpty()) {
@@ -213,13 +227,15 @@ object CrossChatMemory {
         )
     }
 
-    private fun index(ref: SessionRef, messages: List<UiMessage>): Doc {
+    private suspend fun index(ref: SessionRef, messages: List<UiMessage>): Doc {
+        val context = currentCoroutineContext()
         val titleTokens = tokenize(ref.title)
         val allTokens = HashSet(titleTokens)
         val rounds = mutableListOf<Round>()
 
         var pendingUser: String? = null
         for (message in messages) {
+            context.ensureActive()
             when (message.role) {
                 MessageRole.USER -> pendingUser = compact(message.content)
                 MessageRole.ASSISTANT -> {
@@ -251,11 +267,11 @@ object CrossChatMemory {
     internal fun tokenize(text: String): Set<String> {
         val tokens = HashSet<String>()
         val lower = text.lowercase(Locale.ROOT)
-        Regex("[a-z0-9_.-]{2,}").findAll(lower).forEach { match ->
+        LATIN_TOKEN.findAll(lower).forEach { match ->
             val word = match.value
             if (word !in STOP_WORDS) tokens += word
         }
-        Regex("[\\u4e00-\\u9fff]+").findAll(lower).forEach { match ->
+        HAN_RUN.findAll(lower).forEach { match ->
             val run = match.value
             for (i in run.indices) {
                 val ch = run[i].toString()
@@ -269,7 +285,7 @@ object CrossChatMemory {
         return tokens
     }
 
-    private fun compact(text: String): String = text.replace(Regex("\\s+"), " ").trim()
+    private fun compact(text: String): String = text.replace(WHITESPACE, " ").trim()
 
     /** 按查询词在文中的位置截取片段，让引用的部分尽量留在窗口里。 */
     private fun clip(text: String, maxLength: Int, queryTokens: Set<String>): String {

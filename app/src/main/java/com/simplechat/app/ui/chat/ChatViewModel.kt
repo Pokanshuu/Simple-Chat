@@ -2089,7 +2089,8 @@ class ChatViewModel(
          * 续写时把这条 assistant 从历史里摘出去：它要以**末尾前缀**的身份出现，
          * 留在历史里就是同一轮回答发了两遍，服务端会把它当成两个不同的回答。
          */
-        val preparedPath = orderedOutgoingMessages(messages, active)
+        val outgoingMessages = orderedOutgoingMessages(messages, active)
+        val preparedPath = outgoingMessages
             .filter { it.id != prefix?.id }
             /*
              * 附件在这里整理：落盘字节读回内存（`toDataUrl()` / image block 只认内联），
@@ -2110,8 +2111,9 @@ class ChatViewModel(
          * 跨对话记忆：与 OpenAI 通道同一策略 —— 只拼在**最后一条 user 消息**前，
          * 历史与落库内容都不动。
          */
-        val memoryText = runCatching { crossChatMemoryFor(route) }.getOrDefault("")
-        val lastUserId = preparedPath.lastOrNull { it.role == MessageRole.USER }?.id
+        val lastUser = outgoingMessages.lastOrNull { it.role == MessageRole.USER }
+        val memoryText = crossChatMemoryFor(route, lastUser?.content)
+        val lastUserId = lastUser?.id
         val path = if (memoryText.isNotBlank() && lastUserId != null) {
             preparedPath.map { message ->
                 if (message.role == MessageRole.USER && message.id == lastUserId) {
@@ -2358,28 +2360,42 @@ class ChatViewModel(
     /**
      * 检索历史会话里与本轮提问相关的内容，供 [buildRequestMessages] 前置到用户消息。
      *
-     * 任何一步失败都返回空串：记忆是锦上添花，不能因为一次检索异常就让消息发不出去。
+     * 检索失败时仍可发送；停止生成时则保留取消信号。
      */
-    private suspend fun crossChatMemoryFor(route: StoredSettings): String {
+    private suspend fun crossChatMemoryFor(route: StoredSettings, userContent: String?): String {
         if (!route.crossChatMemory || route.crossChatMemoryLimit <= 0) {
             Diagnostics.log("MEM", "skip(disabled) limit=${route.crossChatMemoryLimit}")
             return ""
         }
         val activeConversationId = currentConversationId ?: return ""
         if (activeConversationId.isBlank()) return ""
-        val outgoing = orderedOutgoingMessages(messages, validCompaction(messages, compaction))
-        val query = outgoing.lastOrNull { it.role == MessageRole.USER }?.content?.trim().orEmpty()
+        return try {
+            withContext(Dispatchers.Default) { retrieveCrossChatMemory(route, activeConversationId, userContent) }
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            Diagnostics.log("MEM", "skip(retrieval-failed) error=${error.javaClass.simpleName}")
+            ""
+        }
+    }
+
+    private suspend fun retrieveCrossChatMemory(
+        route: StoredSettings,
+        activeConversationId: String,
+        userContent: String?,
+    ): String {
+        val query = userContent?.trim().orEmpty()
         if (query.isBlank()) {
             Diagnostics.log("MEM", "skip(empty-query)")
             return ""
         }
+        val startedAt = android.os.SystemClock.elapsedRealtime()
         val sessions = repository.allConversations()
             .map { CrossChatMemory.SessionRef(it.id, it.title, it.updatedAt) }
         if (sessions.isEmpty()) {
             Diagnostics.log("MEM", "skip(no-conversations)")
             return ""
         }
-        val startedAt = android.os.SystemClock.elapsedRealtime()
         val result = CrossChatMemory.build(
             query = query,
             currentConversationId = activeConversationId,
@@ -2415,7 +2431,6 @@ class ChatViewModel(
          * 跨对话记忆只拼在**最后一条 user 消息**的发送内容前：落库消息保持原样，
          * 历史也不动（改了历史会让每轮前缀都变，缓存与可复现性一起丢）。
          */
-        val memoryText = runCatching { crossChatMemoryFor(route) }.getOrDefault("")
         if (research.isNotBlank()) request += OutMessageDto("system", MessageContent.text(research))
         modelSwitchedFrom(messages, options.model.id)?.let { previousModel ->
             request += OutMessageDto("system", MessageContent.text(
@@ -2444,7 +2459,9 @@ class ChatViewModel(
 
         // 顺序规则见 `orderedOutgoingMessages`（纯函数，有单测钉死）
         val outgoingMessages = orderedOutgoingMessages(messages, active)
-        val lastUserId = outgoingMessages.lastOrNull { it.role == MessageRole.USER }?.id
+        val lastUser = outgoingMessages.lastOrNull { it.role == MessageRole.USER }
+        val memoryText = crossChatMemoryFor(route, lastUser?.content)
+        val lastUserId = lastUser?.id
         outgoingMessages.forEach { message ->
             /*
              * 空消息不发：历史里出错/被中断的 assistant、既没正文也没附件的 user
