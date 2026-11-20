@@ -99,6 +99,8 @@ internal object NativeShareRenderRegression {
             val body = "# 原生表格与数学公式\n\n$table\n\n" +
                 "\$\$\\int_0^1 x^2\\,dx=\\frac{1}{3}\$\$\n\n" +
                 "\$\$\\sum_{i=1}^{n}i=\\frac{n(n+1)}{2}\$\$\n\n" +
+                "\\(\\ovalbox{图片分享}\\quad\\text{\\tiny已读}\\)\n\n" +
+                "\\[\\Ovalbox{\\sqrt{x}}\\quad\\text{\\small 根式}\\]\n\n" +
                 "\$\$\\begin{pmatrix}1&2&3\\\\4&5&6\\end{pmatrix}\$\$\n\n后续正文保持正常。\n\n```mermaid\ngraph TD\nA --> B\n```"
             val document = MessageShareDocument("表格与公式完整导出", messageShareGroups(listOf(
                 UiMessage("q", MessageRole.USER, "请把表格和公式一起导出。"), UiMessage("a", MessageRole.ASSISTANT, body))))

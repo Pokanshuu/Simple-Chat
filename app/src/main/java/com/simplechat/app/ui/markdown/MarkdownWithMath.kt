@@ -21,6 +21,8 @@ import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalDensity
+import com.hrm.latex.renderer.measure.rememberLatexMeasurer
 import com.hrm.latex.renderer.Latex
 import com.hrm.latex.renderer.model.LatexConfig
 import com.hrm.latex.renderer.model.LatexTheme
@@ -109,8 +111,19 @@ private fun CompatibleFormula(segment: ContentSegment.Formula, config: LatexConf
             // Horizontal scrolling keeps wide formulas accessible instead of clipping content.
             Latex(latex = presentation.nativeTex, config = config,
                 modifier = Modifier.horizontalScroll(rememberScrollState()))
+        } else if (presentation != null && presentation.ovalParts.isNotEmpty() && !sourceVisible) {
+            val dark = LocalIsDarkTheme.current
+            val color = MaterialTheme.colorScheme.onBackground
+            val density = LocalDensity.current
+            val measurer = rememberLatexMeasurer(config)
+            val inline = remember(measurer, presentation, config, dark, color, density) {
+                measurer.inlinePresentation(presentation, config, dark, color, density)
+            }
+            if (inline != null) FormulaInlineText(inline, segment.tex, MaterialTheme.typography.bodyLarge,
+                Modifier.horizontalScroll(rememberScrollState()))
+            else Text(segment.tex, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace))
         } else {
-            if (presentation != null && presentation.nativeTex == null) {
+            if (presentation != null && !presentation.canRender) {
                 DisableSelection {
                     Text(stringResource(R.string.latex_source_fallback), style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)

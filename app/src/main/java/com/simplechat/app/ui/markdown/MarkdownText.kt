@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -268,6 +269,18 @@ internal suspend fun warmMarkdownCache(content: String, warmBlock: (String) -> U
  */
 @Composable
 private fun MarkdownBlockView(text: String, isTail: Boolean) {
+    val math = remember(text) { inlineMathDocument(text) }
+    if (math.formulas.isEmpty()) {
+        MarkdownBlockContents(text, isTail, math, Constraints.Infinity)
+    } else {
+        BoxWithConstraints {
+            MarkdownBlockContents(text, isTail, math, constraints.maxWidth)
+        }
+    }
+}
+
+@Composable
+private fun MarkdownBlockContents(text: String, isTail: Boolean, math: InlineMathDocument, maxFormulaWidth: Int) {
     val colors = LocalChatColors.current
     val scheme = MaterialTheme.colorScheme
 
@@ -276,7 +289,6 @@ private fun MarkdownBlockView(text: String, isTail: Boolean) {
     val bodyStyle = markdownBodyStyle(LocaleHelper.isCjkUi(LocalContext.current))
 
     // 同步解析（见 MarkdownStateCache 的说明）：高度第一次测量就是真实的。
-    val math = remember(text) { inlineMathDocument(text) }
     val state = remember(math.markdown, isTail) {
         if (isTail) parseMarkdown(math.markdown) else markdownStateOf(math.markdown)
     }
@@ -294,7 +306,7 @@ private fun MarkdownBlockView(text: String, isTail: Boolean) {
         StreamingProse(text = text, style = bodyStyle, color = scheme.onBackground, modifier = modifier)
         return
     }
-    val inlineMath = if (math.formulas.isNotEmpty()) rememberInlineMath(math) else null
+    val inlineMath = if (math.formulas.isNotEmpty()) rememberInlineMath(math, maxFormulaWidth) else null
 
     /*
      * 符号与引用条的颜色跟主题走，**字号/行高必须与正文一致**：

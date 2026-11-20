@@ -3,13 +3,12 @@ package com.simplechat.app.ui.markdown
 import android.content.Context
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.text.BasicText
-import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.layout.Layout
-import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -61,17 +60,17 @@ internal fun ExportFormula(tex: String, fontSize: androidx.compose.ui.unit.TextU
     val config = LatexConfig(fontSize = fontSize, fontFamilies = options.fonts,
         theme = LatexTheme.light(color = MaterialTheme.colorScheme.onBackground))
     val measurer = rememberLatexMeasurer(config)
-    val inline = remember(presentation, measurer) {
-        presentation.nativeTex?.let { measurer.inlineContent(it, config, isDarkTheme = false) }
+    val color = MaterialTheme.colorScheme.onBackground
+    val density = LocalDensity.current
+    val inline = remember(presentation, measurer, config, color, density) {
+        measurer.inlinePresentation(presentation, config, dark = false, color = color, density = density)
     }
     if (inline == null) {
         // The same unsupported-syntax fallback as chat; supported formulas never go through text.
         BasicText(tex, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace,
             color = MaterialTheme.colorScheme.onBackground))
     } else ExportFitWidth {
-        BasicText(buildAnnotatedString { appendInlineContent("math", "formula") },
-            inlineContent = mapOf("math" to inline),
-            style = MaterialTheme.typography.bodyLarge.copy(fontSize = fontSize))
+        FormulaInlineText(inline, tex, MaterialTheme.typography.bodyLarge.copy(fontSize = fontSize))
     }
 }
 

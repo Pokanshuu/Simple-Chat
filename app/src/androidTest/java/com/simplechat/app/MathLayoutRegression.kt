@@ -35,6 +35,14 @@ internal object MathLayoutRegression {
 
             - 列表内公式 \(x^2+y^2=z^2\) 与 **加粗正文**连续排版。
             - 行内代码 `echo ${'$'}PATH` 保持原样。
+
+            \(\ovalbox{项链还戴着吗}\quad\text{\tiny已读}\)
+            \(\ovalbox{还是还在抽屉里}\quad\text{\tiny已读}\)
+            \(\ovalbox{我去感应一下}\quad\text{\tiny已读}\)
+
+            \[\ovalbox{\frac{1}{2}}\quad\text{\small 中文}\]
+
+            \(\underbrace{${"x+".repeat(60)}x}_{\text{一行长公式}}\)
         """.trimIndent()
         try {
             instrumentation.waitForIdleSync(); delay(1000)
@@ -54,13 +62,20 @@ internal object MathLayoutRegression {
                 val epsilon = proof.layoutInput.text.text.indexOf("varepsilon")
                 check(before >= 0 && epsilon > before)
                 check(proof.getLineForOffset(before) == proof.getLineForOffset(epsilon)) { "Inline epsilon was split from its sentence" }
+                val bubbles = layouts.filter { it.layoutInput.text.text.contains("\\ovalbox") }
+                check(bubbles.size == 3 && bubbles.all { it.placeholderRects.singleOrNull() != null }) {
+                    "Oval boxes and their labels must be rendered together"
+                }
+                val wide = layouts.single { it.layoutInput.text.text.contains("\\underbrace") }
+                val wideSlot = checkNotNull(wide.placeholderRects.singleOrNull()) { "Oversized inline formula disappeared" }
+                check(wideSlot.right <= wide.size.width + 1) { "Inline formula exceeds the paragraph" }
                 check(layouts.sumOf { it.lineCount } < 24) { "Math layout is still fragmented" }
                 delay(300)
                 instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
                     File(instrumentation.targetContext.cacheDir, "math-mixed-${theme.name.lowercase()}.png")
                         .outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
                 }
-                status("$theme: inline fractions, quote/list containers, punctuation and code preserved; ${layouts.sumOf { it.lineCount }} text lines")
+                status("$theme: inline fractions, oval boxes, long formulas, quotes and lists preserved; ${layouts.sumOf { it.lineCount }} text lines")
             }
         } finally { instrumentation.runOnMainSync { activity.finish() } }
     }

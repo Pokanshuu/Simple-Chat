@@ -4,7 +4,7 @@ import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalDensity
 import com.hrm.latex.renderer.measure.rememberLatexMeasurer
 import com.hrm.latex.renderer.model.LatexConfig
 import com.hrm.latex.renderer.model.LatexTheme
@@ -74,7 +74,7 @@ internal fun inlineMathDocument(source: String): InlineMathDocument {
 
 /** The Markdown engine lays out text and formulas in one paragraph, including inside lists and quotes. */
 @Composable
-internal fun rememberInlineMath(document: InlineMathDocument): Pair<com.mikepenz.markdown.model.MarkdownAnnotator,
+internal fun rememberInlineMath(document: InlineMathDocument, maxWidth: Int): Pair<com.mikepenz.markdown.model.MarkdownAnnotator,
     com.mikepenz.markdown.model.MarkdownInlineContent> {
     val dark = LocalIsDarkTheme.current
     val color = MaterialTheme.colorScheme.onBackground
@@ -83,9 +83,10 @@ internal fun rememberInlineMath(document: InlineMathDocument): Pair<com.mikepenz
     val config = remember(dark, color, fonts, fontSize) { LatexConfig(fontSize = fontSize, fontFamilies = fonts,
         theme = if (dark) LatexTheme.dark(color = color) else LatexTheme.light(color = color)) }
     val measurer = rememberLatexMeasurer(config)
-    val inline = remember(document, measurer, config, dark) { document.formulas.mapNotNull { (id, formula) ->
+    val density = LocalDensity.current
+    val inline = remember(document, measurer, config, dark, density, maxWidth) { document.formulas.mapNotNull { (id, formula) ->
         val presentation = prepareLatexPresentation(formula.tex)
-        presentation.nativeTex?.let { measurer.inlineContent(it, config, dark) }?.let { id to it }
+        measurer.inlinePresentation(presentation, config, dark, color, density)?.fitWidth(maxWidth, density)?.let { id to it }
     }.toMap() }
     val annotator = remember(document, inline) { markdownAnnotator { content, child ->
         if (child.type != MarkdownElementTypes.CODE_SPAN) false else {
