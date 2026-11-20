@@ -195,6 +195,17 @@ class RequestOrderingTest {
     }
 
     @Test
+    fun `editing any message covered by compaction invalidates its summary`() {
+        val path = chain(6)
+        val summary = compaction("m3")
+
+        assertTrue(compactionInvalidatedByEdit(path, summary, "m1"))
+        assertTrue(compactionInvalidatedByEdit(path, summary, "m3"))
+        assertTrue(!compactionInvalidatedByEdit(path, summary, "m4"))
+        assertTrue(!compactionInvalidatedByEdit(path, compaction("other-branch"), "m1"))
+    }
+
+    @Test
     fun `stale compaction from another branch is ignored`() {
         // 摘要是别的分支留下的（那个 id 不在当前路径上）→ 不该白丢一半上下文
         val path = chain(6)

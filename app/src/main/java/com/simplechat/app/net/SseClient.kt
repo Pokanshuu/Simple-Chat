@@ -129,9 +129,11 @@ class SseClient(
                                 is SseLineParser.Result.Events -> result.events.forEach {
                                     emit(it)
                                     emittedAny = true
-                                    if (it is StreamEvent.Stopped || it is StreamEvent.Error) {
+                                    if (it is StreamEvent.Error || (responses && it is StreamEvent.Stopped)) {
                                         receivedStop = true
-                                        if (responses) finished = true
+                                        finished = true
+                                    } else if (it is StreamEvent.Stopped) {
+                                        receivedStop = true
                                     }
                                 }
 

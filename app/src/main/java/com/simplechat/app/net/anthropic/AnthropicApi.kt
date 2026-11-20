@@ -123,7 +123,12 @@ class AnthropicApi(
                                         if (it is StreamEvent.Error) logEmptyMessagesRejection(it.message)
                                         emit(it)
                                         emittedAny = true
-                                        if (it is StreamEvent.Stopped || it is StreamEvent.Error) receivedStop = true
+                                        if (it is StreamEvent.Error) {
+                                            receivedStop = true
+                                            finished = true
+                                        } else if (it is StreamEvent.Stopped) {
+                                            receivedStop = true
+                                        }
                                     }
 
                                 AnthropicStreamParser.Result.Done -> finished = true

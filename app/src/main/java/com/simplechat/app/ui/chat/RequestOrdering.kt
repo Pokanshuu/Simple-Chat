@@ -5,6 +5,16 @@ import com.simplechat.app.db.CompactionEntity
 internal fun validCompaction(path: List<UiMessage>, compaction: CompactionEntity?): CompactionEntity? =
     compaction?.takeIf { summary -> path.any { it.id == summary.throughMessageId } }
 
+internal fun compactionInvalidatedByEdit(
+    path: List<UiMessage>,
+    compaction: CompactionEntity?,
+    messageId: String,
+): Boolean {
+    val boundary = compaction?.let { summary -> path.indexOfFirst { it.id == summary.throughMessageId } } ?: -1
+    val edited = path.indexOfFirst { it.id == messageId }
+    return boundary >= 0 && edited in 0..boundary
+}
+
 internal fun modelSwitchedFrom(path: List<UiMessage>, selectedModel: String): String? =
     path.lastOrNull { it.role == MessageRole.ASSISTANT && !it.streaming && it.content.isNotBlank() && !it.model.isNullOrBlank() }
         ?.model?.takeIf { it != selectedModel }

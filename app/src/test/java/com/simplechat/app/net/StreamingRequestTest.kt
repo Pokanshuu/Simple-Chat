@@ -59,7 +59,7 @@ class StreamingRequestTest {
     }
 
     @Test
-    fun `ambiguous disconnect cannot replay a large body after writing starts`() {
+    fun `request can replay only before upload starts`() {
         val json = ChatApi.defaultJson()
         for (size in listOf(16, LargeRequestBytes.toInt())) {
             val text = "x".repeat(size)
@@ -68,7 +68,7 @@ class StreamingRequestTest {
             body.contentLength() // Measuring bytes is not an upload.
             assertTrue(body.canReplayOnDisconnect())
             body.writeTo(Buffer())
-            assertEquals(size < LargeRequestBytes, body.canReplayOnDisconnect())
+            assertFalse(body.canReplayOnDisconnect())
         }
     }
 

@@ -684,35 +684,46 @@ class ChatViewModel(
         refreshingModels = true
         modelHint = null
         val source = stored
+        val kind = runCatching { ProviderKind.valueOf(source.providerId) }.getOrDefault(ProviderKind.DEEPSEEK)
         val profile = source.apiProfiles.firstOrNull { it.id == source.activeApiProfileId }
         viewModelScope.launch {
-            val result = chatApi.fetchModelCatalog(
-                baseUrl = source.baseUrl.ifBlank { providerKind.defaultBaseUrl },
-                apiKey = if (providerKind.modelListNeedsAuth) source.apiKey else "",
-                apiStyle = source.resolvedApiStyle,
-            )
-            if (stored.activeApiProfileId != source.activeApiProfileId || stored.baseUrl != source.baseUrl ||
-                stored.providerId != source.providerId || stored.apiKey != source.apiKey || stored.apiStyleId != source.apiStyleId) {
-                refreshingModels = false
-                return@launch
-            }
-            result.onSuccess { catalog ->
-                modelHint = Res.get(R.string.models_fetched, catalog.ids.size)
-            }
-            result.onFailure { error ->
-                modelHint = Res.get(R.string.models_fetch_failed, error.userMessage()) +
-                    if (!stored.hasKey) Res.get(R.string.models_fetch_needs_key) else ""
-            }
-            // 落库：设置页的「模型」选择器读的是这份，重启后也还在
-            result.getOrNull()?.let { catalog ->
-                settingsStore.updateApiProfile(source.activeApiProfileId) { current ->
-                    if (profile != null && current.baseUrl == profile.baseUrl && current.providerId == profile.providerId &&
-                        current.apiKeyEncrypted == profile.apiKeyEncrypted && current.apiStyleId == profile.apiStyleId) {
-                        current.copy(modelIds = catalog.ids, modelContextWindows = catalog.contextWindows, modelMetadata = catalog.metadata)
-                    } else current
+            try {
+                val result = chatApi.fetchModelCatalog(
+                    baseUrl = source.baseUrl.ifBlank { kind.defaultBaseUrl },
+                    apiKey = if (kind.modelListNeedsAuth) source.apiKey else "",
+                    apiStyle = source.resolvedApiStyle,
+                )
+                if (stored.activeApiProfileId != source.activeApiProfileId || stored.baseUrl != source.baseUrl ||
+                    stored.providerId != source.providerId || stored.apiKey != source.apiKey || stored.apiStyleId != source.apiStyleId) {
+                    return@launch
                 }
+                result.onSuccess { catalog ->
+                    modelHint = Res.get(R.string.models_fetched, catalog.ids.size)
+                }
+                result.onFailure { error ->
+                    modelHint = Res.get(R.string.models_fetch_failed, error.userMessage()) +
+                        if (!stored.hasKey) Res.get(R.string.models_fetch_needs_key) else ""
+                }
+                // 落库：设置页的「模型」选择器读的是这份，重启后也还在
+                result.getOrNull()?.let { catalog ->
+                    settingsStore.updateApiProfile(source.activeApiProfileId) { current ->
+                        if (profile != null && current.baseUrl == profile.baseUrl && current.providerId == profile.providerId &&
+                            current.apiKeyEncrypted == profile.apiKeyEncrypted && current.apiStyleId == profile.apiStyleId) {
+                            current.copy(modelIds = catalog.ids, modelContextWindows = catalog.contextWindows, modelMetadata = catalog.metadata)
+                        } else current
+                    }
+                }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (stored.activeApiProfileId == source.activeApiProfileId && stored.baseUrl == source.baseUrl &&
+                    stored.providerId == source.providerId && stored.apiKey == source.apiKey && stored.apiStyleId == source.apiStyleId) {
+                    modelHint = Res.get(R.string.models_fetch_failed, error.userMessage()) +
+                        if (!stored.hasKey) Res.get(R.string.models_fetch_needs_key) else ""
+                }
+            } finally {
+                refreshingModels = false
             }
-            refreshingModels = false
         }
     }
 
@@ -1227,18 +1238,31 @@ class ChatViewModel(
         if (index < 0) return
         if (compacting) cancelCompaction()
 
+        val generation = switchGeneration
         viewModelScope.launch {
-            // 挂在**被重新生成那条的父亲**下 → 成为它的兄弟，旧回答留着
-            val fresh = repository.addActiveVariant(
-                conversationId = conversationId,
-                parentId = target.parentId,
-                role = MessageRole.ASSISTANT,
-                content = "",
-                reasoning = "",
-                status = MessageStatus.STREAMING,
-            )
-            reloadPath(conversationId)
-            startStream(conversationId, fresh.id)
+            if (!sendMutex.tryLock()) return@launch
+            try {
+                if (generation != switchGeneration || conversationId != currentConversationId || isStreaming || switching ||
+                    messages.none { it.id == target.id }
+                ) return@launch
+                // 挂在**被重新生成那条的父亲**下 → 成为它的兄弟，旧回答留着
+                val fresh = repository.addActiveVariant(
+                    conversationId = conversationId,
+                    parentId = target.parentId,
+                    role = MessageRole.ASSISTANT,
+                    content = "",
+                    reasoning = "",
+                    status = MessageStatus.STREAMING,
+                )
+                reloadPath(conversationId)
+                startStream(conversationId, fresh.id)
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                banner = Res.get(R.string.error_send_failed, error.userMessage())
+            } finally {
+                sendMutex.unlock()
+            }
         }
     }
 
@@ -1261,17 +1285,32 @@ class ChatViewModel(
         if (!canContinueReply(target, isLastOnPath = index == messages.lastIndex)) return
         if (compacting) cancelCompaction()
 
+        val generation = switchGeneration
         viewModelScope.launch {
-            switchJob?.join()
-            repository.resumeStreaming(target.id)
-            patch(target.id) {
-                it.copy(
-                    status = MessageStatus.STREAMING,
-                    errorMessage = null,
-                    stopReason = null,
-                )
+            if (!sendMutex.tryLock()) return@launch
+            try {
+                switchJob?.join()
+                val currentIndex = messages.indexOfFirst { it.id == target.id }
+                val current = messages.getOrNull(currentIndex)
+                if (generation != switchGeneration || conversationId != currentConversationId || isStreaming || switching ||
+                    current == null || !canContinueReply(current, isLastOnPath = currentIndex == messages.lastIndex)
+                ) return@launch
+                repository.resumeStreaming(target.id)
+                patch(target.id) {
+                    it.copy(
+                        status = MessageStatus.STREAMING,
+                        errorMessage = null,
+                        stopReason = null,
+                    )
+                }
+                startStream(conversationId, target.id, prefix = current)
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                banner = Res.get(R.string.error_send_failed, error.userMessage())
+            } finally {
+                sendMutex.unlock()
             }
-            startStream(conversationId, target.id, prefix = target)
         }
     }
 
@@ -1312,6 +1351,13 @@ class ChatViewModel(
                  * 会出现"保存了却没变"（OpenAI 通道生效、Anthropic 通道不生效）。
                  * 思考 / 搜索 / 读链接块保持原序，它们描述的是这段答案的来历。
                  */
+                if (compactionInvalidatedByEdit(messages.toList(), compaction, target.id)) {
+                    val stale = compaction
+                    if (stale != null) repository.deleteCompaction(stale.id)
+                    compaction = null
+                    runCatching { repository.deleteCompactionCheckpoint(conversationId) }
+                        .onFailure { android.util.Log.w("SimpleChat/Compaction", "Stale checkpoint could not be deleted") }
+                }
                 repository.editMessageInPlace(
                     id = target.id,
                     content = text,

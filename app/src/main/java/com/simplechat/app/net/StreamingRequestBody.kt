@@ -27,8 +27,8 @@ internal open class StreamingRequestBody<T>(
 
     @Volatile private var writeStarted = false
 
-    // A reset after upload starts can leave the server processing the original conversation.
-    internal fun canReplayOnDisconnect(): Boolean = !writeStarted || contentLength() < LargeRequestBytes
+    // Once upload starts, the server may have accepted the request even if no response arrived.
+    internal fun canReplayOnDisconnect(): Boolean = !writeStarted
 
     override fun contentType() = "application/json; charset=utf-8".toMediaType()
     override fun contentLength(): Long = byteCount
