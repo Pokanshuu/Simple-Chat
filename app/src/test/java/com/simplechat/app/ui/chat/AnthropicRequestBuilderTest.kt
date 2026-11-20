@@ -72,6 +72,41 @@ class AnthropicRequestBuilderTest {
     // ── 系统提示词与工具 ──────────────────────────────────
 
     @Test
+    fun `recovery retry keeps text history but omits attachments and server tools`() {
+        val history = listOf(
+            user("Earlier question", listOf(Attachment(Attachment.Kind.TEXT, "notes.txt", "text/plain", "", fileId = "file-api-1"))),
+            assistant("Earlier answer", timeline = listOf(
+                ReplyBlock.ToolUse("tool-1", "deepseek_read_url", "read_link", "read_link", url = "https://example.org"),
+                ReplyBlock.FetchResult("tool-1", "read_link", "https://example.org", signature = "signed-payload"),
+            )),
+            user("Please continue"),
+        )
+
+        val request = buildAnthropicRequest(
+            model = "deepseek-flash",
+            systemPrompt = "",
+            path = history,
+            searchEnabled = true,
+            thinkingEnabled = true,
+            requestTitle = true,
+            latestReminder = null,
+            allowServerTools = false,
+            includeAttachments = false,
+        )
+        val encoded = ChatApi.defaultJson().encodeToString(
+            com.simplechat.app.net.anthropic.AnthropicRequest.serializer(), request,
+        )
+
+        assertTrue(encoded.contains("Earlier question"))
+        assertTrue(encoded.contains("Earlier answer"))
+        assertTrue(encoded.contains("Please continue"))
+        assertTrue(request.tools.isEmpty())
+        assertNull(request.title)
+        assertTrue(!encoded.contains("file-api-1"))
+        assertTrue(!encoded.contains("signed-payload"))
+    }
+
+    @Test
     fun `系统提示词为空时用身份说明兜底`() {
         val request = build(listOf(user("你好")))
         assertEquals(DefaultSystemPrompt, request.system)

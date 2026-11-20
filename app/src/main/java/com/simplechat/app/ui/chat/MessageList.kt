@@ -147,6 +147,7 @@ fun MessageList(
     onOpenImage: (UiMessage, Attachment) -> Unit = { _, _ -> },
     onRetry: (UiMessage) -> Unit = {},
     onChooseModel: (() -> Unit)? = null,
+    onRetryWithoutAttachmentsAndTools: ((UiMessage) -> Unit)? = null,
     /**
      * 用户展开 / 收起某个折叠块（思考面板、超长用户气泡）时调用。
      *
@@ -317,6 +318,7 @@ fun MessageList(
                 onOpenImage = { onOpenImage(message, it) },
                 onRetry = { onRetry(message) },
                 onChooseModel = onChooseModel,
+                onRetryWithoutAttachmentsAndTools = onRetryWithoutAttachmentsAndTools?.let { retry -> { retry(message) } },
             )
             }
             if (shareSelection?.active == true && sharedGroup != null) {
@@ -365,6 +367,7 @@ private fun MessageRow(
     onOpenImage: (Attachment) -> Unit,
     onRetry: () -> Unit,
     onChooseModel: (() -> Unit)?,
+    onRetryWithoutAttachmentsAndTools: (() -> Unit)?,
     onFoldToggle: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -529,6 +532,7 @@ private fun MessageRow(
                 onOpenImage = onOpenImage,
                 onRetry = onRetry,
                 onChooseModel = onChooseModel,
+                onRetryWithoutAttachmentsAndTools = onRetryWithoutAttachmentsAndTools,
                 menu = menu,
                 pressListener = pressListener,
                 // 与用户气泡同一条补偿：展开思考内容时"上方固定、向下展开"
@@ -858,6 +862,7 @@ fun AssistantBlock(
     onOpenImage: (Attachment) -> Unit = {},
     onRetry: () -> Unit = {},
     onChooseModel: (() -> Unit)? = null,
+    onRetryWithoutAttachmentsAndTools: (() -> Unit)? = null,
     menu: @Composable () -> Unit = {},
     pressListener: Modifier = Modifier,
     /**
@@ -1034,15 +1039,21 @@ fun AssistantBlock(
         }
 
         message.errorMessage?.let { error ->
+            val contentRisk = com.simplechat.app.net.providerHintRes(error) == R.string.error_provider_content_risk
             Spacer(Modifier.size(8.dp))
             Text(text = error, style = MaterialTheme.typography.labelMedium, color = LocalChatColors.current.danger)
             Spacer(Modifier.size(6.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (onChooseModel != null) {
+                if (contentRisk && onRetryWithoutAttachmentsAndTools != null) {
+                    CapsuleButton(
+                        text = stringResource(R.string.error_retry_without_attachments_tools),
+                        onClick = onRetryWithoutAttachmentsAndTools,
+                    )
+                } else if (!contentRisk && onChooseModel != null) {
                     CapsuleButton(text = stringResource(R.string.error_choose_model), onClick = onChooseModel)
                     Spacer(Modifier.size(8.dp))
                 }
-                CapsuleButton(
+                if (!contentRisk) CapsuleButton(
                     text = stringResource(R.string.action_retry),
                     onClick = onRetry,
                     leadingIcon = AppIcons.Refresh,

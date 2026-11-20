@@ -30,6 +30,7 @@
     <!-- 上下文超限（context length / maximum context / context window） -->
     <string name="error_provider_empty_messages">服务商未识别到对话消息。若重试仍失败，可在 API 设置中切换兼容端口后重试</string>
     <string name="error_provider_context_length">本轮内容超出模型上下文上限，请压缩上下文或减少附件</string>
+    <string name="error_provider_content_risk">服务商审核了本次输入，未指出具体内容。可保留文字对话，跳过本轮及历史附件和工具后重试。若仍被拒绝，可凭请求编号联系服务商。</string>
 
     <!-- 诊断信息：原文放在全角括号里，跟在提示句后面；%1$s 由代码截断到 300 字符 -->
     <string name="error_provider_raw">（服务端原文：%1$s）</string>
@@ -42,6 +43,9 @@
     <string name="error_parameter_detail">服务商拒绝了请求（HTTP %1$d）。%2$s</string>
     <string name="pro_top_p_hint">Pro 的思考模式由服务端固定采样范围</string>
     <string name="error_choose_model">选择模型</string>
+    <string name="error_retry_without_attachments_tools">跳过附件和工具重试</string>
     <string name="error_large_send_before_reply">长请求在收到服务端响应头前断开，无法确认服务端是否已处理。可以手动重试；若同一会话反复中断，点输入栏的上下文圆环压缩后再试。</string>
     <string name="error_large_stream_before_reply">服务端已响应，但在返回回复内容前连接中断。可以手动重试；若长会话反复中断，点输入栏的上下文圆环压缩后再试。</string>
+    <string name="retry_skipped_notice">本次只发送文字上下文，已跳过附件和工具。原记录已保留。</string>
+    <string name="retry_needs_question">这条提问只有附件。请点提问气泡，补充文字后发送。</string>
 </resources>

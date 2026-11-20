@@ -1212,6 +1212,10 @@ fun ChatScreen(
                                 viewingImage = message.attachments.filter { it.isImage } to attachment
                             },
                             onChooseModel = { openPanel(InputPanelState.THINKING) },
+                            onRetryWithoutAttachmentsAndTools = { message ->
+                                resumeFollowing()
+                                vm.retryMessage(message, omitAttachmentsAndTools = true)
+                            },
                             onRetry = { message ->
                                 // 同「重新生成」：换成一条空的流式回复 → 不锚，跟到底部看它写
                                 resumeFollowing()
@@ -1349,6 +1353,9 @@ fun ChatScreen(
                     .navigationBarsPadding()
                     .imePadding(),
             ) {
+                vm.retrySkipNotice?.let { notice ->
+                    BannerBar(notice, vm::dismissRetrySkipNotice, vm::muteRetrySkipNotice)
+                }
                 vm.imageSkipNotice?.let { message ->
                     BannerBar(message = message, onDismiss = vm::dismissImageSkipNotice,
                         onNeverRemind = vm::neverRemindImageSkip)

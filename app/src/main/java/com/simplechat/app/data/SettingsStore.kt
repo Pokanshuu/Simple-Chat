@@ -85,6 +85,7 @@ data class StoredSettings(
     val filesApi: ServiceApiConfig = ServiceApiConfig(),
     val autoReadAloud: Boolean = false,
     val showImageSkipNotice: Boolean = true,
+    val showRetrySkipNotice: Boolean = true,
     /** Include messages from inactive conversation branches in global search. */
     val searchInactiveBranches: Boolean = true,
     val reasoningLevelId: String = "OFF",
@@ -204,6 +205,7 @@ class SettingsStore(
             searchApi = readService(prefs, Keys.SEARCH_API),
             filesApi = readService(prefs, Keys.FILES_API),
             autoReadAloud = prefs[Keys.AUTO_READ_ALOUD] ?: false,
+            showRetrySkipNotice = prefs[Keys.RETRY_SKIP_NOTICE] ?: true,
             showImageSkipNotice = prefs[Keys.IMAGE_SKIP_NOTICE] ?: true,
             searchInactiveBranches = prefs[Keys.SEARCH_INACTIVE_BRANCHES]
                 ?: StoredSettings().searchInactiveBranches,
@@ -454,6 +456,10 @@ class SettingsStore(
         it != Keys.PROFILES && it != Keys.ACTIVE_PROFILE && it != Keys.ONBOARDING_COMPLETE
     }
 
+    suspend fun muteRetrySkipNotice() {
+        preferences.edit { it[Keys.RETRY_SKIP_NOTICE] = false }
+    }
+
     suspend fun setShowImageSkipNotice(enabled: Boolean) {
         preferences.edit { it[Keys.IMAGE_SKIP_NOTICE] = enabled }
     }
@@ -635,6 +641,7 @@ class SettingsStore(
         val SEARCH_API = stringPreferencesKey("search_api_config")
         val FILES_API = stringPreferencesKey("files_api_config")
         val ACTIVE_PROFILE = stringPreferencesKey("active_api_profile")
+        val RETRY_SKIP_NOTICE = booleanPreferencesKey("show_retry_skip_notice")
         val IMAGE_SKIP_NOTICE = booleanPreferencesKey("show_image_skip_notice")
         val LOADING_WORDS = stringPreferencesKey("loading_words")
         val LOADING_WORDS_USE_THEME_COLOR = booleanPreferencesKey("loading_words_use_theme_color")

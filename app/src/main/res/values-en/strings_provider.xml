@@ -26,6 +26,7 @@
     <!-- Context window exceeded -->
     <string name="error_provider_empty_messages">The provider did not recognize any conversation messages. If retrying fails, try the other compatible API in API settings</string>
     <string name="error_provider_context_length">This turn exceeds the model context limit. Compact the context or remove attachments</string>
+    <string name="error_provider_content_risk">The provider rejected the input during content review. You can retry with the text history, skipping attachments and tools. If review still rejects the request, contact support with the request ID.</string>
 
     <!-- Diagnostic detail kept for troubleshooting; %1$s is truncated to 300 characters in code -->
     <string name="error_provider_raw">" (server said: %1$s)"</string>
@@ -38,6 +39,9 @@
     <string name="error_parameter_detail">The provider rejected the request (HTTP %1$d). %2$s</string>
     <string name="pro_top_p_hint">Pro uses fixed sampling in thinking mode</string>
     <string name="error_choose_model">Choose model</string>
+    <string name="error_retry_without_attachments_tools">Retry without attachments or tools</string>
     <string name="error_large_send_before_reply">The connection closed before response headers arrived. The server may have received the request. Retry manually. If this keeps happening, tap the context ring to compact the conversation first.</string>
     <string name="error_large_stream_before_reply">The server responded, but the stream closed before a reply arrived. Retry manually. If this keeps happening, tap the context ring to compact the conversation first.</string>
+    <string name="retry_skipped_notice">This request uses text context only. Your original attachments and chat history are saved.</string>
+    <string name="retry_needs_question">This prompt has no text to send. Tap the prompt and add a question.</string>
 </resources>

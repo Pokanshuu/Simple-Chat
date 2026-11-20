@@ -97,6 +97,13 @@ class NetworkErrorsTest {
             providerHintRes("messages: at least one message is required (request_id: example)"))
     }
 
+    @Test fun `content risk errors are distinguished from model and endpoint errors`() {
+        assertEquals(R.string.error_provider_content_risk,
+            providerHintRes("Content Exists Risk (request_id: example-123)"))
+        assertEquals(R.string.error_provider_content_risk, providerHintRes("content moderation rejected"))
+        assertNull(providerHintRes("HTTP 400: invalid request parameter"))
+    }
+
     // ── providerHintRes：服务商自报原因 → 人话 ──────────────────────────
 
     @Test

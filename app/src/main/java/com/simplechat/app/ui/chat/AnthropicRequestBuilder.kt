@@ -62,18 +62,20 @@ internal fun buildAnthropicRequest(
      * 由装配层按「服务商 + Base URL」判定（见 `isOfficialDeepSeekEndpoint`）。
      */
     deepSeekExtensions: Boolean = true,
+    allowServerTools: Boolean = true,
+    includeAttachments: Boolean = true,
     /** 采样参数。原版 Anthropic 在开启思考时不允许设置温度，装配层会置空。 */
     temperature: Double? = null,
     topP: Double? = null,
     reasoningEffort: String? = null,
     outputLimit: Int? = null,
 ): AnthropicRequest {
-    val flashExtensions = deepSeekExtensions && model == DEEPSEEK_FLASH
+    val flashExtensions = deepSeekExtensions && allowServerTools && model == DEEPSEEK_FLASH
     val messages = mutableListOf<AnthropicMessageParam>()
 
     path.forEach { message ->
         if (message.role == MessageRole.USER) {
-            messages += userParam(message)
+            messages += userParam(message, includeAttachments)
         } else {
             val content = assistantContent(
                 message,
@@ -234,7 +236,13 @@ private fun titleFitsInline(system: String, messages: List<AnthropicMessageParam
  * 图片走 `source.type = base64`（不是 OpenAI 的 `image_url` + data URL）：
  * 这是 Anthropic 协议的写法，也是本项目不引入 Files API 上传链路时唯一的选择。
  */
-private fun userParam(message: UiMessage): AnthropicMessageParam {
+private fun userParam(message: UiMessage, includeAttachments: Boolean = true): AnthropicMessageParam {
+    if (!includeAttachments) {
+        return AnthropicMessageParam(
+            role = AnthropicMessageParam.RoleUser,
+            content = JsonPrimitive(message.content),
+        )
+    }
     val text = bodyText(message)
     /*
      * 只发**有内容**的图片。

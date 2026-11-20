@@ -85,6 +85,7 @@ internal fun providerHintRes(serverMessage: String?): Int? {
     val text = serverMessage?.trim()?.lowercase()
     if (text.isNullOrEmpty()) return null
     return when {
+        text.containsAny(CONTENT_RISK_KEYWORDS) -> R.string.error_provider_content_risk
         "deepseek-v4-pro" in text && "unavailable" in text &&
             text.containsAny(listOf("deepseek_web_search", "deepseek_read_url", "title generation")) -> R.string.error_deepseek_flash_feature
         text.contains("file") && text.containsAny(listOf("not found", "expired", "does not exist")) -> R.string.service_file_expired
@@ -103,6 +104,12 @@ internal fun providerHintRes(serverMessage: String?): Int? {
         else -> null
     }
 }
+
+private val CONTENT_RISK_KEYWORDS = listOf(
+    "content exists risk",
+    "content risk detected",
+    "content moderation rejected",
+)
 
 internal fun isEmptyMessagesRejection(message: String?): Boolean =
     message?.lowercase()?.contains("messages: at least one message is required") == true
