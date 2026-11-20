@@ -191,7 +191,7 @@ app/src/main/java/com/simplechat/app/
 
 ## 文档
 
-设计文档、实现记录与变更记录见 [`docs/README.md`](docs/README.md)，代码注释中的 `§` 编号对应这些文档。历史记录保留各版本的验证范围。当前预发布版为 v1.2.3（构建号 43），稳定版为 v1.2.2。见 [v1.2.3 预发布说明](RELEASE_NOTES_v1.2.3.md)。
+设计文档、实现记录与变更记录见 [`docs/README.md`](docs/README.md)，代码注释中的 `§` 编号对应这些文档。历史记录保留各版本的验证范围。当前稳定版为 v1.2.3（构建号 43）。见 [v1.2.3 发布说明](RELEASE_NOTES_v1.2.3.md)。
 
 相关入口：
 
