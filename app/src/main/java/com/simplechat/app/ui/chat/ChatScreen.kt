@@ -259,8 +259,8 @@ fun ChatScreen(
     val composerKey = vm.currentConversationId.orEmpty()
     var composerExpanded by remember(composerKey) { mutableStateOf(false) }
     val pendingByConversation = remember { mutableStateMapOf<String, List<Attachment>>() }
-    val editingByConversation = remember { mutableStateMapOf<String, UiMessage?>() }
-    val draftBeforeEditByConversation = remember { mutableStateMapOf<String, String>() }
+    data class ComposerEditDraft(val target: UiMessage, val text: String, val previousDraft: String)
+    val editingByConversation = remember { mutableStateMapOf<String, ComposerEditDraft>() }
     var composerOwner by remember { mutableStateOf<String?>(null) }
 
     /*
@@ -277,16 +277,22 @@ fun ChatScreen(
         voiceTapMode = false
         // ① 把上一份存回它自己的会话
         composerOwner?.let { previous ->
-            vm.saveDraft(previous, draftToPersist())
+            val draft = draftToPersist()
             pendingByConversation[previous] = pending
-            editingByConversation[previous] = editingMessage
-            draftBeforeEditByConversation[previous] = inputBeforeEdit
+            val target = editingMessage
+            if (target != null) {
+                editingByConversation[previous] = ComposerEditDraft(target, input, inputBeforeEdit)
+            } else {
+                editingByConversation.remove(previous)
+            }
+            vm.saveDraft(previous, draft)
         }
-        // ② 取来这一份：草稿走库（进程被杀也还在），其余是瞬时状态、留在内存
-        replaceInput(vm.loadDraft(composerKey).orEmpty())
+        // ② 普通草稿走库，修改中的文字和它的目标一起留在内存。
+        val edit = editingByConversation[composerKey]
+        replaceInput(edit?.text ?: vm.loadDraft(composerKey).orEmpty())
         pending = pendingByConversation[composerKey].orEmpty()
-        editingMessage = editingByConversation[composerKey]
-        inputBeforeEdit = draftBeforeEditByConversation[composerKey].orEmpty()
+        editingMessage = edit?.target
+        inputBeforeEdit = edit?.previousDraft.orEmpty()
         composerOwner = composerKey
 
         // ③ 这些是"指向某条消息"的瞬时状态 —— 跨会话留着是危险的，一律清掉
@@ -1207,15 +1213,18 @@ fun ChatScreen(
                                 if (ReadAloudEnabled) speaker.toggle(message.id, message.content)
                             },
                             onEdit = { message ->
-                                if (message.role == MessageRole.USER) {
-                                    if (editingMessage == null) inputBeforeEdit = input
-                                    editingMessage = message
-                                    replaceInput(message.content)
-                                    // 附件跟着进输入栏 —— 改错别字不该顺手把图丢了
-                                    pending = message.attachments
-                                    panel = InputPanelState.NONE
-                                } else {
-                                    aiEditTarget = message
+                                if (composerOwner == vm.currentConversationId.orEmpty()) {
+                                    if (message.role == MessageRole.ASSISTANT) {
+                                        aiEditTarget = message
+                                    } else if (editingMessage?.id != message.id) {
+                                        // 再次点中正在编辑的气泡时，保留输入栏里的修改稿。
+                                        if (editingMessage == null) inputBeforeEdit = input
+                                        editingMessage = message
+                                        replaceInput(message.content)
+                                        // 附件跟着进输入栏 —— 改错别字不该顺手把图丢了
+                                        pending = message.attachments
+                                        panel = InputPanelState.NONE
+                                    }
                                 }
                             },
                             onDelete = { message -> deleteTarget = message },
@@ -1408,18 +1417,24 @@ fun ChatScreen(
                 )
 
                 fun submitComposer() {
+                    val draftKey = composerOwner ?: return
+                    if (draftKey != vm.currentConversationId.orEmpty()) return
                     val target = editingMessage
                     val attached = pending
-                    val submitted = input
-                    val draftKey = composerOwner
+                    val submitted = inputState.text.toString()
                     val clearPersistedInput = {
                         // Clear only the submitted draft, after the message transaction committed.
-                        if (composerOwner == draftKey && input == submitted && pending == attached) {
-                            replaceInput("")
+                        if (composerOwner == draftKey && editingMessage?.id == target?.id &&
+                            inputState.text.toString() == submitted && pending == attached
+                        ) {
                             composerExpanded = false
-                            pending = emptyList()
-                            editingMessage = null
-                            draftScope.launch { draftKey?.let { vm.clearDraft(it) } }
+                            if (target != null) {
+                                cancelEdit()
+                            } else {
+                                replaceInput("")
+                                pending = emptyList()
+                                draftScope.launch { vm.clearDraft(draftKey) }
+                            }
                             dismissInput()
                         }
                     }
