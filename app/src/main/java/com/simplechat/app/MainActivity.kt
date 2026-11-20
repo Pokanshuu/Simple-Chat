@@ -37,6 +37,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // 诊断日志的第一条：从进程启动起算，排查时能看出"这一场"是什么时候开始的
+        com.simplechat.app.data.Diagnostics.log(
+            "APP",
+            "onCreate ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) " +
+                "android=${android.os.Build.VERSION.SDK_INT} device=${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
+        )
+
         val settingsStore = (application as App).container.settingsStore
         val systemFontScale = resources.configuration.fontScale.coerceAtLeast(0.01f)
 

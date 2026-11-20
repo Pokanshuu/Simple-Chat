@@ -158,6 +158,8 @@ data class MessageEntity(
     val tps: Float? = null,
     @ColumnInfo(name = "tokens_in") val tokensIn: Int? = null,
     @ColumnInfo(name = "tokens_out") val tokensOut: Int? = null,
+    /** 输入里命中 prompt 缓存的部分（DeepSeek `prompt_cache_hit_tokens`）；服务端没报就是 null。 */
+    @ColumnInfo(name = "tokens_cache_hit") val cacheHitTokens: Int? = null,
     /**
      * 内容块时间线（JSON 数组，见 [com.simplechat.app.net.ReplyBlock]）。
      *

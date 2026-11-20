@@ -57,6 +57,7 @@ import com.simplechat.app.ui.common.AppIcons
 import com.simplechat.app.ui.common.AppMenu
 import com.simplechat.app.ui.common.AppMenuItem
 import com.simplechat.app.ui.common.AppShadow
+import com.simplechat.app.data.Pricing
 import com.simplechat.app.ui.common.AppSlider
 import com.simplechat.app.ui.common.AppSwitch
 import com.simplechat.app.ui.common.CapsuleButton
@@ -466,6 +467,43 @@ fun ContextPanelContent(
                     TokenEstimate.format(usage.promptTokens),
                     (ratio * 100).roundToInt(),
                 ),
+            )
+        }
+
+        /*
+         * 本会话消耗：服务端回报的 usage 逐轮累加。
+         *
+         * 口径与上面「最近一次」不同：这里每轮请求的 prompt 都计入（那才是真实计费，
+         * 上下文每轮都要重发）。老数据没有 usage，则整块不出现，不显示一堆 0。
+         */
+        if (stats.usageReplies > 0) {
+            StatRow(
+                label = stringResource(R.string.stats_usage_requests),
+                value = stringResource(R.string.stats_usage_requests_value, stats.usageReplies),
+            )
+            StatRow(
+                label = stringResource(R.string.stats_usage_input),
+                value = "${TokenEstimate.format(stats.usagePromptTokens)} tokens",
+            )
+            StatRow(
+                label = stringResource(R.string.stats_usage_output),
+                value = "${TokenEstimate.format(stats.usageCompletionTokens)} tokens",
+            )
+            if (stats.usageCacheHitTokens > 0) {
+                StatRow(
+                    label = stringResource(R.string.stats_usage_cache_hit),
+                    value = "${TokenEstimate.format(stats.usageCacheHitTokens)} tokens",
+                )
+            }
+            StatRow(
+                label = stringResource(R.string.stats_usage_cost),
+                value = Pricing.format(stats.usageCost),
+            )
+            Spacer(Modifier.size(4.dp))
+            Text(
+                text = stringResource(R.string.stats_usage_note),
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.placeholder,
             )
         }
 

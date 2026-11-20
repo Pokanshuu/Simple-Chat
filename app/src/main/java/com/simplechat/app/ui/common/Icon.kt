@@ -415,6 +415,26 @@ object AppIcons {
         }
     }
 
+    /** 余额（Lucide: credit-card） */
+    val Wallet: ImageVector by lazy {
+        vector("Wallet") {
+            stroke {
+                moveTo(6f, 5f)
+                horizontalLineTo(18f)
+                arcToRelative(4f, 4f, 0f, false, true, 4f, 4f)
+                verticalLineTo(15f)
+                arcToRelative(4f, 4f, 0f, false, true, -4f, 4f)
+                horizontalLineTo(6f)
+                arcToRelative(4f, 4f, 0f, false, true, -4f, -4f)
+                verticalLineTo(9f)
+                arcToRelative(4f, 4f, 0f, false, true, 4f, -4f)
+                close()
+                moveTo(2f, 10f)
+                horizontalLineTo(22f)
+            }
+        }
+    }
+
     /** 编辑（Lucide: pencil） */
     val Edit: ImageVector by lazy {
         vector("Edit") {
