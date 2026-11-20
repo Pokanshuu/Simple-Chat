@@ -119,4 +119,17 @@ class MessageShareTest {
         assertEquals(source, chunks.joinToString(""))
         assertTrue(chunks.all { it.length <= 100 && !it.last().isHighSurrogate() && !it.first().isLowSurrogate() })
     }
+
+    @Test fun selectedExcerptsKeepInlineAndDisplayMathRenderable() {
+        val source = "Area \$x^2\$ and fraction \$\\frac{a}{b}\$.\n\nGaussian integral:\n\n\$\$\n\\int_{-\\infty}^{\\infty} e^{-x^2}\\,dx = \\sqrt{\\pi}\n\$\$"
+        assertTrue(shareSectionUsesMarkdown(user = false, excerpt = true, reasoning = false))
+        val blocks = shareRenderBlocks(source, shareSectionUsesMarkdown(user = false, excerpt = true, reasoning = false))
+        assertEquals("\\int_{-\\infty}^{\\infty} e^{-x^2}\\,dx = \\sqrt{\\pi}", blocks.filterIsInstance<ShareRenderBlock.Formula>().single().tex)
+        val inline = blocks.filterIsInstance<ShareRenderBlock.Text>().first()
+        assertTrue(inline.markdown)
+        assertEquals(listOf("x^2", "\\frac{a}{b}"),
+            com.simplechat.app.ui.markdown.inlineMathDocument(inline.source).formulas.values.map { it.tex })
+        assertFalse(shareSectionUsesMarkdown(user = true, excerpt = false, reasoning = false))
+        assertFalse(shareSectionUsesMarkdown(user = false, excerpt = true, reasoning = true))
+    }
 }

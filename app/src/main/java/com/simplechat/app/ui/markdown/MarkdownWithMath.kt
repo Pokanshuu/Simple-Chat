@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.*
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -16,14 +17,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import com.simplechat.app.R
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.platform.LocalDensity
 import com.hrm.latex.renderer.measure.rememberLatexMeasurer
-import com.hrm.latex.renderer.Latex
 import com.hrm.latex.renderer.model.LatexConfig
 import com.hrm.latex.renderer.model.LatexTheme
 import com.simplechat.app.ui.theme.LocalIsDarkTheme
@@ -48,7 +47,7 @@ fun MarkdownWithMath(
     streaming: Boolean = false,
 ) {
     // 一个回复共用同一条显示进度。公式闭合或插入新段落时继续沿用这条进度。
-    val revealed = rememberSmoothReveal(streaming = streaming, value = content)
+    val revealed = rememberSmoothReveal(streaming = streaming, value = content, markdownLinks = true)
     val segments = remember(revealed) { displayMathSegments(revealed) }
     if (segments.none { it is ContentSegment.Formula }) {
         MarkdownText(
@@ -59,7 +58,7 @@ fun MarkdownWithMath(
         return
     }
 
-    val fontSize = LatexFontSize
+    val fontSize = MaterialTheme.typography.bodyLarge.fontSize
     /*
      * 公式主题：**透明底 + 正文色**。
      *
@@ -93,50 +92,36 @@ fun MarkdownWithMath(
 @Composable
 private fun CompatibleFormula(segment: ContentSegment.Formula, config: LatexConfig) {
     if (LocalMarkdownExport.current != null) {
-        ExportFormula(segment.tex, config.fontSize)
+        ExportFormula(segment.tex, segment.source, config.fontSize)
         return
     }
     val prepared by produceState<LatexPresentation?>(null, segment.tex) {
         value = withContext(Dispatchers.Default) { prepareLatexPresentation(segment.tex) }
     }
-    var sourceVisible by remember(segment.tex) { mutableStateOf(false) }
     val presentation = prepared
-    Column(Modifier.fillMaxWidth().padding(vertical = if (segment.display) 4.dp else 0.dp)) {
-        if (presentation?.simplified == true) DisableSelection {
+    var sourceVisible by remember(segment.source) { mutableStateOf(false) }
+    val dark = LocalIsDarkTheme.current
+    val color = MaterialTheme.colorScheme.onBackground
+    val density = LocalDensity.current
+    val measurer = rememberLatexMeasurer(config)
+    val inline = remember(measurer, presentation, config, dark, color, density) {
+        presentation?.let { measurer.inlinePresentation(it, config, dark, color, density) }
+    }
+    val style = MaterialTheme.typography.bodyLarge
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        if (presentation?.simplified == true && inline != null) DisableSelection {
             TextButton(onClick = { sourceVisible = !sourceVisible }) {
                 Text(stringResource(if (sourceVisible) R.string.latex_show_rendered else R.string.latex_compatible_source))
             }
         }
-        if (presentation?.nativeTex != null && !sourceVisible) {
-            // Horizontal scrolling keeps wide formulas accessible instead of clipping content.
-            Latex(latex = presentation.nativeTex, config = config,
-                modifier = Modifier.horizontalScroll(rememberScrollState()))
-        } else if (presentation != null && presentation.ovalParts.isNotEmpty() && !sourceVisible) {
-            val dark = LocalIsDarkTheme.current
-            val color = MaterialTheme.colorScheme.onBackground
-            val density = LocalDensity.current
-            val measurer = rememberLatexMeasurer(config)
-            val inline = remember(measurer, presentation, config, dark, color, density) {
-                measurer.inlinePresentation(presentation, config, dark, color, density)
-            }
-            if (inline != null) FormulaInlineText(inline, segment.tex, MaterialTheme.typography.bodyLarge,
-                Modifier.horizontalScroll(rememberScrollState()))
-            else Text(segment.tex, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace))
+        if (inline != null && !sourceVisible) {
+            FormulaInlineText(inline, segment.source, style, Modifier.horizontalScroll(rememberScrollState()))
         } else {
-            if (presentation != null && !presentation.canRender) {
-                DisableSelection {
-                    Text(stringResource(R.string.latex_source_fallback), style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+            if (presentation != null && inline == null) DisableSelection {
+                Text(stringResource(R.string.latex_source_fallback), style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            // Join the message's selection registrar, so ranges can cross formula source.
-            Text(segment.tex, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace))
+            Text(segment.source, style = style.copy(fontFamily = FontFamily.Monospace))
         }
     }
 }
-
-/**
- * 公式字号。与正文同档（17sp 左右），不随系统字号线性放大 ——
- * 公式排版对字号敏感，过大会撑破行宽，过小则看不清上下标。
- */
-private val LatexFontSize = 17.sp

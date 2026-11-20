@@ -4,6 +4,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.text.selection.SelectionState
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -72,3 +73,5 @@ internal fun Modifier.dismissMessageSelectionOnTap(selection: MessageTextSelecti
             }
         }
     }
+
+internal val LocalShareExcerpt = staticCompositionLocalOf<((String) -> Unit)?> { null }

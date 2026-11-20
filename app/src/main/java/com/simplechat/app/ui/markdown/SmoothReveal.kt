@@ -41,12 +41,17 @@ private fun String.completePrefix(): String = if (lastOrNull()?.isHighSurrogate(
 
 /** Start with the existing snapshot (including on list re-entry). Animate subsequent appends only. */
 @Composable
-internal fun rememberSmoothReveal(streaming: Boolean, value: String): String {
+internal fun rememberSmoothReveal(streaming: Boolean, value: String, markdownLinks: Boolean = false): String {
     if (!streaming) return value
-    if (rememberCoroutineScope().coroutineContext[MotionDurationScale]?.scaleFactor == 0f) return value.completePrefix()
+    val links = remember(value, markdownLinks) {
+        if (markdownLinks) streamingLinkBoundaries(value) else null
+    }
+    val visible = if (links == null) value else value.substring(0, links.visibleEnd)
+    if (rememberCoroutineScope().coroutineContext[MotionDurationScale]?.scaleFactor == 0f) return visible.completePrefix()
 
-    var shown by remember { mutableStateOf(value.completePrefix()) }
-    val latest by rememberUpdatedState(value)
+    var shown by remember { mutableStateOf(visible.completePrefix()) }
+    val latest by rememberUpdatedState(visible)
+    val latestLinks by rememberUpdatedState(links)
     LaunchedEffect(Unit) {
         // New targets never cancel a reveal in progress. Once caught up (or waiting on a split
         // surrogate), sleep until the next actual source change, without polling or requesting frames.
@@ -60,7 +65,8 @@ internal fun rememberSmoothReveal(streaming: Boolean, value: String): String {
                 val current = shown
                 val next = if (target.startsWith(current)) {
                     val advance = budget.advance(target.length - current.length, elapsedNs)
-                    val end = nextRevealEnd(target, current.length, advance)
+                    val boundary = nextRevealEnd(target, current.length, advance)
+                    val end = latestLinks?.completeThrough(boundary) ?: boundary
                     if (advance > 0 && end == current.length) break // Waiting on the low surrogate.
                     if (end == current.length) current else target.substring(0, end)
                 } else {

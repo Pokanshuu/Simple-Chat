@@ -1,6 +1,6 @@
 <resources>
-    <string name="settings_export_deepseek">导出 DeepSeek 兼容备份</string>
-    <string name="settings_export_deepseek_hint">官方 v3 ZIP 结构，并附加 SimpleChat 完整备份以保留分支、附件、来源和预设；原备份格式继续可用。</string>
+    <string name="settings_export_deepseek">导出 DeepSeek v3 官方格式</string>
+    <string name="settings_export_deepseek_hint">适合迁移聊天记录。保留消息分支、搜索记录和可用图片。预设与非图片附件原文请用 SimpleChat 备份。</string>
     <string name="service_uploaded">已上传到文件 API</string>
     <string name="service_text_threshold">长文本转文件阈值（字符）</string>
     <string name="service_threshold_invalid">请输入 4,000 到 1,000,000 之间的字符数。默认 16,000 字符。</string>

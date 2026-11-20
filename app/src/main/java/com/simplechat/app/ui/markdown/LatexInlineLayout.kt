@@ -1,9 +1,15 @@
 package com.simplechat.app.ui.markdown
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
@@ -32,38 +38,77 @@ internal fun LatexMeasurerState.inlinePresentation(
     color: Color,
     density: Density,
 ): InlineTextContent? {
-    presentation.nativeTex?.let { return inlineContent(it, config, dark) }
+    presentation.nativeTex?.let { tex ->
+        val content = inlineContent(tex, config, dark) ?: return null
+        return content.fitWidth(Constraints.Infinity, density)
+    }
     if (presentation.ovalParts.isEmpty()) return null
-    val horizontalPadding = with(density) { 10.dp.roundToPx() }
-    val verticalPadding = with(density) { 6.dp.roundToPx() }
     val parts = presentation.ovalParts.map { part ->
-        val content = inlineContent(part.tex, config, dark) ?: return null
-        val dimensions = measure(part.tex, config, dark) ?: return null
-        val horizontal = if (part.outline != null) horizontalPadding else 0
-        val vertical = if (part.outline != null) verticalPadding else 0
-        MeasuredPart(
-            content,
-            (ceil(dimensions.widthPx).toInt() + 2 * horizontal).coerceAtLeast(1),
-            (ceil(dimensions.heightPx).toInt() + 2 * vertical).coerceAtLeast(1),
-            ceil(dimensions.baselinePx).toInt() + vertical,
-            part.outline,
-        )
+        val frame = part.frame
+        fun LatexLength.pixels() = with(density) {
+            when (unit) {
+                "em" -> value * config.fontSize.toPx()
+                "ex" -> value * config.fontSize.toPx() * 0.5f
+                "pt" -> (value * 96f / 72f).dp.toPx()
+                "cm" -> (value * 96f / 2.54f).dp.toPx()
+                "mm" -> (value * 96f / 25.4f).dp.toPx()
+                "in" -> (value * 96f).dp.toPx()
+                else -> value.dp.toPx()
+            }
+        }
+        val background = frame?.background?.let { latexBoxColor(it, color) ?: return null }
+        val foreground = background?.let { if (it.luminance() > 0.45f) Color.Black else Color.White } ?: color
+        val partConfig = if (background == null) config else config.copy(theme =
+            if (dark) com.hrm.latex.renderer.model.LatexTheme.dark(color = foreground)
+            else com.hrm.latex.renderer.model.LatexTheme.light(color = foreground))
+        val content = inlineContent(part.tex, partConfig, dark) ?: return null
+        val dimensions = measure(part.tex, partConfig, dark) ?: return null
+        if (!dimensions.widthPx.isFinite() || !dimensions.heightPx.isFinite() || !dimensions.baselinePx.isFinite() ||
+            dimensions.widthPx > MaxFormulaDimension || dimensions.heightPx > MaxFormulaDimension) return null
+        val padding = frame?.padding?.pixels()?.let { with(density) { it.toDp() } }
+        val horizontal = padding ?: if (part.outline != null) 10.dp else if (frame != null) 3.dp else 0.dp
+        val vertical = padding ?: if (part.outline != null) 6.dp else if (frame != null) 3.dp else 0.dp
+        val paddingX = with(density) { horizontal.roundToPx() }
+        val paddingY = with(density) { vertical.roundToPx() }
+        val naturalHeight = ceil(dimensions.heightPx).toInt() + 2 * paddingY
+        val width = maxOf(ceil(dimensions.widthPx).toInt() + 2 * paddingX, frame?.width?.pixels()?.let { ceil(it).toInt() } ?: 0)
+        val height = maxOf(naturalHeight, frame?.height?.pixels()?.let { ceil(it).toInt() } ?: 0)
+        val radius = frame?.radius?.pixels()?.let { with(density) { it.toDp() } }
+        val shape = when {
+            part.outline != null -> CircleShape
+            radius != null -> RoundedCornerShape(radius)
+            else -> RectangleShape
+        }
+        val border = when (part.outline) {
+            OvalOutline.THICK -> 2.dp
+            OvalOutline.THIN -> 1.dp
+            null -> frame?.border?.pixels()?.let { with(density) { it.toDp() } } ?: 0.dp
+        }
+        val borderColor = frame?.borderColor?.let { latexBoxColor(it, color) ?: return null } ?: color
+        val alignment = when (frame?.alignment) {
+            "l" -> Alignment.CenterStart
+            "r" -> Alignment.CenterEnd
+            else -> Alignment.Center
+        }
+        MeasuredPart(content, width.coerceAtLeast(1), height.coerceAtLeast(1),
+            ceil(dimensions.baselinePx).toInt() + paddingY + (height - naturalHeight) / 2,
+            horizontal, vertical, shape, border, borderColor, background, alignment)
     }
     // Align the text and small labels on the math baseline, keeping the box padding on both sides.
     val top = parts.maxOf { it.baseline }
     val width = parts.sumOf { it.width }.coerceAtLeast(1)
     val height = top + parts.maxOf { it.height - it.baseline }
+    if (width > MaxFormulaDimension || height > MaxFormulaDimension) return null
     val placeholder = with(density) {
         Placeholder(width.toSp(), height.coerceAtLeast(1).toSp(), PlaceholderVerticalAlign.TextCenter)
     }
     return InlineTextContent(placeholder) {
         Layout(content = {
             for (part in parts) {
-                val outline = part.outline
-                val modifier = if (outline == null) Modifier else Modifier
-                    .border(if (outline == OvalOutline.THICK) 2.dp else 1.dp, color, CircleShape)
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
-                Box(modifier) {
+                var modifier: Modifier = Modifier
+                part.background?.let { modifier = modifier.background(it, part.shape) }
+                if (part.border > 0.dp) modifier = modifier.border(part.border, part.borderColor, part.shape)
+                Box(modifier.padding(horizontal = part.paddingX, vertical = part.paddingY), contentAlignment = part.alignment) {
                     part.content.children("")
                 }
             }
@@ -89,28 +134,41 @@ private data class MeasuredPart(
     val width: Int,
     val height: Int,
     val baseline: Int,
-    val outline: OvalOutline?,
+    val paddingX: Dp,
+    val paddingY: Dp,
+    val shape: androidx.compose.ui.graphics.Shape,
+    val border: Dp,
+    val borderColor: Color,
+    val background: Color?,
+    val alignment: Alignment,
 )
 
 @Composable
 internal fun FormulaInlineText(inline: InlineTextContent, source: String, style: TextStyle, modifier: Modifier = Modifier) {
+    // A Compose placeholder must fit in one paragraph, even when its drawing has several rows.
+    val alternate = androidx.compose.runtime.remember(source) { source.lineSequence().joinToString(" ") }
     BasicText(
-        text = buildAnnotatedString { appendInlineContent("math", source.ifEmpty { "formula" }) },
+        text = buildAnnotatedString { appendInlineContent("math", alternate.ifEmpty { "formula" }) },
         inlineContent = mapOf("math" to inline),
         style = style,
         modifier = modifier,
     )
 }
 
+private const val MaxFormulaDimension = 8_192
+private const val MinInlineFormulaScale = 0.55f
+
 /** An inline placeholder wider than its paragraph can disappear entirely. Scale the drawing with its slot. */
 internal fun InlineTextContent.fitWidth(maxWidth: Int, density: Density): InlineTextContent? {
-    if (maxWidth == Constraints.Infinity) return this
-    val width = with(density) { ceil(placeholder.width.toPx()).toInt() }
+    val widthPx = with(density) { placeholder.width.toPx() }
+    val heightPx = with(density) { placeholder.height.toPx() }
+    if (!widthPx.isFinite() || !heightPx.isFinite() || maxWidth <= 0 ||
+        widthPx > MaxFormulaDimension || heightPx > MaxFormulaDimension) return null
+    val width = ceil(widthPx).toInt().coerceAtLeast(1)
+    val height = ceil(heightPx).toInt().coerceAtLeast(1)
     if (width <= maxWidth) return this
-    val height = with(density) { ceil(placeholder.height.toPx()).toInt() }.coerceAtLeast(1)
-    // Extremely large native layouts exceed Compose's representable child constraints.
-    if (maxWidth <= 0 || width > 16_384 || height > 16_384) return null
     val scale = maxWidth.toFloat() / width
+    if (scale < MinInlineFormulaScale) return null
     val scaledHeight = ceil(height * scale).toInt().coerceAtLeast(1)
     val slot = with(density) { Placeholder((maxWidth - 0.5f).toSp(), scaledHeight.toSp(), placeholder.placeholderVerticalAlign) }
     return InlineTextContent(slot) { text ->
@@ -125,4 +183,18 @@ internal fun InlineTextContent.fitWidth(maxWidth: Int, density: Density): Inline
             }
         }
     }
+}
+
+private fun latexBoxColor(value: String, foreground: Color): Color? {
+    if (value.equals("currentColor", ignoreCase = true)) return foreground
+    val color = when (value.lowercase()) {
+        "lightblue" -> "#add8e6"
+        "pink" -> "#ffc0cb"
+        "purple" -> "#800080"
+        "orange" -> "#ffa500"
+        "violet" -> "#ee82ee"
+        "transparent" -> return Color.Transparent
+        else -> if (value.startsWith('#') && value.length == 4) "#" + value.drop(1).map { "$it$it" }.joinToString("") else value
+    }
+    return runCatching { Color(android.graphics.Color.parseColor(color)) }.getOrNull()
 }

@@ -77,7 +77,7 @@ internal object NativeShareRenderRegression {
             try {
                 val size = renderer.measure {
                     CompositionLocalProvider(LocalMarkdownExport provides MarkdownExportOptions(fonts)) {
-                        ExportFormula("\\frac{1}{2}")
+                        ExportFormula("\\frac{1}{2}", source = "\$\$\n\\frac{1}{2}\n\$\$")
                     }
                 }
                 check(size.height > 45 && size.width == 952) { "Formula looks like raw source or empty content: $size" }
@@ -92,6 +92,25 @@ internal object NativeShareRenderRegression {
                 bitmap.recycle()
                 status("native fraction uses loaded KaTeX glyphs and produces a nonempty bounded graphics capture")
             } finally { renderer.close() }
+
+            val excerptText = "Area \$x^2\$ and fraction \$\\frac{a}{b}\$.\n\nGaussian integral:\n\n\$\$\n\\int_{-\\infty}^{\\infty} e^{-x^2}\\,dx = \\sqrt{\\pi}\n\$\$"
+            val excerptDocument = MessageShareDocument("分享摘录", messageShareGroups(listOf(
+                UiMessage("excerpt", MessageRole.ASSISTANT, excerptText))),
+                excerptFooter = listOf("摘录于 2026-11-20", "回答由 AI 生成"))
+            val excerptPage = withTimeout(60_000) { exportSharedImages(activity, excerptDocument).single() }
+            val ordinary = withTimeout(60_000) { exportSharedImages(activity, excerptDocument.copy(excerptFooter = emptyList())).single() }
+            val excerptBitmap = checkNotNull(BitmapFactory.decodeFile(excerptPage.path))
+            val ordinaryBitmap = checkNotNull(BitmapFactory.decodeFile(ordinary.path))
+            check(excerptBitmap.width == 1080 && excerptBitmap.height > 300)
+            excerptPage.copyTo(File(activity.cacheDir, "share-native-excerpt-math.png"), true)
+            val bodyStart = 150
+            val bodyEnd = ordinaryBitmap.height - 100
+            check(bodyEnd > bodyStart && (bodyStart until bodyEnd).all { y ->
+                (64 until 1016).all { x -> excerptBitmap.getPixel(x, y) == ordinaryBitmap.getPixel(x, y) }
+            }) { "Excerpt and ordinary share images render different formula bodies" }
+            excerptBitmap.recycle()
+            ordinaryBitmap.recycle()
+            status("assistant excerpt images render inline fractions and display integrals")
 
             val table = "| 项目 | 分式 | 根式 | 矩阵 | 描述 | 最右列 |\n| --- | --- | --- | --- | --- | --- |\n" +
                 "| A | \$\\frac{a+b}{c}\$ | \$\\sqrt{x^2+y^2}\$ | \$\\begin{pmatrix}1&2\\\\3&4\\end{pmatrix}\$ | **完整渲染** | RIGHTMOST |\n" +

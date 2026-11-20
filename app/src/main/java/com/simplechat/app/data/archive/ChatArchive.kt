@@ -44,6 +44,7 @@ object ChatArchive {
 
     const val MANIFEST = "manifest.json"
     const val BACKUP = "backup.json"
+    internal const val LEGACY_DEEPSEEK_BACKUP = "user.json"
     const val MARKDOWN_DIR = "markdown"
 
     private val json = Json {
@@ -132,10 +133,10 @@ object ChatArchive {
         val format = metadata?.get("format")?.jsonPrimitive?.content
         val deepSeekExtension = metadata?.get("export_format_version")?.toString() == "3" &&
             metadata["simplechat_extension_version"]?.toString() == "1" &&
-            metadata["simplechat_backup"]?.jsonPrimitive?.content == DeepSeekArchive.EXTENSION
+            metadata["simplechat_backup"]?.jsonPrimitive?.content == LEGACY_DEEPSEEK_BACKUP
         if (format != FORMAT && !deepSeekExtension) return null
 
-        val backupBytes = readEntry(if (deepSeekExtension) DeepSeekArchive.EXTENSION else BACKUP) ?: return null
+        val backupBytes = readEntry(if (deepSeekExtension) LEGACY_DEEPSEEK_BACKUP else BACKUP) ?: return null
         return runCatching {
             json.decodeFromString<BackupFile>(backupBytes.decodeToString())
         }.getOrNull()

@@ -48,7 +48,7 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
     val renderer = try { ShareComposeRenderer.create(context, accent) }
         catch (error: Throwable) { directory.deleteRecursively(); throw error }
     val memoryClass = (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).memoryClass
-    val writer = ShareImageWriter(context, directory, document.title, shareImagePageHeight(mode, memoryClass), mode == ShareImageMode.LONG, hideBranding)
+    val writer = ShareImageWriter(context, directory, document.title, shareImagePageHeight(mode, memoryClass), mode == ShareImageMode.LONG, hideBranding, document.excerptFooter)
     val result = try {
         suspend fun render(block: ShareRenderBlock, user: Boolean = false, reasoning: Boolean = false,
             reasoningContinues: Boolean = false) {
@@ -61,7 +61,7 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
                 val size = renderer.measure {
                     CompositionLocalProvider(LocalMarkdownExport provides options) {
                         when (block) {
-                            is ShareRenderBlock.Formula -> ExportFormula(block.tex)
+                            is ShareRenderBlock.Formula -> ExportFormula(block.tex, block.source)
                             is ShareRenderBlock.Table -> MarkdownText(block.source)
                             is ShareRenderBlock.Text -> if (block.markdown) MarkdownText(block.source)
                                 else if (user) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopEnd) {
@@ -133,9 +133,13 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
             if (index > 0) writer.space(24)
             for (message in group.messages) {
                 currentCoroutineContext().ensureActive()
-                val user = message.role == MessageRole.USER
+                val excerpt = document.excerptFooter.isNotEmpty()
+                val user = message.role == MessageRole.USER && !excerpt
                 for (section in shareImageText(message, hideReasoning)) {
-                    val blocks = shareRenderBlocks(section.text, markdown = !user && !section.reasoning)
+                    val blocks = shareRenderBlocks(
+                        section.text,
+                        markdown = shareSectionUsesMarkdown(user, excerpt, section.reasoning),
+                    )
                     for ((blockIndex, block) in blocks.withIndex()) {
                         render(block, user, section.reasoning,
                             reasoningContinues = section.reasoning && blockIndex < blocks.lastIndex)
@@ -187,10 +191,13 @@ private const val CaptureTileHeight = 2048
 private class ShareLongImageOverflow : RuntimeException()
 
 private class ShareImageWriter(private val context: Context, private val directory: File, private val title: String,
-    private val height: Int, private val longScreenshot: Boolean, private val hideBranding: Boolean) {
+    private val height: Int, private val longScreenshot: Boolean, private val hideBranding: Boolean,
+    private val excerptFooter: List<String>,
+) {
     private val width = 1080
     private val margin = 64
-    private val bottom = height - if (hideBranding) 64 else 110
+    private val footerHeight = if (excerptFooter.isEmpty()) 100 else 84 + excerptFooter.size * 36
+    private val bottom = height - if (hideBranding) 64 else footerHeight + 10
     private var bitmap: Bitmap? = null
     private lateinit var canvas: Canvas
     private var y = 0
@@ -253,10 +260,16 @@ private class ShareImageWriter(private val context: Context, private val directo
     }
     private fun flush() {
         val current = bitmap ?: return
-        val actualHeight = minOf(height, y + if (hideBranding) 48 else 100).coerceAtLeast(300)
+        val actualHeight = minOf(height, y + if (hideBranding) 48 else footerHeight).coerceAtLeast(300)
         if (!hideBranding) {
             paint.color = Color.GRAY; paint.textSize = 23f; paint.typeface = Typeface.DEFAULT
-            canvas.drawText("SimpleChat · ${files.size + 1}", margin.toFloat(), actualHeight - 35f, paint)
+            if (excerptFooter.isEmpty()) {
+                canvas.drawText("SimpleChat · ${files.size + 1}", margin.toFloat(), actualHeight - 35f, paint)
+            } else {
+                excerptFooter.forEachIndexed { index, line ->
+                    canvas.drawText(line, margin.toFloat(), actualHeight - 38f - (excerptFooter.lastIndex - index) * 36f, paint)
+                }
+            }
         }
         val output = if (actualHeight < height) Bitmap.createBitmap(current, 0, 0, width, actualHeight) else current
         try {

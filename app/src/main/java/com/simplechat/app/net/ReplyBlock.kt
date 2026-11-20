@@ -99,6 +99,8 @@ sealed interface ReplyBlock {
         val publishedAt: String? = null,
         val signature: String? = null,
         val failed: Boolean = false,
+        val snippet: String? = null,
+        val siteName: String? = null,
     ) : ReplyBlock
 }
 

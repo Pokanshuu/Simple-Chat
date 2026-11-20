@@ -55,6 +55,8 @@ import com.mikepenz.markdown.annotator.annotatorSettings
 import com.mikepenz.markdown.annotator.buildMarkdownAnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import com.mikepenz.markdown.compose.LocalMarkdownInlineContent
+import com.mikepenz.markdown.compose.LocalMarkdownAnnotator
 import com.mikepenz.markdown.compose.LocalBulletListHandler
 import com.mikepenz.markdown.compose.components.MarkdownComponent
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
@@ -124,15 +126,16 @@ fun MarkdownText(
     modifier: Modifier = Modifier,
     streaming: Boolean = false,
 ) {
-    val text = remember(content) { normalizedMarkdownSource(content) }
+    val document = remember(content) { normalizedMarkdownDocument(content) }
 
     MarkdownTextBlocks(
-        source = text,
+        source = document.markdown,
         streaming = streaming,
         modifier = modifier,
         blockGap = MarkdownBlockColumnGap,
     ) { blockText, isTail ->
-        MarkdownBlockView(text = blockText, isTail = isTail)
+        val block = remember(document, blockText) { document.forBlock(blockText) }
+        MarkdownBlockView(math = block, isTail = isTail)
     }
 }
 
@@ -224,7 +227,11 @@ private fun markdownStateOf(text: String): State {
 internal const val MarkdownPrewarmMaxChars = 24_000
 private const val MarkdownPrewarmMaxBlocks = 48
 
-private fun normalizedMarkdownSource(content: String) = normalizeSoftBreaks(normalizeHtml(content))
+internal fun normalizedMarkdownDocument(content: String): InlineMathDocument {
+    // TeX can contain HTML-looking inequalities, emphasis markers and table pipes.
+    val document = inlineMathDocument(content)
+    return document.copy(markdown = normalizeSoftBreaks(normalizeHtml(document.markdown)))
+}
 
 /** Prepare the same AST keys as MarkdownWithMath/MarkdownBlockView on a background dispatcher. */
 internal suspend fun warmMarkdownCache(content: String, warmBlock: (String) -> Unit = { markdownStateOf(it) }) {
@@ -236,11 +243,11 @@ internal suspend fun warmMarkdownCache(content: String, warmBlock: (String) -> U
     for (segment in displayMathSegments(content)) {
         context.ensureActive()
         if (segment !is ContentSegment.Text) continue // Display LaTeX has its own renderer.
-        val normalized = normalizedMarkdownSource(segment.text)
+        val normalized = normalizedMarkdownDocument(segment.text).markdown
         if (normalized.length > MarkdownPrewarmMaxChars) return
         for (block in splitMarkdownBlocks(normalized)) {
             context.ensureActive()
-            val key = inlineMathDocument(block.text).markdown
+            val key = block.text
             if (key.length > remainingChars) return
             warmBlock(key)
             remainingChars -= key.length
@@ -268,8 +275,8 @@ internal suspend fun warmMarkdownCache(content: String, warmBlock: (String) -> U
  * 内容没变的块参数仍然相等 —— 跳过照样成立。）
  */
 @Composable
-private fun MarkdownBlockView(text: String, isTail: Boolean) {
-    val math = remember(text) { inlineMathDocument(text) }
+private fun MarkdownBlockView(math: InlineMathDocument, isTail: Boolean) {
+    val text = math.markdown
     if (math.formulas.isEmpty()) {
         MarkdownBlockContents(text, isTail, math, Constraints.Infinity)
     } else {
@@ -344,89 +351,92 @@ private fun MarkdownBlockContents(text: String, isTail: Boolean, math: InlineMat
         }
     }
 
-    CompositionLocalProvider(LocalBulletListHandler provides BulletMarkers) {
+    CompositionLocalProvider(
+        LocalBulletListHandler provides BulletMarkers,
+        LocalInlineMathDocument provides math,
+    ) {
         Markdown(
-        state,
-        // 大标题（h1–h3）上方补白：官方 32px，块间距已给 16dp，这里再补 16dp
-        modifier = modifier.padding(top = headingTopGap(text)),
-        colors = markdownColor(
-            text = scheme.onBackground,
-            codeBackground = colors.markdownCodeBlock,
-            inlineCodeBackground = colors.markdownInlineCode,
-            dividerColor = colors.markdownRule,
-            // 官方表格没有整块底色，只有行间横线；这里也不画卡片
-            tableBackground = Color.Transparent,
-        ),
-        /*
-         * 段落间距：官方 `margin: 16px 0`（相邻段落折叠后仍是 16px）。
-         *
-         * 分块渲染之后这 16dp 由**外层 Column**（[MarkdownBlockColumnGap]）统一给，
-         * 库自己那一层置 0 —— 两边都给就叠成 24dp，长文读起来"一段一段断开"。
-         */
-        padding = markdownPadding(
-            block = 0.dp,
+            state,
+            // 大标题（h1–h3）上方补白：官方 32px，块间距已给 16dp，这里再补 16dp
+            modifier = modifier.padding(top = headingTopGap(text)),
+            colors = markdownColor(
+                text = scheme.onBackground,
+                codeBackground = colors.markdownCodeBlock,
+                inlineCodeBackground = colors.markdownInlineCode,
+                dividerColor = colors.markdownRule,
+                // 官方表格没有整块底色，只有行间横线；这里也不画卡片
+                tableBackground = Color.Transparent,
+            ),
             /*
-             * 列表：块级上下留白由外层 Column 统一给（官方 ul/ol 上下 16px）；
-             * 项距、符号列宽、嵌套缩进全部由自绘列表 [MarkdownListLayout] 控制，
-             * 库这几个参数因此都置 0（留着会与自绘那份叠加）。
+             * 段落间距：官方 `margin: 16px 0`（相邻段落折叠后仍是 16px）。
+             *
+             * 分块渲染之后这 16dp 由**外层 Column**（[MarkdownBlockColumnGap]）统一给，
+             * 库自己那一层置 0 —— 两边都给就叠成 24dp，长文读起来"一段一段断开"。
              */
-            list = 0.dp,
-            listItemTop = 0.dp,
-            listItemBottom = 0.dp,
-            listIndent = 0.dp,
-            codeBlock = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            // 引用：官方 border-left 2px + padding-left 14px，没有额外上下内边距
-            blockQuote = PaddingValues(start = 16.dp),
-            blockQuoteText = PaddingValues(0.dp),
-            blockQuoteBar = PaddingValues.Absolute(left = 0.dp, right = 0.dp),
-        ),
-        dimens = markdownDimens(
-            dividerThickness = 1.dp,
-            codeBackgroundCornerSize = CodeBlockCornerRadius,
-            blockQuoteThickness = 2.dp,
-            // 官方单元格 10/16 的内边距；库只支持统一值，取中间 12dp 近似
-            tableCellPadding = 12.dp,
-            // 列宽是库的"等宽列"参数：官方按内容宽度排，库做不到，取小一点让两列表格不发散
-            tableCellWidth = 120.dp,
-            tableCornerSize = 0.dp,
-        ),
-        extendedSpans = extendedSpans,
-        annotator = inlineMath?.first ?: com.mikepenz.markdown.model.markdownAnnotator(),
-        inlineContent = inlineMath?.second ?: com.mikepenz.markdown.model.markdownInlineContent(),
-        animations = com.mikepenz.markdown.model.markdownAnimations { this },
-        typography = markdownTypography(
-            h1 = MarkdownHeadingStyles[0],
-            h2 = MarkdownHeadingStyles[1],
-            h3 = MarkdownHeadingStyles[2],
-            h4 = MarkdownHeadingStyles[3],
-            h5 = MarkdownHeadingStyles[4],
-            h6 = MarkdownHeadingStyles[5],
-            // 正文与流式阶段用**同一个**样式，否则定稿瞬间字号会跳一下
-            text = bodyStyle,
-            paragraph = bodyStyle,
-            quote = quoteStyle,
-            ordered = markerStyle,
-            bullet = markerStyle,
-            list = bodyStyle,
-            table = MarkdownTableStyle,
-            code = CodeTextStyle,
-            inlineCode = MarkdownInlineCodeStyle,
-            alertTitle = SimpleChatTypography.titleSmall,
-            // 官方链接：品牌色、默认无下划线（悬停才加）。移动端没有 hover，
-            // 下划线常驻会让中文正文里到处是"着重线"，很吵。
-            textLink = TextLinkStyles(style = SpanStyle(color = scheme.primary)),
-        ),
-        components = selectionMeasuredComponents(rememberSearchableMarkdownComponents(markdownComponents(
-            codeFence = collapsibleCodeFence,
-            codeBlock = highlightedCodeBlock,
-            table = adaptiveTable,
-            blockQuote = continuousMarkdownQuote,
-            unorderedList = markdownBulletList,
-            orderedList = markdownOrderedList,
-            checkbox = taskCheckbox,
-            horizontalRule = spacedHorizontalRule,
-        ))),
-    )
+            padding = markdownPadding(
+                block = 0.dp,
+                /*
+                 * 列表：块级上下留白由外层 Column 统一给（官方 ul/ol 上下 16px）；
+                 * 项距、符号列宽、嵌套缩进全部由自绘列表 [MarkdownListLayout] 控制，
+                 * 库这几个参数因此都置 0（留着会与自绘那份叠加）。
+                 */
+                list = 0.dp,
+                listItemTop = 0.dp,
+                listItemBottom = 0.dp,
+                listIndent = 0.dp,
+                codeBlock = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                // 引用：官方 border-left 2px + padding-left 14px，没有额外上下内边距
+                blockQuote = PaddingValues(start = 16.dp),
+                blockQuoteText = PaddingValues(0.dp),
+                blockQuoteBar = PaddingValues.Absolute(left = 0.dp, right = 0.dp),
+            ),
+            dimens = markdownDimens(
+                dividerThickness = 1.dp,
+                codeBackgroundCornerSize = CodeBlockCornerRadius,
+                blockQuoteThickness = 2.dp,
+                // 官方单元格 10/16 的内边距；库只支持统一值，取中间 12dp 近似
+                tableCellPadding = 12.dp,
+                // 列宽是库的"等宽列"参数：官方按内容宽度排，库做不到，取小一点让两列表格不发散
+                tableCellWidth = 120.dp,
+                tableCornerSize = 0.dp,
+            ),
+            extendedSpans = extendedSpans,
+            annotator = inlineMath?.first ?: com.mikepenz.markdown.model.markdownAnnotator(),
+            inlineContent = inlineMath?.second ?: com.mikepenz.markdown.model.markdownInlineContent(),
+            animations = com.mikepenz.markdown.model.markdownAnimations { this },
+            typography = markdownTypography(
+                h1 = MarkdownHeadingStyles[0],
+                h2 = MarkdownHeadingStyles[1],
+                h3 = MarkdownHeadingStyles[2],
+                h4 = MarkdownHeadingStyles[3],
+                h5 = MarkdownHeadingStyles[4],
+                h6 = MarkdownHeadingStyles[5],
+                // 正文与流式阶段用**同一个**样式，否则定稿瞬间字号会跳一下
+                text = bodyStyle,
+                paragraph = bodyStyle,
+                quote = quoteStyle,
+                ordered = markerStyle,
+                bullet = markerStyle,
+                list = bodyStyle,
+                table = MarkdownTableStyle,
+                code = CodeTextStyle,
+                inlineCode = MarkdownInlineCodeStyle,
+                alertTitle = SimpleChatTypography.titleSmall,
+                // 官方链接：品牌色、默认无下划线（悬停才加）。移动端没有 hover，
+                // 下划线常驻会让中文正文里到处是"着重线"，很吵。
+                textLink = TextLinkStyles(style = SpanStyle(color = scheme.primary)),
+            ),
+            components = selectionMeasuredComponents(rememberSearchableMarkdownComponents(markdownComponents(
+                codeFence = collapsibleCodeFence,
+                codeBlock = highlightedCodeBlock,
+                table = adaptiveTable,
+                blockQuote = continuousMarkdownQuote,
+                unorderedList = markdownBulletList,
+                orderedList = markdownOrderedList,
+                checkbox = taskCheckbox,
+                horizontalRule = spacedHorizontalRule,
+            ))),
+        )
     }
 }
 
@@ -503,9 +513,8 @@ private val adaptiveTable: MarkdownComponent = { model ->
     val rows = remember(model.node) { model.node.children.filter { it.type == ROW } }
     val density = LocalDensity.current
     val measurer = rememberTextMeasurer()
-    val formulaMeasurer = if (exporting != null) com.hrm.latex.renderer.measure.rememberLatexMeasurer(
-        com.hrm.latex.renderer.model.LatexConfig(fontSize = style.fontSize, fontFamilies = exporting.fonts)) else null
-    val columnWidths = exporting?.tableMetrics?.widths ?: remember(model.content, model.node, style, density) {
+    val inlineMath = LocalMarkdownInlineContent.current.inlineContent
+    val columnWidths = exporting?.tableMetrics?.widths ?: remember(model.content, model.node, style, density, inlineMath) {
         val tableRows = listOfNotNull(header) + rows
         val columnCount = tableRows.maxOfOrNull { row -> row.children.count { it.type == CELL } } ?: 0
         val widths = FloatArray(columnCount) { with(density) { 88.dp.toPx() } }
@@ -518,13 +527,10 @@ private val adaptiveTable: MarkdownComponent = { model ->
                         softWrap = false, constraints = Constraints(maxWidth = with(density) { 320.dp.roundToPx() }))
                     return (0 until measured.lineCount).maxOfOrNull { measured.getLineRight(it) } ?: 0f
                 }
-                val longest = if (formulaMeasurer == null) textWidth(raw) else splitMath(raw).maxOfOrNull { segment ->
-                    when (segment) {
-                        is ContentSegment.Text -> textWidth(segment.text)
-                        is ContentSegment.Formula -> prepareLatexPresentation(segment.tex).nativeTex
-                            ?.let { formulaMeasurer.measure(it, isDarkTheme = false)?.widthPx } ?: textWidth(segment.tex)
-                    }
-                } ?: 0f
+                val formulaWidth = inlineMath.filterKeys { id -> id in raw }.values.sumOf {
+                    with(density) { it.placeholder.width.toPx() }.toDouble()
+                }.toFloat()
+                val longest = maxOf(textWidth(raw), formulaWidth)
                 widths[index] = maxOf(widths[index], (longest + with(density) { 24.dp.toPx() })
                     .coerceAtMost(with(density) { 320.dp.toPx() }))
             }
@@ -564,21 +570,23 @@ private val adaptiveTable: MarkdownComponent = { model ->
 /** Use the same AST annotator as the stock table, with the normal text layout/span callback. */
 @Composable
 private fun SearchableTableText(content: String, cell: ASTNode, style: TextStyle) {
-    if (LocalMarkdownExport.current != null) {
-        val raw = content.substring(cell.startOffset, cell.endOffset)
-        val segments = remember(raw) { splitMath(raw) }
-        if (segments.any { it is ContentSegment.Formula }) {
-            Column {
-                segments.forEach { segment ->
-                    when (segment) {
-                        is ContentSegment.Formula -> ExportFormula(segment.tex, style.fontSize)
-                        is ContentSegment.Text -> if (segment.text.isNotBlank()) MarkdownText(segment.text.trim())
-                    }
-                }
+    val raw = content.substring(cell.startOffset, cell.endOffset)
+    val document = LocalInlineMathDocument.current
+    val cellMath = remember(document, raw) { document?.forBlock(raw) }
+    if (cellMath == null || cellMath.formulas.isEmpty()) {
+        TableCellText(content, cell, style)
+    } else {
+        BoxWithConstraints {
+            val (annotator, inline) = rememberInlineMath(cellMath, constraints.maxWidth, style.fontSize)
+            CompositionLocalProvider(LocalMarkdownInlineContent provides inline, LocalMarkdownAnnotator provides annotator) {
+                TableCellText(content, cell, style)
             }
-            return
         }
     }
+}
+
+@Composable
+private fun TableCellText(content: String, cell: ASTNode, style: TextStyle) {
     val settings = annotatorSettings()
     val annotated = buildAnnotatedString {
         pushStyle(style.toSpanStyle())

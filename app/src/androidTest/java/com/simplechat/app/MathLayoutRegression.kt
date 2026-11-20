@@ -8,6 +8,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.ui.markdown.*
@@ -34,11 +35,20 @@ internal object MathLayoutRegression {
             > 当 \(n>N\) 时，必定有 \(|a_n-0|\le\frac{2}{n}<\varepsilon\) 成立。
 
             - 列表内公式 \(x^2+y^2=z^2\) 与 **加粗正文**连续排版。
+            - 电路中只有 \(R_1\) 和 \(R_2\) 串联，图线为 \(I-U\)。
             - 行内代码 `echo ${'$'}PATH` 保持原样。
 
             \(\ovalbox{项链还戴着吗}\quad\text{\tiny已读}\)
             \(\ovalbox{还是还在抽屉里}\quad\text{\tiny已读}\)
             \(\ovalbox{我去感应一下}\quad\text{\tiny已读}\)
+
+            \(\framebox[2cm]{\rule{0pt}{2cm}\centering 正方形}\) \(\bbox[4px,lightblue,border:1px solid blue,border-radius:12px]{x^2}\)
+
+            前 \(a<b>c\) 后，未知 \(\unknown{原文}\) 仍可读。
+
+            | 电路量 | 表达式 |
+            | --- | --- |
+            | 分压 | \(\frac{U}{R_1+R_2}\) |
 
             \[\ovalbox{\frac{1}{2}}\quad\text{\small 中文}\]
 
@@ -66,17 +76,64 @@ internal object MathLayoutRegression {
                 check(bubbles.size == 3 && bubbles.all { it.placeholderRects.singleOrNull() != null }) {
                     "Oval boxes and their labels must be rendered together"
                 }
+                val frames = layouts.single { it.layoutInput.text.text.contains("正方形") }
+                check(frames.placeholderRects.filterNotNull().size == 2) { "Fixed square or rounded box remained source" }
+                val circuit = layouts.single { it.layoutInput.text.text.contains("电路中只有") }
+                check(circuit.placeholderRects.count { it != null } == 3)
+                val sentence = circuit.layoutInput.text.text
+                check(circuit.getLineForOffset(sentence.indexOf("电路中只有")) ==
+                    circuit.getLineForOffset(sentence.indexOf("R_1")))
+                val fallback = layouts.single { it.layoutInput.text.text.contains("unknown") }
+                check(fallback.layoutInput.text.text.contains("\\(a<b>c\\)"))
+                check(fallback.layoutInput.text.text.contains("\\(\\unknown{原文}\\)"))
+                check(fallback.placeholderRects.count { it != null } == 1)
                 val wide = layouts.single { it.layoutInput.text.text.contains("\\underbrace") }
-                val wideSlot = checkNotNull(wide.placeholderRects.singleOrNull()) { "Oversized inline formula disappeared" }
-                check(wideSlot.right <= wide.size.width + 1) { "Inline formula exceeds the paragraph" }
-                check(layouts.sumOf { it.lineCount } < 24) { "Math layout is still fragmented" }
+                check(wide.placeholderRects.isEmpty()) { "Oversized inline formula was shrunk below readable size" }
+                check(wide.layoutInput.text.text.contains("一行长公式") &&
+                    wide.layoutInput.text.text.endsWith("\\)")) { "Oversized inline formula lost source" }
+                check(layouts.sumOf { it.lineCount } < 30) { "Math layout is still fragmented" }
                 delay(300)
                 instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
                     File(instrumentation.targetContext.cacheDir, "math-mixed-${theme.name.lowercase()}.png")
                         .outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
                 }
-                status("$theme: inline fractions, oval boxes, long formulas, quotes and lists preserved; ${layouts.sumOf { it.lineCount }} text lines")
+                status("$theme: inline fractions, oval boxes, oversized source fallback, quotes and lists preserved; ${layouts.sumOf { it.lineCount }} text lines")
             }
+            val hits = SelectionTextHits()
+            val content = mutableStateOf("**推导**：\\(\\frac{1}{2}")
+            val streaming = mutableStateOf(true)
+            instrumentation.runOnMainSync {
+                activity.setContent {
+                    SimpleChatTheme(themeMode = ThemeMode.LIGHT) {
+                        Surface {
+                            CompositionLocalProvider(LocalSelectionTextHits provides hits) {
+                                MarkdownWithMath(content.value, streaming = streaming.value)
+                            }
+                        }
+                    }
+                }
+            }
+            suspend fun awaitMathLayout(predicate: (androidx.compose.ui.text.TextLayoutResult) -> Boolean) = withTimeout(10_000) {
+                var result = withContext(Dispatchers.Main) { hits.layouts().firstOrNull(predicate) }
+                while (result == null) {
+                    delay(50)
+                    result = withContext(Dispatchers.Main) { hits.layouts().firstOrNull(predicate) }
+                }
+                result
+            }
+            awaitMathLayout { it.layoutInput.text.text.contains("frac{1}{2}") && it.placeholderRects.isEmpty() }
+            instrumentation.runOnMainSync { content.value += "\\) 完成" }
+            val active = awaitMathLayout {
+                it.layoutInput.text.text.endsWith(" 完成") && it.placeholderRects.singleOrNull() != null
+            }
+            instrumentation.runOnMainSync { streaming.value = false }
+            instrumentation.waitForIdleSync()
+            val settled = awaitMathLayout {
+                it.layoutInput.text.text.endsWith(" 完成") && it.placeholderRects.singleOrNull() != null
+            }
+            check(active.layoutInput.text.text == settled.layoutInput.text.text &&
+                active.placeholderRects == settled.placeholderRects && active.lineCount == settled.lineCount)
+            status("streaming math stays literal until closure and preserves the final formula placement")
         } finally { instrumentation.runOnMainSync { activity.finish() } }
     }
 }

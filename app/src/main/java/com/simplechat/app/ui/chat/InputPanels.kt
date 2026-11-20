@@ -377,6 +377,7 @@ fun ContextPanelContent(
     modifier: Modifier = Modifier,
     /** 服务端回报的**最近一次**请求用量；没发过请求时为 null。 */
     usage: RequestUsage? = null,
+    showUsageCost: Boolean = false,
     compactionStatus: String? = null,
 ) {
     val colors = LocalChatColors.current
@@ -495,16 +496,18 @@ fun ContextPanelContent(
                     value = "${TokenEstimate.format(stats.usageCacheHitTokens)} tokens",
                 )
             }
-            StatRow(
-                label = stringResource(R.string.stats_usage_cost),
-                value = Pricing.format(stats.usageCost),
-            )
-            Spacer(Modifier.size(4.dp))
-            Text(
-                text = stringResource(R.string.stats_usage_note),
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.placeholder,
-            )
+            if (showUsageCost) {
+                StatRow(
+                    label = stringResource(R.string.stats_usage_cost),
+                    value = Pricing.format(stats.usageCost),
+                )
+                Spacer(Modifier.size(4.dp))
+                Text(
+                    text = stringResource(R.string.stats_usage_note),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.placeholder,
+                )
+            }
         }
 
         Spacer(Modifier.size(16.dp))

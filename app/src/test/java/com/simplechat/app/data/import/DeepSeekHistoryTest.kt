@@ -9,7 +9,6 @@ import java.io.StringReader
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -42,9 +41,7 @@ class DeepSeekHistoryTest {
         DeepSeekHistory.planSession(scan(raw), sessionId, naming)
 
     private fun parsedMessageOf(raw: String): DeepSeekHistory.ParsedMessage =
-        DeepSeekHistory.parsedMessage(
-            kotlinx.serialization.json.Json.parseToJsonElement(raw).jsonObject,
-        ) ?: error("消息解析失败")
+        readDeepSeekMessage(JsonStream(StringReader(raw)))
 
     // ── 第一遍：骨架 ────────────────────────────────────────
 
@@ -333,7 +330,7 @@ class DeepSeekHistoryTest {
                 ]}""",
         )
         // 非图片附件没有字节，不进附件列表；图片由调用方按 export_path 读好后传进来
-        assertEquals(listOf("chat_sessions/s3_files/f1_a.jpg"), parsed.imagePaths)
+        assertEquals(listOf("chat_sessions/s3_files/f1_a.jpg"), parsed.images.map { it.path })
         val message = DeepSeekHistory.toBackupMessage(parsed, plan, "s3", listOf(image))!!
         assertEquals(listOf(image), message.attachments)
     }

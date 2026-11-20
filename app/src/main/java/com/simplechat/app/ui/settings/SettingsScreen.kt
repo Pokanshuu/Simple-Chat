@@ -149,6 +149,7 @@ private enum class SettingsPage(private val parentName: String?) {
     SEARCH_API("API_PROFILES"),
     FILES_API("API_PROFILES"),
     PRESETS("ROOT"),
+    MEMORY("ROOT"),
     /** 外观：主题模式、主题色、字体大小入口。 */
     APPEARANCE("ROOT"),
     /** 字体大小（外观 → 二级）。 */
@@ -467,7 +468,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
         }
     }
 
-    fun prepareExport(extension: String, launch: (String) -> Unit, generate: suspend (File) -> Unit) {
+    fun prepareExport(extension: String, launch: (String) -> Unit, prefix: String = "simplechat-", datePattern: String = "yyyyMMdd-HHmm", generate: suspend (File) -> Unit) {
         if (archiveProgress.value != null || importProgress.value != null || importReading) return
         archiveSaving = false
         archiveProgress.value = 0f
@@ -482,8 +483,8 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                     check(target.length() > 0) { Res.get(R.string.export_failed_short) }
                 }
                 pendingArchive = target
-                val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
-                launch("simplechat-$stamp.$extension")
+                val stamp = SimpleDateFormat(datePattern, Locale.US).format(Date())
+                launch("$prefix$stamp.$extension")
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -556,16 +557,6 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
         archiveProgress.value = 1f
     }
 
-    val crashLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) {
-        uri: Uri? -> savePreparedExport(uri)
-    }
-    fun startCrashExport() = prepareExport("txt", { crashLauncher.launch(it) }) { file ->
-        val report = com.simplechat.app.data.CrashDiagnostics.file(context)
-            ?: error(Res.get(R.string.crash_report_missing))
-        report.inputStream().use { input -> file.outputStream().use { input.copyTo(it) } }
-        archiveProgress.value = 1f
-    }
-
     val archiveLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip"),
     ) { uri: Uri? -> savePreparedExport(uri) }
@@ -573,10 +564,11 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
     fun startArchiveExport() = prepareExport("zip", { archiveLauncher.launch(it) }) { file ->
         stageArchive(file) { repository.exportArchive(it) { p -> archiveProgress.value = p } }
     }
-    fun startDeepSeekExport() = prepareExport("zip", { archiveLauncher.launch(it) }) { file ->
+    fun startDeepSeekExport() = prepareExport("zip", { archiveLauncher.launch(it) }, prefix = "deepseek_data-", datePattern = "yyyy-MM-dd") { file ->
         repository.exportDeepSeekArchive(file) { p -> archiveProgress.value = p }
         java.util.zip.ZipFile(file).use { zip ->
-            check(zip.getEntry("manifest.json") != null && zip.getEntry("chat_session_index.json") != null && zip.getEntry("user.json") != null)
+            check(zip.entries().asSequence().firstOrNull()?.name == "manifest.json")
+            check(zip.getEntry("chat_session_index.json") != null && zip.getEntry("user.json") == null)
         }
     }
     // ── 页面 ──────────────────────────────────────────────
@@ -597,15 +589,18 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                 SettingsPage.SEARCH_API -> stringResource(R.string.service_search_title)
                 SettingsPage.FILES_API -> stringResource(R.string.service_files_title)
                 SettingsPage.PRESETS -> stringResource(R.string.settings_presets)
+                SettingsPage.MEMORY -> stringResource(R.string.settings_group_memory)
                 SettingsPage.APPEARANCE -> stringResource(R.string.settings_appearance)
                 SettingsPage.FONT -> stringResource(R.string.settings_font_size)
                 SettingsPage.CHAT -> stringResource(R.string.settings_chat_behavior)
                 SettingsPage.LOADING_WORDS -> stringResource(R.string.settings_loading_words)
                 SettingsPage.VOICE -> stringResource(R.string.tts_voice)
-                SettingsPage.USAGE -> stringResource(R.string.settings_usage_title)
+                SettingsPage.USAGE -> stringResource(
+                    if (isOfficialDeepSeekEndpoint(stored.baseUrl)) R.string.settings_usage_title else R.string.settings_usage_only,
+                )
                 SettingsPage.ABOUT -> stringResource(R.string.settings_about)
                 SettingsPage.LICENSES -> stringResource(R.string.about_licenses)
-                SettingsPage.DIAGNOSTICS -> stringResource(R.string.about_diagnostics_title)
+                SettingsPage.DIAGNOSTICS -> stringResource(R.string.about_diagnostics_group)
             },
             onBack = {
                 if (archiveProgress.value == null && importProgress.value == null && !importReading) {
@@ -641,7 +636,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                     modifier = Modifier
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp),
+                        .padding(horizontal = Space.Screen),
                 ) {
                     when (target) {
                         SettingsPage.ROOT -> RootPage(
@@ -674,13 +669,17 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                             onToggleHoldToTalk = {
                                 scope.launch { store.setHoldToTalk(it) }
                             },
+                            onOpenLoadingWords = { page = SettingsPage.LOADING_WORDS },
+                        )
+
+                        SettingsPage.MEMORY -> MemoryPage(
+                            stored = stored,
                             onToggleCrossChatMemory = {
                                 scope.launch { store.setCrossChatMemory(it) }
                             },
                             onCrossChatMemoryLimitChange = {
                                 scope.launch { store.setCrossChatMemoryLimit(it) }
                             },
-                            onOpenLoadingWords = { page = SettingsPage.LOADING_WORDS },
                         )
 
                         SettingsPage.LOADING_WORDS -> if (settingsLoaded) LoadingWordsPage(
@@ -704,8 +703,6 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                             onExport = { startExport() },
                             onExportArchive = { startArchiveExport() },
                             onExportDeepSeek = { startDeepSeekExport() },
-                            onExportReport = { startReportExport() },
-                            onExportCrash = { startCrashExport() },
                             onImport = {
                                 // 全放行：Chatbox 的备份是 .zip，有的设备报的 MIME 还很不标准。
                                 // 真正的判定放在解析那一步，认不出来会给出明确原因。
@@ -804,11 +801,16 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
 
                         SettingsPage.LICENSES -> LicensesPage()
 
-                        SettingsPage.DIAGNOSTICS -> DiagnosticsPage()
+                        SettingsPage.DIAGNOSTICS -> DiagnosticsPage(
+                            exportMessage = dataMessage,
+                            exportBusy = archiveProgress.value != null,
+                            onExportReport = { startReportExport() },
+                        )
 
                         SettingsPage.USAGE -> UsagePage(
                             stored = stored,
                             loadTotals = { repository.usageTotals() },
+                            loadDaily = { repository.dailyUsage(it) },
                         )
 
                         SettingsPage.VOICE -> VoicePage(
@@ -1177,9 +1179,8 @@ private fun RootPage(
      * 账户余额：只有官方端点有 `/user/balance`。这里进页面自动查一次，点行再刷。
      * 查询失败不弹窗、不打扰 —— 余额是辅助信息，失败时行内文字说明即可。
      */
-    var balanceRefresh by remember { mutableIntStateOf(0) }
     var balanceState by remember { mutableStateOf<BalanceRowState>(BalanceRowState.Loading) }
-    LaunchedEffect(stored.baseUrl, stored.apiKey, balanceRefresh) {
+    LaunchedEffect(stored.baseUrl, stored.apiKey) {
         if (!isOfficialDeepSeekEndpoint(stored.baseUrl)) {
             balanceState = BalanceRowState.Unsupported
             return@LaunchedEffect
@@ -1211,14 +1212,20 @@ private fun RootPage(
         SettingsNavRow(
             icon = AppIcons.Server,
             label = stringResource(R.string.settings_api),
-            value = null,
+            value = stored.apiProfiles.firstOrNull { it.id == stored.activeApiProfileId }?.name,
             onClick = { onOpen(SettingsPage.API_PROFILES) },
         )
         RowDivider()
-        BalanceRow(
-            state = balanceState,
-            onClick = { onOpen(SettingsPage.USAGE) },
-        )
+        if (isOfficialDeepSeekEndpoint(stored.baseUrl)) {
+            BalanceRow(state = balanceState, onClick = { onOpen(SettingsPage.USAGE) })
+        } else {
+            SettingsNavRow(
+                icon = AppIcons.FileText,
+                label = stringResource(R.string.settings_usage_only),
+                value = null,
+                onClick = { onOpen(SettingsPage.USAGE) },
+            )
+        }
     }
 
     /*
@@ -1270,12 +1277,8 @@ private fun RootPage(
                 }
             }
         }
-    }
 
-    // 对话：影响「AI 怎么说、怎么呈现、怎么读出来」的设置
-    SettingsSectionLabel(stringResource(R.string.settings_group_chat))
-
-    SettingsCard {
+        RowDivider()
         SettingsNavRow(
             icon = AppIcons.Prompt,
             label = stringResource(R.string.settings_presets),
@@ -1284,9 +1287,18 @@ private fun RootPage(
         )
 
         RowDivider()
-
         SettingsNavRow(
-            icon = AppIcons.MessageSquare,
+            icon = AppIcons.Brain,
+            label = stringResource(R.string.settings_group_memory),
+            value = stringResource(
+                if (stored.crossChatMemory) R.string.settings_memory_status_basic
+                else R.string.settings_memory_status_closed,
+            ),
+            onClick = { onOpen(SettingsPage.MEMORY) },
+        )
+        RowDivider()
+        SettingsNavRow(
+            icon = AppIcons.Sliders,
             label = stringResource(R.string.settings_chat_behavior),
             value = null,
             onClick = { onOpen(SettingsPage.CHAT) },
@@ -1409,11 +1421,8 @@ private fun ChatBehaviorPage(
     onToggleAutoCollapse: (Boolean) -> Unit,
     onToggleSearchInactiveBranches: (Boolean) -> Unit,
     onToggleHoldToTalk: (Boolean) -> Unit,
-    onToggleCrossChatMemory: (Boolean) -> Unit,
-    onCrossChatMemoryLimitChange: (Int) -> Unit,
     onOpenLoadingWords: () -> Unit,
 ) {
-    var memoryLimitMenuOpen by remember { mutableStateOf(false) }
 
     SettingsSectionLabel(stringResource(R.string.settings_group_display))
 
@@ -1452,41 +1461,66 @@ private fun ChatBehaviorPage(
         )
     }
 
-    SettingsSectionLabel(stringResource(R.string.settings_group_memory))
+}
 
+@Composable
+private fun MemoryPage(
+    stored: StoredSettings,
+    onToggleCrossChatMemory: (Boolean) -> Unit,
+    onCrossChatMemoryLimitChange: (Int) -> Unit,
+) {
+    var memoryLimitMenuOpen by remember { mutableStateOf(false) }
+    Text(
+        text = stringResource(R.string.settings_memory_hint),
+        style = MaterialTheme.typography.bodySmall,
+        color = LocalChatColors.current.placeholder,
+        modifier = Modifier.settingsSectionGrid(),
+    )
     SettingsCard {
         SettingsSwitchRow(
-            icon = AppIcons.Sparkles,
+            icon = AppIcons.Brain,
             label = stringResource(R.string.settings_cross_chat_memory),
             checked = stored.crossChatMemory,
-            onCheckedChange = onToggleCrossChatMemory,
+            onCheckedChange = { enabled ->
+                if (!enabled) memoryLimitMenuOpen = false
+                onToggleCrossChatMemory(enabled)
+            },
         )
-        RowDivider()
-        Box {
-            SettingsNavRow(
-                icon = AppIcons.ListChecks,
-                label = stringResource(R.string.settings_cross_chat_memory_limit),
-                value = stringResource(
-                    R.string.settings_cross_chat_memory_limit_value,
-                    stored.crossChatMemoryLimit,
-                ),
-                onClick = { memoryLimitMenuOpen = true },
-            )
-            AppMenu(
-                expanded = memoryLimitMenuOpen,
-                onDismissRequest = { memoryLimitMenuOpen = false },
-            ) {
-                (1..10).forEach { count ->
-                    AppMenuItem(
-                        label = stringResource(R.string.settings_cross_chat_memory_limit_value, count),
-                        selected = count == stored.crossChatMemoryLimit,
-                        onClick = {
-                            memoryLimitMenuOpen = false
-                            onCrossChatMemoryLimitChange(count)
-                        },
-                    )
+        if (stored.crossChatMemory) {
+            RowDivider()
+            Box {
+                SettingsNavRow(
+                    icon = AppIcons.ListChecks,
+                    label = stringResource(R.string.settings_cross_chat_memory_limit),
+                    value = stringResource(
+                        R.string.settings_cross_chat_memory_limit_value,
+                        stored.crossChatMemoryLimit,
+                    ),
+                    onClick = { memoryLimitMenuOpen = true },
+                )
+                AppMenu(
+                    expanded = memoryLimitMenuOpen,
+                    onDismissRequest = { memoryLimitMenuOpen = false },
+                ) {
+                    (1..10).forEach { count ->
+                        AppMenuItem(
+                            label = stringResource(R.string.settings_cross_chat_memory_limit_value, count),
+                            selected = count == stored.crossChatMemoryLimit,
+                            onClick = {
+                                memoryLimitMenuOpen = false
+                                onCrossChatMemoryLimitChange(count)
+                            },
+                        )
+                    }
                 }
             }
+            RowDivider(inset = 16.dp)
+            SettingsActionRow(
+                label = stringResource(R.string.settings_enhanced_memory),
+                hint = stringResource(R.string.settings_enhanced_memory_unavailable),
+                enabled = false,
+                onClick = {},
+            )
         }
     }
 }
@@ -1801,8 +1835,6 @@ private fun DataPage(
     onExport: () -> Unit,
     onExportArchive: () -> Unit,
     onExportDeepSeek: () -> Unit,
-    onExportReport: () -> Unit,
-    onExportCrash: () -> Unit,
     onImport: () -> Unit,
     onDeleteAll: () -> Unit,
 ) {
@@ -1829,12 +1861,14 @@ private fun DataPage(
             onClick = onExportDeepSeek,
             enabled = !reading && progress == null && exportProgress == null,
         )
-        RowDivider()
+    }
+
+    SettingsSectionLabel(stringResource(R.string.settings_import_all))
+    SettingsCard {
         SettingsActionRow(
             label = stringResource(R.string.settings_import_all),
             hint = stringResource(R.string.settings_import_all_summary),
             onClick = onImport,
-            // 导入期间不能重复点：同一份包并发解析会把内存和数据库都顶爆
             enabled = !reading && progress == null && exportProgress == null,
         )
     }
@@ -1891,28 +1925,6 @@ private fun DataPage(
                 )
             }
         }
-    }
-
-    /*
-     * 诊断：导入对账报告与崩溃诊断都是"出了问题才用"的东西，和日常的备份 / 导入
-     * 不是同一类操作。混在备份卡片里，看起来会像"又一个常规导出"。
-     */
-    SettingsSectionLabel(stringResource(R.string.settings_group_diagnostics))
-
-    SettingsCard {
-        SettingsActionRow(
-            label = stringResource(R.string.import_report_export),
-            hint = stringResource(R.string.import_report_hint),
-            onClick = onExportReport,
-            enabled = !reading && progress == null && exportProgress == null,
-        )
-        RowDivider()
-        SettingsActionRow(
-            label = stringResource(R.string.crash_report_export),
-            hint = stringResource(R.string.crash_report_hint),
-            onClick = onExportCrash,
-            enabled = !reading && progress == null && exportProgress == null,
-        )
     }
 
     SettingsSectionLabel(stringResource(R.string.settings_group_reset))
@@ -2453,6 +2465,7 @@ private fun AboutPage(
 ) {
     val colors = LocalChatColors.current
     val scope = rememberCoroutineScope()
+    var showProjectLicense by rememberSaveable { mutableStateOf(false) }
     var checking by remember { mutableStateOf(false) }
     var checkResult by remember { mutableStateOf<UpdateChecker.Result?>(null) }
 
@@ -2462,19 +2475,7 @@ private fun AboutPage(
         InfoRow(label = stringResource(R.string.about_version), value = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
         RowDivider(inset = 16.dp)
         InfoRow(label = stringResource(R.string.about_package), value = BuildConfig.APPLICATION_ID)
-        RowDivider(inset = 16.dp)
-        InfoRow(label = stringResource(R.string.license_type), value = APP_LICENSE)
-        RowDivider(inset = 16.dp)
-        InfoRow(label = stringResource(R.string.license_copyright), value = APP_COPYRIGHT)
-    }
-
-    /*
-     * 「检查更新」单独一张卡：上面几行是只读信息，这一行是**可点**的 ——
-     * 混排会出现"有的能点有的不能点"。
-     */
-    SettingsSectionLabel(stringResource(R.string.about_update))
-
-    SettingsCard {
+        RowDivider()
         SettingsActionRow(
             label = stringResource(R.string.about_check_update),
             hint = stringResource(R.string.about_current_version, BuildConfig.VERSION_NAME),
@@ -2491,36 +2492,41 @@ private fun AboutPage(
         )
     }
 
-    /*
-     * 项目地址单独一组，不与上面的版本信息混排：
-     * 这一行是**可点**的（点开跳到仓库），而上面几行是只读信息 ——
-     * 混在一张卡里会出现「有的能点有的不能点」。
-     */
     SettingsSectionLabel(stringResource(R.string.about_project))
-
     SettingsCard {
-        LinkRow(
-            label = stringResource(R.string.about_project_url),
-            value = ProjectUrl,
-            url = ProjectUrl,
-        )
+        LinkRow(label = stringResource(R.string.about_project_url), value = ProjectUrl, url = ProjectUrl)
+        RowDivider(inset = 16.dp)
+        SettingsNavRow(icon = null, label = stringResource(R.string.license_type), value = APP_LICENSE,
+            onClick = { showProjectLicense = true })
+        RowDivider(inset = 16.dp)
+        SettingsNavRow(icon = null, label = stringResource(R.string.about_licenses),
+            value = stringResource(R.string.licenses_count, thirdPartyLicenses.size), onClick = onOpenLicenses)
     }
-
-    SettingsSectionLabel(stringResource(R.string.about_licenses))
-
-    /*
-     * 只放一行入口，不把十几个组件铺在「关于」页里。
-     *
-     * 合规要看的是**每个组件的五项信息**（名称与版本 / 许可证 / 版权 / 官方链接 /
-     * 许可证全文），那必须是一页能逐条读的清单，而不是几张 `名字 (MIT)` 的便签。
-     */
-    SettingsCard {
-        SettingsNavRow(
-            icon = AppIcons.FileText,
-            label = stringResource(R.string.about_licenses),
-            value = stringResource(R.string.licenses_count, thirdPartyLicenses.size),
-            onClick = onOpenLicenses,
-        )
+    if (showProjectLicense) {
+        val context = LocalContext.current
+        val license = remember(context) { context.resources.openRawResource(R.raw.simplechat_license).bufferedReader().use { it.readText() } }
+        val colors = LocalChatColors.current
+        Dialog(onDismissRequest = { showProjectLicense = false }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 560.dp)
+                    .clip(ContainerShape)
+                    .background(colors.card)
+                    .padding(20.dp),
+            ) {
+                Text("SimpleChat · MIT", style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface)
+                Spacer(Modifier.size(12.dp))
+                Text(license, Modifier.weight(1f, fill = false).heightIn(max = 520.dp)
+                    .verticalScroll(rememberScrollState()),
+                    style = MaterialTheme.typography.bodySmall, color = colors.processText)
+                Spacer(Modifier.size(16.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextAction(stringResource(R.string.action_close), onClick = { showProjectLicense = false })
+                }
+            }
+        }
     }
 
     SettingsSectionLabel(stringResource(R.string.about_diagnostics_group))
@@ -2532,8 +2538,8 @@ private fun AboutPage(
     SettingsCard {
         SettingsNavRow(
             icon = AppIcons.Info,
-            label = stringResource(R.string.about_diagnostics_title),
-            value = stringResource(R.string.about_diagnostics_count, Diagnostics.count()),
+            label = stringResource(R.string.about_diagnostics_group),
+            value = null,
             onClick = onOpenDiagnostics,
         )
     }
@@ -2797,6 +2803,9 @@ fun SettingsTopBar(title: String, onBack: () -> Unit) {
     }
 }
 
+private fun Modifier.settingsSectionGrid(): Modifier =
+    padding(start = 4.dp, top = Space.Section, bottom = Space.Gap)
+
 @Composable
 fun SettingsSectionLabel(text: String) {
     val colors = LocalChatColors.current
@@ -2804,7 +2813,7 @@ fun SettingsSectionLabel(text: String) {
         text = text,
         style = MaterialTheme.typography.labelMedium,
         color = colors.placeholder,
-        modifier = Modifier.padding(start = 4.dp, top = Space.Section, bottom = Space.Gap),
+        modifier = Modifier.settingsSectionGrid(),
     )
 }
 
@@ -2948,26 +2957,23 @@ private fun BalanceRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Space.IconGap),
     ) {
+        val contentTint = MaterialTheme.colorScheme.onSurface
         Icon(
             imageVector = AppIcons.Wallet,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurface,
+            tint = contentTint,
             modifier = Modifier.size(Space.Icon),
         )
         Text(
             text = stringResource(R.string.settings_balance),
             style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = contentTint,
             modifier = Modifier.weight(1f),
         )
         Text(
             text = value,
             style = MaterialTheme.typography.bodyMedium,
-            color = if (state is BalanceRowState.Balance) {
-                MaterialTheme.colorScheme.onSurface
-            } else {
-                colors.placeholder
-            },
+            color = colors.placeholder,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.End,
@@ -3463,13 +3469,19 @@ private data class UsageTotalsUi(
 private fun UsagePage(
     stored: StoredSettings,
     loadTotals: suspend () -> com.simplechat.app.db.UsageTotals,
+    loadDaily: suspend (Long) -> List<com.simplechat.app.db.DailyUsage>,
 ) {
     val colors = LocalChatColors.current
+    val context = LocalContext.current
     var refreshTick by remember { mutableIntStateOf(0) }
     var balance by remember { mutableStateOf<BalanceRowState>(BalanceRowState.Loading) }
     var totals by remember { mutableStateOf(UsageTotalsUi()) }
+    val today = java.time.LocalDate.now()
+    val firstDay = today.minusDays(29)
+    var daily by remember(firstDay) { mutableStateOf<List<com.simplechat.app.db.DailyUsage>?>(null) }
 
     LaunchedEffect(stored.baseUrl, stored.apiKey, refreshTick) {
+        balance = BalanceRowState.Loading
         balance = when {
             !isOfficialDeepSeekEndpoint(stored.baseUrl) -> BalanceRowState.Unsupported
             stored.apiKey.isBlank() -> BalanceRowState.NoKey
@@ -3482,6 +3494,17 @@ private fun UsagePage(
                     is DeepSeekBalance.Result.Failed -> BalanceRowState.Failed
                 }
             }
+        }
+    }
+
+    LaunchedEffect(firstDay, refreshTick) {
+        val since = firstDay.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        daily = try {
+            loadDaily(since)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -3513,40 +3536,48 @@ private fun UsagePage(
     ) {
         Spacer(Modifier.size(Space.Section))
 
-        SettingsSectionLabel(stringResource(R.string.settings_balance))
-        SettingsCard {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = when (val state = balance) {
-                            BalanceRowState.Loading -> "…"
-                            is BalanceRowState.Balance -> balanceSymbol(state.currency) + state.total
-                            BalanceRowState.NoKey -> stringResource(R.string.settings_balance_no_key)
-                            BalanceRowState.Unsupported -> stringResource(R.string.settings_balance_unsupported)
-                            BalanceRowState.Failed -> stringResource(R.string.settings_balance_failed)
-                        },
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(
-                        text = stringResource(R.string.settings_balance_refresh),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .clip(PillShape)
-                            .clickable { refreshTick++ }
-                            .padding(horizontal = Space.Inline, vertical = Space.RowPadY),
-                    )
+        if (isOfficialDeepSeekEndpoint(stored.baseUrl)) {
+            SettingsSectionLabel(stringResource(R.string.settings_deepseek_balance))
+            SettingsCard {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = when (val state = balance) {
+                                BalanceRowState.Loading -> "…"
+                                is BalanceRowState.Balance -> balanceSymbol(state.currency) + state.total
+                                BalanceRowState.NoKey -> stringResource(R.string.settings_balance_no_key)
+                                BalanceRowState.Unsupported -> stringResource(R.string.settings_balance_unsupported)
+                                BalanceRowState.Failed -> stringResource(R.string.settings_balance_failed)
+                            },
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconCircleButton(
+                            icon = AppIcons.Refresh,
+                            contentDescription = stringResource(R.string.settings_balance_refresh),
+                            onClick = { refreshTick++ },
+                            size = 36.dp,
+                            iconSize = 18.dp,
+                            tint = MaterialTheme.colorScheme.onSurface,
+                        )
+                        IconCircleButton(
+                            icon = AppIcons.ExternalLink,
+                            contentDescription = stringResource(R.string.settings_balance_top_up),
+                            onClick = { openInBrowser(context, "https://platform.deepseek.com/usage") },
+                            size = 36.dp,
+                            iconSize = 18.dp,
+                        )
+                    }
                 }
             }
-        }
 
-        Spacer(Modifier.size(Space.Section))
+            Spacer(Modifier.size(Space.Section))
+        }
 
         SettingsSectionLabel(stringResource(R.string.stats_usage_title_all))
         SettingsCard {
@@ -3574,18 +3605,24 @@ private fun UsagePage(
                         value = "${TokenEstimate.format(totals.cacheHitTokens)} tokens",
                     )
                 }
-                UsageStatRow(
-                    label = stringResource(R.string.stats_usage_cost),
-                    value = com.simplechat.app.data.Pricing.format(cost),
-                )
-                Text(
-                    text = stringResource(R.string.stats_usage_note),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = colors.placeholder,
-                )
+                if (isOfficialDeepSeekEndpoint(stored.baseUrl)) {
+                    UsageStatRow(
+                        label = stringResource(R.string.stats_usage_cost),
+                        value = com.simplechat.app.data.Pricing.format(cost),
+                    )
+                    Text(
+                        text = stringResource(R.string.stats_usage_note),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.placeholder,
+                    )
+                }
             }
         }
 
+        daily?.let { rows ->
+            SettingsSectionLabel(stringResource(R.string.stats_usage_recent))
+            SettingsCard { DailyUsageChart(firstDay, rows) }
+        }
         Spacer(Modifier.size(Space.Section))
     }
 }
@@ -3612,19 +3649,31 @@ private fun UsageStatRow(label: String, value: String) {
 // ══════════════════════════════════════════════════════════
 
 /**
- * 当前运行日志：最近若干条事件，可复制 / 分享导出 / 清空。
- *
- * 数据源是 [Diagnostics] 的**内存环形缓冲**：只覆盖本次进程，退出即散。
- * 这点必须写在界面上 —— 否则用户以为删了应用日志还在，或者反过来
- * 以为"打开这个页面"才开始记录。
+ * 将当前运行日志与最近一次崩溃堆栈作为同一份诊断内容导出。
+ * 运行日志保存在进程内存，崩溃堆栈单独保存在本地文件；清空操作同时删除两者。
  */
 @Composable
-private fun DiagnosticsPage() {
+private fun DiagnosticsPage(
+    exportMessage: String?,
+    exportBusy: Boolean,
+    onExportReport: () -> Unit,
+) {
     val colors = LocalChatColors.current
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    var exportMenuOpen by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var lines by remember { mutableStateOf(Diagnostics.snapshot()) }
+    fun fullDiagnosticText(): String = buildString {
+        append(Diagnostics.exportText())
+        val crash = com.simplechat.app.data.CrashDiagnostics.text(context)
+        if (crash != null) {
+            appendLine()
+            appendLine("Latest crash report")
+            appendLine("----------")
+            append(crash)
+        }
+    }
 
     // 日志是活的：停在页面上时每秒拉一次，用户一边复现一边就能看到新行。
     LaunchedEffect(Unit) {
@@ -3634,10 +3683,6 @@ private fun DiagnosticsPage() {
         }
     }
 
-    /*
-     * 导出到文件走系统文件选择器（SAF）：不申请存储权限、不猜下载目录，
-     * 写完立刻在提示里说明 "已保存"，用户去刚选的位置找。
-     */
     val saveFile = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/plain"),
     ) { uri ->
@@ -3645,7 +3690,7 @@ private fun DiagnosticsPage() {
         scope.launch {
             val ok = runCatching {
                 withContext(Dispatchers.IO) {
-                    val text = Diagnostics.exportText()
+                    val text = fullDiagnosticText()
                     val stream = context.contentResolver.openOutputStream(uri, "wt")
                         ?: error("no output stream")
                     stream.use { it.write(text.toByteArray()) }
@@ -3658,47 +3703,63 @@ private fun DiagnosticsPage() {
             ).show()
         }
     }
-
     SettingsSectionLabel(stringResource(R.string.about_diagnostics_group))
 
     SettingsCard {
-        SettingsActionRow(
-            label = stringResource(R.string.diagnostics_copy),
-            hint = stringResource(R.string.diagnostics_count, lines.size),
-            onClick = { clipboard.setText(AnnotatedString(Diagnostics.exportText())) },
-        )
-        RowDivider(inset = Space.Screen)
-        SettingsActionRow(
-            label = stringResource(R.string.diagnostics_save_file),
-            hint = stringResource(R.string.diagnostics_save_file_hint),
-            onClick = {
-                val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.ROOT)
-                    .format(java.util.Date())
-                saveFile.launch("SimpleChat-diagnostics-$stamp.txt")
-            },
-        )
-        RowDivider(inset = Space.Screen)
-        SettingsActionRow(
-            label = stringResource(R.string.diagnostics_export),
-            hint = stringResource(R.string.diagnostics_export_hint),
-            onClick = {
-                val send = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_SUBJECT, "SimpleChat diagnostics")
-                    putExtra(Intent.EXTRA_TEXT, Diagnostics.exportText())
+        Box {
+            SettingsActionRow(
+                label = stringResource(R.string.diagnostics_export),
+                hint = stringResource(R.string.diagnostics_count, lines.size),
+                onClick = { exportMenuOpen = true },
+            )
+            AppMenu(expanded = exportMenuOpen, onDismissRequest = { exportMenuOpen = false }) {
+                AppMenuItem(stringResource(R.string.diagnostics_copy), AppIcons.Copy) {
+                    exportMenuOpen = false
+                    clipboard.setText(AnnotatedString(fullDiagnosticText()))
+                    android.widget.Toast.makeText(context, Res.get(R.string.diagnostics_copied), android.widget.Toast.LENGTH_SHORT).show()
                 }
-                context.startActivity(Intent.createChooser(send, Res.get(R.string.diagnostics_export)))
-            },
-        )
-        RowDivider(inset = Space.Screen)
+                AppMenuItem(stringResource(R.string.diagnostics_export), AppIcons.Share) {
+                    exportMenuOpen = false
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_SUBJECT, "SimpleChat diagnostics")
+                        putExtra(Intent.EXTRA_TEXT, fullDiagnosticText())
+                    }
+                    context.startActivity(Intent.createChooser(send, Res.get(R.string.diagnostics_export)))
+                }
+                AppMenuItem(stringResource(R.string.diagnostics_save_file), AppIcons.Download) {
+                    exportMenuOpen = false
+                    val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.ROOT).format(java.util.Date())
+                    saveFile.launch("SimpleChat-diagnostics-$stamp.txt")
+                }
+            }
+        }
+        RowDivider()
         SettingsActionRow(
             label = stringResource(R.string.diagnostics_clear),
             hint = null,
             onClick = {
                 Diagnostics.clear()
+                com.simplechat.app.data.CrashDiagnostics.clear(context)
                 lines = emptyList()
             },
         )
+    }
+
+    SettingsSectionLabel(stringResource(R.string.diagnostics_backup_title))
+    SettingsCard {
+        SettingsActionRow(
+            label = stringResource(R.string.import_report_export),
+            hint = stringResource(R.string.import_report_hint),
+            onClick = onExportReport,
+            enabled = !exportBusy,
+        )
+    }
+
+    if (exportBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
+    exportMessage?.let {
+        Text(it, modifier = Modifier.padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+            style = MaterialTheme.typography.bodySmall, color = colors.processText)
     }
 
     SettingsSectionLabel(stringResource(R.string.diagnostics_log_section))

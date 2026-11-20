@@ -1061,6 +1061,7 @@ fun ChatScreen(
 
     val textSelection = remember(vm) { MessageTextSelection() }
     val shareSelection = remember(vm) { MessageShareSelection() }
+    var excerpt by remember(vm.currentConversationId) { mutableStateOf<MessageShareDocument?>(null) }
     val shareMessages = vm.messages.toList()
     val shareGroups = remember(shareMessages) { messageShareGroups(shareMessages) }
     LaunchedEffect(vm.currentConversationId) { textSelection.dismiss(); shareSelection.close() }
@@ -1094,7 +1095,10 @@ fun ChatScreen(
                 // 新对话 = "我要看新的"，恢复跟随
                 resumeFollowing()
             },
-            onDoubleTap = { scope.launch { listState.animateScrollToItem(0) } },
+            onDoubleTap = {
+                detached = true
+                scope.launch { listState.scrollToItem(0) }
+            },
             // 点顶栏任意处也收键盘
             modifier = Modifier.dismissKeyboardOnTouch(clearFocus = { !textSelection.isActive }),
         )
@@ -1121,6 +1125,20 @@ fun ChatScreen(
                             loadingWordsUseThemeColor = vm.loadingWordsUseThemeColor,
                             textSelection = textSelection,
                             shareSelection = shareSelection,
+                            onShareExcerpt = { message, selectedText ->
+                                textSelection.dismiss()
+                                dismissInput()
+                                val quote = UiMessage(message.id, message.role, selectedText)
+                                val footnote = buildList {
+                                    add(Res.get(R.string.share_excerpt_date, java.time.LocalDate.now().toString()))
+                                    if (message.role == MessageRole.ASSISTANT) add(Res.get(R.string.share_excerpt_ai))
+                                }
+                                excerpt = MessageShareDocument(
+                                    Res.get(R.string.share_excerpt),
+                                    listOf(MessageShareGroup(quote.id, listOf(quote))),
+                                    footnote,
+                                )
+                            },
                             onShare = { message ->
                                 textSelection.dismiss()
                                 dismissInput()
@@ -1343,6 +1361,10 @@ fun ChatScreen(
             }
         }
 
+        excerpt?.let { snapshot ->
+            MessageShareTools(shareSelection, emptyList(), snapshot.title, excerpt = snapshot,
+                onCloseExcerpt = { excerpt = null })
+        }
         val composer: @Composable () -> Unit = {
             if (shareSelection.active) {
                 MessageShareTools(shareSelection, shareGroups, vm.conversationTitle(),
@@ -1559,6 +1581,7 @@ fun ChatScreen(
                     ContextPanelContent(
                         stats = vm.contextStats,
                         usage = vm.lastUsage,
+                        showUsageCost = com.simplechat.app.net.isOfficialDeepSeekEndpoint(vm.attachmentSettings.baseUrl),
                         compaction = vm.compaction,
                         compacting = vm.compacting,
                         compactionStatus = vm.compactionStatus,

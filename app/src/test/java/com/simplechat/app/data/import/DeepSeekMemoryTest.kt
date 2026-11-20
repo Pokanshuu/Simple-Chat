@@ -7,8 +7,6 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -18,9 +16,14 @@ class DeepSeekMemoryTest {
     )
 
     @Test
-    fun `direct field reader matches previous mapping including field order escapes and fragments`() {
-        val raw = """{"id":2,"parent_id":1,"role":"ASSISTANT","status":"FINISHED","inserted_at":"2024-01-01T00:00:00Z","unknown":{"deep":[1,2]},"fragments":[{"content":"a\nb\"c 😀","type":"RESPONSE"},{"type":"RESPONSE","content":"tail"},{"elapsed_secs":2,"content":"thinking","type":"THINK"},{"type":"TEMPLATE_RESPONSE","content":"template"},{"files":[{"export_path":"photo.png","is_image":true},{"is_image":false,"export_path":"file.txt"}],"type":"FILE"}]}"""
-        assertEquals(DeepSeekHistory.parsedMessage(Json.parseToJsonElement(raw).jsonObject), readDeepSeekMessage(JsonStream(StringReader(raw))))
+    fun `direct field reader preserves field order independence escapes and fragments`() {
+        val raw = """{"id":2,"parent_id":1,"role":"ASSISTANT","status":"FINISHED","inserted_at":"2024-01-01T00:00:00Z","unknown":{"deep":[1,2]},"fragments":[{"content":"a\nb\"c 😀","type":"RESPONSE"},{"type":"RESPONSE","content":"tail"},{"elapsed_secs":2.5,"content":"thinking","type":"THINK"},{"type":"TEMPLATE_RESPONSE","content":"template"},{"files":[{"export_path":"photo.png","is_image":true},{"is_image":false,"export_path":"file.txt"}],"type":"FILE"}]}"""
+        val parsed = readDeepSeekMessage(JsonStream(StringReader(raw)))
+        assertEquals(2L, parsed.number)
+        assertEquals("a\nb\"c 😀tail", parsed.response)
+        assertEquals("template", parsed.template)
+        assertEquals(listOf("thinking" to 2500L), parsed.thinks)
+        assertEquals(listOf("photo.png"), parsed.images.map { it.path })
     }
 
     @Test

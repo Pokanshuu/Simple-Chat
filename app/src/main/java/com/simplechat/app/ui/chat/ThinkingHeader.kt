@@ -73,7 +73,7 @@ internal fun ThinkingHeader(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Icon(
-            imageVector = AppIcons.Brain,
+            imageVector = AppIcons.Sparkles,
             contentDescription = null,
             tint = colors.processText,
             modifier = Modifier.size(15.dp),

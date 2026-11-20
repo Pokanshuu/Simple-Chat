@@ -54,7 +54,7 @@ internal fun ExportFitWidth(content: @Composable () -> Unit) {
 
 /** Same native measure/draw engine as Latex(), with explicit fonts and synchronous readiness. */
 @Composable
-internal fun ExportFormula(tex: String, fontSize: androidx.compose.ui.unit.TextUnit = 17.sp) {
+internal fun ExportFormula(tex: String, source: String = tex, fontSize: androidx.compose.ui.unit.TextUnit = 17.sp) {
     val options = checkNotNull(LocalMarkdownExport.current)
     val presentation = remember(tex) { prepareLatexPresentation(tex) }
     val config = LatexConfig(fontSize = fontSize, fontFamilies = options.fonts,
@@ -67,10 +67,10 @@ internal fun ExportFormula(tex: String, fontSize: androidx.compose.ui.unit.TextU
     }
     if (inline == null) {
         // The same unsupported-syntax fallback as chat; supported formulas never go through text.
-        BasicText(tex, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace,
+        BasicText(source, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace,
             color = MaterialTheme.colorScheme.onBackground))
     } else ExportFitWidth {
-        FormulaInlineText(inline, tex, MaterialTheme.typography.bodyLarge.copy(fontSize = fontSize))
+        FormulaInlineText(inline, source, MaterialTheme.typography.bodyLarge.copy(fontSize = fontSize))
     }
 }
 

@@ -1,6 +1,6 @@
 <resources>
-    <string name="settings_export_deepseek">Export DeepSeek-compatible backup</string>
-    <string name="settings_export_deepseek_hint">Official v3 ZIP structure with a full SimpleChat extension preserving branches, attachments, sources and presets. Existing backup formats remain available.</string>
+    <string name="settings_export_deepseek">Export DeepSeek v3 archive</string>
+    <string name="settings_export_deepseek_hint">For moving chat history with message branches, search history and available images. Use a SimpleChat backup for presets and non-image file contents.</string>
     <string name="service_uploaded">Uploaded to Files API</string>
     <string name="service_text_threshold">Long text threshold (characters)</string>
     <string name="service_threshold_invalid">Enter a character count between 4,000 and 1,000,000. The default is 16,000.</string>

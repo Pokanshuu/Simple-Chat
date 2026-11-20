@@ -128,4 +128,37 @@ class MathSplitTest {
         val formula = result.single() as ContentSegment.Formula
         assertEquals("""\$5""", formula.tex)
     }
+
+    @Test fun codeAndLinksDoNotContainMath() {
+        val source = "````sh\necho \$x\$\n```\n\$y\$\n````\n\n[label](https://example.invalid/\$price\$) and \$z\$"
+        val segments = splitMath(source)
+        assertEquals(listOf("z"), segments.filterIsInstance<ContentSegment.Formula>().map { it.tex })
+    }
+
+    @Test fun incompleteDisplayDoesNotSwallowLaterParagraphs() {
+        val source = "\$\$unfinished\n\nprose\n\n\$\$x^2\$\$"
+        assertEquals(listOf("x^2"), splitMath(source).filterIsInstance<ContentSegment.Formula>().map { it.tex })
+    }
+
+    @Test fun pricesAndCrossLineInlineMathStayLiteral() {
+        for (source in listOf("From \$5-\$10", "\$first\r\nlast\$", "\$first\\\nlast\$")) {
+            assertEquals(listOf(ContentSegment.Text(source)), splitMath(source))
+        }
+    }
+
+    @Test fun standaloneAmsEnvironmentsAreNativeDisplayMath() {
+        val align = "\\begin{align*}\na&=b \\\\\nc&=d\n\\end{align*}"
+        val formula = displayMathSegments("前\n$align\n后").filterIsInstance<ContentSegment.Formula>().single()
+        assertTrue(formula.display)
+        assertEquals(align, formula.source)
+        assertTrue(prepareLatexPresentation(formula.tex).canRender)
+        assertTrue(displayMathSegments("```tex\n$align\n```").none { it is ContentSegment.Formula })
+    }
+
+    @Test fun sameLineBracketMathDoesNotBreakATableRow() {
+        val source = "| 前 \\[|x|\\] 后 | y |"
+        val formula = splitMath(source).filterIsInstance<ContentSegment.Formula>().single()
+        assertTrue(!formula.display)
+        assertEquals("|x|", formula.tex)
+    }
 }

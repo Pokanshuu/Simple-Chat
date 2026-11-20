@@ -47,7 +47,7 @@ Good for:
 - **Loading phrases**: while waiting for the first token, the app picks one phrase per reply and animates the trailing dots. Under Settings → Conversation behavior → Display → Loading phrases, add, edit, or delete phrases and optionally apply the theme accent to the text, spinner, and dots. An empty custom list uses the eight built-in phrases.
 - Thinking panel: `reasoning_content` shown collapsed, timing counts real thinking time only, folds as soon as the answer starts (can be turned off).
 - **Continue generating**: a reply you stopped, or one cut off by the output limit, can be continued in place (trailing-assistant prefix).
-- **Math**: `$…$` / `$$…$$` / `\[…\]` rendered natively by Compose (no WebView + KaTeX).
+- **Math**: `$…$` and `\(…\)` are inline; standalone `$$…$$` and `\[…\]` are display math. Same-line `$$…$$` and `\[…\]` stay inline. Compose-native rendering, no WebView.
 - **Mermaid diagrams**: ```mermaid fences render as diagrams with a switch back to source; the script ships in the APK, so it works offline.
 - **Hold to speak**: press and hold the empty composer to record. Release to transcribe and send, or swipe up and release to cancel. Official DeepSeek connections use DeepSeek ASR for recordings up to 120 seconds. Other connections use the Android speech recognizer when available.
 - **Read aloud**: replies are spoken by the system TTS engine — no backend, no permission. Pick a voice (with preview) in Settings; code blocks and tables are stripped before reading.
@@ -188,7 +188,7 @@ app/src/main/java/com/simplechat/app/
 
 ## Documentation
 
-Design documents, implementation records and the changelog are indexed in [`docs/README.md`](docs/README.md). The `§` references in code comments point to these documents. Historical records describe each version and what was verified. The current prerelease is v1.2.3-beta.2; v1.2.2 remains the stable release. See the [prerelease notes](RELEASE_NOTES_v1.2.3-beta.2.md).
+Design documents, implementation records and the changelog are indexed in [`docs/README.md`](docs/README.md). The `§` references in code comments point to these documents. Historical records describe each version and what was verified.
 
 - [`TODO.md`](TODO.md): current status and to-dos.
 

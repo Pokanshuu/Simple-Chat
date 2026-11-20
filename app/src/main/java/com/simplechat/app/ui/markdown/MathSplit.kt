@@ -1,5 +1,9 @@
 package com.simplechat.app.ui.markdown
 
+import org.intellij.markdown.MarkdownElementTypes
+import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
+import org.intellij.markdown.parser.MarkdownParser
+
 /**
  * 正文里的一段内容：普通 Markdown，或一段数学公式。
  *
@@ -22,7 +26,7 @@ sealed interface ContentSegment {
  * | 写法 | 形态 |
  * |---|---|
  * | `$$…$$` | 独占一行时为行间；同一行夹在正文中时为行内 |
- * | `\[…\]` | 行间 |
+ * | `\[…\]` | 独占行时为行间，同一行夹在正文中时为行内 |
  * | `$…$` | 行内 |
  * | `\(…\)` | 行内 |
  *
@@ -37,10 +41,12 @@ sealed interface ContentSegment {
 internal fun splitMath(content: String): List<ContentSegment> {
     if (content.isEmpty()) return emptyList()
     // 没有任何定界符：快路径，原样返回（绝大多数消息走到这里）
-    if (!content.contains('$') && !content.contains("\\[") && !content.contains("\\(")) {
+    if (!content.contains('$') && !content.contains("\\[") && !content.contains("\\(") && !content.contains("\\begin{")) {
         return listOf(ContentSegment.Text(content))
     }
 
+    val excluded = mathExcludedRanges(content)
+    var rangeIndex = 0
     val out = mutableListOf<ContentSegment>()
     val buffer = StringBuilder()
     var i = 0
@@ -53,39 +59,29 @@ internal fun splitMath(content: String): List<ContentSegment> {
     }
 
     while (i < content.length) {
+        while (rangeIndex < excluded.size && excluded[rangeIndex].last < i) rangeIndex++
+        val nextRange = excluded.getOrNull(rangeIndex)
+        if (nextRange != null && i >= nextRange.first) {
+            buffer.append(content, i, nextRange.last + 1)
+            i = nextRange.last + 1
+            continue
+        }
+        val limit = nextRange?.first ?: content.length
         if (content.startsWith("\\$", i) || content.startsWith("\\\\", i) || content.startsWith("\\`", i)) {
             buffer.append(content, i, i + 2)
             i += 2
             continue
         }
-        // ── 围栏代码块：整块跳过，里面的 $ 不算公式 ──
-        if (content.startsWith("```", i) || content.startsWith("~~~", i)) {
-            val marker = content.substring(i, i + 3)
-            val end = content.indexOf(marker, i + 3)
-            val stop = if (end < 0) content.length else end + 3
-            buffer.append(content, i, stop)
-            i = stop
-            continue
-        }
-
-        // A code span closes only with a backtick run of the same length.
-        if (content[i] == '`') {
-            val openEnd = content.runEnd(i, '`')
-            var close = content.indexOf('`', openEnd)
-            var stop = openEnd
-            while (close >= 0) {
-                val closeEnd = content.runEnd(close, '`')
-                if (closeEnd - close == openEnd - i) {
-                    stop = closeEnd
-                    break
-                }
-                close = content.indexOf('`', closeEnd)
+        if (content.startsWith("\\begin{", i)) {
+            val stop = displayEnvironmentEnd(content, i, minOf(limit, i + 32_000))
+            if (stop > i) {
+                flushText()
+                val source = content.substring(i, stop)
+                out += ContentSegment.Formula(source, display = true, source = source)
+                i = stop
+                continue
             }
-            buffer.append(content, i, stop)
-            i = stop
-            continue
         }
-
         val closer = when {
             content.startsWith("$$", i) -> "$$"
             content.startsWith("\\[", i) -> "\\]"
@@ -93,14 +89,17 @@ internal fun splitMath(content: String): List<ContentSegment> {
             else -> null
         }
         if (closer != null) {
-            val dollarPair = closer == "$$"
-            val end = mathClose(content, i + 2, closer, singleLine = closer == "\\)")
+            val end = mathClose(content, i + 2, closer, minOf(limit, i + 32_004), singleLine = closer == "\\)")
             if (end > i + 2) {
                 val tex = content.substring(i + 2, end).trim()
                 if (tex.isNotEmpty()) {
                     val stop = end + 2
-                    val display = closer == "\\]" || dollarPair &&
-                        (content.hasLineBreak(i + 2, end) || content.isStandalone(i, stop))
+                    val display = closer != "\\)" && content.isStandalone(i, stop)
+                    if (closer != "\\)" && !display && content.hasLineBreak(i + 2, end)) {
+                        buffer.append(content, i, i + 2)
+                        i += 2
+                        continue
+                    }
                     flushText()
                     out += ContentSegment.Formula(tex, display, content.substring(i, stop))
                     i = stop
@@ -113,7 +112,7 @@ internal fun splitMath(content: String): List<ContentSegment> {
             continue
         }
         if (content[i] == '$') {
-            val close = inlineClose(content, i)
+            val close = inlineClose(content, i, minOf(limit, i + 32_002))
             if (close > 0) {
                 flushText()
                 out += ContentSegment.Formula(
@@ -133,20 +132,57 @@ internal fun splitMath(content: String): List<ContentSegment> {
     return out
 }
 
-private fun String.runEnd(start: Int, char: Char): Int {
-    var end = start + 1
-    while (end < length && this[end] == char) end++
-    return end
+private val StandaloneEnvironments = setOf(
+    "equation", "equation*", "align", "align*", "aligned", "gather", "gather*", "multline", "multline*", "cases",
+)
+
+private fun displayEnvironmentEnd(source: String, start: Int, limit: Int): Int {
+    val nameStart = start + "\\begin{".length
+    val nameEnd = (nameStart until minOf(limit, nameStart + 16)).firstOrNull { source[it] == '}' } ?: return -1
+    val name = source.substring(nameStart, nameEnd)
+    if (name !in StandaloneEnvironments) return -1
+    val close = "\\end{$name}"
+    val end = mathClose(source, nameEnd + 1, close, limit, singleLine = false)
+    val stop = end + close.length
+    return if (end > nameEnd + 1 && source.isStandalone(start, stop)) stop else -1
 }
 
-private fun mathClose(content: String, start: Int, closer: String, singleLine: Boolean): Int {
+/** Use Markdown's own fence lengths, container rules and link offsets. */
+private fun mathExcludedRanges(source: String): List<IntRange> {
+    if (!MathMarkdownSyntax.containsMatchIn(source)) return emptyList()
+    val tree = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(source)
+    val ranges = mutableListOf<IntRange>()
+    val pending = ArrayDeque<org.intellij.markdown.ast.ASTNode>().apply { add(tree) }
+    while (pending.isNotEmpty()) {
+        val node = pending.removeLast()
+        when (node.type) {
+            MarkdownElementTypes.CODE_FENCE, MarkdownElementTypes.CODE_BLOCK, MarkdownElementTypes.CODE_SPAN,
+            MarkdownElementTypes.LINK_DESTINATION, MarkdownElementTypes.AUTOLINK -> {
+                if (node.startOffset < node.endOffset) ranges += node.startOffset until node.endOffset
+            }
+            else -> node.children.asReversed().forEach(pending::addLast)
+        }
+    }
+    return ranges.sortedBy { it.first }
+}
+
+private val MathMarkdownSyntax = Regex("[\u0060~<]|\\]\\(|(?m)^(?: {4}|\\t| {0,3}\\[)")
+
+private fun mathClose(content: String, start: Int, closer: String, limit: Int, singleLine: Boolean): Int {
     var i = start
-    while (i < content.length) {
+    var lineHasContent = true
+    while (i < limit) {
         val char = content[i]
-        if (singleLine && (char == '\r' || char == '\n')) return -1
-        if (content.startsWith(closer, i)) return i
-        // A closing delimiter can contain a backslash, so test it before skipping escapes.
-        if (char == '\\' && (!singleLine || (content.getOrNull(i + 1) ?: '\u0000') !in LineBreaks)) i++
+        if (i + closer.length <= limit && content.startsWith(closer, i)) return i
+        if (char in LineBreaks) {
+            if (singleLine || !lineHasContent) return -1
+            lineHasContent = false
+            if (char == '\r' && content.getOrNull(i + 1) == '\n') i++
+        } else if (!char.isWhitespace()) {
+            lineHasContent = true
+            // Never skip a line break following an escape.
+            if (char == '\\' && i + 1 < limit && content[i + 1] !in LineBreaks) i++
+        }
         i++
     }
     return -1
@@ -175,21 +211,25 @@ private fun String.isStandalone(start: Int, end: Int): Boolean {
  * 规则：开引号后面不能是空白（排除 "$ 5"），闭引号前面不能是空白（排除 "$5 和 $10"），
  * 中间不能有换行（行内公式不跨行），`\$` 是**转义**的美元号、不当作闭合。
  */
-private fun inlineClose(content: String, open: Int): Int {
+private fun inlineClose(content: String, open: Int, limit: Int): Int {
     var i = open + 1
     if (i >= content.length) return -1
     if (content[i].isWhitespace()) return -1
     if (content[i] == '$') return -1 // "$$" 是行间公式，交给上面处理
-    while (i < content.length) {
+    var braces = 0
+    while (i < limit) {
         val c = content[i]
-        if (c == '\n') return -1
+        if (c in LineBreaks) return -1
         if (c == '\\') {
             // 跳过被转义的那个字符（`\$` / `\\` / `\{`）
+            if ((content.getOrNull(i + 1) ?: '\u0000') in LineBreaks) return -1
             i += 2
             continue
         }
-        if (c == '$') {
-            if (content[i - 1].isWhitespace()) return -1
+        if (c == '{') braces++
+        if (c == '}' && braces > 0) braces--
+        if (c == '$' && braces == 0) {
+            if (content[i - 1].isWhitespace() || content.getOrNull(i + 1)?.isDigit() == true) return -1
             return i
         }
         i++

@@ -68,6 +68,9 @@ object AttachmentFiles {
         return runCatching { file.readBytes() }.getOrNull()
     }
 
+    internal fun storedSize(context: Context, attachment: Attachment): Long =
+        attachmentFile(dirOf(context), attachment.path)?.takeIf { it.isFile }?.length() ?: 0L
+
     fun open(context: Context, attachment: Attachment): InputStream {
         val file = attachmentFile(dirOf(context), attachment.path) ?: throw IOException("Invalid attachment path")
         if (!file.isFile || file.length() == 0L) throw IOException("Original image is missing")

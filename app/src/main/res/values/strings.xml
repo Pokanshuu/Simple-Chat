@@ -115,6 +115,8 @@
     <string name="settings_data">数据管理</string>
     <string name="settings_api">API 配置</string>
     <string name="settings_balance">账户余额</string>
+    <string name="settings_deepseek_balance">DeepSeek 账户余额</string>
+    <string name="settings_balance_top_up">打开 DeepSeek 充值页面</string>
     <string name="settings_usage_title">用量与余额</string>
     <string name="settings_balance_loading">查询中…</string>
     <string name="settings_balance_no_key">未配置 API Key</string>
@@ -126,7 +128,6 @@
     <string name="settings_about">关于</string>
     <string name="settings_group_account">账户</string>
     <string name="settings_group_personal">个性化</string>
-    <string name="settings_group_chat">对话</string>
     <string name="settings_chat_behavior">对话行为</string>
     <string name="settings_theme_mode">主题模式</string>
     <string name="settings_group_text">文字</string>
@@ -166,8 +167,8 @@
     <string name="settings_about_title">关于 SimpleChat</string>
     <string name="settings_export_all">导出所有数据</string>
     <string name="settings_export_all_summary">导出会话、消息与全部版本</string>
-    <string name="settings_import_all">导入所有数据</string>
-    <string name="settings_import_all_summary">支持 Chatbox、DeepSeek 格式，可选增量 / 覆盖同名 / 同名新命名</string>
+    <string name="settings_import_all">导入备份</string>
+    <string name="settings_import_all_summary">支持 SimpleChat JSON 或 ZIP、Chatbox 备份和 DeepSeek v3 ZIP。可选择如何处理同名会话。</string>
     <string name="settings_delete_all">删除所有历史对话</string>
     <string name="settings_destructive_hint">不可恢复</string>
     <string name="settings_delete_all_title">删除全部历史对话？</string>
@@ -208,6 +209,7 @@
     <string name="import_index_unverified"> · 无法核验归档索引，不能确认会话清单完整</string>
     <string name="import_repaired_messages"> · 已保留并修复 %1$d 条断链或循环消息</string>
     <string name="import_report_export">导出最近一次导入报告</string>
+    <string name="diagnostics_backup_title">备份诊断</string>
     <string name="import_report_hint">查看各会话的导入状态与失败原因</string>
     <string name="crash_report_export">导出最近一次崩溃诊断</string>
     <string name="crash_report_hint">仅包含设备、版本和异常堆栈，不含聊天正文或密钥</string>
@@ -278,6 +280,7 @@
     <string name="diagnostics_export">导出日志</string>
     <string name="diagnostics_save_file">导出到文件</string>
     <string name="diagnostics_save_file_hint">保存 .txt 到所选位置</string>
+    <string name="diagnostics_copied">已复制诊断信息</string>
     <string name="diagnostics_saved">已保存</string>
     <string name="diagnostics_save_failed">保存失败</string>
     <string name="diagnostics_export_hint">分享为文本，附设备与版本信息</string>
@@ -300,7 +303,7 @@
     <string name="about_libs_crypto">加密</string>
     <string name="about_libs_math">公式</string>
     <string name="about_libs_diagram">图表</string>
-    <string name="about_ai_disclaimer">生成内容由模型产出，请自行判断使用。</string>
+    <string name="about_ai_disclaimer">生成内容由模型产出，请自行判断使用。请合法使用。</string>
 
     <!-- ── 会话（仓库 / 顶栏 / 抽屉共用） ───────────────── -->
     <string name="conversation_fork_suffix">（副本）</string>
@@ -392,7 +395,7 @@
     <string name="err_deepseek_version">这个 DeepSeek 归档是第 %1$d 版，本应用只认第 %2$d 版</string>
     <string name="images_skipped_no_vision">当前模型不支持图片，已忽略 %1$d 张</string>
     <string name="images_skipped_unreadable">有 %1$d 张图片格式无法识别或文件已损坏，本轮未发送</string>
-    <string name="warn_deepseek_limited">搜索与读链步骤、非图片附件未导入</string>
+    <string name="warn_deepseek_limited">DeepSeek v3 归档仅支持恢复图片原件。</string>
     <string name="err_unrecognised_file">认不出这份文件：既不是压缩包，也不是 JSON</string>
     <string name="err_unrecognised_format">认不出这份文件（format=%1$s）</string>
     <string name="err_scratch_dir">临时目录不可用：%1$s</string>
@@ -759,6 +762,21 @@
     <string name="onboarding_import_again">导入其他备份</string>
     <string name="onboarding_import_reading">正在读取文件…</string>
     <string name="onboarding_import_progress">正在导入… %1$d%%</string>
+    <string name="settings_enhanced_memory">增强记忆</string>
+    <string name="settings_enhanced_memory_unavailable">尚未开放。此功能需要下载本地模型并建立索引，可能增加耗电、发热和存储占用。</string>
+    <string name="settings_usage_only">用量统计</string>
+    <string name="diagnostics_reports">诊断报告</string>
+    <string name="stats_usage_recent">近 30 天 · 每日 Token</string>
+    <string name="stats_usage_daily_empty">近 30 天暂无服务端上报的用量。</string>
+    <string name="stats_usage_daily_value">%1$s · %2$s tokens</string>
+    <string name="share_excerpt">分享摘录</string>
+    <string name="share_excerpt_date">摘录于 %1$s</string>
+    <string name="share_excerpt_ai">回答由 AI 生成，仅供参考</string>
+    <string name="settings_memory_hint">开启后，会从其他对话检索相关片段，并随当前问题发送给当前模型。</string>
+    <string name="settings_memory_status_closed">关闭</string>
+    <string name="settings_memory_status_basic">跨对话记忆</string>
+    <string name="settings_memory_status_enhanced">增强记忆</string>
+    <string name="settings_memory_status_indexing">建立索引中…</string>
 </resources>
 
 

@@ -7,6 +7,7 @@ import com.simplechat.app.data.Attachment
 import com.simplechat.app.data.BackupConversation
 import com.simplechat.app.data.BackupMessage
 import com.simplechat.app.data.ImportFailure
+import com.simplechat.app.net.ReplyBlock
 import java.io.Reader
 import java.io.StringReader
 import java.io.ByteArrayInputStream
@@ -21,7 +22,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
@@ -60,10 +60,7 @@ import kotlinx.serialization.json.longOrNull
  *
  * ### 刻意不导的内容
  *
- * - `TIP` / `CONTENT_RISK` / `PARTIAL_FILE_READ` / `TOOL_IMAGE_SEARCH`：纯展示提示，无信息量；
- * - `TOOL_SEARCH` / `TOOL_OPEN` / `TOOL_FIND` / `READ_LINK`：搜索与读链过程。
- *   它们进的是我们的 `timeline`，映射规则比正文复杂得多（状态、分组、签名），
- *   这一步先不做 —— 正文、思考、附件、状态、时间先落地。
+ * - `TIP` / `CONTENT_RISK` / `PARTIAL_FILE_READ`：展示提示，本地没有对应的消息片段。
  * - 非图片附件：归档里只有元数据，没有字节，导进来会变成点不开的附件。
  */
 internal object DeepSeekHistory {
@@ -213,9 +210,10 @@ internal object DeepSeekHistory {
              * 也不该把"没取回"算两次 —— 那会让结果页的图片数虚高。
              */
             val images = HashMap<String, Attachment?>()
-            suspend fun imageOf(path: String): Attachment? {
+            suspend fun imageOf(ref: ImageRef): Attachment? {
+                val path = ref.path
                 if (images.containsKey(path)) return images[path]
-                val image = readImage(path)
+                val image = readImage(path, ref.name)
                 image?.path?.let { createdImages += it }
                 if (image == null) onImageDropped()
                 images[path] = image
@@ -238,7 +236,7 @@ internal object DeepSeekHistory {
                         check(emitted.add(parsed.number)) { "Duplicate message ${parsed.number}" }
                         // 图片在这里**先读完**：toBackupMessage 保持纯函数，
                         // 读 ZIP 条目（阻塞 IO）只发生在这个挂起上下文里
-                        val attachments = parsed.imagePaths.mapNotNull { imageOf(it) }
+                        val attachments = parsed.images.mapNotNull { imageOf(it) }
                         val message = checkNotNull(toBackupMessage(parsed, planned, sessionId, attachments))
                         sink(message)
                         if (emitted.size % ProgressEveryMessages == 0) {
@@ -259,7 +257,7 @@ internal object DeepSeekHistory {
          * MIME 按**真实内容**取（[ApiImage]）：服务端只看内容，写错了不会报错，
          * 只会在发送时被拒。
          */
-        private suspend fun readImage(path: String): Attachment? {
+        private suspend fun readImage(path: String, name: String?): Attachment? {
             val entry = zip.getEntry(path) ?: return null
             naming.storeImageStream?.let { store ->
                 val activeContext = currentCoroutineContext()
@@ -286,7 +284,7 @@ internal object DeepSeekHistory {
                     val stored = store(cancellable, mime)
                     return Attachment(
                         kind = Attachment.Kind.IMAGE,
-                        name = size?.let { naming.imageName(it.first, it.second) } ?: naming.imageFallbackName(),
+                        name = name ?: size?.let { naming.imageName(it.first, it.second) } ?: naming.imageFallbackName(),
                         mime = mime, data = "", width = size?.first ?: 0, height = size?.second ?: 0, path = stored,
                     )
                 }
@@ -308,7 +306,7 @@ internal object DeepSeekHistory {
             val stored = naming.storeImage?.invoke(bytes, mime)
             return Attachment(
                 kind = Attachment.Kind.IMAGE,
-                name = size?.let { naming.imageName(it.first, it.second) } ?: naming.imageFallbackName(),
+                name = name ?: size?.let { naming.imageName(it.first, it.second) } ?: naming.imageFallbackName(),
                 mime = mime,
                 data = if (stored != null) "" else Base64.getEncoder().encodeToString(bytes),
                 width = size?.first ?: 0,
@@ -357,8 +355,9 @@ internal object DeepSeekHistory {
         onProgress: (Float) -> Unit = {},
         onFailure: (ImportFailure) -> Unit = {},
         onImageDropped: () -> Unit = {},
+        parsedManifest: JsonObject? = null,
     ): DeepSeekStream? {
-        val manifest = readJson(zip, MANIFEST) ?: run {
+        val manifest = parsedManifest ?: readJson(zip, MANIFEST) ?: run {
             /*
              * manifest 读不出来但形状对得上 → 归档**不完整**。
              *
@@ -369,7 +368,9 @@ internal object DeepSeekHistory {
             if (hasSessionEntries(zip)) throw AppTextException(R.string.err_archive_damaged)
             return null
         }
-        val version = manifest["export_format_version"]?.jsonPrimitive?.intOrNull ?: return null
+        val rawVersion = manifest["export_format_version"] ?: return null
+        val version = (rawVersion as? kotlinx.serialization.json.JsonPrimitive)?.intOrNull
+            ?: throw AppTextException(R.string.err_unrecognised_file)
         if (version != FORMAT_VERSION) {
             throw AppTextException(R.string.err_deepseek_version, version, FORMAT_VERSION)
         }
@@ -733,7 +734,7 @@ internal object DeepSeekHistory {
             // 模板正文（超时 / 内容过滤那类）也是正文：我们只透传，不做取舍
             if (message.template.isEmpty()) message.response else message.response + message.template
         }
-        val elapsedSecs = message.thinks.sumOf { it.second }
+        val elapsedMs = message.thinks.sumOf { it.second }
         return BackupMessage(
             id = "$ID_PREFIX$sessionId-${message.number}",
             parentId = planned.kept[message.number]
@@ -749,9 +750,14 @@ internal object DeepSeekHistory {
                 else message.thinks.joinToString("\n") { it.first }).takeIf { it.isNotBlank() },
             status = statusOf(message.status),
             model = null,
-            thinkingMs = elapsedSecs.takeIf { it > 0L }?.times(1000L),
-            // 导出的历史不参与续写：没有服务端需要的签名与工具块
-            stopReason = null,
+            thinkingMs = elapsedMs.takeIf { it > 0L },
+            timeline = message.timeline,
+            stopReason = when (message.status) {
+                "CONTENT_FILTER" -> "refusal"
+                "TIMEOUT" -> "timeout"
+                "CONTEXT_LENGTH_EXCEEDED" -> "context_length_exceeded"
+                else -> null
+            },
             createdAt = parseIso(message.insertedAt) ?: planned.createdAt,
         )
     }
@@ -762,6 +768,8 @@ internal object DeepSeekHistory {
      * 字段刻意只留"进数据库/进界面"需要的那几样：多余的字段留在原文里不发散，
      * 这样几十万条消息的会话也不会因为解析而膨胀。
      */
+    internal data class ImageRef(val path: String, val name: String?)
+
     internal data class ParsedMessage(
         val number: Long,
         val parentNumber: Long?,
@@ -774,44 +782,12 @@ internal object DeepSeekHistory {
         val response: String,
         /** `TEMPLATE_RESPONSE` 片段拼接（超时 / 内容过滤那类服务端模板）。 */
         val template: String,
-        /** 思考片段：正文 + 耗时（秒，可能缺省）。 */
+        /** 思考片段：正文 + 耗时（毫秒）。 */
         val thinks: List<Pair<String, Long>>,
         /** 图片原件的 ZIP 条目名（`export_path`），按出现顺序。 */
-        val imagePaths: List<String>,
+        val images: List<ImageRef>,
+        val timeline: List<ReplyBlock>,
     )
-
-    internal fun parsedMessage(message: JsonObject): ParsedMessage? {
-        val number = message.long("id") ?: return null
-        val request = StringBuilder()
-        val response = StringBuilder()
-        val template = StringBuilder()
-        val thinks = ArrayList<Pair<String, Long>>()
-        val images = ArrayList<String>()
-        for (fragment in message.arrOrEmpty("fragments")) {
-            when (fragment.str("type")) {
-                "REQUEST" -> request.append(fragment.str("content").orEmpty())
-                "RESPONSE" -> response.append(fragment.str("content").orEmpty())
-                "TEMPLATE_RESPONSE" -> template.append(fragment.str("content").orEmpty())
-                "THINK" -> thinks += fragment.str("content").orEmpty() to fragment.longOrZero("elapsed_secs")
-                "FILE" -> fragment.arrOrEmpty("files").forEach { entry ->
-                    if (entry.str("is_image") != "true") return@forEach
-                    entry.str("export_path")?.let { images += it }
-                }
-            }
-        }
-        return ParsedMessage(
-            number = number,
-            parentNumber = message.long("parent_id"),
-            role = message.str("role"),
-            status = message.str("status"),
-            insertedAt = message.str("inserted_at"),
-            request = request.toString(),
-            response = response.toString(),
-            template = template.toString(),
-            thinks = thinks,
-            imagePaths = images,
-        )
-    }
 
     /** 状态映射，规则来自官方 README（`FINISHED` / `INCOMPLETE` / `FAILED` …）。 */
     private fun statusOf(status: String?): String = when (status) {
@@ -922,16 +898,11 @@ internal object DeepSeekHistory {
         return runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()
     }
 
-    private fun JsonObject.arrOrEmpty(key: String): List<JsonObject> =
-        (this[key] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
-
     private fun JsonObject.str(key: String): String? =
         runCatching { this[key]?.jsonPrimitive?.contentOrNull }.getOrNull()
 
     private fun JsonObject.long(key: String): Long? =
         runCatching { this[key]?.jsonPrimitive?.longOrNull }.getOrNull()
-
-    private fun JsonObject.longOrZero(key: String): Long = long(key) ?: 0L
 
     /** 单张图片上限：再大的塞进数据库只会拖垮列表滚动。 */
     private const val MaxSingleImageBytes = 64 * 1024 * 1024

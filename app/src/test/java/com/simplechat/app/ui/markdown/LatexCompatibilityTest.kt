@@ -55,4 +55,17 @@ class LatexCompatibilityTest {
         assertEquals("""{\scriptsize\text{中文}} + {\Large\text{大字}} + x^2""",
             prepareLatexPresentation(source).nativeTex)
     }
+
+    @Test fun visibleBoxExamplesKeepContentAndDimensions() {
+        val source = "\$\\fbox{\$x^2+y^2=r^2\$}\$"
+        val nested = inlineMathDocument(source).formulas.values.single()
+        assertEquals("x^2+y^2=r^2", prepareLatexPresentation(nested.tex).ovalParts.single().tex)
+        val square = prepareLatexPresentation("""\framebox[2cm][c]{\rule{0pt}{2cm}\centering 固定方框}""").ovalParts.single()
+        assertEquals(LatexLength(2f, "cm"), square.frame?.width)
+        assertEquals(square.frame?.width, square.frame?.height)
+        assertEquals("""\text{固定方框}""", square.tex)
+        val capsule = prepareLatexPresentation("""\bbox[4px,lightblue,border:1px solid blue,border-radius:12px]{x^2}""")
+        assertEquals(LatexLength(12f, "px"), capsule.ovalParts.single().frame?.radius)
+        assertFalse(prepareLatexPresentation("""\bbox[display:none]{x}""").canRender)
+    }
 }

@@ -47,6 +47,8 @@ import kotlinx.coroutines.withContext
 @Composable
 internal fun MessageShareTools(
     selection: MessageShareSelection, groups: List<MessageShareGroup>, title: String, modifier: Modifier = Modifier,
+    excerpt: MessageShareDocument? = null,
+    onCloseExcerpt: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val accent = LocalAccentColor.current
@@ -109,7 +111,26 @@ internal fun MessageShareTools(
         }
     }
 
-    MessageShareBottomBar(selection.selected(groups).size, busy, hint,
+    if (excerpt != null) {
+        androidx.compose.runtime.LaunchedEffect(excerpt) {
+            runExport {
+                images = exportSharedImages(context, excerpt, ShareImageMode.LONG, accent)
+                preview = true
+            }
+        }
+        if (!preview) AlertDialog(
+            onDismissRequest = onCloseExcerpt,
+            title = { Text(stringResource(R.string.share_excerpt)) },
+            text = { if (hint != null) Text(hint!!) else LinearProgressIndicator(Modifier.fillMaxWidth()) },
+            confirmButton = { OutlinedButton(onClick = onCloseExcerpt) { Text(stringResource(R.string.action_close)) } },
+        )
+    }
+    fun closePreview() {
+        preview = false
+        if (excerpt != null) onCloseExcerpt()
+    }
+
+    if (excerpt == null) MessageShareBottomBar(selection.selected(groups).size, busy, hint,
         onImage = {
             imageDocument = document()
         },
@@ -165,7 +186,7 @@ internal fun MessageShareTools(
         )
     }
 
-    if (preview) Dialog(onDismissRequest = { if (!busy) preview = false },
+    if (preview) Dialog(onDismissRequest = { if (!busy) closePreview() },
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         val dialogView = LocalView.current
         val dark = LocalIsDarkTheme.current
@@ -180,7 +201,7 @@ internal fun MessageShareTools(
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).systemBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.share_image_preview, images.size), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-                IconCircleButton(AppIcons.Close, stringResource(R.string.action_close), { if (!busy) preview = false })
+                IconCircleButton(AppIcons.Close, stringResource(R.string.action_close), { if (!busy) closePreview() })
             }
             // Decode visible regions only: previewing a long screenshot must not allocate it again.
             val tiles by produceState<List<SharePreviewTile>>(emptyList(), images) {

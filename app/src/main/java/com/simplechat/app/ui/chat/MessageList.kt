@@ -16,6 +16,8 @@ import androidx.compose.ui.geometry.Rect
 import com.simplechat.app.ui.markdown.LocalSearchViewport
 import com.simplechat.app.ui.markdown.SearchViewport
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.text.contextmenu.builder.item
+import androidx.compose.foundation.text.contextmenu.modifier.appendTextContextMenuComponents
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.MutableTransitionState
@@ -172,6 +174,7 @@ fun MessageList(
     textSelection: MessageTextSelection = remember { MessageTextSelection() },
     shareSelection: MessageShareSelection? = null,
     onShare: ((UiMessage) -> Unit)? = null,
+    onShareExcerpt: ((UiMessage, String) -> Unit)? = null,
     loadingLabelFor: (String) -> String? = { null },
     loadingWordsUseThemeColor: Boolean = false,
 ) {
@@ -269,6 +272,7 @@ fun MessageList(
         ) { index, message ->
             val sharedGroup = shareGroupByMessage[message.id]
             val row: @Composable () -> Unit = {
+            CompositionLocalProvider(LocalShareExcerpt provides onShareExcerpt?.let { share -> { text -> share(message, text) } }) {
             MessageRow(
                 message = message,
                 loadingLabel = if (message.streaming) loadingLabelFor(message.id) else null,
@@ -320,6 +324,7 @@ fun MessageList(
                 onChooseModel = onChooseModel,
                 onRetryWithoutAttachmentsAndTools = onRetryWithoutAttachmentsAndTools?.let { retry -> { retry(message) } },
             )
+            }
             }
             if (shareSelection?.active == true && sharedGroup != null) {
                 ShareSelectableRow(sharedGroup, sharedGroup.id in shareSelection.selectedIds,
@@ -944,15 +949,18 @@ fun AssistantBlock(
             .padding(2.dp),
     ) {
         /*
-         * 首 token 还没到：正文、思考、时间线**全空**。
-         *
-         * 这一段在长上下文 + 思考型模型上能走十几秒，原先界面上什么都没有 ——
-         * 用户看到的只是"消息发出去后一片空白"。给一个和思考栏同形状的
-         * 「加载中…」过渡，第一段内容一出现就自动让位。
+         * 一直等到首条正文可见才收起加载词。思考内容或时间线先到时，答案首字
+         * 仍可能迟迟不出现；保留等待提示，避免长上下文下回复气泡再次显得空白。
          */
-        if (message.streaming && answer.isBlank() && !hasReasoning && timeline == null) {
-            WaitingIndicator(loadingLabel, useThemeColor = loadingWordsUseThemeColor)
-            Spacer(Modifier.size(MessageGap))
+        AnimatedVisibility(
+            visible = message.streaming && answer.isBlank(),
+            enter = fadeIn(tween(120, easing = MotionEasing)),
+            exit = fadeOut(tween(240, easing = MotionEasing)),
+        ) {
+            Column {
+                WaitingIndicator(loadingLabel, useThemeColor = loadingWordsUseThemeColor)
+                Spacer(Modifier.size(MessageGap))
+            }
         }
 
         if (timeline != null) {
@@ -1012,16 +1020,8 @@ fun AssistantBlock(
             }
         }
         SelectableText(selecting, selectionState) {
-            if (selecting) {
-                Text(
-                    text = com.simplechat.app.ui.markdown.selectionCopyText(answer),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-            } else {
-                CompositionLocalProvider(LocalCitationClick provides onCitationClick) {
-                    MarkdownWithMath(content = answer, streaming = message.streaming)
-                }
+            CompositionLocalProvider(LocalCitationClick provides onCitationClick) {
+                MarkdownWithMath(content = answer, streaming = message.streaming)
             }
         }
 
@@ -1176,6 +1176,9 @@ private fun MessageMetaSlot(peeked: Boolean, message: UiMessage) {
  * [state] 由外层持有 —— 进入选择态时要用它做一次 `clear()`，
  * 这样点空白处退出时选区不会残留在下一次。
  */
+private object ShareExcerptMenuKey
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SelectableText(
     selecting: Boolean,
@@ -1185,7 +1188,22 @@ private fun SelectableText(
     // Moving into/out of the registrar must preserve the current page and expanded code blocks.
     val currentContent by rememberUpdatedState(content)
     val body = remember { movableContentOf { currentContent() } }
-    if (selecting) SelectionContainer(state = state) { body() } else body()
+    if (selecting) {
+        val onShareExcerpt = LocalShareExcerpt.current
+        val label = stringResource(R.string.share_excerpt)
+        SelectionContainer(
+            state = state,
+            modifier = Modifier.appendTextContextMenuComponents {
+                if (onShareExcerpt != null && state.selectedTexts.isNotEmpty()) {
+                    item(ShareExcerptMenuKey, label) {
+                        val text = state.selectedTexts.joinToString("\n") { it.text }.trim()
+                        close()
+                        if (text.isNotEmpty()) onShareExcerpt(text)
+                    }
+                }
+            },
+        ) { body() }
+    } else body()
 }
 
 /**

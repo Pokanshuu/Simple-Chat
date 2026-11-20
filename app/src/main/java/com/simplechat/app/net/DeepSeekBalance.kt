@@ -59,21 +59,17 @@ object DeepSeekBalance {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     /**
-     * 查询余额。
-     *
-     * [baseUrl] 允许带 `/v1` 后缀（有的自定义端点这么填），拼路径前先剥掉，
-     * 避免出现 `/v1/user/balance`。查询失败不重试：一次失败就是一次失败。
+     * 查询余额。聊天协议的路径不影响账户接口。
      */
     suspend fun fetch(baseUrl: String, apiKey: String): Result = withContext(Dispatchers.IO) {
-        val root = baseUrl.trim().trimEnd('/')
-        val url = root.let { if (it.endsWith("/v1")) it.removeSuffix("/v1") else it } + "/user/balance"
-        val request = Request.Builder()
-            .url(url)
-            .header("Authorization", "Bearer $apiKey")
-            .header("Accept", "application/json")
-            .get()
-            .build()
         try {
+            if (!isOfficialDeepSeekEndpoint(baseUrl)) return@withContext Result.Failed("unsupported host")
+            val request = Request.Builder()
+                .url("https://api.deepseek.com/user/balance")
+                .header("Authorization", "Bearer $apiKey")
+                .header("Accept", "application/json")
+                .get()
+                .build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     return@withContext Result.Failed("http ${response.code}")
@@ -81,7 +77,9 @@ object DeepSeekBalance {
                 val body = response.body.string()
                 Result.Ok(json.decodeFromString<Snapshot>(body))
             }
-        } catch (t: Throwable) {
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (t: Exception) {
             Result.Failed(t.message ?: t::class.simpleName ?: "unknown")
         }
     }

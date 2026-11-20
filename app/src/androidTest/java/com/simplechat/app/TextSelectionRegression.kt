@@ -47,6 +47,7 @@ internal object TextSelectionRegression {
         val listState = LazyListState()
         var edits = 0
         var outsideClicks = 0
+        var excerpt: String? = null
         val richText = "Anchor original selection stays here.\n\n" +
             "Second paragraph for dragging across separate text nodes.\n\n" +
             "```kotlin\nval selectedCode = 123\n```\n\n" +
@@ -142,7 +143,8 @@ internal object TextSelectionRegression {
                             Box(Modifier.weight(1f)
                                 .dismissKeyboardOnTouch(clearFocus = { !selection.isActive })) {
                                 MessageList(messages.value, Modifier.fillMaxSize(), listState = listState,
-                                    textSelection = selection, onEdit = { edits++ })
+                                    textSelection = selection, onEdit = { edits++ },
+                                    onShareExcerpt = { _, text -> excerpt = text; selection.dismiss() })
                             }
                         }
                     }
@@ -166,6 +168,11 @@ internal object TextSelectionRegression {
             val doubleElapsed = SystemClock.uptimeMillis() - secondDown - 40
             check(doubleElapsed < 1000) { "Double-tap startup took $doubleElapsed ms" }
             status("double-tap selects the touched word using measured layout: $doubleElapsed ms after second tap")
+            tapText(instrumentation.targetContext.getString(R.string.share_excerpt))
+            check(withContext(Dispatchers.Main) { excerpt == "Anchor" && !selection.isActive }) {
+                "Excerpt action did not deliver exactly the selected word"
+            }
+            status("excerpt share delivers the highlighted word and closes selection")
             withContext(Dispatchers.Main) { selection.dismiss() }
             delay(200)
             enter()

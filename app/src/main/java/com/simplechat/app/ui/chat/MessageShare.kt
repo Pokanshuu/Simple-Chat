@@ -56,7 +56,11 @@ class MessageShareSelection {
 }
 
 /** A fixed snapshot taken when an export action starts; streaming/branch changes cannot alter it. */
-data class MessageShareDocument(val title: String, val groups: List<MessageShareGroup>) {
+data class MessageShareDocument(
+    val title: String,
+    val groups: List<MessageShareGroup>,
+    val excerptFooter: List<String> = emptyList(),
+) {
     val messages: List<UiMessage> get() = groups.flatMap { it.messages }
 }
 

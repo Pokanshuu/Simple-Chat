@@ -48,4 +48,11 @@ class InlineMathTest {
         assertEquals(setOf("SCMATHX0"), result.formulas.keys)
         assertTrue(result.markdown.startsWith("`SCMATH0`"))
     }
+
+    @Test fun normalizationPreservesTexThatResemblesHtmlOrMarkdown() {
+        val source = "<b>条件</b> \\(a<b>c\\) 与 \$|a|_1\$。"
+        val document = normalizedMarkdownDocument(source)
+        assertEquals(listOf("a<b>c", "|a|_1"), document.formulas.values.map { it.tex })
+        assertEquals("**条件** \\(a<b>c\\) 与 \$|a|_1\$。", document.restore(document.markdown))
+    }
 }

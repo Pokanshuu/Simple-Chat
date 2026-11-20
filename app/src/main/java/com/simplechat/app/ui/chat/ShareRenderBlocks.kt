@@ -2,9 +2,7 @@ package com.simplechat.app.ui.chat
 
 import com.simplechat.app.net.ReplyBlock
 import com.simplechat.app.ui.markdown.ContentSegment
-import com.simplechat.app.ui.markdown.normalizeHtml
 import com.simplechat.app.ui.markdown.normalizeListIndent
-import com.simplechat.app.ui.markdown.normalizeSoftBreaks
 import com.simplechat.app.ui.markdown.splitMarkdownBlocks
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
@@ -49,9 +47,12 @@ internal fun shareImageText(message: UiMessage, hideReasoning: Boolean = true): 
     }
 }
 
+internal fun shareSectionUsesMarkdown(user: Boolean, excerpt: Boolean, reasoning: Boolean): Boolean =
+    !reasoning && (!user || excerpt)
+
 internal sealed interface ShareRenderBlock {
     data class Text(val source: String, val markdown: Boolean) : ShareRenderBlock
-    data class Formula(val tex: String) : ShareRenderBlock
+    data class Formula(val tex: String, val source: String) : ShareRenderBlock
     data class Table(val source: String, val rowCount: Int) : ShareRenderBlock
 }
 
@@ -62,11 +63,13 @@ internal fun shareRenderBlocks(text: String, markdown: Boolean): List<ShareRende
     fun prose(source: String) {
         com.simplechat.app.ui.markdown.displayMathSegments(source).forEach { segment ->
             when (segment) {
-                is ContentSegment.Formula -> result += ShareRenderBlock.Formula(segment.tex)
+                is ContentSegment.Formula -> result += ShareRenderBlock.Formula(segment.tex, segment.source)
                 is ContentSegment.Text -> {
-                    val normalized = normalizeListIndent(normalizeSoftBreaks(normalizeHtml(segment.text)))
+                    val document = com.simplechat.app.ui.markdown.normalizedMarkdownDocument(segment.text)
+                    val normalized = normalizeListIndent(document.markdown)
                     splitMarkdownBlocks(normalized).forEach { block ->
-                        if (block.text.length <= 6000) result += ShareRenderBlock.Text(block.text, true)
+                        val original = document.restore(block.text)
+                        if (original.length <= 6000) result += ShareRenderBlock.Text(original, true)
                         else {
                             val lines = block.text.lines()
                             val fence = Regex("^ {0,3}(`{3,}|~{3,})(.*)$").matchEntire(lines.first())
@@ -75,36 +78,46 @@ internal fun shareRenderBlocks(text: String, markdown: Boolean): List<ShareRende
                                 val closed = lines.last().trim().let { it.length >= marker.length && it.all { c -> c == marker[0] } }
                                 val body = lines.drop(1).let { if (closed) it.dropLast(1) else it }.joinToString("\n")
                                 boundedShareChunks(body).forEach { result += ShareRenderBlock.Text("${lines.first()}\n$it\n$marker", true) }
-                            } else boundedShareChunks(block.text).forEach { result += ShareRenderBlock.Text(it, true) }
+                            } else boundedShareChunks(block.text, protected = document.tokenRanges(block.text)).forEach {
+                                result += ShareRenderBlock.Text(document.restore(it), true)
+                            }
                         }
                     }
                 }
             }
         }
     }
-    val root = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(text)
+    val document = com.simplechat.app.ui.markdown.inlineMathDocument(text)
+    val encoded = document.markdown
+    val root = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(encoded)
     var position = 0
     root.children.filter { it.type == GFMElementTypes.TABLE }.forEach { table ->
-        prose(text.substring(position, table.startOffset))
-        result += ShareRenderBlock.Table(text.substring(table.startOffset, table.endOffset),
+        prose(document.restore(encoded.substring(position, table.startOffset)))
+        result += ShareRenderBlock.Table(document.restore(encoded.substring(table.startOffset, table.endOffset)),
             table.children.count { it.type == GFMElementTypes.ROW })
         position = table.endOffset
     }
-    prose(text.substring(position))
+    prose(document.restore(encoded.substring(position)))
     return result
 }
 
 /** Bound native text layout, preserving every character and UTF-16 surrogate pair. */
-internal fun boundedShareChunks(text: String, limit: Int = 6000): List<String> {
+internal fun boundedShareChunks(text: String, limit: Int = 6000, protected: List<IntRange> = emptyList()): List<String> {
     require(limit >= 2)
     val result = mutableListOf<String>()
     var start = 0
+    var rangeIndex = 0
     while (start < text.length) {
         var end = minOf(start + limit, text.length)
         if (end < text.length) {
             val newline = text.lastIndexOf('\n', end - 1)
             if (newline > start + limit / 2) end = newline + 1
-            if (text[end - 1].isHighSurrogate() && text[end].isLowSurrogate()) end--
+            while (rangeIndex < protected.size && protected[rangeIndex].last < end) rangeIndex++
+            val range = protected.getOrNull(rangeIndex)
+            if (range != null && end > range.first) {
+                end = if (range.first > start) range.first else range.last + 1
+            }
+            if (end < text.length && text[end - 1].isHighSurrogate() && text[end].isLowSurrogate()) end--
         }
         result += text.substring(start, end)
         start = end

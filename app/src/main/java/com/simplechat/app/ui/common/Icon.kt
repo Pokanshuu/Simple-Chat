@@ -394,6 +394,26 @@ object AppIcons {
     }
 
     /** 重新生成（Lucide: refresh-cw） */
+    val ExternalLink: ImageVector by lazy {
+        vector("ExternalLink") {
+            stroke {
+                moveTo(15f, 3f)
+                horizontalLineTo(21f)
+                verticalLineTo(9f)
+                moveTo(10f, 14f)
+                lineTo(21f, 3f)
+                moveTo(18f, 13f)
+                verticalLineTo(19f)
+                arcToRelative(2f, 2f, 0f, false, true, -2f, 2f)
+                horizontalLineTo(5f)
+                arcToRelative(2f, 2f, 0f, false, true, -2f, -2f)
+                verticalLineTo(8f)
+                arcToRelative(2f, 2f, 0f, false, true, 2f, -2f)
+                horizontalLineTo(11f)
+            }
+        }
+    }
+
     val Refresh: ImageVector by lazy {
         vector("Refresh") {
             stroke {
@@ -695,7 +715,8 @@ object AppIcons {
         }
     }
 
-    /** 思考过程（Lucide: brain） */    val Brain: ImageVector by lazy {
+    /** 思考过程（Lucide: brain） */
+    val Brain: ImageVector by lazy {
         vector("Brain") {
             stroke {
                 moveTo(12f, 18f)

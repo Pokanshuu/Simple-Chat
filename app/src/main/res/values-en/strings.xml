@@ -113,6 +113,8 @@
     <string name="settings_data">Data management</string>
     <string name="settings_api">API</string>
     <string name="settings_balance">Account balance</string>
+    <string name="settings_deepseek_balance">DeepSeek account balance</string>
+    <string name="settings_balance_top_up">Open DeepSeek top-up page</string>
     <string name="settings_usage_title">Usage &amp; balance</string>
     <string name="settings_balance_loading">Checking…</string>
     <string name="settings_balance_no_key">No API key</string>
@@ -124,7 +126,6 @@
     <string name="settings_about">About</string>
     <string name="settings_group_account">Account</string>
     <string name="settings_group_personal">Personal</string>
-    <string name="settings_group_chat">Chat</string>
     <string name="settings_chat_behavior">Conversation</string>
     <string name="settings_theme_mode">Theme</string>
     <string name="settings_group_text">Text</string>
@@ -164,8 +165,8 @@
     <string name="settings_about_title">About SimpleChat</string>
     <string name="settings_export_all">Export all data</string>
     <string name="settings_export_all_summary">Exports conversations, messages and all versions</string>
-    <string name="settings_import_all">Import all data</string>
-    <string name="settings_import_all_summary">Supports the Chatbox format; merge or overwrite</string>
+    <string name="settings_import_all">Import backup</string>
+    <string name="settings_import_all_summary">Supports SimpleChat JSON or ZIP, Chatbox backups, and DeepSeek v3 ZIP. Choose how to handle matching chat titles.</string>
     <string name="settings_delete_all">Delete all conversations</string>
     <string name="settings_destructive_hint">Cannot be undone</string>
     <string name="settings_delete_all_title">Delete all conversations?</string>
@@ -206,6 +207,7 @@
     <string name="import_index_unverified"> · Archive index could not be verified; the session list may be incomplete</string>
     <string name="import_repaired_messages"> · Preserved and repaired %1$d orphaned or cyclic messages</string>
     <string name="import_report_export">Export latest import report</string>
+    <string name="diagnostics_backup_title">Backup diagnostics</string>
     <string name="import_report_hint">Review each conversation’s import status and any failure reasons</string>
     <string name="crash_report_export">Export latest crash diagnostics</string>
     <string name="crash_report_hint">Device, version and stack frames only; no chat content or API keys</string>
@@ -273,6 +275,7 @@
     <string name="diagnostics_export">Export log</string>
     <string name="diagnostics_save_file">Save to file</string>
     <string name="diagnostics_save_file_hint">Save a .txt to the location you pick</string>
+    <string name="diagnostics_copied">Diagnostics copied</string>
     <string name="diagnostics_saved">Saved</string>
     <string name="diagnostics_save_failed">Save failed</string>
     <string name="diagnostics_export_hint">Share as text, with device and version info</string>
@@ -295,7 +298,7 @@
     <string name="about_libs_crypto">Encryption</string>
     <string name="about_libs_math">Math</string>
     <string name="about_libs_diagram">Diagrams</string>
-    <string name="about_ai_disclaimer">Generated content comes from the model; use your own judgement.</string>
+    <string name="about_ai_disclaimer">Generated content comes from the model; use your own judgement and use it lawfully.</string>
 
     <!-- ── Conversations ────────────────────────────────── -->
     <string name="conversation_fork_suffix">(copy)</string>
@@ -387,7 +390,7 @@
     <string name="err_deepseek_version">This DeepSeek archive is version %1$d; this app reads version %2$d</string>
     <string name="images_skipped_no_vision">This model does not accept images; %1$d skipped</string>
     <string name="images_skipped_unreadable">Skipped %1$d image(s): unsupported or damaged file</string>
-    <string name="warn_deepseek_limited">Search steps, link reading and non-image files were not imported</string>
+    <string name="warn_deepseek_limited">DeepSeek v3 archives can restore original files for images only.</string>
     <string name="err_unrecognised_file">Unrecognised file: neither a zip archive nor JSON</string>
     <string name="err_unrecognised_format">Unrecognised file (format=%1$s)</string>
     <string name="err_scratch_dir">Temp directory unavailable: %1$s</string>
@@ -749,6 +752,21 @@
     <string name="onboarding_import_again">Import another backup</string>
     <string name="onboarding_import_reading">Reading file…</string>
     <string name="onboarding_import_progress">Importing… %1$d%%</string>
+    <string name="settings_enhanced_memory">Enhanced memory</string>
+    <string name="settings_enhanced_memory_unavailable">Coming later. Requires a local model and index and may increase battery use, heat, and storage use.</string>
+    <string name="settings_usage_only">Usage stats</string>
+    <string name="diagnostics_reports">Diagnostic reports</string>
+    <string name="stats_usage_recent">Last 30 days · Daily tokens</string>
+    <string name="stats_usage_daily_empty">No reported usage in the last 30 days.</string>
+    <string name="stats_usage_daily_value">%1$s · %2$s tokens</string>
+    <string name="share_excerpt">Share excerpt</string>
+    <string name="share_excerpt_date">Excerpted on %1$s</string>
+    <string name="share_excerpt_ai">AI-generated answer, for reference only</string>
+    <string name="settings_memory_hint">When enabled, relevant excerpts are retrieved from other chats and sent to the current model with your prompt.</string>
+    <string name="settings_memory_status_closed">Off</string>
+    <string name="settings_memory_status_basic">Cross-chat memory</string>
+    <string name="settings_memory_status_enhanced">Enhanced memory</string>
+    <string name="settings_memory_status_indexing">Building index…</string>
 </resources>
 
 

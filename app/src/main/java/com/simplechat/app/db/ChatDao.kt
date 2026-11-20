@@ -354,6 +354,17 @@ interface MessageDao {
     )
     suspend fun usageTotals(): UsageTotals
 
+    @Query(
+        """
+        SELECT date(createdAt / 1000, 'unixepoch', 'localtime') AS day,
+               SUM(tokens_in + COALESCE(tokens_out, 0)) AS tokens
+        FROM messages
+        WHERE role = 'assistant' AND tokens_in IS NOT NULL AND createdAt >= :since
+        GROUP BY day
+        """,
+    )
+    suspend fun dailyUsage(since: Long): List<DailyUsage>
+
     /**
      * 「保存」编辑后的消息：**原地**换掉正文（可连同附件与内容块）。
      *
@@ -582,3 +593,6 @@ data class UsageTotals(
     val completionTokens: Int,
     val cacheHitTokens: Int,
 )
+
+/** Local date and reported input plus output tokens. */
+data class DailyUsage(val day: String, val tokens: Long)

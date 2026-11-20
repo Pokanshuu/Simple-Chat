@@ -11,7 +11,20 @@ internal data class LatexPresentation(
     val canRender: Boolean get() = nativeTex != null || ovalParts.isNotEmpty()
 }
 
-internal data class LatexPart(val tex: String, val outline: OvalOutline? = null)
+internal data class LatexPart(val tex: String, val outline: OvalOutline? = null, val frame: LatexFrame? = null)
+
+internal data class LatexFrame(
+    val width: LatexLength? = null,
+    val height: LatexLength? = null,
+    val alignment: String = "c",
+    val padding: LatexLength? = null,
+    val radius: LatexLength? = null,
+    val background: String? = null,
+    val border: LatexLength? = null,
+    val borderColor: String? = null,
+)
+
+internal data class LatexLength(val value: Float, val unit: String)
 
 internal enum class OvalOutline { THIN, THICK }
 
@@ -20,8 +33,8 @@ internal fun prepareLatexPresentation(source: String): LatexPresentation {
     if (source.length > 32_000) return LatexPresentation(null)
     val normalized = normalizeLatexBoxes(source) ?: return LatexPresentation(null)
     val compatible = normalizeTextSizes(normalized)
-    val parts = if ("\\ovalbox" in compatible || "\\Ovalbox" in compatible) {
-        splitLatexOvals(compatible) ?: return LatexPresentation(null)
+    val parts = if (FrameCommands.any { "\\$it" in compatible }) {
+        splitLatexFrames(compatible) ?: return LatexPresentation(null)
     } else emptyList()
     val simplified = normalized != source
     if (parts.isEmpty()) {
@@ -153,8 +166,8 @@ private fun String.latexGroupEnd(start: Int): Int? {
     return null
 }
 
-/** Lay out formula-level oval boxes alongside the native spans. */
-private fun splitLatexOvals(tex: String): List<LatexPart>? {
+/** Lay out formula-level frames alongside native spans. */
+private fun splitLatexFrames(tex: String): List<LatexPart>? {
     val parts = mutableListOf<LatexPart>()
     var start = 0
     var i = 0
@@ -167,16 +180,44 @@ private fun splitLatexOvals(tex: String): List<LatexPart>? {
                 val command = tex.substring(commandStart + 1, i)
                 if (command.isEmpty()) {
                     if (i < tex.length) i++
-                } else if (command == "ovalbox" || command == "Ovalbox") {
-                    while (i < tex.length && tex[i].isWhitespace()) i++
-                    val end = tex.latexGroupEnd(i) ?: return null
+                } else if (command in FrameCommands) {
                     val prefix = tex.substring(start, commandStart)
                     if (prefix.isNotBlank()) parts += LatexPart(prefix)
+                    while (tex.getOrNull(i)?.isWhitespace() == true) i++
+                    val options = mutableListOf<String>()
+                    while (tex.getOrNull(i) == '[' && options.size < 2) {
+                        val close = tex.indexOf(']', i + 1).takeIf { it > i } ?: return null
+                        options += tex.substring(i + 1, close).trim()
+                        i = close + 1
+                        while (tex.getOrNull(i)?.isWhitespace() == true) i++
+                    }
+                    val end = tex.latexGroupEnd(i) ?: return null
                     val body = tex.substring(i + 1, end - 1)
-                    // A bare CJK sentence in a box is prose, so the math font must not italicize it.
-                    val content = if (PlainCjkBox.matches(body)) "\\text{$body}" else body
-                    val outline = if (command == "Ovalbox") OvalOutline.THICK else OvalOutline.THIN
-                    parts += LatexPart(content, outline)
+                    when (command) {
+                        "ovalbox", "Ovalbox" -> {
+                            if (options.isNotEmpty()) return null
+                            val outline = if (command == "Ovalbox") OvalOutline.THICK else OvalOutline.THIN
+                            parts += LatexPart(boxText(body), outline)
+                        }
+                        "fbox", "framebox" -> {
+                            if (command == "fbox" && options.isNotEmpty()) return null
+                            val width = options.firstOrNull()?.let { parseLatexLength(it) ?: return null }
+                            val alignment = options.getOrNull(1) ?: "c"
+                            if (alignment !in setOf("l", "c", "r")) return null
+                            val strut = FrameStrut.find(body)
+                            val height = strut?.groupValues?.get(1)?.let { parseLatexLength(it) ?: return null }
+                            val content = if (strut != null) body.substring(strut.range.last + 1) else body
+                            val centering = FrameCentering.find(content)
+                            val label = if (centering != null) content.substring(centering.range.last + 1) else content
+                            parts += LatexPart(boxText(label), frame = LatexFrame(width, height, alignment,
+                                border = LatexLength(1f, "px")))
+                        }
+                        "bbox" -> {
+                            if (options.size > 1) return null
+                            val frame = parseBbox(options.firstOrNull().orEmpty()) ?: return null
+                            parts += LatexPart(boxText(body), frame = frame)
+                        }
+                    }
                     if (parts.size > 64) return null
                     i = end
                     start = end
@@ -192,3 +233,51 @@ private fun splitLatexOvals(tex: String): List<LatexPart>? {
 }
 
 private val PlainCjkBox = Regex("""(?!.*[\\{}$%_#^&~])(?=.*\p{IsHan})[\p{L}\p{N}\p{P} \t]+""")
+
+private val FrameCommands = setOf("ovalbox", "Ovalbox", "fbox", "framebox", "bbox")
+private val FrameStrut = Regex("""^\s*\\rule\s*\{\s*0(?:pt|px|em|ex|cm|mm|in)?\s*\}\s*\{([^{}]+)\}""")
+private val FrameCentering = Regex("""^\s*\\centering(?![a-zA-Z])\s*""")
+private val FrameLength = Regex("""([0-9]{1,3}(?:\.[0-9]{1,3})?|\.[0-9]{1,3})\s*(pt|px|em|ex|cm|mm|in)?""")
+private val FrameColor = Regex("""[a-zA-Z]{2,20}|#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}""")
+private val BboxBorder = Regex("""([^\s]+)\s+solid(?:\s+([^\s]+))?""")
+
+private fun boxText(body: String): String {
+    val text = body.trim()
+    if (text.startsWith('$') && text.endsWith('$') && text.length > 2 && '$' !in text.substring(1, text.lastIndex)) {
+        return text.substring(1, text.lastIndex)
+    }
+    return if (PlainCjkBox.matches(body)) "\\text{$body}" else body
+}
+
+private fun parseLatexLength(source: String): LatexLength? {
+    val match = FrameLength.matchEntire(source.trim()) ?: return null
+    val value = match.groupValues[1].toFloatOrNull() ?: return null
+    val unit = match.groupValues[2]
+    if (unit.isEmpty() && value != 0f) return null
+    return LatexLength(value, unit.ifEmpty { "px" })
+}
+
+private fun parseBbox(options: String): LatexFrame? {
+    if (options.length > 256) return null
+    var frame = LatexFrame()
+    for (option in options.split(',')) {
+        val value = option.trim()
+        if (value.isEmpty()) continue
+        when {
+            value.startsWith("border-radius:") -> {
+                val radius = parseLatexLength(value.substringAfter(':')) ?: return null
+                frame = frame.copy(radius = radius)
+            }
+            value.startsWith("border:") -> {
+                val border = BboxBorder.matchEntire(value.substringAfter(':').trim()) ?: return null
+                val width = parseLatexLength(border.groupValues[1]) ?: return null
+                val color = border.groupValues[2].ifEmpty { null }
+                if (color != null && !FrameColor.matches(color) && color != "currentColor") return null
+                frame = frame.copy(border = width, borderColor = color)
+            }
+            FrameColor.matches(value) -> frame = frame.copy(background = value)
+            else -> frame = frame.copy(padding = parseLatexLength(value) ?: return null)
+        }
+    }
+    return frame
+}

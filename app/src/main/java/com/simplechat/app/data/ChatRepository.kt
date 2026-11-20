@@ -565,6 +565,8 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     /** 全库累计用量（设置 → 用量与余额）。 */
     suspend fun usageTotals(): UsageTotals = messages.usageTotals()
 
+    suspend fun dailyUsage(since: Long) = messages.dailyUsage(since)
+
     /**
      * 打开会话前清扫：把上次被中断的流式消息判为 STOPPED。
      *
@@ -884,25 +886,20 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     suspend fun exportDeepSeekArchive(file: File, onProgress: (Float) -> Unit = {}) = withContext(Dispatchers.IO) {
         db.withTransaction {
             val rows = conversations.getAllRaw()
-            val headers = rows.map { it.toBackup(emptyList(), getEnabledPresetIds(it.id)) }
+            val headers = rows.map { it.toBackup(emptyList(), emptyList()) }
             val sessions = headers.map { com.simplechat.app.data.archive.DeepSeekArchive.Session(it, messages.getLightFor(it.id)) }
-            val presetRows = presets.getAll().map { it.toBackup() }
-            val total = rows.sumOf { messages.countFor(it.id) }.coerceAtLeast(1)
+            val total = sessions.sumOf { it.tree.size }.coerceAtLeast(1)
             var written = 0
             file.outputStream().buffered().use { output ->
                 com.simplechat.app.data.archive.DeepSeekArchive.writeTo(output, sessions,
                     attachmentSource = { AttachmentFiles.open(context, it) },
-                    readMessage = { readMessageForExport(it).toBackup() },
-                ) { native ->
-                    writeBackupStream(native.writer(Charsets.UTF_8).buffered(), System.currentTimeMillis(), headers, presetRows,
-                        attachmentSource = { AttachmentFiles.open(context, it) }) { id, sink ->
-                        for (messageId in messages.idsFor(id)) {
-                            currentCoroutineContext().ensureActive()
-                            sink(readMessageForExport(messageId).toBackup())
-                            onProgress(0.5f * ++written / total)
-                        }
-                    }
-                }
+                    readMessage = { id ->
+                        currentCoroutineContext().ensureActive()
+                        readMessageForExport(id).toBackup()
+                    },
+                    onMessage = { onProgress(0.95f * ++written / total) },
+                    storedImageSize = { AttachmentFiles.storedSize(context, it) },
+                )
             }
             onProgress(1f)
         }
@@ -1159,63 +1156,52 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         }
         if (isZip) ZipFile(file).use { zip ->
             val manifest = zip.getEntry(ChatArchive.MANIFEST)
-            if (manifest != null && manifest.size in 1..65_536) {
-                val metadata = runCatching { backupJson.parseToJsonElement(zip.getInputStream(manifest).reader(Charsets.UTF_8).use { it.readText() })
+            val metadata = if (manifest != null && manifest.size in 1..65_536) {
+                runCatching { backupJson.parseToJsonElement(zip.getInputStream(manifest).reader(Charsets.UTF_8).use { it.readText() })
                     .jsonObject }.getOrNull()
-                if (metadata?.get("export_format_version")?.toString() == "3" &&
-                    metadata["simplechat_extension_version"]?.toString() == "1" &&
-                    metadata["simplechat_backup"]?.jsonPrimitive?.content == com.simplechat.app.data.archive.DeepSeekArchive.EXTENSION) {
-                    val backup = zip.getEntry(com.simplechat.app.data.archive.DeepSeekArchive.EXTENSION)
-                        ?: throw AppTextException(R.string.err_archive_damaged)
-                    return importOwnStream({ zip.getInputStream(backup).reader(Charsets.UTF_8) }, scratchDir, mode, onProgress)
-                }
+            } else null
+            if (metadata?.get("export_format_version")?.toString() == "3" &&
+                metadata["simplechat_extension_version"]?.toString() == "1" &&
+                metadata["simplechat_backup"]?.jsonPrimitive?.content == ChatArchive.LEGACY_DEEPSEEK_BACKUP) {
+                val backup = zip.getEntry(ChatArchive.LEGACY_DEEPSEEK_BACKUP)
+                    ?: throw AppTextException(R.string.err_archive_damaged)
+                return importOwnStream({ zip.getInputStream(backup).reader(Charsets.UTF_8) }, scratchDir, mode, onProgress)
             }
-            val own = manifest != null && manifest.size in 1..65_536 &&
+            val own = metadata?.get("export_format_version") == null && manifest != null && manifest.size in 1..65_536 &&
                 runCatching { OwnBackupStream.format { zip.getInputStream(manifest).reader(Charsets.UTF_8) } }.getOrNull() == ChatArchive.FORMAT
             if (own) {
                 val backup = zip.getEntry(ChatArchive.BACKUP) ?: throw AppTextException(R.string.err_archive_damaged)
                 return importOwnStream({ zip.getInputStream(backup).reader(Charsets.UTF_8) }, scratchDir, mode, onProgress)
             }
-        }
-        /*
-         * DeepSeek 导出先走**流式**导入：它的会话数量级最大（一份归档几千个会话、
-         * 两万多条消息），整包建对象会 OOM。判定只看 `manifest.json` 一个字段，
-         * 代价是开一次 ZIP —— 与"导入过程中内存爆掉"相比不值一提。
-         */
-        val isDeepSeek = runCatching {
-            ZipFile(file).use { zip -> DeepSeekHistory.detect(zip) }
-        }.getOrDefault(false)
-        if (isDeepSeek) {
-            val failures = mutableListOf<ImportFailure>()
-            var droppedImages = 0
-            val report = ZipFile(file).use { zip ->
+            // Keep the same ZIP open while consuming the two-pass DeepSeek importer.
+            if (metadata == null || metadata["export_format_version"] != null) {
+                val failures = mutableListOf<ImportFailure>()
+                var droppedImages = 0
                 val opened = DeepSeekHistory.open(
                     zip = zip,
+                    parsedManifest = metadata,
                     naming = importNaming(),
                     onProgress = onProgress,
                     onFailure = { failure ->
-                        // 用户看不到日志，但出问题时要能查：谁被跳过、为什么
                         failures += failure
                         android.util.Log.w(ImportLogTag, "跳过会话 ${failure.reference}：${failure.reason}")
                     },
                     onImageDropped = { droppedImages++ },
-                ) ?: throw AppTextException(R.string.err_unrecognised_file)
-                /*
-                 * ⚠️ 会话是**逐条产出、逐条写库**的（见 `ImportSession`）：
-                 * 写库必须在 ZIP 关掉之前跑完，否则第二遍读正文就没有源了。
-                 */
-                importSessions(opened, mode, failures)
-            }.copy(droppedImages = droppedImages)
-            val reportSaved = saveImportReport(report)
-            if (report.expected == 0) throw AppTextException(R.string.err_no_sessions)
-            return report to importSummary(
-                sourceName = Res.get(R.string.backup_source_deepseek),
-                report = report,
-                warnings = buildList {
-                    add(AppText.of(R.string.warn_deepseek_limited))
-                    if (!reportSaved) add(AppText.of(R.string.import_report_not_saved))
-                },
-            )
+                )
+                if (opened != null) {
+                    val report = importSessions(opened, mode, failures).copy(droppedImages = droppedImages)
+                    val reportSaved = saveImportReport(report)
+                    if (report.expected == 0) throw AppTextException(R.string.err_no_sessions)
+                    return report to importSummary(
+                        sourceName = Res.get(R.string.backup_source_deepseek),
+                        report = report,
+                        warnings = buildList {
+                            add(AppText.of(R.string.warn_deepseek_limited))
+                            if (!reportSaved) add(AppText.of(R.string.import_report_not_saved))
+                        },
+                    )
+                }
+            }
         }
 
         return importExternal(

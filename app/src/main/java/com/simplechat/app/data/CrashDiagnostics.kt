@@ -31,4 +31,10 @@ object CrashDiagnostics {
     }
 
     fun file(context: Context): File? = File(context.filesDir, "last-crash.txt").takeIf { it.isFile }
+
+    fun text(context: Context): String? = file(context)?.readText()
+
+    fun clear(context: Context) {
+        file(context)?.delete()
+    }
 }
