@@ -21,6 +21,17 @@
 
 ## 📌 待实现
 
+### 导入长对话续聊后切换 DeepSeek Pro 被拒（2026-11-20，待定位）
+
+用户反馈从 DeepSeek 导入的长对话，在 SimpleChat v1.2.2 续聊后，升级到 v1.2.3-beta.3 并切换到 Pro 仍收到 `Content Exists Risk`。截图中的纯文字重试也收到相同错误。约 50K 是用户观察到的复现线索。用户从较短分支继续写后也曾超过 50K 并成功生成，因此尚无证据表明存在固定的 50K 上限。
+
+- v1.2.2 的官方 Anthropic 请求曾可能把 Flash 专用功能和签名读链历史发给 Pro。beta.3 的 Chat Completions、Responses 和 Anthropic 路径均按当前模型限制内置搜索和读链，官方 Pro 的请求也不回传 Flash 的历史工具块或签名。独立搜索结果可作为文本加入普通请求，纯文字重试会跳过本轮独立搜索及附件处理。 [OpenAI 兼容请求](app/src/main/java/com/simplechat/app/net/ChatApi.kt#L80) · [Anthropic 请求](app/src/main/java/com/simplechat/app/ui/chat/AnthropicRequestBuilder.kt#L73) · [重试路径](app/src/main/java/com/simplechat/app/ui/chat/ChatViewModel.kt#L1818)
+- DeepSeek 文档区分内容审核返回的 `400 Content Exists Risk` 与流式输出以 `refusal` 结束。未开启 `safety_check` 但声明联网工具的请求也可能以拒答结束。仅凭截图无法确认实际协议、HTTP 状态或触发字段。 [DeepSeek 内容安全说明](https://api-docs.deepseek.com/zh-cn/guides/safety/)
+- 纯文字重试仍发送当前分支的历史正文和系统提示。应优先核对旧版新增的用户消息与助手正文，以及上一条带模型标记的助手回复来自 Flash 时注入的模型切换提示。已有约 27 万 token 的联网测试使用合成会话，未覆盖这条真实存档及拒绝场景。 [模型切换判断](app/src/main/java/com/simplechat/app/ui/chat/RequestOrdering.kt#L18) · [beta.3 验收记录](docs/29-v1.2.3-beta.3验收-2026-11-20.md#L23)
+
+- [ ] 拿到原会话的本地复现后，记录实际模型 ID、供应商、端点、协议、HTTP 状态或流结束原因与请求编号。在同一模型、协议和分支下，对照正常发送与纯文字重试，并比较旧版续聊前后的消息角色、正文长度、系统字段、附件引用和工具声明。正文与 API Key 留在设备上。
+- [ ] 若仍只有截图，请通过实际 API 供应商的支持渠道，凭普通请求与纯文字重试的编号查询拒绝阶段及触发字段。以实际请求对照或供应商回执为准，再确认根因和修复范围。
+
 ### 双通道协议的真机联调（⚠️ 最优先）
 
 **现状**：Anthropic 兼容通道（智能搜索 / 链接阅读 / 引用 / 服务端标题 /
