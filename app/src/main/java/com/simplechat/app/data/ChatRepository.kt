@@ -10,6 +10,7 @@ import com.simplechat.app.db.AttachmentRefEntity
 import com.simplechat.app.db.CompactionEntity
 import com.simplechat.app.db.ConversationEntity
 import com.simplechat.app.db.ConversationPresetEntity
+import com.simplechat.app.db.UsageTotals
 import com.simplechat.app.db.ConversationSearchHit
 import com.simplechat.app.db.DraftEntity
 import com.simplechat.app.db.MessageEntity
@@ -82,6 +83,9 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     // ── 会话列表 ──────────────────────────────────────────
 
     fun observeConversations(): Flow<List<ConversationEntity>> = conversations.observeAll()
+
+    /** 跨对话记忆检索用：一次性取回全部会话（标题 + 更新时间）。 */
+    suspend fun allConversations(): List<ConversationEntity> = conversations.allConversations()
 
     /**
      * 观察**单个会话**。
@@ -538,6 +542,10 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         thinkingMs: Long? = null,
         timeline: List<ReplyBlock> = emptyList(),
         stopReason: String? = null,
+        /** 服务端回报的用量；没报就留 null，不要填 0（0 会被当成真实值参与计价）。 */
+        tokensIn: Int? = null,
+        tokensOut: Int? = null,
+        cacheHitTokens: Int? = null,
     ) = messages.finish(
         id = id,
         content = content,
@@ -549,7 +557,13 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         thinkingMs = thinkingMs,
         timeline = ReplyBlocks.encode(timeline),
         stopReason = stopReason,
+        tokensIn = tokensIn,
+        tokensOut = tokensOut,
+        cacheHitTokens = cacheHitTokens,
     )
+
+    /** 全库累计用量（设置 → 用量与余额）。 */
+    suspend fun usageTotals(): UsageTotals = messages.usageTotals()
 
     /**
      * 打开会话前清扫：把上次被中断的流式消息判为 STOPPED。
@@ -629,6 +643,9 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             thinkingMs = thinkingMs,
             timeline = null,
             stopReason = null,
+            tokensIn = null,
+            tokensOut = null,
+            cacheHitTokens = null,
         )
         toUiWithCounts(conversationId, entity.copy(ttftMs = ttftMs, tps = tps, thinkingMs = thinkingMs))
     }

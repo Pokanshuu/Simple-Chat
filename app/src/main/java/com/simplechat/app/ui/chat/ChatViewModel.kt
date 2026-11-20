@@ -17,6 +17,7 @@ import com.simplechat.app.data.ApiKey
 import com.simplechat.app.data.BackgroundGeneration
 import com.simplechat.app.data.Attachment
 import com.simplechat.app.data.ChatRepository
+import com.simplechat.app.data.Diagnostics
 import com.simplechat.app.data.CompactionCheckpoint
 import com.simplechat.app.data.compactionFingerprint
 import com.simplechat.app.ui.markdown.warmMarkdownCache
@@ -1177,6 +1178,12 @@ class ChatViewModel(
         val tpsList = messages.mapNotNull { it.tps }
         val thinking = messages.mapNotNull { it.reasoningSeconds }
 
+        /*
+         * 服务端回报的用量：只算**有上报**的回复。老数据 tokensIn/out 为 null，
+         * 不能按 0 计入 —— 否则"本会话消耗"会永远停在 0，看起来像没工作。
+         */
+        val usageMessages = messages.filter { it.role == MessageRole.ASSISTANT && it.tokensIn != null }
+
         return ContextStats(
             usedTokens = TokenEstimate.fromWeight(usedWeight) + attachmentTokens,
             windowTokens = settings.model.contextWindow,
@@ -1193,6 +1200,10 @@ class ChatViewModel(
             avgTps = tpsList.takeIf { it.isNotEmpty() }?.average()?.toFloat(),
             totalThinkingSeconds = thinking.takeIf { it.isNotEmpty() }?.sum(),
             hasCompaction = active != null,
+            usageReplies = usageMessages.size,
+            usagePromptTokens = usageMessages.sumOf { it.tokensIn ?: 0 },
+            usageCompletionTokens = usageMessages.sumOf { it.tokensOut ?: 0 },
+            usageCacheHitTokens = usageMessages.sumOf { it.cacheHitTokens ?: 0 },
         ) to weights
     }
 
@@ -1559,6 +1570,12 @@ class ChatViewModel(
         val routeProvider = providerKind
         val searchRequested = webSearch
         val latestQuestion = messages.lastOrNull { it.role == MessageRole.USER }?.content.orEmpty()
+        Diagnostics.log(
+            "CHAT",
+            "start model=${options.model.id} style=$selectedApiStyle " +
+                "base=${route.baseUrl} search=$searchRequested " +
+                "messages=${messages.size}",
+        )
         streamJob = viewModelScope.launch {
             val startedAt = SystemClock.elapsedRealtime()
             var lastCheckpointAt = startedAt
@@ -1726,7 +1743,14 @@ class ChatViewModel(
 
                             // 流内错误对象是**上游网关原文**（如 `No available channel …`）：
                             // 先翻成人话，认不出才保留原文（见 `serverErrorText`）
-                            is StreamEvent.Error -> failure = sendError(event)
+                            is StreamEvent.Error -> {
+                                Diagnostics.log(
+                                    "CHAT",
+                                    "stream error code=${event.code} " +
+                                        "retryable=${event.retryable} msg=${event.message.take(300)}",
+                                )
+                                failure = sendError(event)
+                            }
 
                             // 块通道不该出现这两类增量；出现了说明通道配错，忽略
                             is StreamEvent.Content, is StreamEvent.Reasoning -> Unit
@@ -1791,7 +1815,14 @@ class ChatViewModel(
 
                             // 流内错误对象是**上游网关原文**（如 `No available channel …`）：
                             // 先翻成人话，认不出才保留原文（见 `serverErrorText`）
-                            is StreamEvent.Error -> failure = sendError(event)
+                            is StreamEvent.Error -> {
+                                Diagnostics.log(
+                                    "CHAT",
+                                    "stream error code=${event.code} " +
+                                        "retryable=${event.retryable} msg=${event.message.take(300)}",
+                                )
+                                failure = sendError(event)
+                            }
 
                             // 块级事件只属于 Anthropic 通道；这条路径上忽略
                             else -> Unit
@@ -1952,16 +1983,34 @@ class ChatViewModel(
                             thinkingMs = thinkingMs,
                             timeline = timeline,
                             stopReason = accumulator?.stopReason,
+                            tokensIn = lastUsage?.promptTokens?.takeIf { it > 0 },
+                            tokensOut = lastUsage?.completionTokens?.takeIf { it > 0 },
+                            cacheHitTokens = lastUsage?.cacheHitTokens,
                         )
                         repository.touchConversation(conversationId)
                     }
                 }.onFailure { error ->
                     android.util.Log.e("SimpleChat/Save", "Reply persistence failed: ${error.javaClass.simpleName}")
+                    Diagnostics.e("SAVE", "reply persistence failed", error)
                     if (conversationId == currentConversationId) {
                         banner = Res.get(R.string.reply_save_failed)
                         patch(replyId) { it.copy(status = MessageStatus.ERROR, errorMessage = Res.get(R.string.reply_save_failed)) }
                     }
                 }.isSuccess
+            }
+
+            /*
+             * 把这轮的用量写回内存里那条消息：落库的已是最新值，但界面统计读的是
+             * 内存列表 —— 不补这一下，「本会话消耗」要等重新打开会话才会更新。
+             */
+            if (persisted && conversationId == currentConversationId) {
+                patch(replyId) { message ->
+                    message.copy(
+                        tokensIn = lastUsage?.promptTokens?.takeIf { it > 0 },
+                        tokensOut = lastUsage?.completionTokens?.takeIf { it > 0 },
+                        cacheHitTokens = lastUsage?.cacheHitTokens,
+                    )
+                }
             }
 
             /*
@@ -2040,7 +2089,7 @@ class ChatViewModel(
          * 续写时把这条 assistant 从历史里摘出去：它要以**末尾前缀**的身份出现，
          * 留在历史里就是同一轮回答发了两遍，服务端会把它当成两个不同的回答。
          */
-        val path = orderedOutgoingMessages(messages, active)
+        val preparedPath = orderedOutgoingMessages(messages, active)
             .filter { it.id != prefix?.id }
             /*
              * 附件在这里整理：落盘字节读回内存（`toDataUrl()` / image block 只认内联），
@@ -2056,6 +2105,24 @@ class ChatViewModel(
                 else prepareOutgoingUser(message, route, options.model)
                 preserveTurnWhenAttachmentsSkipped(message, outgoing)
             }
+
+        /*
+         * 跨对话记忆：与 OpenAI 通道同一策略 —— 只拼在**最后一条 user 消息**前，
+         * 历史与落库内容都不动。
+         */
+        val memoryText = runCatching { crossChatMemoryFor(route) }.getOrDefault("")
+        val lastUserId = preparedPath.lastOrNull { it.role == MessageRole.USER }?.id
+        val path = if (memoryText.isNotBlank() && lastUserId != null) {
+            preparedPath.map { message ->
+                if (message.role == MessageRole.USER && message.id == lastUserId) {
+                    message.copy(content = "$memoryText\n\n${message.content}")
+                } else {
+                    message
+                }
+            }
+        } else {
+            preparedPath
+        }
 
         /*
          * 官方域才发 DeepSeek 扩展字段（搜索工具 / 服务端标题 /
@@ -2288,12 +2355,67 @@ class ChatViewModel(
             outgoing.attachments.isEmpty()
         ) outgoing.copy(content = Res.get(R.string.prompt_attachments_skipped)) else outgoing
 
+    /**
+     * 检索历史会话里与本轮提问相关的内容，供 [buildRequestMessages] 前置到用户消息。
+     *
+     * 任何一步失败都返回空串：记忆是锦上添花，不能因为一次检索异常就让消息发不出去。
+     */
+    private suspend fun crossChatMemoryFor(route: StoredSettings): String {
+        if (!route.crossChatMemory || route.crossChatMemoryLimit <= 0) {
+            Diagnostics.log("MEM", "skip(disabled) limit=${route.crossChatMemoryLimit}")
+            return ""
+        }
+        val activeConversationId = currentConversationId ?: return ""
+        if (activeConversationId.isBlank()) return ""
+        val outgoing = orderedOutgoingMessages(messages, validCompaction(messages, compaction))
+        val query = outgoing.lastOrNull { it.role == MessageRole.USER }?.content?.trim().orEmpty()
+        if (query.isBlank()) {
+            Diagnostics.log("MEM", "skip(empty-query)")
+            return ""
+        }
+        val sessions = repository.allConversations()
+            .map { CrossChatMemory.SessionRef(it.id, it.title, it.updatedAt) }
+        if (sessions.isEmpty()) {
+            Diagnostics.log("MEM", "skip(no-conversations)")
+            return ""
+        }
+        val startedAt = android.os.SystemClock.elapsedRealtime()
+        val result = CrossChatMemory.build(
+            query = query,
+            currentConversationId = activeConversationId,
+            limit = route.crossChatMemoryLimit,
+            sessions = sessions,
+            loadMessages = { id -> repository.loadActivePath(id) },
+        )
+        val elapsed = android.os.SystemClock.elapsedRealtime() - startedAt
+        Diagnostics.log(
+            "MEM",
+            buildString {
+                append(if (result.injected) "inject" else "skip(${result.reason})")
+                append(" tokens=${result.queryTokens}")
+                append(" candidates=${result.candidates}")
+                append(" picked=${result.picked}")
+                append(" fallback=${result.fallback}")
+                append(" chars=${result.text.length}")
+                append(" ms=$elapsed")
+                append(" sessions=${sessions.size}")
+                append(" limit=${route.crossChatMemoryLimit}")
+            },
+        )
+        return result.text
+    }
+
     private suspend fun buildRequestMessages(
         research: String, route: StoredSettings, options: ConversationSettings,
         omitAttachmentsAndTools: Boolean = false,
     ): List<OutMessageDto> {
         skippedNoVision = 0; skippedUnreadable = 0; skippedUnsupportedFiles = 0
         val request = mutableListOf<OutMessageDto>()
+        /*
+         * 跨对话记忆只拼在**最后一条 user 消息**的发送内容前：落库消息保持原样，
+         * 历史也不动（改了历史会让每轮前缀都变，缓存与可复现性一起丢）。
+         */
+        val memoryText = runCatching { crossChatMemoryFor(route) }.getOrDefault("")
         if (research.isNotBlank()) request += OutMessageDto("system", MessageContent.text(research))
         modelSwitchedFrom(messages, options.model.id)?.let { previousModel ->
             request += OutMessageDto("system", MessageContent.text(
@@ -2321,7 +2443,9 @@ class ChatViewModel(
         }
 
         // 顺序规则见 `orderedOutgoingMessages`（纯函数，有单测钉死）
-        orderedOutgoingMessages(messages, active).forEach { message ->
+        val outgoingMessages = orderedOutgoingMessages(messages, active)
+        val lastUserId = outgoingMessages.lastOrNull { it.role == MessageRole.USER }?.id
+        outgoingMessages.forEach { message ->
             /*
              * 空消息不发：历史里出错/被中断的 assistant、既没正文也没附件的 user
              * 是可能存在的，而部分兼容网关对空 `content` 直接 400 ——
@@ -2333,6 +2457,13 @@ class ChatViewModel(
             } else message
             val sendable = preserveTurnWhenAttachmentsSkipped(message, outgoing)
             if (!isSendableOutgoing(sendable)) return@forEach
+            val body = if (
+                memoryText.isNotBlank() && message.role == MessageRole.USER && message.id == lastUserId
+            ) {
+                "$memoryText\n\n${sendable.content}"
+            } else {
+                sendable.content
+            }
             request += OutMessageDto(
                 role = if (message.role == MessageRole.USER) "user" else "assistant",
                 /*
@@ -2343,9 +2474,9 @@ class ChatViewModel(
                  * 在协议里是不合法的（会 400），而 AI 回复本来也不该带图。
                  */
                 content = if (message.role != MessageRole.USER || sendable.attachments.isEmpty()) {
-                    MessageContent.text(sendable.content)
+                    MessageContent.text(body)
                 } else {
-                    userContent(sendable.content, sendable.attachments)
+                    userContent(body, sendable.attachments)
                 },
             )
         }

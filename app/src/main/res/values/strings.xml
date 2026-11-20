@@ -114,6 +114,13 @@
     <string name="settings_title">设置</string>
     <string name="settings_data">数据管理</string>
     <string name="settings_api">API 配置</string>
+    <string name="settings_balance">账户余额</string>
+    <string name="settings_usage_title">用量与余额</string>
+    <string name="settings_balance_loading">查询中…</string>
+    <string name="settings_balance_no_key">未配置 API Key</string>
+    <string name="settings_balance_unsupported">仅官方端点支持</string>
+    <string name="settings_balance_failed">查询失败</string>
+    <string name="settings_balance_refresh">刷新余额</string>
     <string name="settings_presets">预设</string>
     <string name="settings_font_size">字体大小</string>
     <string name="settings_about">关于</string>
@@ -138,6 +145,10 @@
     <string name="loading_words_duplicate">这条加载词已存在</string>
     <string name="settings_group_display">显示</string>
     <string name="settings_group_search">搜索</string>
+    <string name="settings_group_memory">记忆</string>
+    <string name="settings_cross_chat_memory">跨对话记忆</string>
+    <string name="settings_cross_chat_memory_limit">参考会话数</string>
+    <string name="settings_cross_chat_memory_limit_value">%1$d 个</string>
     <string name="settings_group_backup">备份</string>
     <string name="settings_group_diagnostics">诊断</string>
     <string name="settings_group_reset">重置</string>
@@ -259,6 +270,20 @@
     <string name="about_project">项目</string>
     <string name="about_project_url">项目地址</string>
     <string name="about_licenses">开源许可</string>
+    <string name="about_diagnostics_group">诊断</string>
+    <string name="about_diagnostics_title">诊断日志</string>
+    <string name="about_diagnostics_count">%1$d 条</string>
+    <string name="diagnostics_copy">复制全部</string>
+    <string name="diagnostics_count">%1$d 条记录</string>
+    <string name="diagnostics_export">导出日志</string>
+    <string name="diagnostics_save_file">导出到文件</string>
+    <string name="diagnostics_save_file_hint">保存 .txt 到所选位置</string>
+    <string name="diagnostics_saved">已保存</string>
+    <string name="diagnostics_save_failed">保存失败</string>
+    <string name="diagnostics_export_hint">分享为文本，附设备与版本信息</string>
+    <string name="diagnostics_clear">清空</string>
+    <string name="diagnostics_log_section">最近日志</string>
+    <string name="diagnostics_empty">暂无日志。复现问题后再回来看看。</string>
     <string name="licenses_count">%1$d 个组件</string>
     <string name="licenses_third_party">第三方组件</string>
     <string name="licenses_reference_title">参考实现</string>
@@ -449,6 +474,15 @@
     <string name="stats_total_thinking">累计思考时长</string>
     <string name="stats_cache_hit">缓存命中（最近一次）</string>
     <string name="stats_cache_hit_value">%1$s / %2$s · %3$d%%</string>
+    <string name="stats_usage_title">本会话消耗</string>
+    <string name="stats_usage_title_all">全部会话消耗</string>
+    <string name="stats_usage_requests">请求次数</string>
+    <string name="stats_usage_requests_value">%1$d 次</string>
+    <string name="stats_usage_input">输入</string>
+    <string name="stats_usage_output">输出</string>
+    <string name="stats_usage_cache_hit">其中缓存命中</string>
+    <string name="stats_usage_cost">估算费用</string>
+    <string name="stats_usage_note">来自服务端回报的 usage；价格按 DeepSeek 官方定价估算，仅供参考。</string>
     <string name="stats_seconds">%1$d 秒</string>
 
     <!-- 上下文压缩 -->
