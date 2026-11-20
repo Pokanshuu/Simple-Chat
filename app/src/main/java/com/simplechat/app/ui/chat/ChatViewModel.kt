@@ -278,6 +278,10 @@ class ChatViewModel(
     var autoCollapseThinking by mutableStateOf(true)
         private set
 
+    /** 长按输入框开始语音输入（设置页可关）。 */
+    var holdToTalk by mutableStateOf(true)
+        private set
+
     /**
      * 已经向服务端要过标题的会话。
      *
@@ -417,6 +421,7 @@ class ChatViewModel(
         apiStyle = ApiStyle.resolve(kind, value.apiStyleId, value.baseUrl)
         webSearch = value.webSearch
         autoCollapseThinking = value.autoCollapseThinking
+        holdToTalk = value.holdToTalk
         loadingWordsUseThemeColor = value.loadingWordsUseThemeColor
         ttsVoiceName = value.ttsVoiceName
         autoReadAloud = value.autoReadAloud

@@ -657,6 +657,9 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                             onToggleSearchInactiveBranches = {
                                 scope.launch { store.setSearchInactiveBranches(it) }
                             },
+                            onToggleHoldToTalk = {
+                                scope.launch { store.setHoldToTalk(it) }
+                            },
                             onOpenLoadingWords = { page = SettingsPage.LOADING_WORDS },
                         )
 
@@ -1347,6 +1350,7 @@ private fun ChatBehaviorPage(
     stored: StoredSettings,
     onToggleAutoCollapse: (Boolean) -> Unit,
     onToggleSearchInactiveBranches: (Boolean) -> Unit,
+    onToggleHoldToTalk: (Boolean) -> Unit,
     onOpenLoadingWords: () -> Unit,
 ) {
     SettingsSectionLabel(stringResource(R.string.settings_group_display))
@@ -1357,6 +1361,13 @@ private fun ChatBehaviorPage(
             label = stringResource(R.string.settings_auto_collapse),
             checked = stored.autoCollapseThinking,
             onCheckedChange = onToggleAutoCollapse,
+        )
+        RowDivider()
+        SettingsSwitchRow(
+            icon = AppIcons.Mic,
+            label = stringResource(R.string.settings_hold_to_talk),
+            checked = stored.holdToTalk,
+            onCheckedChange = onToggleHoldToTalk,
         )
         RowDivider()
         SettingsNavRow(
