@@ -93,7 +93,12 @@ internal object NativeShareRenderRegression {
                 status("native fraction uses loaded KaTeX glyphs and produces a nonempty bounded graphics capture")
             } finally { renderer.close() }
 
-            val excerptText = "Area \$x^2\$ and fraction \$\\frac{a}{b}\$.\n\nGaussian integral:\n\n\$\$\n\\int_{-\\infty}^{\\infty} e^{-x^2}\\,dx = \\sqrt{\\pi}\n\$\$"
+            val excerptText = "Area \$x^2\$ and fraction \$\\frac{a}{b}\$.\n\n\\(\\ovalbox{项链还戴着吗}\\quad\\text{\\tiny已读}\\)\n\n\\(\\ovalbox{还是还在抽屉里}\\quad\\text{\\tiny已读}\\)\n\n\\(\\ovalbox{我去感应一下}\\quad\\text{\\tiny已读}\\)\n\nGaussian integral:\n\n\$\$\n\\int_{-\\infty}^{\\infty} e^{-x^2}\\,dx = \\sqrt{\\pi}\n\$\$"
+            val excerptBlocks = shareRenderBlocks(excerptText, markdown = true)
+            val inlineFormulaCount = excerptBlocks.filterIsInstance<ShareRenderBlock.Text>().sumOf { block ->
+                inlineMathDocument(block.source).formulas.size
+            }
+            check(inlineFormulaCount == 5) { "Excerpt lost inline math tokens: $inlineFormulaCount" }
             val excerptDocument = MessageShareDocument("分享摘录", messageShareGroups(listOf(
                 UiMessage("excerpt", MessageRole.ASSISTANT, excerptText))),
                 excerptFooter = listOf("摘录于 2026-11-20", "回答由 AI 生成"))
@@ -110,7 +115,7 @@ internal object NativeShareRenderRegression {
             }) { "Excerpt and ordinary share images render different formula bodies" }
             excerptBitmap.recycle()
             ordinaryBitmap.recycle()
-            status("assistant excerpt images render inline fractions and display integrals")
+            status("assistant excerpt images render three oval read receipts, inline fractions and display integrals")
 
             val table = "| 项目 | 分式 | 根式 | 矩阵 | 描述 | 最右列 |\n| --- | --- | --- | --- | --- | --- |\n" +
                 "| A | \$\\frac{a+b}{c}\$ | \$\\sqrt{x^2+y^2}\$ | \$\\begin{pmatrix}1&2\\\\3&4\\end{pmatrix}\$ | **完整渲染** | RIGHTMOST |\n" +

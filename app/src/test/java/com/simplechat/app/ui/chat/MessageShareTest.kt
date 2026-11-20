@@ -121,14 +121,18 @@ class MessageShareTest {
     }
 
     @Test fun selectedExcerptsKeepInlineAndDisplayMathRenderable() {
-        val source = "Area \$x^2\$ and fraction \$\\frac{a}{b}\$.\n\nGaussian integral:\n\n\$\$\n\\int_{-\\infty}^{\\infty} e^{-x^2}\\,dx = \\sqrt{\\pi}\n\$\$"
+        val source = "Area \$x^2\$ and fraction \$\\frac{a}{b}\$.\n\n\\(\\ovalbox{项链还戴着吗}\\quad\\text{\\tiny已读}\\)\n\n\\(\\ovalbox{还是还在抽屉里}\\quad\\text{\\tiny已读}\\)\n\n\\(\\ovalbox{我去感应一下}\\quad\\text{\\tiny已读}\\)\n\nGaussian integral:\n\n\$\$\n\\int_{-\\infty}^{\\infty} e^{-x^2}\\,dx = \\sqrt{\\pi}\n\$\$"
         assertTrue(shareSectionUsesMarkdown(user = false, excerpt = true, reasoning = false))
         val blocks = shareRenderBlocks(source, shareSectionUsesMarkdown(user = false, excerpt = true, reasoning = false))
         assertEquals("\\int_{-\\infty}^{\\infty} e^{-x^2}\\,dx = \\sqrt{\\pi}", blocks.filterIsInstance<ShareRenderBlock.Formula>().single().tex)
         val inline = blocks.filterIsInstance<ShareRenderBlock.Text>().first()
         assertTrue(inline.markdown)
-        assertEquals(listOf("x^2", "\\frac{a}{b}"),
-            com.simplechat.app.ui.markdown.inlineMathDocument(inline.source).formulas.values.map { it.tex })
+        val allInlineFormulas = blocks.filterIsInstance<ShareRenderBlock.Text>().flatMap { text ->
+            com.simplechat.app.ui.markdown.inlineMathDocument(text.source).formulas.values.map { it.tex }
+        }
+        assertEquals(listOf("x^2", "\\frac{a}{b}", "\\ovalbox{项链还戴着吗}\\quad\\text{\\tiny已读}",
+            "\\ovalbox{还是还在抽屉里}\\quad\\text{\\tiny已读}",
+            "\\ovalbox{我去感应一下}\\quad\\text{\\tiny已读}"), allInlineFormulas)
         assertFalse(shareSectionUsesMarkdown(user = true, excerpt = false, reasoning = false))
         assertFalse(shareSectionUsesMarkdown(user = false, excerpt = true, reasoning = true))
     }
