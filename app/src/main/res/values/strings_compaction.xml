@@ -11,4 +11,5 @@
     <string name="compact_deadline">本次压缩已用时 %1$d 秒，已停止请求。点击压缩可从已保存的位置继续。</string>
     <string name="compact_request_timeout">等待摘要超时，已停止请求。请检查接口后再继续，已完成的批次会保留。</string>
     <string name="compact_no_new_history">暂无可纳入摘要的更早消息，已保留当前摘要。</string>
+    <string name="context_recovery_applied">较早的对话已压缩，本轮保留你的最新提问并继续生成。</string>
 </resources>

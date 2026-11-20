@@ -5,6 +5,10 @@ import com.simplechat.app.db.CompactionEntity
 internal fun validCompaction(path: List<UiMessage>, compaction: CompactionEntity?): CompactionEntity? =
     compaction?.takeIf { summary -> path.any { it.id == summary.throughMessageId } }
 
+internal fun modelSwitchedFrom(path: List<UiMessage>, selectedModel: String): String? =
+    path.lastOrNull { it.role == MessageRole.ASSISTANT && !it.streaming && it.content.isNotBlank() && !it.model.isNullOrBlank() }
+        ?.model?.takeIf { it != selectedModel }
+
 /**
  * 从**活跃路径**与压缩状态算出实际发出去的消息序列。
  *

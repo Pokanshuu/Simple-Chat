@@ -1402,30 +1402,22 @@ fun ChatScreen(
                         }
                     }
 
+                    // Unsupported attachments are filtered for this turn; keep the text turn alive.
                     /*
-                     * 模型不支持识图时**在这里拦住**，而不是让请求打到服务端换回 400。
-                     * 400 的原文（如 "image_url is not supported"）对用户没有指导意义，
-                     * 这里能直接告诉他"换个模型"。
+                     * 主动发消息 = "我要看新内容"：清掉"已离开底部"标记。
+                     *
+                     * ⚠️ **这里不能直接 `scrollToBottom()`** —— 消息是异步落库的，
+                     * 滚动发出时它还没进列表，下标 0 还是上一条回复；等它进来时
+                     * 下标整体后移，Compose 又按 key 把原条目钉住，于是人停在上条
+                     * 回复的结尾（实测就是这个 bug）。
+                     * 交给上面那个"条数变化才滚"的 effect —— 等它真的进列表再滚。
                      */
-                    if (attached.any { it.isImage } && !vm.settings.model.supportsVision) {
-                        attachError = Res.get(R.string.chat_vision_unsupported, vm.settings.model.displayName)
+                    resumeFollowing()
+                    if (target != null) {
+                        // 输入栏的发送键就是「保存并发送」，不再让用户做二次选择
+                        requestResend(target, submitted, attached, clearPersistedInput)
                     } else {
-                        /*
-                         * 主动发消息 = "我要看新内容"：清掉"已离开底部"标记。
-                         *
-                         * ⚠️ **这里不能直接 `scrollToBottom()`** —— 消息是异步落库的，
-                         * 滚动发出时它还没进列表，下标 0 还是上一条回复；等它进来时
-                         * 下标整体后移，Compose 又按 key 把原条目钉住，于是人停在上条
-                         * 回复的结尾（实测就是这个 bug）。
-                         * 交给上面那个"条数变化才滚"的 effect —— 等它真的进列表再滚。
-                         */
-                        resumeFollowing()
-                        if (target != null) {
-                            // 输入栏的发送键就是「保存并发送」，不再让用户做二次选择
-                            requestResend(target, submitted, attached, clearPersistedInput)
-                        } else {
-                            vm.send(submitted, attached, clearPersistedInput)
-                        }
+                        vm.send(submitted, attached, clearPersistedInput)
                     }
                 }
 

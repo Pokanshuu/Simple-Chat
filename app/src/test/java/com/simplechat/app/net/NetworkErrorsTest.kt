@@ -104,6 +104,16 @@ class NetworkErrorsTest {
         assertNull(providerHintRes("HTTP 400: invalid request parameter"))
     }
 
+    @Test fun `retryable optional-feature errors are separated from setup and transport failures`() {
+        assertTrue(canRetryWithoutAttachmentsAndTools(400, "Content Exists Risk"))
+        assertTrue(canRetryWithoutAttachmentsAndTools(422, "deepseek_web_search is unavailable"))
+        assertTrue(canRetryWithoutAttachmentsAndTools(413, "request body too large"))
+        assertFalse(canRetryWithoutAttachmentsAndTools(401, "invalid api key"))
+        assertFalse(canRetryWithoutAttachmentsAndTools(400, "unknown model"))
+        assertFalse(canRetryWithoutAttachmentsAndTools(503, "upstream unavailable"))
+        assertFalse(canRetryWithoutAttachmentsAndTools(null, "socket reset"))
+    }
+
     // ── providerHintRes：服务商自报原因 → 人话 ──────────────────────────
 
     @Test

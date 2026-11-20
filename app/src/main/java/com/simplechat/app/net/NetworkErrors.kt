@@ -105,10 +105,44 @@ internal fun providerHintRes(serverMessage: String?): Int? {
     }
 }
 
+/** Retry only request-content/tool incompatibilities, never credentials, configuration, or transport errors. */
+internal fun canRetryWithoutAttachmentsAndTools(code: Int?, serverMessage: String?): Boolean {
+    val status = code ?: return false
+    if (status !in 400..499 || status == 401 || status == 403 || status == 408 || status == 429) return false
+    val text = serverMessage?.lowercase().orEmpty()
+    if (text.isBlank()) return false
+    if (text.containsAny(AUTH_KEYWORDS + INVALID_API_KEY_KEYWORDS + QUOTA_KEYWORDS + CONTEXT_KEYWORDS + MODEL_MISSING_KEYWORDS)) {
+        return false
+    }
+    return text.containsAny(OPTIONAL_FEATURE_ERROR_KEYWORDS) ||
+        (status == 413 && text.containsAny(PAYLOAD_KEYWORDS))
+}
+
 private val CONTENT_RISK_KEYWORDS = listOf(
     "content exists risk",
     "content risk detected",
     "content moderation rejected",
+)
+
+private val OPTIONAL_FEATURE_ERROR_KEYWORDS = listOf(
+    "content exists risk",
+    "content risk detected",
+    "content moderation rejected",
+    "deepseek_web_search",
+    "deepseek_read_url",
+    "server-side tool calls",
+    "tool calls are unavailable",
+    "tool is not supported",
+    "unsupported tool",
+    "file_id",
+    "files api",
+    "unsupported image",
+    "images are not supported",
+    "file format",
+    "unsupported file",
+    "payload too large",
+    "request body too large",
+    "request_too_large",
 )
 
 internal fun isEmptyMessagesRejection(message: String?): Boolean =

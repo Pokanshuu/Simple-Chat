@@ -17,6 +17,18 @@ import org.junit.Test
 class RequestOrderingTest {
 
     @Test
+    fun `model switch notice compares against last completed assistant`() {
+        val path = listOf(
+            msg("u1", "", MessageRole.USER, "question"),
+            msg("a1", "u1", MessageRole.ASSISTANT, "Flash answer").copy(model = "deepseek-flash"),
+            msg("u2", "a1", MessageRole.USER, "follow up"),
+            msg("a2", "u2", MessageRole.ASSISTANT, "", MessageStatus.STREAMING).copy(model = "deepseek-v4-pro"),
+        )
+        assertEquals("deepseek-flash", modelSwitchedFrom(path, "deepseek-v4-pro"))
+        assertEquals(null, modelSwitchedFrom(path, "deepseek-flash"))
+    }
+
+    @Test
     fun `compaction with blank historical replies must retain the newly sent user message`() {
         val path = listOf(
             msg("u1", "", MessageRole.USER, "old question"),

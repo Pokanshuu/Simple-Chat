@@ -47,5 +47,8 @@
     <string name="error_large_send_before_reply">长请求在收到服务端响应头前断开，无法确认服务端是否已处理。可以手动重试；若同一会话反复中断，点输入栏的上下文圆环压缩后再试。</string>
     <string name="error_large_stream_before_reply">服务端已响应，但在返回回复内容前连接中断。可以手动重试；若长会话反复中断，点输入栏的上下文圆环压缩后再试。</string>
     <string name="retry_skipped_notice">本次只发送文字上下文，已跳过附件和工具。原记录已保留。</string>
-    <string name="retry_needs_question">这条提问只有附件。请点提问气泡，补充文字后发送。</string>
+    <string name="tool_request_skipped_continue">搜索工具暂不可用，本轮已跳过并继续文字对话。</string>
+    <string name="attachments_skipped_unsupported">当前模型无法读取 %1$d 个旧附件，本轮已跳过；文字对话继续。</string>
+    <string name="prompt_attachments_skipped">本轮有附件因当前模型能力限制而跳过。请基于可用的文字上下文继续。</string>
+    <string name="model_switch_context">本对话上一条 AI 回复由模型 %1$s 生成；当前切换为 %2$s。请将已有对话作为连续上下文继续，不要重置或重复开始。</string>
 </resources>

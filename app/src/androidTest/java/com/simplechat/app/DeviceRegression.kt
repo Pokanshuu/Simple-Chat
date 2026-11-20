@@ -36,6 +36,7 @@ class DeviceRegression : Instrumentation() {
     private var nativeShareTests = false
     private var releaseUiTests = false
     private var compactionTests = false
+    private var deepSeekLive = false
     private var serviceTests = false
     private var mathTests = false
     private var composerTests = false
@@ -53,6 +54,7 @@ class DeviceRegression : Instrumentation() {
         nativeShareTests = arguments?.getString("nativeShare") == "true"
         releaseUiTests = arguments?.getString("releaseUi") == "true"
         compactionTests = arguments?.getString("compaction") == "true"
+        deepSeekLive = arguments?.getString("deepSeekLive") == "true"
         serviceTests = arguments?.getString("services") == "true"
         mathTests = arguments?.getString("math") == "true"
         composerTests = arguments?.getString("composer") == "true"
@@ -75,6 +77,7 @@ class DeviceRegression : Instrumentation() {
                     ServiceConfigUiRegression.run(this@DeviceRegression, ::passed)
                     BackupCompatibilityRegression.run(targetContext, ::passed)
                 }
+                else if (deepSeekLive) DeepSeekLiveRegression.run(targetContext, ::passed)
                 else if (compactionTests) CompactionRegression.run(this@DeviceRegression, ::passed)
                 else if (releaseUiTests) ReleaseUiRegression.run(this@DeviceRegression, ::passed)
                 else if (nativeShareTests) NativeShareRenderRegression.run(this@DeviceRegression, ::passed)

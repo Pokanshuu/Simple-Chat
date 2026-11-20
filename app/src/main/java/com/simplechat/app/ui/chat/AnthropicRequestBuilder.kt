@@ -80,7 +80,7 @@ internal fun buildAnthropicRequest(
             val content = assistantContent(
                 message,
                 keepThinking = deepSeekExtensions && thinkingEnabled,
-                deepSeekBlocks = flashExtensions,
+                deepSeekBlocks = flashExtensions && (message.model == null || message.model == model),
             )
             // 一条既没正文也没工具痕迹的 assistant 发出去就是空块，服务端会 400
             if (isSendable(content)) {
@@ -96,7 +96,7 @@ internal fun buildAnthropicRequest(
         val content = assistantContent(
             tail,
             keepThinking = deepSeekExtensions && thinkingEnabled,
-            deepSeekBlocks = flashExtensions,
+            deepSeekBlocks = flashExtensions && (tail.model == null || tail.model == model),
         )
         if (isSendable(content)) {
             messages += AnthropicMessageParam(

@@ -43,5 +43,8 @@
     <string name="error_large_send_before_reply">The connection closed before response headers arrived. The server may have received the request. Retry manually. If this keeps happening, tap the context ring to compact the conversation first.</string>
     <string name="error_large_stream_before_reply">The server responded, but the stream closed before a reply arrived. Retry manually. If this keeps happening, tap the context ring to compact the conversation first.</string>
     <string name="retry_skipped_notice">This request uses text context only. Your original attachments and chat history are saved.</string>
-    <string name="retry_needs_question">This prompt has no text to send. Tap the prompt and add a question.</string>
+    <string name="tool_request_skipped_continue">The search tool is unavailable. This turn will continue as a text conversation.</string>
+    <string name="attachments_skipped_unsupported">This model cannot read %1$d previous attachment(s). They are skipped for this turn; text chat continues.</string>
+    <string name="prompt_attachments_skipped">An attachment was skipped because this model cannot access it. Continue using the available text context.</string>
+    <string name="model_switch_context">The previous assistant reply used %1$s; this turn uses %2$s. Continue from the existing conversation without restarting or repeating earlier content.</string>
 </resources>

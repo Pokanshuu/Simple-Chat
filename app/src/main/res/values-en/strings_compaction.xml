@@ -11,4 +11,5 @@
     <string name="compact_deadline">Stopped after %1$d seconds. Select Compact to continue from saved progress.</string>
     <string name="compact_request_timeout">The summary request timed out. Check the endpoint before continuing. Completed batches are saved.</string>
     <string name="compact_no_new_history">No earlier messages to add. Your current summary is unchanged.</string>
+    <string name="context_recovery_applied">Earlier conversation was summarized. Continuing with your latest message.</string>
 </resources>

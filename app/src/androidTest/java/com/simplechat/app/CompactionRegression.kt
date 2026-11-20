@@ -74,6 +74,7 @@ internal object CompactionRegression {
             for (style in listOf("OPENAI", "ANTHROPIC")) {
                 store.setApiStyle(style)
                 val calls = AtomicInteger()
+                val rejectLongHistory = AtomicBoolean(false)
                 val accepted = Collections.synchronizedList(mutableListOf<String>())
                 val payloads = Collections.synchronizedList(mutableListOf<JsonObject>())
                 val client = ChatApi.defaultClient().newBuilder().addInterceptor { chain ->
@@ -88,7 +89,13 @@ internal object CompactionRegression {
                         it.jsonObject["text"]?.jsonPrimitive?.content.orEmpty()
                     }
                     val response = Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
-                    if (number == 1) {
+                    if (rejectLongHistory.get() && input == "continue-WITH-270K-HISTORY" &&
+                        payload["messages"]!!.jsonArray.size > 2
+                    ) {
+                        response.code(400).message("Bad Request").body(
+                            """{"error":{"message":"user input too long, 270000 tokens exceeds max 150000 tokens"}}"""
+                                .toResponseBody("application/json".toMediaType())).build()
+                    } else if (number == 1) {
                         response.code(400).message("Bad Request").body(
                             """{"error":{"message":"user input too long, 32942 tokens exceeds max 32768 tokens"}}"""
                                 .toResponseBody("application/json".toMediaType())).build()
@@ -124,10 +131,6 @@ internal object CompactionRegression {
                 waitFor { withContext(Dispatchers.Main) { !vm.switching && vm.messages.size == 12 } }
                 render(vm)
                 blocked.set(true)
-                withContext(Dispatchers.Main) { vm.compactContext() }
-                waitFor { withContext(Dispatchers.Main) { !vm.compacting } }
-                check(calls.get() == 1)
-                check(withContext(Dispatchers.Main) { vm.banner?.contains("32768") == true && vm.compaction == old })
                 withContext(Dispatchers.Main) { vm.compactContext() }
                 waitFor { calls.get() >= 3 }
                 delay(300)
@@ -196,8 +199,30 @@ internal object CompactionRegression {
                 check(calls.get() == beforeWhole + 1 && accepted.last().contains(big))
                 check(payloads.last()["max_tokens"]?.jsonPrimitive?.int == 65_536 && "safety_check" !in payloads.last())
                 check(withContext(Dispatchers.Main) { vm.banner == null && vm.compaction?.summary == "COMPLETE_SUMMARY_${calls.get()}" })
+                val longText = "中".repeat(405_000)
+                check(TokenEstimate.of(longText) == 270_000)
+                val recoveryId = repository.createConversation(ConversationMode.CREATIVE, "DEEPSEEK", "deepseek-flash", title = "Long recovery")
+                val originalQuestion = repository.appendUserMessage(recoveryId, "start")
+                val longReply = repository.beginAssistantMessage(recoveryId, originalQuestion.id)
+                repository.finishMessage(longReply, longText, null, MessageStatus.DONE)
+                withContext(Dispatchers.Main) { vm.openConversation(recoveryId) }
+                waitFor { withContext(Dispatchers.Main) { !vm.switching && vm.messages.lastOrNull()?.id == longReply } }
+                rejectLongHistory.set(true)
+                val beforeRecovery = calls.get()
+                val pendingPrompt = "continue-WITH-270K-HISTORY"
+                withContext(Dispatchers.Main) { vm.send(pendingPrompt) }
+                waitFor { withContext(Dispatchers.Main) { !vm.isStreaming && vm.messages.lastOrNull()?.role == MessageRole.ASSISTANT && calls.get() > beforeRecovery } }
+                check(payloads[beforeRecovery]["messages"]!!.jsonArray.toString().contains(longText))
+                val recoveredPayload = payloads.last().toString()
+                check(recoveredPayload.contains(pendingPrompt) && recoveredPayload.contains("COMPLETE_SUMMARY") && !recoveredPayload.contains(longText))
+                withContext(Dispatchers.Main) {
+                    check(vm.messages.last().status == MessageStatus.DONE) { vm.messages.last().errorMessage.orEmpty() }
+                    check(vm.compaction?.throughMessageId == longReply)
+                }
+                check(repository.loadActivePath(recoveryId).any { it.content == longText })
                 withContext(Dispatchers.Main) { vm.viewModelScope.cancel() }
-                status("$style: ordinary follow-up including full 228k history sent in one request; compaction also used one request; 32K rejection paused before batching; checkpoint resumed after VM restart; originals preserved; only complete summary displayed")
+                status("$style: 270K request rejected at 150K, compacted and retried with the exact prompt in the same turn")
+                status("$style: full 228K history sent in one request; 32K rejection automatically split compaction; checkpoint resumed after VM restart")
             }
         } finally {
             blocked.set(false)

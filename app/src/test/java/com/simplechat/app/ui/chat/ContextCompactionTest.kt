@@ -123,35 +123,24 @@ class ContextCompactionTest {
         assertEquals(1, calls)
     }
 
-    @Test fun `whole request fallback covers complete source without repeating on resume`() = runBlocking {
+    @Test fun `whole request rejection splits immediately without losing any accepted source`() = runBlocking {
         val source = "中文😀".repeat(18_000)
-        run {
-            val kind = CompactionFailureKind.INPUT_LIMIT
-            var checkpoint = CompactionCheckpoint()
-            var level = 0
-            val accepted = StringBuilder()
-            var wholeCalls = 0
-            try {
-                compactInBatches(sequenceOf(source), prompts, 1_000_000, onCheckpoint = { checkpoint = it }) { input, _, _ ->
-                    assertEquals(source, input)
-                    wholeCalls++
-                    throw CompactionRequestFailure(kind, inputLimit = 32_768)
-                }
-                fail("An explicit retry should be required to split the full input")
-            } catch (error: AppTextException) {
-                assertEquals(com.simplechat.app.R.string.compact_whole_limit, error.text.resId)
+        var checkpoint = CompactionCheckpoint()
+        var calls = 0
+        val accepted = StringBuilder()
+        val result = compactInBatches(sequenceOf(source), prompts, 1_000_000,
+            onCheckpoint = { checkpoint = it }) { input, _, _ ->
+            if (++calls == 1) {
+                assertEquals(source, input)
+                throw CompactionRequestFailure(CompactionFailureKind.INPUT_LIMIT, inputLimit = 32_768)
             }
-            assertEquals(1, wholeCalls)
-            assertEquals(0L, checkpoint.offset)
-            val result = compactInBatches(sequenceOf(source), prompts, 1_000_000, checkpoint,
-                onProgress = { level = it.level }) { input, _, _ ->
-                assertNotEquals(source, input)
-                if (level == 0) accepted.append(input)
-                "complete recap"
-            }
-            assertTrue(result.startsWith("complete recap"))
-            assertEquals(source, accepted.toString())
+            accepted.append(input)
+            "complete recap"
         }
+        assertTrue(calls > 1)
+        assertTrue(result.startsWith("complete recap"))
+        assertEquals(32_768, checkpoint.requestWindow)
+        assertEquals(source, accepted.toString())
     }
 
     @Test fun `every request fits and hierarchical merge includes all leaf summaries in order`() = runBlocking {
@@ -250,32 +239,37 @@ class ContextCompactionTest {
         }
     }
 
-    @Test fun `1M model recovers from the reported 32768 request limit without losing any source`() = runBlocking {
-        val source = "中文😀".repeat(46_000) + "LAST"
+    @Test fun `short 270k conversation can compact and preserve the exact pending prompt`() = runBlocking {
+        val source = "中".repeat(405_000)
+        val pending = UiMessage("u2", MessageRole.USER, "保持原句，继续第八章。")
+        val history = listOf(UiMessage("u1", MessageRole.USER, "开始写作"),
+            UiMessage("a1", MessageRole.ASSISTANT, source), pending)
+        assertEquals(270_000, com.simplechat.app.data.TokenEstimate.of(source))
+        assertEquals(0, compactionCutIndex(history, 500_000))
+        val window = 150_000
+        val cut = compactionCutIndex(history, compactionRecentTokenBudget(1_000_000, window))
+        val material = compactionSegments(history.take(cut), null, prompts).joinToString("")
+        var requests = 0
         val accepted = StringBuilder()
-        var level = 0
-        var rejected = 0
-        var checkpoint = CompactionCheckpoint()
-        try {
-            compactInBatches(sequenceOf(source), prompts, 1_000_000, onCheckpoint = { checkpoint = it }) { _, _, _ ->
-                rejected++
-                throw compactionFailure(StreamEvent.Error("localized", 400, rawMessage =
-                    "user input too long, 32942 tokens exceeds max 32768 tokens (request_id: example)"))
-            }
-            fail("Expected limit notice")
-        } catch (e: AppTextException) { assertEquals(com.simplechat.app.R.string.compact_whole_limit, e.text.resId) }
-        val result = compactInBatches(sequenceOf(source), prompts, 1_000_000, checkpoint,
-            onCheckpoint = { checkpoint = it }, onProgress = { level = it.level }) { input, _, _ ->
-            assertTrue(com.simplechat.app.data.TokenEstimate.of(input) <= 32_768)
-            assertFalse(Character.isHighSurrogate(input.last()))
-            assertFalse(Character.isLowSurrogate(input.first()))
-            if (level == 0) accepted.append(input)
+        val rejection = compactionFailure(StreamEvent.Error("localized", 400,
+            rawMessage = "user input too long, 270000 tokens exceeds max 150000 tokens"))
+        assertEquals(window, rejection.inputLimit)
+        val result = compactInBatches(sequenceOf(material), prompts, 1_000_000,
+            CompactionCheckpoint(requestWindow = checkNotNull(rejection.inputLimit))) { input, output, _ ->
+            requests++
+            assertTrue(com.simplechat.app.data.TokenEstimate.of(input) + output < window)
+            accepted.append(input)
             "summary"
         }
-        assertTrue(result.startsWith("summary"))
-        assertEquals(1, rejected)
-        assertEquals(32_768, checkpoint.requestWindow)
-        assertEquals(source, accepted.toString())
+        assertTrue(requests > 1)
+        assertEquals(material, accepted.toString())
+        assertFalse(pending.content in material)
+        val summary = com.simplechat.app.db.CompactionEntity("id", "chat", history[cut - 1].id, result, 0, 0)
+        val outgoing = orderedOutgoingMessages(history, summary)
+        assertEquals(listOf(pending), outgoing)
+        val request = buildAnthropicRequest("deepseek-v4-pro", summary.summary, outgoing, false, false, false, null)
+        assertEquals(pending.content, (request.messages.single().content as kotlinx.serialization.json.JsonPrimitive).content)
+        validateRequestBudget(estimatedInputTokens(request), request.maxTokens, window)
     }
 
     @Test fun `unknown request limits shrink adaptively and remain bounded`() = runBlocking {

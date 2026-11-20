@@ -49,6 +49,18 @@ class DeepSeekCompatibilityTest {
         assertEquals("high", request.outputConfig?.effort)
     }
 
+    @Test fun switchingBackToFlashUsesProTextAndEnablesFlashToolsAgain() {
+        val history = listOf(UiMessage("u", MessageRole.USER, "first"),
+            UiMessage("a", MessageRole.ASSISTANT, "Pro answer", model = DEEPSEEK_PRO,
+                timeline = listOf(ReplyBlock.Thinking("private reasoning", signature = "pro-signature"))),
+            UiMessage("u2", MessageRole.USER, "read https://example.org"))
+        val request = buildAnthropicRequest(DEEPSEEK_FLASH, "", history, true, true, false, null)
+        val wire = json.encodeToJsonElement(request).toString()
+        assertTrue("Pro answer" in wire)
+        assertFalse("pro-signature" in wire)
+        assertEquals(2, request.tools.size)
+    }
+
     @Test fun flashAndProOnBothOpenAiProtocols() = runBlocking {
         for (style in listOf(ApiStyle.OPENAI, ApiStyle.OPENAI_RESPONSES)) for (id in listOf(DEEPSEEK_FLASH, DEEPSEEK_PRO)) {
             val captured = Buffer()

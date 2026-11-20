@@ -10,6 +10,10 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeoutOrNull
 
+/** Reserve room for the summary while keeping recent turns verbatim. */
+internal fun compactionRecentTokenBudget(modelWindow: Int, requestWindow: Int?): Int =
+    minOf(modelWindow, requestWindow ?: modelWindow).div(8).coerceIn(1, 32_000)
+
 /** Keep six messages when practical, but allow recovery even when a few messages fill the window. */
 internal fun compactionCutIndex(messages: List<UiMessage>, recentTokenBudget: Int): Int {
     var cut = (messages.size - 6).coerceAtLeast(0)
@@ -218,11 +222,6 @@ internal suspend fun compactInBatches(
                 }
                 onProgress(progress.copy(recovery = failure.kind))
                 if (state.outputExhausted) throw AppTextException(R.string.compact_output_exhausted)
-                if (progress.isWholeSource && failure.kind == CompactionFailureKind.INPUT_LIMIT && end > 2) {
-                    throw if (failure.inputLimit != null) AppTextException(
-                        R.string.compact_whole_limit, contextWindow, failure.inputLimit,
-                    ) else AppTextException(R.string.compact_whole_rejected)
-                }
                 if (failure.kind != CompactionFailureKind.INPUT_LIMIT || end <= 2 || ++sizeRejections > 2) throw failure
                 continue
             } catch (_: IOException) {
