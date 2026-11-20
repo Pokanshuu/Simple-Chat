@@ -60,6 +60,9 @@ fun MessageEntity.toUi(): UiMessage = UiMessage(
     tps = tps,
     timeline = ReplyBlocks.decode(timeline),
     stopReason = stopReason,
+    tokensIn = tokensIn,
+    tokensOut = tokensOut,
+    cacheHitTokens = cacheHitTokens,
 )
 
 fun MessageStatus.toStorage(): String = name

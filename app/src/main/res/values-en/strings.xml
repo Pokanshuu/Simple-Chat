@@ -112,6 +112,13 @@
     <string name="settings_title">Settings</string>
     <string name="settings_data">Data management</string>
     <string name="settings_api">API</string>
+    <string name="settings_balance">Account balance</string>
+    <string name="settings_usage_title">Usage &amp; balance</string>
+    <string name="settings_balance_loading">Checking…</string>
+    <string name="settings_balance_no_key">No API key</string>
+    <string name="settings_balance_unsupported">Official endpoint only</string>
+    <string name="settings_balance_failed">Check failed</string>
+    <string name="settings_balance_refresh">Refresh balance</string>
     <string name="settings_presets">Presets</string>
     <string name="settings_font_size">Font size</string>
     <string name="settings_about">About</string>
@@ -136,6 +143,10 @@
     <string name="loading_words_duplicate">This phrase already exists</string>
     <string name="settings_group_display">Display</string>
     <string name="settings_group_search">Search</string>
+    <string name="settings_group_memory">Memory</string>
+    <string name="settings_cross_chat_memory">Cross-chat memory</string>
+    <string name="settings_cross_chat_memory_limit">Sessions to recall</string>
+    <string name="settings_cross_chat_memory_limit_value">%1$d</string>
     <string name="settings_group_backup">Backup</string>
     <string name="settings_group_diagnostics">Diagnostics</string>
     <string name="settings_group_reset">Reset</string>
@@ -146,6 +157,7 @@
     <string name="settings_appearance">Appearance</string>
     <string name="settings_accent">Accent color</string>
     <string name="settings_auto_collapse">Auto-collapse thinking</string>
+    <string name="settings_hold_to_talk">Hold input to talk</string>
     <string name="settings_search_inactive_branches">Search inactive branches</string>
     <string name="generation_channel">Generation progress</string>
     <string name="generation_running_title">Generating reply</string>
@@ -253,6 +265,20 @@
     <string name="about_project">Project</string>
     <string name="about_project_url">Repository</string>
     <string name="about_licenses">Open-source licenses</string>
+    <string name="about_diagnostics_group">Diagnostics</string>
+    <string name="about_diagnostics_title">Diagnostic log</string>
+    <string name="about_diagnostics_count">%1$d lines</string>
+    <string name="diagnostics_copy">Copy all</string>
+    <string name="diagnostics_count">%1$d entries</string>
+    <string name="diagnostics_export">Export log</string>
+    <string name="diagnostics_save_file">Save to file</string>
+    <string name="diagnostics_save_file_hint">Save a .txt to the location you pick</string>
+    <string name="diagnostics_saved">Saved</string>
+    <string name="diagnostics_save_failed">Save failed</string>
+    <string name="diagnostics_export_hint">Share as text, with device and version info</string>
+    <string name="diagnostics_clear">Clear</string>
+    <string name="diagnostics_log_section">Recent entries</string>
+    <string name="diagnostics_empty">No entries yet. Reproduce the issue and come back.</string>
     <string name="licenses_count">%1$d components</string>
     <string name="licenses_third_party">Third-party components</string>
     <string name="licenses_reference_title">References</string>
@@ -442,6 +468,15 @@
     <string name="stats_total_thinking">Total thinking time</string>
     <string name="stats_cache_hit">Prompt cache hit (latest)</string>
     <string name="stats_cache_hit_value">%1$s / %2$s · %3$d%%</string>
+    <string name="stats_usage_title">This conversation</string>
+    <string name="stats_usage_title_all">All conversations</string>
+    <string name="stats_usage_requests">Requests</string>
+    <string name="stats_usage_requests_value">%1$d</string>
+    <string name="stats_usage_input">Input</string>
+    <string name="stats_usage_output">Output</string>
+    <string name="stats_usage_cache_hit">Cache hits</string>
+    <string name="stats_usage_cost">Estimated cost</string>
+    <string name="stats_usage_note">From server-reported usage; cost is estimated at DeepSeek official rates.</string>
     <string name="stats_seconds">%1$d seconds</string>
 
     <!-- Context compaction -->
@@ -586,7 +621,7 @@
     <string name="api_style_openai_responses">OpenAI Responses</string>
     <string name="api_style_anthropic">Anthropic compatible (extended)</string>
     <string name="settings_web_search">Smart search</string>
-    <string name="settings_web_search_hint">Let the model search the web when needed. Only available on the extended channel.</string>
+    <string name="settings_web_search_hint">Official Flash supports built-in search. Other models can use a separate Search API configured in this profile.</string>
     <string name="settings_location">Region</string>
     <string name="settings_location_hint_short">Used for the time reminder</string>
     <string name="settings_location_placeholder">City or country, e.g. “Hangzhou”</string>
@@ -692,8 +727,8 @@
     <string name="onboarding_key_invalid">Check that the key starts with sk- and contains only English characters</string>
     <string name="onboarding_key_rejected">Verification failed. Check the key, account status, and network connection.</string>
     <string name="onboarding_model_title">Choose a model</string>
-    <string name="onboarding_model_pro">Better writing for complex tasks</string>
-    <string name="onboarding_model_flash">Faster responses at lower cost</string>
+    <string name="onboarding_model_pro">For complex text tasks. Web access requires a separate Search API.</string>
+    <string name="onboarding_model_flash">Supports images, built-in web search and link reading.</string>
     <string name="onboarding_model_note">Change models and reasoning effort anytime in the ✨ menu</string>
     <string name="onboarding_backup_title">Import your backup</string>
     <string name="onboarding_backup_hint">Supports SimpleChat, Chatbox, and official DeepSeek ZIP backups</string>

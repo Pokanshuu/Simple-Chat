@@ -25,7 +25,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     // v7：messages 增加 timeline / stopReason（Anthropic 兼容通道的内容块时间线）
     // v8：新增 attachment_refs（落盘图片的引用，删会话时据此清理文件）
     // v9：附件可被多个会话引用（分叉后删除原会话不能丢图）
-    version = 9,
+    // v10：消息记录 prompt 缓存命中量（用量与余额页按命中/未命中分别计价）
+    version = 10,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -153,6 +154,13 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v9 → v10：只加一列，老消息保持 null（= 那轮没有服务端用量，界面按"未知"处理）。 */
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN tokens_cache_hit INTEGER")
+            }
+        }
+
         fun build(context: Context, name: String = "simplechat.db"): AppDatabase =
             Room.databaseBuilder(
                 context.applicationContext,
@@ -167,6 +175,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_6_7,
                     MIGRATION_7_8,
                     MIGRATION_8_9,
+                    MIGRATION_9_10,
                 )
                 .build()
     }

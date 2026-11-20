@@ -180,6 +180,14 @@ data class ContextStats(
     /** 累计思考时长（秒）。 */
     val totalThinkingSeconds: Long?,
     val hasCompaction: Boolean,
+    /** 服务端回报过用量的回复条数（老数据没有用量，不计入）。 */
+    val usageReplies: Int = 0,
+    /** 这些回复累计的输入 token（每轮请求的 prompt 都算，含重复的上下文）。 */
+    val usagePromptTokens: Int = 0,
+    /** 累计输出 token。 */
+    val usageCompletionTokens: Int = 0,
+    /** 输入里命中缓存的部分。 */
+    val usageCacheHitTokens: Int = 0,
 ) {
     /** 占用比例，0f..1f。 */
     val ratio: Float
@@ -187,6 +195,14 @@ data class ContextStats(
 
     /** 占用百分比，整数。 */
     val percent: Int get() = (ratio * 100).toInt()
+
+    /** 本会话累计用量的估算费用（元）。 */
+    val usageCost: Double
+        get() = com.simplechat.app.data.Pricing.cost(
+            promptTokens = usagePromptTokens,
+            completionTokens = usageCompletionTokens,
+            cacheHitTokens = usageCacheHitTokens.takeIf { it > 0 },
+        )
 }
 
 /** 展示模型；M4 接入 Room 后由实体映射而来。 */
@@ -241,6 +257,15 @@ data class UiMessage(
      * （唯一用到它的是 `max_tokens`：表示"被上限截断"，可以续写。）
      */
     val stopReason: String? = null,
+    /**
+     * 服务端回报的用量（该条回复那一轮请求）。
+     *
+     * null = 老数据或服务端没报 —— 用量统计里按"未上报"处理，不按 0 计。
+     */
+    val tokensIn: Int? = null,
+    val tokensOut: Int? = null,
+    /** 输入里命中 prompt 缓存的部分。 */
+    val cacheHitTokens: Int? = null,
 ) {
     val streaming: Boolean get() = status == MessageStatus.STREAMING
     internal val hasReasoning: Boolean get() = !reasoning.isNullOrBlank()

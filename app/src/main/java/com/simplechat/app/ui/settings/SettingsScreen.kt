@@ -47,6 +47,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -61,12 +62,15 @@ import com.simplechat.app.BuildConfig
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
@@ -78,10 +82,14 @@ import com.simplechat.app.App
 import com.simplechat.app.R
 import com.simplechat.app.data.ApiKey
 import com.simplechat.app.net.UpdateChecker
+import com.simplechat.app.net.DeepSeekBalance
+import com.simplechat.app.net.isOfficialDeepSeekEndpoint
 import com.simplechat.app.data.AppLanguage
 import com.simplechat.app.data.ImportMode
 import com.simplechat.app.data.Res
 import com.simplechat.app.data.StoredSettings
+import com.simplechat.app.data.TokenEstimate
+import com.simplechat.app.data.Diagnostics
 import com.simplechat.app.data.SettingsStore
 import com.simplechat.app.data.normalizeLoadingWord
 import com.simplechat.app.data.ApiProfile
@@ -150,9 +158,13 @@ private enum class SettingsPage(private val parentName: String?) {
     LOADING_WORDS("CHAT"),
     /** 朗读音色（系统 TTS）。 */
     VOICE("ROOT"),
+    /** 用量与余额：账户余额 + 全部会话累计消耗。 */
+    USAGE("ROOT"),
     ABOUT("ROOT"),
     /** 开源许可与版权清单（关于 → 二级）。 */
-    LICENSES("ABOUT");
+    LICENSES("ABOUT"),
+    /** 诊断日志（关于 → 二级；复制/导出当前运行日志）。 */
+    DIAGNOSTICS("ABOUT");
 
     /** 返回键回到哪一页；层级只在这里声明一次，转场方向也由它推出。 */
     val parent: SettingsPage? get() = parentName?.let { valueOf(it) }
@@ -251,7 +263,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
             modelContextWindows = profile.modelContextWindows,
             modelMetadata = profile.modelMetadata,
             modelOverrides = profile.modelOverrides,
-            webSearch = profile.webSearch, searchApi = profile.searchApi)
+            webSearch = profile.webSearch, searchApi = profile.searchApi, filesApi = profile.filesApi)
     }
     var savingService by remember { mutableStateOf(false) }
     var serviceBack by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -590,8 +602,10 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                 SettingsPage.CHAT -> stringResource(R.string.settings_chat_behavior)
                 SettingsPage.LOADING_WORDS -> stringResource(R.string.settings_loading_words)
                 SettingsPage.VOICE -> stringResource(R.string.tts_voice)
+                SettingsPage.USAGE -> stringResource(R.string.settings_usage_title)
                 SettingsPage.ABOUT -> stringResource(R.string.settings_about)
                 SettingsPage.LICENSES -> stringResource(R.string.about_licenses)
+                SettingsPage.DIAGNOSTICS -> stringResource(R.string.about_diagnostics_title)
             },
             onBack = {
                 if (archiveProgress.value == null && importProgress.value == null && !importReading) {
@@ -656,6 +670,15 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                             },
                             onToggleSearchInactiveBranches = {
                                 scope.launch { store.setSearchInactiveBranches(it) }
+                            },
+                            onToggleHoldToTalk = {
+                                scope.launch { store.setHoldToTalk(it) }
+                            },
+                            onToggleCrossChatMemory = {
+                                scope.launch { store.setCrossChatMemory(it) }
+                            },
+                            onCrossChatMemoryLimitChange = {
+                                scope.launch { store.setCrossChatMemoryLimit(it) }
                             },
                             onOpenLoadingWords = { page = SettingsPage.LOADING_WORDS },
                         )
@@ -776,9 +799,17 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
 
                         SettingsPage.ABOUT -> AboutPage(
                             onOpenLicenses = { page = SettingsPage.LICENSES },
+                            onOpenDiagnostics = { page = SettingsPage.DIAGNOSTICS },
                         )
 
                         SettingsPage.LICENSES -> LicensesPage()
+
+                        SettingsPage.DIAGNOSTICS -> DiagnosticsPage()
+
+                        SettingsPage.USAGE -> UsagePage(
+                            stored = stored,
+                            loadTotals = { repository.usageTotals() },
+                        )
 
                         SettingsPage.VOICE -> VoicePage(
                             selectedName = stored.ttsVoiceName,
@@ -1142,6 +1173,31 @@ private fun RootPage(
 ) {
     var languageMenuOpen by remember { mutableStateOf(false) }
 
+    /*
+     * 账户余额：只有官方端点有 `/user/balance`。这里进页面自动查一次，点行再刷。
+     * 查询失败不弹窗、不打扰 —— 余额是辅助信息，失败时行内文字说明即可。
+     */
+    var balanceRefresh by remember { mutableIntStateOf(0) }
+    var balanceState by remember { mutableStateOf<BalanceRowState>(BalanceRowState.Loading) }
+    LaunchedEffect(stored.baseUrl, stored.apiKey, balanceRefresh) {
+        if (!isOfficialDeepSeekEndpoint(stored.baseUrl)) {
+            balanceState = BalanceRowState.Unsupported
+            return@LaunchedEffect
+        }
+        if (stored.apiKey.isBlank()) {
+            balanceState = BalanceRowState.NoKey
+            return@LaunchedEffect
+        }
+        balanceState = BalanceRowState.Loading
+        balanceState = when (val result = DeepSeekBalance.fetch(stored.baseUrl, stored.apiKey)) {
+            is DeepSeekBalance.Result.Ok ->
+                result.snapshot.primary
+                    ?.let { BalanceRowState.Balance(it.currency, it.totalBalance) }
+                    ?: BalanceRowState.Failed
+            is DeepSeekBalance.Result.Failed -> BalanceRowState.Failed
+        }
+    }
+
     SettingsSectionLabel(stringResource(R.string.settings_group_account))
 
     SettingsCard {
@@ -1157,6 +1213,11 @@ private fun RootPage(
             label = stringResource(R.string.settings_api),
             value = null,
             onClick = { onOpen(SettingsPage.API_PROFILES) },
+        )
+        RowDivider()
+        BalanceRow(
+            state = balanceState,
+            onClick = { onOpen(SettingsPage.USAGE) },
         )
     }
 
@@ -1347,8 +1408,13 @@ private fun ChatBehaviorPage(
     stored: StoredSettings,
     onToggleAutoCollapse: (Boolean) -> Unit,
     onToggleSearchInactiveBranches: (Boolean) -> Unit,
+    onToggleHoldToTalk: (Boolean) -> Unit,
+    onToggleCrossChatMemory: (Boolean) -> Unit,
+    onCrossChatMemoryLimitChange: (Int) -> Unit,
     onOpenLoadingWords: () -> Unit,
 ) {
+    var memoryLimitMenuOpen by remember { mutableStateOf(false) }
+
     SettingsSectionLabel(stringResource(R.string.settings_group_display))
 
     SettingsCard {
@@ -1357,6 +1423,13 @@ private fun ChatBehaviorPage(
             label = stringResource(R.string.settings_auto_collapse),
             checked = stored.autoCollapseThinking,
             onCheckedChange = onToggleAutoCollapse,
+        )
+        RowDivider()
+        SettingsSwitchRow(
+            icon = AppIcons.Mic,
+            label = stringResource(R.string.settings_hold_to_talk),
+            checked = stored.holdToTalk,
+            onCheckedChange = onToggleHoldToTalk,
         )
         RowDivider()
         SettingsNavRow(
@@ -1377,6 +1450,44 @@ private fun ChatBehaviorPage(
             checked = stored.searchInactiveBranches,
             onCheckedChange = onToggleSearchInactiveBranches,
         )
+    }
+
+    SettingsSectionLabel(stringResource(R.string.settings_group_memory))
+
+    SettingsCard {
+        SettingsSwitchRow(
+            icon = AppIcons.Sparkles,
+            label = stringResource(R.string.settings_cross_chat_memory),
+            checked = stored.crossChatMemory,
+            onCheckedChange = onToggleCrossChatMemory,
+        )
+        RowDivider()
+        Box {
+            SettingsNavRow(
+                icon = AppIcons.ListChecks,
+                label = stringResource(R.string.settings_cross_chat_memory_limit),
+                value = stringResource(
+                    R.string.settings_cross_chat_memory_limit_value,
+                    stored.crossChatMemoryLimit,
+                ),
+                onClick = { memoryLimitMenuOpen = true },
+            )
+            AppMenu(
+                expanded = memoryLimitMenuOpen,
+                onDismissRequest = { memoryLimitMenuOpen = false },
+            ) {
+                (1..10).forEach { count ->
+                    AppMenuItem(
+                        label = stringResource(R.string.settings_cross_chat_memory_limit_value, count),
+                        selected = count == stored.crossChatMemoryLimit,
+                        onClick = {
+                            memoryLimitMenuOpen = false
+                            onCrossChatMemoryLimitChange(count)
+                        },
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -1939,6 +2050,8 @@ private fun ApiPage(
                 checked = stored.webSearch,
                 onCheckedChange = onWebSearch,
             )
+        } else if (com.simplechat.app.net.isOfficialDeepSeekEndpoint(stored.baseUrl) && stored.modelId == com.simplechat.app.net.DEEPSEEK_PRO) {
+            Text(stringResource(R.string.deepseek_pro_search_hint), modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
         }
         RowDivider(inset = 16.dp)
         SettingsNavRow(
@@ -2334,7 +2447,10 @@ private fun FontPage(
 // ══════════════════════════════════════════════════════════
 
 @Composable
-private fun AboutPage(onOpenLicenses: () -> Unit) {
+private fun AboutPage(
+    onOpenLicenses: () -> Unit,
+    onOpenDiagnostics: () -> Unit = {},
+) {
     val colors = LocalChatColors.current
     val scope = rememberCoroutineScope()
     var checking by remember { mutableStateOf(false) }
@@ -2404,6 +2520,21 @@ private fun AboutPage(onOpenLicenses: () -> Unit) {
             label = stringResource(R.string.about_licenses),
             value = stringResource(R.string.licenses_count, thirdPartyLicenses.size),
             onClick = onOpenLicenses,
+        )
+    }
+
+    SettingsSectionLabel(stringResource(R.string.about_diagnostics_group))
+
+    /*
+     * 诊断日志：出问题时让用户把「刚才那一段」直接复制给我们。
+     * 只统计当前进程的内存缓冲，不落盘，退出即清 —— 页面里会写明。
+     */
+    SettingsCard {
+        SettingsNavRow(
+            icon = AppIcons.Info,
+            label = stringResource(R.string.about_diagnostics_title),
+            value = stringResource(R.string.about_diagnostics_count, Diagnostics.count()),
+            onClick = onOpenDiagnostics,
         )
     }
 
@@ -2758,6 +2889,94 @@ private fun AccentSwatch(
                 .clip(CircleShape)
                 .semantics { contentDescription = swatchDesc }
                 .clickable(onClick = onClick),
+        )
+    }
+}
+
+/** 余额行的状态。 */
+private sealed interface BalanceRowState {
+    /** 正在查。 */
+    data object Loading : BalanceRowState
+
+    /** 查到了：币种 + 总额。服务端给的是字符串，原样显示，避免浮点误差。 */
+    data class Balance(val currency: String, val total: String) : BalanceRowState
+
+    /** 还没配 API Key。 */
+    data object NoKey : BalanceRowState
+
+    /** 当前端点不是 DeepSeek 官方端点，没有 `/user/balance`。 */
+    data object Unsupported : BalanceRowState
+
+    /** 查失败：网络、鉴权、响应结构不认识都落这里。 */
+    data object Failed : BalanceRowState
+}
+
+/** 币种符号。认不出来就不加符号，只显示数字。 */
+private fun balanceSymbol(currency: String): String = when (currency.uppercase()) {
+    "CNY", "RMB" -> "¥"
+    "USD" -> "$"
+    "EUR" -> "€"
+    "JPY" -> "JP¥"
+    else -> ""
+}
+
+/**
+ * 「账户余额」行：图标 + 标题 + 右侧余额 + 刷新图标。
+ *
+ * 与 [SettingsNavRow] 不同，这行**不是导航**，所以右侧不带箭头 —— 放刷新图标，
+ * 点整行即重新查询。查询中 / 失败态同样可点，方便网络恢复后重试。
+ */
+@Composable
+private fun BalanceRow(
+    state: BalanceRowState,
+    onClick: () -> Unit,
+) {
+    val colors = LocalChatColors.current
+    val value: String = when (state) {
+        BalanceRowState.Loading -> stringResource(R.string.settings_balance_loading)
+        is BalanceRowState.Balance -> balanceSymbol(state.currency) + state.total
+        BalanceRowState.NoKey -> stringResource(R.string.settings_balance_no_key)
+        BalanceRowState.Unsupported -> stringResource(R.string.settings_balance_unsupported)
+        BalanceRowState.Failed -> stringResource(R.string.settings_balance_failed)
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .heightIn(min = Space.Row)
+            .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.IconGap),
+    ) {
+        Icon(
+            imageVector = AppIcons.Wallet,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(Space.Icon),
+        )
+        Text(
+            text = stringResource(R.string.settings_balance),
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (state is BalanceRowState.Balance) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                colors.placeholder
+            },
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.End,
+        )
+        Icon(
+            imageVector = AppIcons.ChevronRight,
+            contentDescription = null,
+            tint = colors.placeholder,
+            modifier = Modifier.size(16.dp),
         )
     }
 }
@@ -3219,3 +3438,292 @@ private fun maskKey(key: String): String {
 
 
 
+
+// ══════════════════════════════════════════════════════════
+//  用量与余额
+// ══════════════════════════════════════════════════════════
+
+/** 全库累计消耗的展示状态。 */
+private data class UsageTotalsUi(
+    val loading: Boolean = true,
+    val replies: Int = 0,
+    val promptTokens: Int = 0,
+    val completionTokens: Int = 0,
+    val cacheHitTokens: Int = 0,
+    val failed: Boolean = false,
+)
+
+/**
+ * 「用量与余额」页：账户余额 + 全部会话的累计 token 消耗与估算费用。
+ *
+ * 余额只对官方端点可查（`/user/balance`）；消耗统计是本地库里的服务端 usage，
+ * 与余额无关 —— 所以即使余额查不到，消耗也能显示。
+ */
+@Composable
+private fun UsagePage(
+    stored: StoredSettings,
+    loadTotals: suspend () -> com.simplechat.app.db.UsageTotals,
+) {
+    val colors = LocalChatColors.current
+    var refreshTick by remember { mutableIntStateOf(0) }
+    var balance by remember { mutableStateOf<BalanceRowState>(BalanceRowState.Loading) }
+    var totals by remember { mutableStateOf(UsageTotalsUi()) }
+
+    LaunchedEffect(stored.baseUrl, stored.apiKey, refreshTick) {
+        balance = when {
+            !isOfficialDeepSeekEndpoint(stored.baseUrl) -> BalanceRowState.Unsupported
+            stored.apiKey.isBlank() -> BalanceRowState.NoKey
+            else -> {
+                when (val result = DeepSeekBalance.fetch(stored.baseUrl, stored.apiKey)) {
+                    is DeepSeekBalance.Result.Ok ->
+                        result.snapshot.primary
+                            ?.let { BalanceRowState.Balance(it.currency, it.totalBalance) }
+                            ?: BalanceRowState.Failed
+                    is DeepSeekBalance.Result.Failed -> BalanceRowState.Failed
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(refreshTick) {
+        totals = runCatching { loadTotals() }.fold(
+            onSuccess = { t ->
+                UsageTotalsUi(
+                    loading = false,
+                    replies = t.replies,
+                    promptTokens = t.promptTokens,
+                    completionTokens = t.completionTokens,
+                    cacheHitTokens = t.cacheHitTokens,
+                )
+            },
+            onFailure = { UsageTotalsUi(loading = false, failed = true) },
+        )
+    }
+
+    val cost = com.simplechat.app.data.Pricing.cost(
+        promptTokens = totals.promptTokens,
+        completionTokens = totals.completionTokens,
+        cacheHitTokens = totals.cacheHitTokens.takeIf { it > 0 },
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Space.Screen),
+    ) {
+        Spacer(Modifier.size(Space.Section))
+
+        SettingsSectionLabel(stringResource(R.string.settings_balance))
+        SettingsCard {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = when (val state = balance) {
+                            BalanceRowState.Loading -> "…"
+                            is BalanceRowState.Balance -> balanceSymbol(state.currency) + state.total
+                            BalanceRowState.NoKey -> stringResource(R.string.settings_balance_no_key)
+                            BalanceRowState.Unsupported -> stringResource(R.string.settings_balance_unsupported)
+                            BalanceRowState.Failed -> stringResource(R.string.settings_balance_failed)
+                        },
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = stringResource(R.string.settings_balance_refresh),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .clip(PillShape)
+                            .clickable { refreshTick++ }
+                            .padding(horizontal = Space.Inline, vertical = Space.RowPadY),
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.size(Space.Section))
+
+        SettingsSectionLabel(stringResource(R.string.stats_usage_title_all))
+        SettingsCard {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                UsageStatRow(
+                    label = stringResource(R.string.stats_usage_requests),
+                    value = stringResource(R.string.stats_usage_requests_value, totals.replies),
+                )
+                UsageStatRow(
+                    label = stringResource(R.string.stats_usage_input),
+                    value = "${TokenEstimate.format(totals.promptTokens)} tokens",
+                )
+                UsageStatRow(
+                    label = stringResource(R.string.stats_usage_output),
+                    value = "${TokenEstimate.format(totals.completionTokens)} tokens",
+                )
+                if (totals.cacheHitTokens > 0) {
+                    UsageStatRow(
+                        label = stringResource(R.string.stats_usage_cache_hit),
+                        value = "${TokenEstimate.format(totals.cacheHitTokens)} tokens",
+                    )
+                }
+                UsageStatRow(
+                    label = stringResource(R.string.stats_usage_cost),
+                    value = com.simplechat.app.data.Pricing.format(cost),
+                )
+                Text(
+                    text = stringResource(R.string.stats_usage_note),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.placeholder,
+                )
+            }
+        }
+
+        Spacer(Modifier.size(Space.Section))
+    }
+}
+
+@Composable
+private fun UsageStatRow(label: String, value: String) {
+    val colors = LocalChatColors.current
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = colors.placeholder,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+// ══════════════════════════════════════════════════════════
+//  诊断日志
+// ══════════════════════════════════════════════════════════
+
+/**
+ * 当前运行日志：最近若干条事件，可复制 / 分享导出 / 清空。
+ *
+ * 数据源是 [Diagnostics] 的**内存环形缓冲**：只覆盖本次进程，退出即散。
+ * 这点必须写在界面上 —— 否则用户以为删了应用日志还在，或者反过来
+ * 以为"打开这个页面"才开始记录。
+ */
+@Composable
+private fun DiagnosticsPage() {
+    val colors = LocalChatColors.current
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    var lines by remember { mutableStateOf(Diagnostics.snapshot()) }
+
+    // 日志是活的：停在页面上时每秒拉一次，用户一边复现一边就能看到新行。
+    LaunchedEffect(Unit) {
+        while (true) {
+            lines = Diagnostics.snapshot()
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+
+    /*
+     * 导出到文件走系统文件选择器（SAF）：不申请存储权限、不猜下载目录，
+     * 写完立刻在提示里说明 "已保存"，用户去刚选的位置找。
+     */
+    val saveFile = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val ok = runCatching {
+                withContext(Dispatchers.IO) {
+                    val text = Diagnostics.exportText()
+                    val stream = context.contentResolver.openOutputStream(uri, "wt")
+                        ?: error("no output stream")
+                    stream.use { it.write(text.toByteArray()) }
+                }
+            }.isSuccess
+            android.widget.Toast.makeText(
+                context,
+                Res.get(if (ok) R.string.diagnostics_saved else R.string.diagnostics_save_failed),
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+
+    SettingsSectionLabel(stringResource(R.string.about_diagnostics_group))
+
+    SettingsCard {
+        SettingsActionRow(
+            label = stringResource(R.string.diagnostics_copy),
+            hint = stringResource(R.string.diagnostics_count, lines.size),
+            onClick = { clipboard.setText(AnnotatedString(Diagnostics.exportText())) },
+        )
+        RowDivider(inset = Space.Screen)
+        SettingsActionRow(
+            label = stringResource(R.string.diagnostics_save_file),
+            hint = stringResource(R.string.diagnostics_save_file_hint),
+            onClick = {
+                val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.ROOT)
+                    .format(java.util.Date())
+                saveFile.launch("SimpleChat-diagnostics-$stamp.txt")
+            },
+        )
+        RowDivider(inset = Space.Screen)
+        SettingsActionRow(
+            label = stringResource(R.string.diagnostics_export),
+            hint = stringResource(R.string.diagnostics_export_hint),
+            onClick = {
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_SUBJECT, "SimpleChat diagnostics")
+                    putExtra(Intent.EXTRA_TEXT, Diagnostics.exportText())
+                }
+                context.startActivity(Intent.createChooser(send, Res.get(R.string.diagnostics_export)))
+            },
+        )
+        RowDivider(inset = Space.Screen)
+        SettingsActionRow(
+            label = stringResource(R.string.diagnostics_clear),
+            hint = null,
+            onClick = {
+                Diagnostics.clear()
+                lines = emptyList()
+            },
+        )
+    }
+
+    SettingsSectionLabel(stringResource(R.string.diagnostics_log_section))
+
+    if (lines.isEmpty()) {
+        Text(
+            text = stringResource(R.string.diagnostics_empty),
+            style = MaterialTheme.typography.labelMedium,
+            color = colors.placeholder,
+            modifier = Modifier.padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+        )
+    } else {
+        /*
+         * 只渲染最近 300 行：环形缓冲有 2000 条，全画出来会让这一页变成卡顿现场。
+         * 复制 / 导出仍是完整内容 —— 看的是样本，交出去的是全量。
+         */
+        lines.takeLast(300).asReversed().forEach { line ->
+            Text(
+                text = line,
+                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                color = colors.processText,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Space.Screen, vertical = 2.dp),
+            )
+        }
+    }
+}

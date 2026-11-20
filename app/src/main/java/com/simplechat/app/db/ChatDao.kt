@@ -22,6 +22,10 @@ interface ConversationDao {
     )
     fun observeAll(): Flow<List<ConversationEntity>>
 
+    /** 跨对话记忆检索用：一次性取回会话标题与更新时间（不观察）。 */
+    @Query("SELECT * FROM conversations ORDER BY updatedAt DESC")
+    suspend fun allConversations(): List<ConversationEntity>
+
     /** One bounded preview per matching message; title-only hits remain visible. */
     @Query(
         """
@@ -178,7 +182,7 @@ interface MessageDao {
         SELECT id, conversationId, parentId, variantIndex, active, role, content,
                substr(attachments, 1, :cap) AS attachments,
                reasoning, status, errorMessage, model, excluded,
-               thinkingMs, ttftMs, tps, tokens_in, tokens_out,
+               thinkingMs, ttftMs, tps, tokens_in, tokens_out, tokens_cache_hit,
                timeline, stopReason, createdAt
         FROM messages WHERE conversationId = :conversationId
         """,
@@ -202,7 +206,7 @@ interface MessageDao {
         SELECT id, conversationId, parentId, variantIndex, active, role,
                '' AS content, NULL AS attachments, NULL AS reasoning,
                status, NULL AS errorMessage,
-               model, excluded, thinkingMs, ttftMs, tps, tokens_in, tokens_out,
+               model, excluded, thinkingMs, ttftMs, tps, tokens_in, tokens_out, tokens_cache_hit,
                NULL AS timeline, stopReason, createdAt
         FROM messages WHERE id = :id
         """,
@@ -263,7 +267,7 @@ interface MessageDao {
         SELECT id, conversationId, parentId, variantIndex, active, role, content,
                substr(attachments, 1, :cap) AS attachments,
                reasoning, status, errorMessage, model, excluded,
-               thinkingMs, ttftMs, tps, tokens_in, tokens_out,
+               thinkingMs, ttftMs, tps, tokens_in, tokens_out, tokens_cache_hit,
                timeline, stopReason, createdAt
         FROM messages WHERE id IN (:ids)
         """,
@@ -310,7 +314,8 @@ interface MessageDao {
         UPDATE messages
         SET content = :content, reasoning = :reasoning, status = :status, errorMessage = :error,
             ttftMs = :ttftMs, tps = :tps, thinkingMs = :thinkingMs,
-            timeline = :timeline, stopReason = :stopReason
+            timeline = :timeline, stopReason = :stopReason,
+            tokens_in = :tokensIn, tokens_out = :tokensOut, tokens_cache_hit = :cacheHitTokens
         WHERE id = :id
         """,
     )
@@ -325,7 +330,29 @@ interface MessageDao {
         thinkingMs: Long?,
         timeline: String?,
         stopReason: String?,
+        tokensIn: Int?,
+        tokensOut: Int?,
+        cacheHitTokens: Int?,
     )
+
+    /**
+     * 全库累计用量（设置 → 用量与余额）。
+     *
+     * 只统计服务端回报过用量的回复：老数据 tokens_in 为 null，算进来会让"总消耗"
+     * 被大量 0 稀释。每轮请求的 prompt 都含前面全部上下文，所以直接求和就是
+     * 真实计费口径，不需要去重。
+     */
+    @Query(
+        """
+        SELECT COUNT(*) AS replies,
+               COALESCE(SUM(tokens_in), 0) AS promptTokens,
+               COALESCE(SUM(tokens_out), 0) AS completionTokens,
+               COALESCE(SUM(tokens_cache_hit), 0) AS cacheHitTokens
+        FROM messages
+        WHERE role = 'assistant' AND tokens_in IS NOT NULL
+        """,
+    )
+    suspend fun usageTotals(): UsageTotals
 
     /**
      * 「保存」编辑后的消息：**原地**换掉正文（可连同附件与内容块）。
@@ -546,3 +573,12 @@ interface AttachmentRefDao {
     @Query("DELETE FROM attachment_refs")
     suspend fun clearEverything()
 }
+
+/** 全库累计用量投影（见 [MessageDao.usageTotals]）。 */
+data class UsageTotals(
+    /** 有服务端用量回报的回复条数。 */
+    val replies: Int,
+    val promptTokens: Int,
+    val completionTokens: Int,
+    val cacheHitTokens: Int,
+)
