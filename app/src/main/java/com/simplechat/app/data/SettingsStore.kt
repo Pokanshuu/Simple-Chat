@@ -1,6 +1,9 @@
 package com.simplechat.app.data
 
 import android.content.Context
+import com.simplechat.app.net.DEEPSEEK_FLASH
+import com.simplechat.app.net.effectiveModelId
+import com.simplechat.app.net.isOfficialDeepSeekEndpoint
 import com.simplechat.app.net.ApiStyle
 import com.simplechat.app.net.ModelCapabilityOverride
 import com.simplechat.app.net.RemoteModelMetadata
@@ -82,6 +85,7 @@ data class StoredSettings(
     val filesApi: ServiceApiConfig = ServiceApiConfig(),
     val autoReadAloud: Boolean = false,
     val showImageSkipNotice: Boolean = true,
+    val showRetrySkipNotice: Boolean = true,
     /** Include messages from inactive conversation branches in global search. */
     val searchInactiveBranches: Boolean = true,
     val reasoningLevelId: String = "OFF",
@@ -98,6 +102,17 @@ data class StoredSettings(
     val followSystemFont: Boolean = true,
     /** 思考内容是否自动折叠（关闭则默认展开，需手动收起）。 */
     val autoCollapseThinking: Boolean = true,
+    /** 长按输入框开始语音输入（关闭后长按不再触发）。 */
+    val holdToTalk: Boolean = true,
+    /**
+     * 跨对话记忆：发消息时从**其它会话**里检索相关片段，附在当前用户消息前。
+     *
+     * 只在这条消息明显"想回忆"（提到「之前/上次/记得」等）或实词足够多时才注入，
+     * 免得每句「你好」都拖一段历史。
+     */
+    val crossChatMemory: Boolean = true,
+    /** 一次最多参考几个历史会话（1..10）。 */
+    val crossChatMemoryLimit: Int = 4,
     /** 新对话默认模式：CREATIVE / ROLEPLAY。 */
     val defaultModeId: String = "CREATIVE",
     /** 界面语言：AppLanguage 的枚举名，见 data/LocaleHelper.kt。 */
@@ -169,7 +184,10 @@ data class StoredSettings(
         )
 
     /** 当前通道是否支持联网搜索。 */
-    val supportsWebSearch: Boolean get() = searchApi.enabled || resolvedApiStyle == ApiStyle.ANTHROPIC
+    val officialFlash: Boolean get() = isOfficialDeepSeekEndpoint(baseUrl) && effectiveModelId(baseUrl, modelId) == DEEPSEEK_FLASH
+    val supportsWebSearch: Boolean get() = searchApi.enabled || officialFlash
+    val supportsFileReferences: Boolean get() = !isOfficialDeepSeekEndpoint(baseUrl) || officialFlash
+    val useRemoteFiles: Boolean get() = filesApi.enabled && supportsFileReferences
 }
 
 /**
@@ -189,13 +207,14 @@ class SettingsStore(
         StoredSettings(
             providerId = prefs[Keys.PROVIDER] ?: StoredSettings().providerId,
             baseUrl = prefs[Keys.BASE_URL] ?: StoredSettings().baseUrl,
-            modelId = prefs[Keys.MODEL] ?: StoredSettings().modelId,
+            modelId = effectiveModelId(prefs[Keys.BASE_URL] ?: ProviderKind.DEEPSEEK.defaultBaseUrl, prefs[Keys.MODEL] ?: DEEPSEEK_FLASH),
             apiKey = readApiKey(prefs),
-            apiProfiles = profileRows(prefs),
+            apiProfiles = profileRows(prefs).map { it.copy(modelId = effectiveModelId(it.baseUrl, it.modelId)) },
             activeApiProfileId = prefs[Keys.ACTIVE_PROFILE] ?: "legacy",
             searchApi = readService(prefs, Keys.SEARCH_API),
             filesApi = readService(prefs, Keys.FILES_API),
             autoReadAloud = prefs[Keys.AUTO_READ_ALOUD] ?: false,
+            showRetrySkipNotice = prefs[Keys.RETRY_SKIP_NOTICE] ?: true,
             showImageSkipNotice = prefs[Keys.IMAGE_SKIP_NOTICE] ?: true,
             searchInactiveBranches = prefs[Keys.SEARCH_INACTIVE_BRANCHES]
                 ?: StoredSettings().searchInactiveBranches,
@@ -210,6 +229,10 @@ class SettingsStore(
                 ?: StoredSettings().followSystemFont,
             autoCollapseThinking = prefs[Keys.AUTO_COLLAPSE_THINKING]
                 ?: StoredSettings().autoCollapseThinking,
+            holdToTalk = prefs[Keys.HOLD_TO_TALK] ?: StoredSettings().holdToTalk,
+            crossChatMemory = prefs[Keys.CROSS_CHAT_MEMORY] ?: StoredSettings().crossChatMemory,
+            crossChatMemoryLimit = prefs[Keys.CROSS_CHAT_MEMORY_LIMIT]
+                ?: StoredSettings().crossChatMemoryLimit,
             defaultModeId = prefs[Keys.DEFAULT_MODE] ?: StoredSettings().defaultModeId,
             languageId = prefs[LANGUAGE_KEY] ?: StoredSettings().languageId,
             apiStyleId = prefs[Keys.API_STYLE] ?: StoredSettings().apiStyleId,
@@ -368,6 +391,18 @@ class SettingsStore(
         preferences.edit { it[Keys.AUTO_COLLAPSE_THINKING] = enabled }
     }
 
+    suspend fun setHoldToTalk(enabled: Boolean) {
+        preferences.edit { it[Keys.HOLD_TO_TALK] = enabled }
+    }
+
+    suspend fun setCrossChatMemory(enabled: Boolean) {
+        preferences.edit { it[Keys.CROSS_CHAT_MEMORY] = enabled }
+    }
+
+    suspend fun setCrossChatMemoryLimit(limit: Int) {
+        preferences.edit { it[Keys.CROSS_CHAT_MEMORY_LIMIT] = limit.coerceIn(1, 10) }
+    }
+
     suspend fun setDefaultMode(modeId: String) {
         preferences.edit { it[Keys.DEFAULT_MODE] = modeId }
     }
@@ -441,6 +476,10 @@ class SettingsStore(
         it != Keys.PROFILES && it != Keys.ACTIVE_PROFILE && it != Keys.ONBOARDING_COMPLETE
     }
 
+    suspend fun muteRetrySkipNotice() {
+        preferences.edit { it[Keys.RETRY_SKIP_NOTICE] = false }
+    }
+
     suspend fun setShowImageSkipNotice(enabled: Boolean) {
         preferences.edit { it[Keys.IMAGE_SKIP_NOTICE] = enabled }
     }
@@ -463,7 +502,7 @@ class SettingsStore(
         id = id, name = name,
         providerId = prefs[Keys.PROVIDER] ?: "DEEPSEEK",
         baseUrl = prefs[Keys.BASE_URL] ?: "https://api.deepseek.com",
-        modelId = prefs[Keys.MODEL] ?: "deepseek-flash",
+        modelId = effectiveModelId(prefs[Keys.BASE_URL] ?: ProviderKind.DEEPSEEK.defaultBaseUrl, prefs[Keys.MODEL] ?: DEEPSEEK_FLASH),
         apiKeyEncrypted = prefs[Keys.API_KEY_ENC].orEmpty(),
         apiStyleId = prefs[Keys.API_STYLE] ?: "AUTO",
         modelIds = ModelIdList.decode(prefs[Keys.MODEL_IDS]),
@@ -622,6 +661,7 @@ class SettingsStore(
         val SEARCH_API = stringPreferencesKey("search_api_config")
         val FILES_API = stringPreferencesKey("files_api_config")
         val ACTIVE_PROFILE = stringPreferencesKey("active_api_profile")
+        val RETRY_SKIP_NOTICE = booleanPreferencesKey("show_retry_skip_notice")
         val IMAGE_SKIP_NOTICE = booleanPreferencesKey("show_image_skip_notice")
         val LOADING_WORDS = stringPreferencesKey("loading_words")
         val LOADING_WORDS_USE_THEME_COLOR = booleanPreferencesKey("loading_words_use_theme_color")
@@ -645,6 +685,9 @@ class SettingsStore(
         val FONT_SCALE = floatPreferencesKey("font_scale")
         val FOLLOW_SYSTEM_FONT = booleanPreferencesKey("follow_system_font")
         val AUTO_COLLAPSE_THINKING = booleanPreferencesKey("auto_collapse_thinking")
+        val HOLD_TO_TALK = booleanPreferencesKey("hold_to_talk")
+        val CROSS_CHAT_MEMORY = booleanPreferencesKey("cross_chat_memory")
+        val CROSS_CHAT_MEMORY_LIMIT = intPreferencesKey("cross_chat_memory_limit")
         val DEFAULT_MODE = stringPreferencesKey("default_mode")
         val API_STYLE = stringPreferencesKey("api_style")
         val WEB_SEARCH = booleanPreferencesKey("web_search")
