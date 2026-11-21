@@ -1,13 +1,18 @@
 package com.simplechat.app.ui.common
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathBuilder
+import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
+
+internal val LocalUseSimpleCatIcon = compositionLocalOf { true }
 
 /**
  * 图标集。
@@ -1174,7 +1179,10 @@ object AppIcons {
      * 与 [Bubble] 的区别：那个是**实心**的品牌标识，属于启动图与 App 图标；
      * 这里是描边的，跟界面其余图标是一套。
      */
-    val MessageSquare: ImageVector by lazy {
+    val MessageSquare: ImageVector
+        @Composable get() = if (LocalUseSimpleCatIcon.current) SimpleCat else ClassicMessageSquare
+
+    val ClassicMessageSquare: ImageVector by lazy {
         vector("MessageSquare") {
             stroke {
                 moveTo(21f, 15f)
@@ -1220,7 +1228,27 @@ object AppIcons {
      * 描边风格，与设置页其它一级入口（Palette / FontSize / Collapse / Info）
      * 是一套。实心的 [Bubble] 那个是品牌标识，混在描边图标里会显得很重。
      */
-    val Prompt: ImageVector get() = MessageSquare
+    val Prompt: ImageVector
+        @Composable get() = MessageSquare
+
+    // Visible paths from simple-cat.svg, using its 24 × 24 viewBox.
+    val SimpleCat: ImageVector by lazy {
+        vector("SimpleCat") {
+            addPath(
+                pathData = addPathNodes(
+                    "M5.9,19.2l-2.8,2.3c-.3.3-.6.3-1,0,0,0-.2-.3-.2-.4V3.1" +
+                        "c0-.2,0-.4.3-.6.4-.3,1-.3,1.4,0l2.7,2.2.5.3" +
+                        "c.5.4,1.1.7,1.8.7h6.6c.6,0,1.3-.3,1.8-.7l.5-.3,2.7-2.2" +
+                        "c.4-.3,1-.3,1.4,0,.2.2.3.3.3.6v14.6c0,.9-.9,1.7-1.9,1.7h-4.6" +
+                        "M8.3,11.1V13.7M15.7,11.1V13.7",
+                ),
+                stroke = SolidColor(Color.Black),
+                strokeLineWidth = 2f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            )
+        }
+    }
 
     /** 关于（Lucide: info） */
     val Info: ImageVector by lazy {

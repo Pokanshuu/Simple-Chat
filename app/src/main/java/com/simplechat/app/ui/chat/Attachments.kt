@@ -9,6 +9,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import android.util.Base64
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -61,7 +66,9 @@ import androidx.compose.ui.semantics.semantics
 import kotlin.math.roundToInt
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.asImageBitmap
@@ -698,17 +705,60 @@ fun AttachmentViewerDialog(
                 val attachment = pages[page]
                 // 每页各解各的：Pager 只组合当前页与左右邻页，不会把整组图读进内存
                 val pageBitmap = rememberAttachmentImage(attachment, target)
+                var zoom by remember(page) { mutableStateOf(1f) }
+                var pan by remember(page) { mutableStateOf(Offset.Zero) }
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().clipToBounds(),
                     contentAlignment = Alignment.Center,
                 ) {
                     if (pageBitmap != null) {
                         Image(
                             bitmap = pageBitmap,
                             contentDescription = attachment.name,
-                            // Fit：整张图都在屏幕内，不裁切；空白由深底兜住，不显眼
                             contentScale = ContentScale.Fit,
-                            modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 8.dp)
+                                // Keep pointer coordinates in the stationary viewport.
+                                .pointerInput(page, pageBitmap) {
+                                    awaitEachGesture {
+                                        awaitFirstDown(requireUnconsumed = false)
+                                        var transforming = false
+                                        do {
+                                            val event = awaitPointerEvent()
+                                            if (event.changes.any { it.isConsumed }) break
+                                            val twoFingers = event.changes.count { it.pressed } >= 2
+                                            val movement = event.calculatePan()
+                                            if (twoFingers || (zoom > 1f && movement != Offset.Zero)) {
+                                                transforming = true
+                                            }
+                                            if (transforming) {
+                                                val nextZoom = (zoom * event.calculateZoom()).coerceIn(1f, 5f)
+                                                val ratio = nextZoom / zoom
+                                                val center = Offset(size.width / 2f, size.height / 2f)
+                                                val focus = event.calculateCentroid(useCurrent = false)
+                                                if (focus != Offset.Unspecified) {
+                                                    val fit = minOf(
+                                                        size.width.toFloat() / pageBitmap.width,
+                                                        size.height.toFloat() / pageBitmap.height,
+                                                    )
+                                                    val maxX = ((pageBitmap.width * fit * nextZoom - size.width) / 2f).coerceAtLeast(0f)
+                                                    val maxY = ((pageBitmap.height * fit * nextZoom - size.height) / 2f).coerceAtLeast(0f)
+                                                    val nextPan = pan * ratio + (focus - center) * (1f - ratio) + movement
+                                                    zoom = nextZoom
+                                                    pan = Offset(nextPan.x.coerceIn(-maxX, maxX), nextPan.y.coerceIn(-maxY, maxY))
+                                                }
+                                                event.changes.forEach { it.consume() }
+                                            }
+                                        } while (event.changes.any { it.pressed })
+                                    }
+                                }
+                                .graphicsLayer {
+                                    scaleX = zoom
+                                    scaleY = zoom
+                                    translationX = pan.x
+                                    translationY = pan.y
+                                },
                         )
                     } else {
                         Icon(

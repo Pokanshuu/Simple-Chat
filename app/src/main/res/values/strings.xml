@@ -578,7 +578,7 @@
     <string name="image_api_chat_base_hint">留空以使用聊天 API 地址</string>
     <string name="image_api_reuse_key">复用聊天 API Key</string>
     <string name="image_api_key">生图 API Key</string>
-    <string name="image_api_default_model">默认图片模型</string>
+    <string name="image_api_default_size">默认图片尺寸</string>
     <string name="image_api_aspect_ratio">Gemini 画幅，例如 1:1、16:9</string>
     <string name="image_generate_action">生成图片</string>
     <string name="image_generated">图片已生成。</string>
@@ -835,6 +835,12 @@
     <string name="image_exit_mode">退出生图模式</string>
     <string name="settings_search_options">搜索设置</string>
     <string name="image_reference_unreadable">无法读取参考图片，请重新选择。</string>
+    <string name="settings_icon">图标</string>
+    <string name="settings_icon_classic">经典图标</string>
+    <string name="settings_icon_simple_cat" translatable="false">Simple Cat</string>
+    <string name="settings_icon_restart_title">需要重新打开应用</string>
+    <string name="settings_icon_restart_message">确认后将退出应用，重新打开即可使用新图标。</string>
+    <string name="settings_icon_exit">确认并退出</string>
 </resources>
 
 

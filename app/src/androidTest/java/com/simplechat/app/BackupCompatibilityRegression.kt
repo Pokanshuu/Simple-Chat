@@ -37,7 +37,17 @@ internal object BackupCompatibilityRegression {
             val restored = repository.importExternal(deepseek, root, ImportMode.MERGE).first
             check(restored.messages == 3 && restored.failed == 0)
             val after = json.decodeFromString<BackupFile>(repository.exportBackup())
-            check(after.conversations == baseline.conversations && after.presets == baseline.presets)
+            check(after.conversations == baseline.conversations && after.presets == baseline.presets) {
+                fun fields(before: kotlinx.serialization.json.JsonObject, restored: kotlinx.serialization.json.JsonObject) =
+                    (before.keys + restored.keys).filter { before[it] != restored[it] }
+                val expected = json.encodeToJsonElement(BackupConversation.serializer(), baseline.conversations.single()) as kotlinx.serialization.json.JsonObject
+                val actual = json.encodeToJsonElement(BackupConversation.serializer(), after.conversations.single()) as kotlinx.serialization.json.JsonObject
+                val messageFields = baseline.conversations.single().messages.zip(after.conversations.single().messages).map { (before, restored) ->
+                    fields(json.encodeToJsonElement(BackupMessage.serializer(), before) as kotlinx.serialization.json.JsonObject,
+                        json.encodeToJsonElement(BackupMessage.serializer(), restored) as kotlinx.serialization.json.JsonObject)
+                }
+                "Backup differs in conversation fields ${fields(expected, actual)}, message fields $messageFields, presets match=${after.presets == baseline.presets}"
+            }
             repository.deleteAllConversations()
             check(repository.importExternal(legacy, root, ImportMode.MERGE).first.messages == 3)
             check(repository.loadActivePath("native-id").map { it.id } == listOf("u", "a"))

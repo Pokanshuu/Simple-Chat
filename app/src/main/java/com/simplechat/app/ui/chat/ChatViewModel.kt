@@ -73,6 +73,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import com.simplechat.app.net.ImageToolCall
+import com.simplechat.app.net.requestsImageGeneration
 
 /**
  * 对话状态与流式调度。
@@ -1751,17 +1752,18 @@ class ChatViewModel(
         stoppedByUser = false
         val route = attachmentSettings
         val options = settings
+        val latestUser = messages.lastOrNull { it.role == MessageRole.USER }
+        val latestQuestion = latestUser?.content.orEmpty()
+        val imageIntent = prefix == null && requestsImageGeneration(latestQuestion)
         val nativeImageAdapter = route.nativeImageAdapter(options.model.id)
-        val nativeGeminiTurn = prefix == null && !route.imageGenApi.enabled && nativeImageAdapter == "GEMINI"
-        val imageToolEnabled = prefix == null && !nativeGeminiTurn &&
+        val nativeGeminiTurn = imageIntent && !route.imageGenApi.enabled && nativeImageAdapter == "GEMINI"
+        val imageToolEnabled = imageIntent && !nativeGeminiTurn &&
             (if (route.imageGenApi.enabled) route.imageGenApi.modelId.isNotBlank() else nativeImageAdapter != null)
         val selectedApiStyle = apiStyle
         val extended = selectedApiStyle == ApiStyle.ANTHROPIC
 
         val routeProvider = providerKind
         val searchRequested = webSearch && !com.simplechat.app.net.usesAutomaticOpenAiSearch(options.model.id, selectedApiStyle)
-        val latestUser = messages.lastOrNull { it.role == MessageRole.USER }
-        val latestQuestion = latestUser?.content.orEmpty()
         Diagnostics.log(
             "CHAT",
             "start model=${options.model.id} style=$selectedApiStyle " +

@@ -235,18 +235,25 @@ internal fun ImageGenApiPage(
         testStatus?.let { (message, failed) -> ServiceNote(message, failed) }
         SettingsSectionLabel(stringResource(R.string.image_api_options))
         SettingsCard {
-            SettingsNavRow(null, stringResource(R.string.image_api_default_model),
+            SettingsNavRow(null, stringResource(R.string.image_api_pick_model),
                 draft.modelId.ifBlank { stringResource(R.string.api_model_unset) }, { pickingModel = true })
+            RowDivider(inset = Space.Screen)
+            val sizeLabel = stringResource(R.string.image_api_default_size)
             if (draft.adapter == "GEMINI") {
-                RowDivider(inset = Space.Screen)
                 ServiceField(stringResource(R.string.image_api_aspect_ratio), draft.aspectRatio,
                     { draft = draft.copy(aspectRatio = it) }, KeyboardType.Text)
+                RowDivider(inset = Space.Screen)
                 Column(Modifier.selectableGroup()) {
-                    listOf("1K", "2K", "4K").forEach { size ->
-                        RowDivider(inset = Space.Screen)
+                    Text(sizeLabel, style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(horizontal = Space.Screen, vertical = Space.RowPadY))
+                    listOf("1K", "2K", "4K").forEachIndexed { index, size ->
+                        if (index > 0) RowDivider(inset = Space.Screen)
                         SettingsChoiceRow(null, size, draft.geminiImageSize == size) { draft = draft.copy(geminiImageSize = size) }
                     }
                 }
+            } else {
+                ServiceField(sizeLabel, draft.size, { draft = draft.copy(size = it) }, KeyboardType.Text)
             }
         }
     }

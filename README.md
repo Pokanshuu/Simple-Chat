@@ -4,8 +4,10 @@
 
 **中文 | [English](README.en.md)**
 
-[![Version](https://img.shields.io/badge/version-1.2.3-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
+[![Version](https://img.shields.io/badge/version-1.2.4-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+查看 [v1.2.4 发布说明](RELEASE_NOTES_v1.2.4.md)，了解会话内生图、对话记忆和图标切换。
 
 ## 简介
 

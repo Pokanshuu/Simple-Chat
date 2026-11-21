@@ -41,12 +41,31 @@
             android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|fontScale"
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.SimpleChat">
+            android:theme="@style/Theme.SimpleChat" />
+
+        <activity-alias
+            android:name=".ClassicLauncher"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".SimpleCatLauncher"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@drawable/simple_chat_logo"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <!--
             「拍照」要一个可写的位置给相机 App，并把 URI 授权给它。

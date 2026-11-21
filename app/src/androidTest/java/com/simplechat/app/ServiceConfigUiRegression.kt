@@ -194,7 +194,7 @@ internal object ServiceConfigUiRegression {
             }
             tapText(activity.getString(R.string.image_api_key))
             fillDialog("fixture-image-key")
-            tapText(activity.getString(R.string.image_api_default_model))
+            tapText(activity.getString(R.string.image_api_pick_model))
             tapText(activity.getString(R.string.api_model_manual))
             fillDialog("fixture-image-model")
             revealText(activity.getString(R.string.api_test))

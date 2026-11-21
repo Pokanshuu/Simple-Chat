@@ -563,7 +563,7 @@
     <string name="image_api_chat_base_hint">Leave blank to use the chat API endpoint</string>
     <string name="image_api_reuse_key">Reuse chat API key</string>
     <string name="image_api_key">Image API key</string>
-    <string name="image_api_default_model">Default image model</string>
+    <string name="image_api_default_size">Default image size</string>
     <string name="image_api_aspect_ratio">Gemini aspect ratio, e.g. 1:1 or 16:9</string>
     <string name="image_generate_action">Generate image</string>
     <string name="image_generated">Image generated.</string>
@@ -825,6 +825,11 @@
     <string name="image_exit_mode">Exit image mode</string>
     <string name="settings_search_options">Search settings</string>
     <string name="image_reference_unreadable">Could not read the reference image. Select it again.</string>
+    <string name="settings_icon">Icon</string>
+    <string name="settings_icon_classic">Classic icon</string>
+    <string name="settings_icon_restart_title">Reopen the app</string>
+    <string name="settings_icon_restart_message">The app will close after you confirm. Open it again to use the new icon.</string>
+    <string name="settings_icon_exit">Confirm and exit</string>
 </resources>
 
 

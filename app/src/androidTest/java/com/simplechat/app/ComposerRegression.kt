@@ -207,6 +207,58 @@ internal object ComposerRegression {
                 }
             }
         }
+        awaitNode { it.contentDescription?.toString() == attachment.name }
+        val automation = instrumentation.uiAutomation
+        fun blueHeight(): Int {
+            val shot = checkNotNull(automation.takeScreenshot())
+            return try {
+                (0 until shot.height).count { y ->
+                    val pixel = shot.getPixel(shot.width / 2, y)
+                    android.graphics.Color.blue(pixel) > 150 && android.graphics.Color.red(pixel) < 60
+                }
+            } finally { shot.recycle() }
+        }
+        val fitHeight = withTimeout(5_000) {
+            var height = blueHeight()
+            while (height <= 100) { delay(100); height = blueHeight() }
+            height
+        }
+        val screen = activity.window.decorView
+        fun pinch(start: Float, end: Float) {
+            val downTime = SystemClock.uptimeMillis()
+            fun send(action: Int, distance: Float, count: Int) {
+                val properties = Array(count) { i -> MotionEvent.PointerProperties().apply {
+                    id = i
+                    toolType = MotionEvent.TOOL_TYPE_FINGER
+                } }
+                val coords = Array(count) { i -> MotionEvent.PointerCoords().apply {
+                    x = screen.width / 2f + if (i == 0) -distance else distance
+                    y = screen.height / 2f
+                    pressure = 1f
+                    size = 1f
+                } }
+                val event = MotionEvent.obtain(
+                    downTime, SystemClock.uptimeMillis(), action, count, properties, coords,
+                    0, 0, 1f, 1f, 0, 0, android.view.InputDevice.SOURCE_TOUCHSCREEN, 0,
+                )
+                try { check(automation.injectInputEvent(event, true)) } finally { event.recycle() }
+            }
+            send(MotionEvent.ACTION_DOWN, start, 1)
+            send(MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), start, 2)
+            for (i in 1..8) send(MotionEvent.ACTION_MOVE, start + (end - start) * i / 8f, 2)
+            send(MotionEvent.ACTION_POINTER_UP or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), end, 2)
+            send(MotionEvent.ACTION_UP, end, 1)
+        }
+        val near = screen.width * 0.10f
+        val far = screen.width * 0.20f
+        pinch(near, far)
+        delay(150)
+        check(blueHeight() > fitHeight * 1.5f) { "Pinch did not enlarge the displayed image" }
+        pinch(far, near)
+        delay(150)
+        check(kotlin.math.abs(blueHeight() - fitHeight) < 12) { "Pinch did not restore the fit size" }
+        passed("full-screen photo enlarges and returns to fit using two-finger gestures")
+
         val saveLabel = activity.getString(R.string.image_save_original)
         val longPress = awaitNode { node -> node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_LONG_CLICK && it.label == saveLabel } }
         check(longPress.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK))

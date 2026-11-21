@@ -97,6 +97,7 @@ data class StoredSettings(
     val maxTokens: Int = 0,
     /** 外观：SYSTEM / LIGHT / DARK。 */
     val themeModeId: String = "SYSTEM",
+    val useSimpleCatIcon: Boolean = true,
     /** 主题色：AccentColor.name，见 ui/theme/Theme.kt。 */
     val accentColorId: String = "BLUE",
     /** 字号倍率。 */
@@ -227,6 +228,7 @@ class SettingsStore(
             topP = prefs[Keys.TOP_P] ?: StoredSettings().topP,
             maxTokens = prefs[Keys.MAX_TOKENS] ?: StoredSettings().maxTokens,
             themeModeId = prefs[Keys.THEME_MODE] ?: StoredSettings().themeModeId,
+            useSimpleCatIcon = prefs[Keys.USE_SIMPLE_CAT_ICON] ?: StoredSettings().useSimpleCatIcon,
             accentColorId = prefs[Keys.ACCENT_COLOR] ?: StoredSettings().accentColorId,
             fontScale = prefs[Keys.FONT_SCALE] ?: StoredSettings().fontScale,
             followSystemFont = prefs[Keys.FOLLOW_SYSTEM_FONT]
@@ -358,6 +360,10 @@ class SettingsStore(
 
     suspend fun setThemeMode(modeId: String) {
         preferences.edit { it[Keys.THEME_MODE] = modeId }
+    }
+
+    suspend fun setUseSimpleCatIcon(enabled: Boolean) {
+        preferences.edit { it[Keys.USE_SIMPLE_CAT_ICON] = enabled }
     }
 
     suspend fun setAccentColor(colorId: String) {
@@ -706,6 +712,7 @@ class SettingsStore(
         val TOP_P = floatPreferencesKey("top_p")
         val MAX_TOKENS = intPreferencesKey("max_tokens")
         val THEME_MODE = stringPreferencesKey("theme_mode")
+        val USE_SIMPLE_CAT_ICON = booleanPreferencesKey("use_simple_cat_icon")
         val ACCENT_COLOR = stringPreferencesKey("accent_color")
         val FONT_SCALE = floatPreferencesKey("font_scale")
         val FOLLOW_SYSTEM_FONT = booleanPreferencesKey("follow_system_font")
