@@ -27,6 +27,27 @@ class ModernModelCatalogTest {
     }
 
     @Test
+    fun `GPT off selection sends an explicit effort on both protocols`() {
+        for ((id, expected) in listOf("gpt-5.2" to "none", "gpt-6.2-sol" to "low", "openai/gpt-5-mini" to "minimal")) {
+            val model = ModelCatalog.find(ProviderKind.CUSTOM, id)
+            assertEquals(expected, buildChatRequest(model, emptyList(), false).reasoningEffort)
+            val request = buildResponsesRequest(model, emptyList(), false, null, null, null)
+            assertEquals(expected, request.reasoning?.effort)
+            assertNull(request.reasoning?.summary)
+        }
+    }
+
+    @Test
+    fun `only dedicated search models lock the search switch`() {
+        val official = "https://api.openai.com/v1"
+        assertTrue(usesAutomaticOpenAiSearch("openai/gpt-5-search-api-2025-10-02", ApiStyle.OPENAI))
+        assertFalse(usesAutomaticOpenAiSearch("gpt-5.2", ApiStyle.OPENAI))
+        assertTrue(supportsOpenAiSearchTool(official, "gpt-5.2", ApiStyle.OPENAI_RESPONSES))
+        assertFalse(supportsOpenAiSearchTool(official, "gpt-5.2", ApiStyle.OPENAI))
+        assertFalse(supportsOpenAiSearchTool("https://proxy.example/v1", "gpt-5.2", ApiStyle.OPENAI_RESPONSES))
+    }
+
+    @Test
     fun `native Claude sends adaptive thinking and omits unsupported temperature`() {
         val model = ModelCatalog.find(ProviderKind.CUSTOM, "anthropic/claude-opus-5.5")
         assertEquals(1_000_000, model.contextWindow)

@@ -506,6 +506,8 @@
     <!-- 面板四：对话设置 -->
     <string name="input_conversation_name">对话名称</string>
     <string name="input_conversation_memory">当前会话记忆设置</string>
+    <string name="input_configure_api">配置 API</string>
+    <string name="input_conversation_memory_toggle">记忆对话</string>
     <string name="input_conversation_memory_hint">关闭后，本会话不会引用其他会话的记忆，其他会话也不会引用本会话的内容。</string>
     <string name="input_conversation_name_hint">给这个对话起个名字</string>
     <string name="input_system_prompt">系统提示词</string>
@@ -554,6 +556,7 @@
     <!-- ── 附件（Attachments.kt） ─────────────────────────────── -->
     <string name="attach_remove">移除附件</string>
     <string name="attach_char_count">%1$d 字</string>
+    <string name="attach_generate_image">生成图片</string>
     <string name="attach_camera">拍照</string>
     <string name="attach_gallery">相册</string>
     <string name="attach_file">文件</string>
@@ -575,7 +578,7 @@
     <string name="image_api_chat_base_hint">留空以使用聊天 API 地址</string>
     <string name="image_api_reuse_key">复用聊天 API Key</string>
     <string name="image_api_key">生图 API Key</string>
-    <string name="image_api_size">图片尺寸</string>
+    <string name="image_api_default_model">默认图片模型</string>
     <string name="image_api_aspect_ratio">Gemini 画幅，例如 1:1、16:9</string>
     <string name="image_generate_action">生成图片</string>
     <string name="image_generated">图片已生成。</string>
@@ -732,7 +735,7 @@
     <string name="mermaid_show_diagram">图表</string>
     <string name="mermaid_render_failed">图表渲染失败，以下是原始代码</string>
     <string name="mermaid_loading">图表生成中…</string>
-    <string name="settings_export_archive">导出全部对话（ZIP 归档）</string>
+    <string name="settings_export_archive">导出全部对话（SimpleChat 备份）</string>
     <string name="settings_export_archive_summary">包含所有对话与附件的完整备份，另附每个对话的 Markdown 文稿；可直接用于导入恢复。</string>
     <string name="images_never_remind">不再提醒</string>
     <string name="settings_image_skip_notice">图片跳过提醒</string>

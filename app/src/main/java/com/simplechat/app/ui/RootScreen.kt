@@ -88,7 +88,7 @@ import kotlinx.coroutines.launch
  */
 private enum class Route(val depth: Int) {
     CHAT(0),
-    SETTINGS(1), IMAGE_SETTINGS(1),
+    SETTINGS(1), IMAGE_SETTINGS(1), API_SETTINGS(1),
 }
 
 /** 抽屉平时的宽度。 */
@@ -425,6 +425,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                                             wideSidebarVisible = !wideSidebarVisible
                                         } else scope.launch { drawerState.open() }
                                     },
+                                    onConfigureApi = { route = Route.API_SETTINGS },
                                     onConfigureImageApi = { route = Route.IMAGE_SETTINGS },
                                     onNewConversation = {
                                         exitSearch()
@@ -435,8 +436,9 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                             }
                         }
 
-                        Route.SETTINGS, Route.IMAGE_SETTINGS -> SettingsScreen(
+                        Route.SETTINGS, Route.IMAGE_SETTINGS, Route.API_SETTINGS -> SettingsScreen(
                             onBack = { route = Route.CHAT }, startAtImageApi = target == Route.IMAGE_SETTINGS,
+                            startAtApiProfiles = target == Route.API_SETTINGS,
                         )
                     }
                 }

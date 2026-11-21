@@ -174,6 +174,7 @@ fun ChatScreen(
     onNewConversation: () -> Unit,
     modifier: Modifier = Modifier,
     onConfigureImageApi: () -> Unit = {},
+    onConfigureApi: () -> Unit = {},
 ) {
     val colors = LocalChatColors.current
     val focusManager = LocalFocusManager.current
@@ -1504,38 +1505,6 @@ fun ChatScreen(
                     }
                 }
 
-                val canUseVoice = !vm.isStreaming && editingMessage == null &&
-                    composerOwner == composerKey && (officialAsr != null || voice.state.systemAvailable)
-                fun startVoice(tapMode: Boolean): Boolean {
-                    if (!canUseVoice || input.isNotEmpty() || voice.state.active) return false
-                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
-                        PackageManager.PERMISSION_GRANTED
-                    ) {
-                        microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
-                        return false
-                    }
-                    val owner = composerKey
-                    speechError = null
-                    val started = voice.start(officialAsr, onResult = { transcript ->
-                        voiceTapMode = false
-                        if (owner == vm.currentConversationId.orEmpty() && composerOwner == owner &&
-                            input.isEmpty() && editingMessage == null
-                        ) {
-                            replaceInput(transcript)
-                            submitComposer()
-                        }
-                    }, onError = {
-                        voiceTapMode = false
-                        speechError = it
-                    })
-                    if (started) {
-                        voiceTapMode = tapMode
-                        dismissInput()
-                        panel = InputPanelState.NONE
-                    }
-                    return started
-                }
-
                 val imageRoute = vm.attachmentSettings
                 val imageConfig = imageRoute.imageGenApi
                 val showImageEntry = imageConfig.enabled || imageConfig.nativeResponsesEnabled
@@ -1559,10 +1528,68 @@ fun ChatScreen(
                     onRemove = { referenceImages[composerKey] = imageReferences - it },
                     onOpen = { viewingImage = Triple(imageReferences, it, imageReferences.indexOf(it)) },
                 )
+                val canSubmitImage = imageModel != null && (imageConfig.enabled || imageRoute.hasKey)
+                fun submitImage(prompt: String) {
+                    val owner = composerOwner ?: return
+                    if (owner != composerKey || !canSubmitImage || prompt.isBlank()) return
+                    val ratio = imageAspectRatio?.takeIf { it in imageRatios }
+                    resumeFollowing()
+                    vm.generateImage(prompt, requestedAspectRatio = ratio, references = imageReferences,
+                        requestedModelId = imageModel?.first) {
+                        if (referenceImages[owner].orEmpty() == imageReferences) referenceImages.remove(owner)
+                        if (imagePromptByConversation[owner] == prompt) imagePromptByConversation.remove(owner)
+                        if (composerOwner == owner && imageFieldState.text.toString() == prompt) {
+                            imageFieldState.setTextAndPlaceCursorAtEnd("")
+                            composerExpanded = false
+                            imageMode = false
+                            dismissInput()
+                        }
+                    }
+                }
+
+                val canUseVoice = !vm.isStreaming && (if (imageMode) canSubmitImage else editingMessage == null) &&
+                    composerOwner == composerKey && (officialAsr != null || voice.state.systemAvailable)
+                fun startVoice(tapMode: Boolean): Boolean {
+                    val imageVoice = imageMode
+                    val field = if (imageVoice) imageFieldState else inputState
+                    if (!canUseVoice || field.text.isNotEmpty() || voice.state.active) return false
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
+                        PackageManager.PERMISSION_GRANTED
+                    ) {
+                        microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                        return false
+                    }
+                    val owner = composerKey
+                    speechError = null
+                    val started = voice.start(officialAsr, onResult = { transcript ->
+                        voiceTapMode = false
+                        if (owner == vm.currentConversationId.orEmpty() && composerOwner == owner &&
+                            imageMode == imageVoice && field.text.isEmpty() && (imageVoice || editingMessage == null)
+                        ) {
+                            if (imageVoice) {
+                                field.setTextAndPlaceCursorAtEnd(transcript)
+                                submitImage(transcript)
+                            } else {
+                                replaceInput(transcript)
+                                submitComposer()
+                            }
+                        }
+                    }, onError = {
+                        voiceTapMode = false
+                        speechError = it
+                    })
+                    if (started) {
+                        voiceTapMode = tapMode
+                        dismissInput()
+                        panel = InputPanelState.NONE
+                    }
+                    return started
+                }
+
                 InputBar(
                     fieldState = if (imageMode) imageFieldState else inputState,
                     imageMode = imageMode,
-                    sendAllowed = !imageMode || (imageModel != null && (imageConfig.enabled || imageRoute.hasKey)),
+                    sendAllowed = !imageMode || canSubmitImage,
                     imageControls = {
                         CapsuleButton(
                             text = imageModel?.second ?: stringResource(R.string.image_api_pick_model),
@@ -1593,14 +1620,20 @@ fun ChatScreen(
                         else -> null
                     },
                     onCancelEdit = {
-                        if (imageMode) { imageMode = false; panel = InputPanelState.NONE } else cancelEdit()
+                        if (imageMode) {
+                            voice.cancel()
+                            voiceTapMode = false
+                            voiceCancelling = false
+                            imageMode = false
+                            panel = InputPanelState.NONE
+                        } else cancelEdit()
                     },
                     // 面板展开时输入栏投影淡出，两块合看成一体
                     panelExpanded = panel != InputPanelState.NONE,
                     contextStats = vm.contextStats,
                     statsPanelOpen = panel == InputPanelState.STATS,
                     onOpenStatsPanel = { openPanel(InputPanelState.STATS) },
-                    holdToTalkEnabled = !imageMode && canUseVoice && vm.holdToTalk,
+                    holdToTalkEnabled = canUseVoice && vm.holdToTalk,
                     voiceState = voice.state,
                     voiceLevel = { voice.level },
                     voiceSourceLabel = stringResource(
@@ -1619,32 +1652,13 @@ fun ChatScreen(
                     onVoiceTap = { if (voiceTapMode) voice.finish() else startVoice(tapMode = true) },
                     thinkingEnabled = vm.settings.thinkingEnabled || vm.defaultThinkingActive,
                     // 搜索也在这个面板里，开着就算激活（见 InputBar 的说明）
-                    webSearchEnabled = vm.supportsWebSearch && vm.webSearch,
+                    webSearchEnabled = vm.automaticWebSearch || (vm.supportsWebSearch && vm.webSearch),
                     thinkingPanelOpen = panel == InputPanelState.THINKING,
                     onOpenThinkingPanel = { openPanel(InputPanelState.THINKING) },
                     settingsPanelOpen = panel == InputPanelState.SETTINGS,
                     onOpenSettingsPanel = { openPanel(InputPanelState.SETTINGS) },
                     streaming = vm.isStreaming,
-                    onSend = {
-                        if (!imageMode) submitComposer() else {
-                            val owner = composerOwner
-                            val submitted = imageFieldState.text.toString()
-                            if (owner != null && owner == composerKey && submitted.isNotBlank()) {
-                                val ratio = imageAspectRatio?.takeIf { it in imageRatios }
-                                resumeFollowing()
-                                vm.generateImage(submitted, requestedAspectRatio = ratio, references = imageReferences,
-                                    requestedModelId = imageModel?.first) {
-                                    if (referenceImages[owner].orEmpty() == imageReferences) referenceImages.remove(owner)
-                                    if (imagePromptByConversation[owner] == submitted) imagePromptByConversation.remove(owner)
-                                    if (composerOwner == owner && imageFieldState.text.toString() == submitted) {
-                                        imageFieldState.setTextAndPlaceCursorAtEnd("")
-                                        imageMode = false
-                                        dismissInput()
-                                    }
-                                }
-                            }
-                        }
-                    },
+                    onSend = { if (imageMode) submitImage(imageFieldState.text.toString()) else submitComposer() },
                     onStop = { vm.stop() },
                     // ⊕ 真的能用了：展开与其它面板同一个容器（浮在输入栏上方的卡片）
                     canAttach = !imageMode || imageReferences.size < 3,
@@ -1735,6 +1749,8 @@ fun ChatScreen(
                         hint = vm.modelHint,
                         showWebSearch = vm.supportsWebSearch,
                         webSearchEnabled = vm.webSearch,
+                        automaticWebSearch = vm.automaticWebSearch,
+                        onConfigureApi = { panel = InputPanelState.NONE; onConfigureApi() },
                         onToggleWebSearch = { vm.toggleWebSearch() },
                         supportsExplicitThinkingOff = vm.apiStyle == ApiStyle.ANTHROPIC &&
                             com.simplechat.app.net.claudeAdaptiveModel(vm.settings.model.id)?.canDisableThinking != false,

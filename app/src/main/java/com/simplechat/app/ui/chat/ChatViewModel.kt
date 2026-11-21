@@ -302,7 +302,9 @@ class ChatViewModel(
      * 搜索走的是扩展通道的工具（`deepseek_web_search`），OpenAI 兼容通道没有等价入口。
      * 所以通道不支持时干脆不显示，而不是留一个按下去什么都不发生的开关。
      */
-    val supportsWebSearch: Boolean get() = attachmentSettings.supportsWebSearch
+    val automaticWebSearch: Boolean get() = com.simplechat.app.net.usesAutomaticOpenAiSearch(settings.model.id, apiStyle)
+    val supportsWebSearch: Boolean get() = automaticWebSearch || attachmentSettings.supportsWebSearch ||
+        com.simplechat.app.net.supportsOpenAiSearchTool(attachmentSettings.baseUrl, settings.model.id, apiStyle)
     val attachmentSettings: StoredSettings get() = stored.copy(modelId = settings.model.id)
 
     /** 智能搜索开关：这一轮要不要向服务端声明 `deepseek_web_search`。 */
@@ -334,7 +336,7 @@ class ChatViewModel(
     /** 切换智能搜索（输入栏那个开关）。立即落库，下次启动保持。 */
     fun toggleWebSearch() {
         // 通道不支持时不该有入口；这里再挡一道，避免其它路径把它打开
-        if (!supportsWebSearch) return
+        if (!supportsWebSearch || automaticWebSearch) return
         val next = !webSearch
         webSearch = next
         viewModelScope.launch { settingsStore.setWebSearch(next) }
@@ -1757,7 +1759,7 @@ class ChatViewModel(
         val extended = selectedApiStyle == ApiStyle.ANTHROPIC
 
         val routeProvider = providerKind
-        val searchRequested = webSearch
+        val searchRequested = webSearch && !com.simplechat.app.net.usesAutomaticOpenAiSearch(options.model.id, selectedApiStyle)
         val latestUser = messages.lastOrNull { it.role == MessageRole.USER }
         val latestQuestion = latestUser?.content.orEmpty()
         Diagnostics.log(
@@ -1981,7 +1983,9 @@ class ChatViewModel(
                     val readLink = builtInFlash && HttpLink.containsMatchIn(latestQuestion)
                     val title = builtInFlash && shouldRequestTitle()
                     val search = builtInFlash && searchRequested && !route.searchApi.enabled
-                    optionalFieldsSent = !textOnly && (imageToolEnabled || outgoing.any { it.content is kotlinx.serialization.json.JsonArray } ||
+                    val openAiSearch = !textOnly && searchRequested && !route.searchApi.enabled &&
+                        com.simplechat.app.net.supportsOpenAiSearchTool(route.baseUrl, options.model.id, selectedApiStyle)
+                    optionalFieldsSent = !textOnly && (imageToolEnabled || openAiSearch || outgoing.any { it.content is kotlinx.serialization.json.JsonArray } ||
                         search || readLink || research.context.isNotBlank() || title && outgoing.sumOf {
                             ((it.content as? kotlinx.serialization.json.JsonPrimitive)?.content?.length ?: 8001).toLong() + 32
                         } <= 8000)
@@ -1992,6 +1996,7 @@ class ChatViewModel(
                         model = options.model,
                         messages = outgoing,
                         search = search,
+                        openAiSearch = openAiSearch,
                         readLink = readLink,
                         requestTitle = title,
                         generateImageTool = imageToolEnabled && !textOnly,

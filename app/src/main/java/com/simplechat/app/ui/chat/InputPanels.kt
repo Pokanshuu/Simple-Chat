@@ -176,15 +176,17 @@ fun ThinkingPanelContent(
     onToggleWebSearch: () -> Unit = {},
     modifier: Modifier = Modifier,
     supportsExplicitThinkingOff: Boolean = false,
+    automaticWebSearch: Boolean = false,
+    onConfigureApi: (() -> Unit)? = null,
 ) {
     val colors = LocalChatColors.current
-    val minimumGeminiEffort = settings.model.minimumGeminiEffort()
+    val minimumRequiredEffort = settings.model.minimumRequiredEffort()
     val availableLevels = ReasoningLevel.forModel(settings.model)
-    val levels = if (minimumGeminiEffort != null) availableLevels.filter { it.enabled }.ifEmpty {
-        ReasoningLevel.entries.filter { it.apiValue == minimumGeminiEffort }.ifEmpty { availableLevels }
+    val levels = if (minimumRequiredEffort != null) availableLevels.filter { it.enabled }.ifEmpty {
+        ReasoningLevel.entries.filter { it.apiValue == minimumRequiredEffort }.ifEmpty { availableLevels }
     } else availableLevels
     val selectedLevel = if (settings.reasoningLevel in levels) settings.reasoningLevel else {
-        val effort = settings.model.resolveReasoningEffort(settings.reasoningLevel.apiValue) ?: minimumGeminiEffort
+        val effort = settings.model.resolveReasoningEffort(settings.reasoningLevel.apiValue) ?: minimumRequiredEffort
         levels.firstOrNull { it.apiValue == effort } ?: levels.first()
     }
     val selectedTick = levels.indexOf(selectedLevel)
@@ -211,7 +213,7 @@ fun ThinkingPanelContent(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(onClick = onToggleWebSearch)
+                    .clickable(enabled = !automaticWebSearch, onClick = onToggleWebSearch)
                     .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -223,7 +225,8 @@ fun ThinkingPanelContent(
                 )
                 // 全应用同一个 AppSwitch —— 别在这里用 M3 的 Switch（52dp，比行标题还大）
                 AppSwitch(
-                    checked = webSearchEnabled,
+                    checked = automaticWebSearch || webSearchEnabled,
+                    enabled = !automaticWebSearch,
                     onCheckedChange = { onToggleWebSearch() },
                 )
             }
@@ -267,7 +270,7 @@ fun ThinkingPanelContent(
         Text(
             text = when {
                 !supportsThinking -> stringResource(R.string.input_thinking_unsupported)
-                minimumGeminiEffort != null -> stringResource(R.string.input_thinking_minimum)
+                minimumRequiredEffort != null -> stringResource(R.string.input_thinking_minimum)
                 else -> stringResource(R.string.input_thinking_hint)
             },
             style = MaterialTheme.typography.labelSmall,
@@ -316,6 +319,10 @@ fun ThinkingPanelContent(
                     onClick = { onSettingsChange(settings.copy(model = model)) },
                 )
             }
+        }
+        if (onConfigureApi != null) {
+            CapsuleButton(stringResource(R.string.input_configure_api), onClick = onConfigureApi,
+                modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 8.dp))
         }
     }
 }
@@ -909,7 +916,9 @@ fun ConversationSettingsPanelContent(
         }
 
         if (memoryEnabled != null) {
-            val memoryLabel = stringResource(R.string.input_conversation_memory)
+            PanelSectionTitle(stringResource(R.string.input_conversation_memory))
+            Spacer(Modifier.size(8.dp))
+            val memoryLabel = stringResource(R.string.input_conversation_memory_toggle)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(memoryLabel, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
                 AppSwitch(

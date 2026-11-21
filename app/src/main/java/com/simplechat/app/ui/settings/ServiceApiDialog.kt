@@ -91,9 +91,10 @@ internal fun ImageGenApiPage(
     onSaved: () -> Unit,
 ) = key(visit) {
     val original = remember { stored.imageGenApi }
+    val initial = if (original.enabled) original.copy(nativeResponsesEnabled = false) else original
     val scope = rememberCoroutineScope()
     val imageApi = remember { ImageGenerationApi() }
-    var draft by remember { mutableStateOf(original) }
+    var draft by remember { mutableStateOf(initial) }
     var secret by remember { mutableStateOf("") }
     val reusedBase = stored.baseUrl.takeIf { draft.baseUrl.isBlank() || draft.reuseChatKey }
     val reusedKey = stored.apiKey.takeIf { draft.reuseChatKey }
@@ -168,11 +169,13 @@ internal fun ImageGenApiPage(
     )
     SettingsSectionLabel(stringResource(R.string.image_api_route))
     SettingsCard {
-        SettingsSwitchRow(stringResource(R.string.image_api_independent), draft.enabled, { draft = draft.copy(enabled = it) })
+        SettingsSwitchRow(stringResource(R.string.image_api_independent), draft.enabled,
+            { draft = draft.copy(enabled = it, nativeResponsesEnabled = false) },
+            enabled = !draft.nativeResponsesEnabled)
         RowDivider(inset = Space.Screen)
-        SettingsSwitchRow(stringResource(R.string.image_api_native_title), draft.nativeResponsesEnabled, {
-            draft = draft.copy(nativeResponsesEnabled = it)
-        })
+        SettingsSwitchRow(stringResource(R.string.image_api_native_title), draft.nativeResponsesEnabled,
+            { draft = draft.copy(enabled = false, nativeResponsesEnabled = it) },
+            enabled = !draft.enabled)
     }
     if (draft.nativeResponsesEnabled) ServiceNote(stringResource(R.string.image_api_native_hint))
     if (draft.enabled) {
@@ -232,10 +235,10 @@ internal fun ImageGenApiPage(
         testStatus?.let { (message, failed) -> ServiceNote(message, failed) }
         SettingsSectionLabel(stringResource(R.string.image_api_options))
         SettingsCard {
-            SettingsNavRow(null, stringResource(R.string.image_api_pick_model),
+            SettingsNavRow(null, stringResource(R.string.image_api_default_model),
                 draft.modelId.ifBlank { stringResource(R.string.api_model_unset) }, { pickingModel = true })
-            RowDivider(inset = Space.Screen)
             if (draft.adapter == "GEMINI") {
+                RowDivider(inset = Space.Screen)
                 ServiceField(stringResource(R.string.image_api_aspect_ratio), draft.aspectRatio,
                     { draft = draft.copy(aspectRatio = it) }, KeyboardType.Text)
                 Column(Modifier.selectableGroup()) {
@@ -244,8 +247,6 @@ internal fun ImageGenApiPage(
                         SettingsChoiceRow(null, size, draft.geminiImageSize == size) { draft = draft.copy(geminiImageSize = size) }
                     }
                 }
-            } else {
-                ServiceField(stringResource(R.string.image_api_size), draft.size, { draft = draft.copy(size = it) }, KeyboardType.Text)
             }
         }
     }

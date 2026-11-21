@@ -75,6 +75,7 @@ class ChatApi(
         retryBeforeContent: Boolean = true,
         apiStyle: ApiStyle = ApiStyle.OPENAI,
         search: Boolean = false,
+        openAiSearch: Boolean = false,
         readLink: Boolean = false,
         requestTitle: Boolean = false,
         generateImageTool: Boolean = false,
@@ -98,7 +99,14 @@ class ChatApi(
                     val imageTool = imageToolDefinition.takeIf { generateImageTool }?.let {
                         DeepSeekTool("function", name = it.name, description = it.description, parameters = it.parameters)
                     }
-                    request.copy(tools = (tools.orEmpty() + listOfNotNull(imageTool)).ifEmpty { null }, title = title, reasoning = if (isOfficialDeepSeekEndpoint(baseUrl) && !thinkingEnabled) ResponsesReasoningDto("none") else request.reasoning)
+                    val searchTool = DeepSeekTool("web_search").takeIf {
+                        openAiSearch && supportsOpenAiSearchTool(baseUrl, model.id, apiStyle)
+                    }
+                    request.copy(
+                        tools = (tools.orEmpty() + listOfNotNull(imageTool, searchTool)).ifEmpty { null },
+                        title = title,
+                        reasoning = if (isOfficialDeepSeekEndpoint(baseUrl) && !thinkingEnabled) ResponsesReasoningDto("none") else request.reasoning,
+                    )
                 },
                 messages = requestMessages, model = model, extraHeaders = extraHeaders, retryBeforeContent = retryBeforeContent,
             )
@@ -108,10 +116,13 @@ class ChatApi(
         val request = buildChatRequest(model, requestMessages, thinkingEnabled, reasoningEffort, maxTokens, temperature, topP, isOfficialDeepSeekEndpoint(baseUrl))
             .let { if (allTools == null && title == null) it else it.copy(tools = allTools, toolChoice = if (imageTool != null) "auto" else null, title = title, temperature = null, topP = null) }
 
+        val automaticSearch = usesAutomaticOpenAiSearch(model.id, apiStyle)
         return sseClient.stream(
             url = chatCompletionsUrl(baseUrl),
             apiKey = apiKey,
-            request = request,
+            request = if (automaticSearch && isOfficialOpenAiEndpoint(baseUrl)) {
+                request.copy(webSearchOptions = buildJsonObject {})
+            } else request,
             extraHeaders = extraHeaders,
             contextWindow = model.contextWindow,
             retryBeforeContent = retryBeforeContent,

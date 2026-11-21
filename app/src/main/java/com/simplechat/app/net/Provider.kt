@@ -71,14 +71,16 @@ data class ModelInfo(
     }
 
     internal fun disabledReasoningEffort(): String? = effortLevels?.firstOrNull { it in ReasoningWire.offLevels }
-        ?: minimumGeminiEffort()
+        ?: minimumRequiredEffort()
 
-    internal fun minimumGeminiEffort(): String? {
+    internal fun minimumRequiredEffort(): String? {
         if (!supportsThinking || reasoningWire != ReasoningWire.EFFORT) return null
-        val name = normalizedGeminiModel(id)
-        if (!name.startsWith("gemini-3") && !name.startsWith("gemini-4-") && name != "gemini-2.5-pro") return null
-        if (effortLevels?.any { it in ReasoningWire.offLevels } == true) return null
-        return if (effortLevels == null) "low" else resolveReasoningEffort("minimal")
+        val gemini = normalizedGeminiModel(id)
+        val mandatoryGemini = gemini.startsWith("gemini-3") || gemini.startsWith("gemini-4-") || gemini == "gemini-2.5-pro"
+        val levels = effortLevels ?: modernGptBaseline(id)?.effortLevels
+        if (levels?.any { it in ReasoningWire.offLevels } == true) return null
+        if (!mandatoryGemini && modernGptBaseline(id)?.effortLevels == null) return null
+        return if (levels == null) "low" else resolveReasoningEffort("minimal")
     }
 
     /** Match the nearest advertised enabled effort, preserving the selected one when accepted. */
@@ -263,8 +265,6 @@ object ModelCatalog {
                 contextWindow = 1_047_576)
             "o3", "o4-mini" -> ModelInfo(id, supportsVision = true, supportsThinking = true,
                 contextWindow = 200_000, reasoningWire = ReasoningWire.EFFORT, completionTokenField = true)
-            "gpt-5", "gpt-5-mini", "gpt-5-nano" -> ModelInfo(id, supportsVision = true, supportsThinking = true,
-                contextWindow = 400_000, reasoningWire = ReasoningWire.EFFORT, completionTokenField = true)
             else -> null
         }
     }
@@ -302,6 +302,9 @@ object ModelCatalog {
 }
 
 private val geminiPreviewSuffix = Regex("-preview(?:-\\d{2}-\\d{2,4})?$")
+
+internal fun isOfficialOpenAiEndpoint(baseUrl: String): Boolean =
+    baseUrl.trim().toHttpUrlOrNull()?.let { it.isHttps && it.host == "api.openai.com" } == true
 
 internal fun normalizedGeminiModel(id: String): String = id.lowercase().removePrefix("google/")
     .removePrefix("models/").replace(geminiPreviewSuffix, "")

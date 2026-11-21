@@ -53,8 +53,10 @@ internal fun modernClaudeBaseline(id: String): ModelInfo? {
     }
 }
 
+internal fun normalizedOpenAiModel(id: String): String = id.lowercase().removePrefix("openai/").replace(datedSnapshot, "")
+
 internal fun modernGptBaseline(id: String): ModelInfo? {
-    val canonical = id.removePrefix("openai/").replace(datedSnapshot, "")
+    val canonical = normalizedOpenAiModel(id)
     fun gpt(window: Int, output: Int, efforts: List<String>) = ModelInfo(id, supportsVision = true,
         supportsThinking = true, contextWindow = window, maxOutputTokens = output, effortLevels = efforts,
         reasoningWire = ReasoningWire.EFFORT, completionTokenField = true)
@@ -72,6 +74,22 @@ internal fun modernGptBaseline(id: String): ModelInfo? {
         "gpt-5.2" -> gpt(400_000, 128_000, listOf("none") + extendedGptEffort)
         "gpt-5.2-pro" -> gpt(400_000, 128_000, listOf("medium", "high", "xhigh"))
         "gpt-5.1" -> gpt(400_000, 128_000, listOf("none") + standardEffort)
+        "gpt-5", "gpt-5-mini", "gpt-5-nano" -> gpt(400_000, 128_000, listOf("minimal") + standardEffort)
+        "gpt-5-pro" -> gpt(400_000, 272_000, listOf("high"))
+        "gpt-5-search-api" -> ModelInfo(id, contextWindow = 200_000)
         else -> null
+    }
+}
+
+internal fun usesAutomaticOpenAiSearch(modelId: String, style: ApiStyle): Boolean =
+    style == ApiStyle.OPENAI && normalizedOpenAiModel(modelId) == "gpt-5-search-api"
+
+internal fun supportsOpenAiSearchTool(baseUrl: String, modelId: String, style: ApiStyle): Boolean {
+    if (style != ApiStyle.OPENAI_RESPONSES || !isOfficialOpenAiEndpoint(baseUrl)) return false
+    return when (normalizedOpenAiModel(modelId)) {
+        "chat-latest", "gpt-5.1", "gpt-5.2", "gpt-5.2-pro", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-pro",
+        "gpt-5.5", "gpt-5.5-pro", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+        "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6.2-astra", "gpt-6.2-sol" -> true
+        else -> false
     }
 }

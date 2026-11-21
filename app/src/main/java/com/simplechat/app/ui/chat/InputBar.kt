@@ -143,7 +143,7 @@ internal fun InputBar(
     val shape = ContainerShape
     val text = fieldState.text
     val density = LocalDensity.current
-    var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    var textLayout by remember(fieldState) { mutableStateOf<TextLayoutResult?>(null) }
     val visualLines = textLayout?.lineCount ?: 0
     val showExpand = !voiceState.active &&
         (expanded || (text.isNotEmpty() && visualLines >= ExpandAtVisualLines))

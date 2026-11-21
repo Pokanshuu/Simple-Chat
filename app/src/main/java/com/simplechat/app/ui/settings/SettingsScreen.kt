@@ -242,13 +242,14 @@ fun SettingsScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     startAtImageApi: Boolean = false,
+    startAtApiProfiles: Boolean = false,
 ) {
     val context = LocalContext.current
-    SettingsScreen(onBack, modifier, (context.applicationContext as App).container.settingsStore, startAtImageApi)
+    SettingsScreen(onBack, modifier, (context.applicationContext as App).container.settingsStore, startAtImageApi, startAtApiProfiles)
 }
 
 @Composable
-internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: SettingsStore, startAtImageApi: Boolean = false) {
+internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: SettingsStore, startAtImageApi: Boolean = false, startAtApiProfiles: Boolean = false) {
     val colors = LocalChatColors.current
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
@@ -258,7 +259,11 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
     var stored by remember { mutableStateOf(StoredSettings()) }
     var settingsLoaded by remember { mutableStateOf(false) }
     // 换语言会重建 Activity，保留设置页的当前位置。
-    var page by rememberSaveable { mutableStateOf(if (startAtImageApi) SettingsPage.IMAGE_API else SettingsPage.ROOT) }
+    var page by rememberSaveable { mutableStateOf(when {
+        startAtImageApi -> SettingsPage.IMAGE_API
+        startAtApiProfiles -> SettingsPage.API_PROFILES
+        else -> SettingsPage.ROOT
+    }) }
     var editingProfileId by rememberSaveable { mutableStateOf<String?>(null) }
     val editingProfile = stored.apiProfiles.firstOrNull { it.id == editingProfileId }
     val editingSettings = editingProfile?.let { profile ->
@@ -389,7 +394,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
 
     fun previousPage() {
         if (savingService) return
-        if (page == SettingsPage.IMAGE_API && startAtImageApi) {
+        if (page == SettingsPage.IMAGE_API && startAtImageApi || page == SettingsPage.API_PROFILES && startAtApiProfiles) {
             onBack()
             return
         }
@@ -2169,7 +2174,7 @@ internal fun ApiProfilesPage(
     }
     Spacer(Modifier.size(16.dp))
     SettingsCard {
-        SettingsActionRow(stringResource(R.string.api_profile_new), stringResource(R.string.api_profile_new_hint), onNew)
+        SettingsActionRow(stringResource(R.string.api_profile_new), stringResource(R.string.api_profile_new_hint), onNew, icon = AppIcons.PlusCircle)
         RowDivider(inset = 16.dp)
         SettingsActionRow(stringResource(R.string.api_profile_copy), stringResource(R.string.api_profile_copy_hint), onCopy)
     }
@@ -3145,11 +3150,12 @@ internal fun SettingsSwitchRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     icon: ImageVector? = null,
+    enabled: Boolean = true,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onCheckedChange(!checked) }
+            .clickable(enabled = enabled) { onCheckedChange(!checked) }
             .heightIn(min = Space.Row)
             .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
         verticalAlignment = Alignment.CenterVertically,
@@ -3166,12 +3172,13 @@ internal fun SettingsSwitchRow(
         Text(
             text = label,
             style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = if (enabled) MaterialTheme.colorScheme.onSurface else LocalChatColors.current.placeholder,
             modifier = Modifier.weight(1f),
         )
         AppSwitch(
             checked = checked,
             onCheckedChange = onCheckedChange,
+            enabled = enabled,
             modifier = Modifier.semantics { contentDescription = label },
         )
     }

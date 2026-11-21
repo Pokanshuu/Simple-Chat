@@ -56,17 +56,12 @@ data class ImageGenConfig(
 }
 
 internal fun StoredSettings.nativeImageAdapter(model: String = modelId): String? {
-    if (model.isBlank()) return null
-    val endpoint = baseUrl.toHttpUrlOrNull() ?: return null
-    val officialGemini = endpoint.isHttps && endpoint.host == "generativelanguage.googleapis.com"
-    if ((officialGemini || imageGenApi.nativeResponsesEnabled) && isGeminiImageModel(model)) {
+    if (!imageGenApi.nativeResponsesEnabled || imageGenApi.enabled || model.isBlank()) return null
+    if (isGeminiImageModel(model)) {
         return "GEMINI"
     }
     if (resolvedApiStyle != com.simplechat.app.net.ApiStyle.OPENAI_RESPONSES) return null
-    if (imageGenApi.nativeResponsesEnabled || endpoint.isHttps && endpoint.host == "api.openai.com" && model in responsesImageToolModels) {
-        return "RESPONSES"
-    }
-    return null
+    return "RESPONSES"
 }
 
 // Official model capabilities checked 2026-11-21. Custom Images API model IDs are user-entered.
@@ -82,11 +77,3 @@ private val geminiInteractionsModels = setOf(
 )
 
 private val geminiImageModels = geminiInteractionsModels + "gemini-2.5-flash-image"
-
-// Verified on the official model detail pages. Other Responses endpoints can opt in.
-private val responsesImageToolModels = setOf(
-    "chat-latest", "gpt-5.2", "gpt-5.2-pro", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-pro",
-    "gpt-5.5", "gpt-5.5-pro", "gpt-5.6-cyber", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra",
-    "gpt-6-astra", "gpt-6-cyber", "gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra",
-    "gpt-6.2-astra", "gpt-6.2-sol",
-)

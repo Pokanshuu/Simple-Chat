@@ -433,41 +433,14 @@ fun AttachmentPanelContent(
     onPickFile: () -> Unit,
     onGenerateImage: (() -> Unit)? = null,
 ) {
-    /*
-     * 两行等宽入口：拍照 / 相册 / 文件 / 生图。
-     *
-     * 等宽而不是按内容自适应 —— 三个入口的地位是平等的，
-     * 谁宽谁窄会让人觉得有一个"更主要"。
-     */
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        AttachmentTile(
-            label = stringResource(R.string.attach_camera),
-            icon = AppIcons.Camera,
-            onClick = onCapture,
-            modifier = Modifier.weight(1f),
-        )
-        AttachmentTile(
-            label = stringResource(R.string.attach_gallery),
-            icon = AppIcons.Image,
-            onClick = onPickImage,
-            modifier = Modifier.weight(1f),
-        )
-      }
-      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        AttachmentTile(
-            label = stringResource(R.string.attach_file),
-            icon = AppIcons.FileText,
-            onClick = onPickFile,
-            modifier = Modifier.weight(1f),
-        )
-        if (onGenerateImage == null) Spacer(Modifier.weight(1f)) else AttachmentTile(
-            label = stringResource(R.string.image_generate_action),
-            icon = AppIcons.ImageEdit,
-            onClick = onGenerateImage,
-            modifier = Modifier.weight(1f),
-        )
-      }
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        AttachmentTile(stringResource(R.string.attach_camera), AppIcons.Camera, onCapture, Modifier.weight(1f))
+        AttachmentTile(stringResource(R.string.attach_gallery), AppIcons.Image, onPickImage, Modifier.weight(1f))
+        AttachmentTile(stringResource(R.string.attach_file), AppIcons.FileText, onPickFile, Modifier.weight(1f))
+        if (onGenerateImage != null) {
+            AttachmentTile(stringResource(R.string.attach_generate_image), AppIcons.ImageEdit,
+                onGenerateImage, Modifier.weight(1f))
+        }
     }
 }
 
@@ -603,7 +576,7 @@ private fun AttachmentTile(
             .clip(SoftShape)
             .background(colors.fieldBackground)
             .clickable(onClick = onClick)
-            .padding(vertical = 14.dp, horizontal = 10.dp),
+            .padding(vertical = 12.dp, horizontal = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -615,8 +588,11 @@ private fun AttachmentTile(
         )
         Text(
             text = label,
-            style = MaterialTheme.typography.titleSmall,
+            style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

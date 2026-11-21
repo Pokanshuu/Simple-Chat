@@ -46,6 +46,7 @@ data class ChatRequestDto(
     val stream: Boolean,
     val tools: List<DeepSeekTool>? = null,
     @SerialName("tool_choice") val toolChoice: String? = null,
+    @SerialName("web_search_options") val webSearchOptions: JsonElement? = null,
     val title: DeepSeekTitle? = null,
     /** DeepSeek 思考模式开关。不支持的模型不能带此字段。 */
     val thinking: ThinkingDto? = null,

@@ -316,7 +316,7 @@ internal object ComposerRegression {
                 check(action.performAction(AccessibilityNodeInfo.ACTION_CLICK))
             }
             clickNode("attachment button") { it.contentDescription?.toString() == activity.getString(R.string.input_attach_add) }
-            clickNode("generate image tile") { it.text?.toString() == activity.getString(R.string.image_generate_action) }
+            clickNode("generate image tile") { it.text?.toString() == activity.getString(R.string.attach_generate_image) }
             clickNode("image model capsule") { it.text?.toString() == "fixture-image-model" }
             find("image model drawer") { it.text?.toString() == activity.getString(R.string.image_api_pick_model) }
             clickNode("image model selected in drawer") { it.text?.toString() == "fixture-image-model" && it.parent?.isClickable == true }

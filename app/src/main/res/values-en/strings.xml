@@ -500,6 +500,8 @@
     <!-- Panel 4: chat settings -->
     <string name="input_conversation_name">Conversation name</string>
     <string name="input_conversation_memory">Memory for this conversation</string>
+    <string name="input_configure_api">Configure API</string>
+    <string name="input_conversation_memory_toggle">Remember this chat</string>
     <string name="input_conversation_memory_hint">When off, this conversation neither uses memories from other conversations nor contributes to them.</string>
     <string name="input_conversation_name_hint">Give this conversation a name</string>
     <string name="input_system_prompt">System prompt</string>
@@ -539,6 +541,7 @@
     <!-- ── Attachments ───────────────────────────────────────── -->
     <string name="attach_remove">Remove attachment</string>
     <string name="attach_char_count">%1$d characters</string>
+    <string name="attach_generate_image">Generate</string>
     <string name="attach_camera">Camera</string>
     <string name="attach_gallery">Photos</string>
     <string name="attach_file">File</string>
@@ -560,7 +563,7 @@
     <string name="image_api_chat_base_hint">Leave blank to use the chat API endpoint</string>
     <string name="image_api_reuse_key">Reuse chat API key</string>
     <string name="image_api_key">Image API key</string>
-    <string name="image_api_size">Image size</string>
+    <string name="image_api_default_model">Default image model</string>
     <string name="image_api_aspect_ratio">Gemini aspect ratio, e.g. 1:1 or 16:9</string>
     <string name="image_generate_action">Generate image</string>
     <string name="image_generated">Image generated.</string>
@@ -719,7 +722,7 @@
     <string name="mermaid_show_diagram">Diagram</string>
     <string name="mermaid_render_failed">Could not render the diagram. Raw code below.</string>
     <string name="mermaid_loading">Rendering diagram…</string>
-    <string name="settings_export_archive">Export all chats (ZIP archive)</string>
+    <string name="settings_export_archive">Export all chats (SimpleChat backup)</string>
     <string name="settings_export_archive_summary">A complete backup of every chat and attachment, plus a Markdown document per chat. Can be imported back directly.</string>
     <string name="import_fail_space">Not enough storage. Free space and retry incremental import.</string>
     <string name="import_fail_memory">Not enough available memory. Close other apps and retry.</string>

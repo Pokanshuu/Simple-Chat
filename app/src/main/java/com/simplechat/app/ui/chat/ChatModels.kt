@@ -51,8 +51,7 @@ enum class MessageStatus { DONE, STREAMING, STOPPED, ERROR }
  *  ↑ 最左即关闭
  * ```
  *
- * 滑到最左即关闭思考（发 `thinking.type = disabled`，不带 `reasoning_effort`）；
- * 其余档位发送对应的 `reasoning_effort`。
+ * 支持关闭的模型才提供关闭档。必须思考的模型从其支持的最低档开始。
  */
 enum class ReasoningLevel(val apiValue: String?, @StringRes private val labelRes: Int) {
     OFF(null, R.string.reasoning_off),
@@ -122,10 +121,10 @@ data class ConversationSettings(
 ) {
     /** 实际是否开启思考：模型支持且档位非 OFF。 */
     val thinkingEnabled: Boolean
-        get() = model.supportsThinking && (reasoningLevel.enabled || model.minimumGeminiEffort() != null)
+        get() = model.supportsThinking && (reasoningLevel.enabled || model.minimumRequiredEffort() != null)
 
     val reasoningEffort: String?
-        get() = if (thinkingEnabled) reasoningLevel.apiValue ?: model.minimumGeminiEffort() else null
+        get() = if (thinkingEnabled) reasoningLevel.apiValue ?: model.minimumRequiredEffort() else null
 
     /** 最终系统提示词：预设按序拼接 + 会话补充。用于预览，避免黑盒。 */
     fun composedSystemPrompt(presets: List<Preset>): String {
