@@ -88,7 +88,9 @@ data class StoredSettings(
     val showImageSkipNotice: Boolean = true,
     val showRetrySkipNotice: Boolean = true,
     /** Include messages from inactive conversation branches in global search. */
-    val searchInactiveBranches: Boolean = true,
+    val searchInactiveBranches: Boolean = false,
+    val searchReasoning: Boolean = false,
+    val readAloudEnabled: Boolean = true,
     val reasoningLevelId: String = "OFF",
     val temperature: Float = 1.0f,
     val topP: Float = 1.0f,
@@ -240,6 +242,8 @@ class SettingsStore(
             apiStyleId = prefs[Keys.API_STYLE] ?: StoredSettings().apiStyleId,
             webSearch = prefs[Keys.WEB_SEARCH] ?: StoredSettings().webSearch,
             locationRegion = prefs[Keys.LOCATION] ?: StoredSettings().locationRegion,
+            searchReasoning = prefs[Keys.SEARCH_REASONING] ?: false,
+            readAloudEnabled = prefs[Keys.READ_ALOUD_ENABLED] ?: true,
             ttsVoiceName = prefs[Keys.TTS_VOICE] ?: StoredSettings().ttsVoiceName,
             ttsVoiceLabel = prefs[Keys.TTS_VOICE_LABEL] ?: StoredSettings().ttsVoiceLabel,
             modelIds = ModelIdList.decode(prefs[Keys.MODEL_IDS]),
@@ -430,22 +434,22 @@ class SettingsStore(
     private fun readImageGen(prefs: Preferences): ImageGenConfig =
         prefs[Keys.IMAGE_GEN_API]?.let { apiProfileJson.decodeFromString<ImageGenConfig>(it) } ?: ImageGenConfig()
 
-    suspend fun setImageGenApi(config: ImageGenConfig, expectedProfileId: String) {
+    suspend fun setImageGenApi(config: ImageGenConfig) {
         require(config.adapter in setOf("OPENAI_IMAGES", "GEMINI", "DASHSCOPE"))
         if (config.enabled && config.modelId.isBlank()) throw AppTextException(com.simplechat.app.R.string.error_no_model)
         require(config.size.matches(Regex("[0-9]{2,5}x[0-9]{2,5}")))
         require(config.aspectRatio in setOf("1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16", "21:9"))
         require(config.geminiImageSize in setOf("1K", "2K", "4K"))
-        editApi(expectedProfileId) { it[Keys.IMAGE_GEN_API] = apiProfileJson.encodeToString(config) }
+        preferences.edit { it[Keys.IMAGE_GEN_API] = apiProfileJson.encodeToString(config) }
     }
 
-    suspend fun setServiceApi(files: Boolean, config: ServiceApiConfig, expectedProfileId: String) {
+    suspend fun setServiceApi(files: Boolean, config: ServiceApiConfig) {
         config.endpoint("https://api.deepseek.com", if (files) config.filesPath else config.searchPath)
         if (!files) config.endpoint("https://api.deepseek.com", config.fetchPath)
         require(config.count in 1..50)
         require(config.longTextChars in 4_000..1_000_000)
         require(config.purpose in listOf("user_data", "text_recognition", "rich_layout_recognition"))
-        editApi(expectedProfileId) { it[if (files) Keys.FILES_API else Keys.SEARCH_API] = apiProfileJson.encodeToString(config) }
+        preferences.edit { it[if (files) Keys.FILES_API else Keys.SEARCH_API] = apiProfileJson.encodeToString(config) }
     }
 
     fun encryptServiceKey(key: String): String {
@@ -502,6 +506,14 @@ class SettingsStore(
         preferences.edit { it[Keys.SEARCH_INACTIVE_BRANCHES] = enabled }
     }
 
+    suspend fun setSearchReasoning(enabled: Boolean) {
+        preferences.edit { it[Keys.SEARCH_REASONING] = enabled }
+    }
+
+    suspend fun setReadAloudEnabled(enabled: Boolean) {
+        preferences.edit { it[Keys.READ_ALOUD_ENABLED] = enabled }
+    }
+
     suspend fun setAutoReadAloud(enabled: Boolean) {
         preferences.edit { it[Keys.AUTO_READ_ALOUD] = enabled }
     }
@@ -527,9 +539,6 @@ class SettingsStore(
         temperature = prefs[Keys.TEMPERATURE] ?: 1f, topP = prefs[Keys.TOP_P] ?: 1f,
         maxTokens = prefs[Keys.MAX_TOKENS] ?: 0, webSearch = prefs[Keys.WEB_SEARCH] ?: false,
         lastUsedAt = lastUsedAt,
-        searchApi = readService(prefs, Keys.SEARCH_API),
-        filesApi = readService(prefs, Keys.FILES_API),
-        imageGenApi = readImageGen(prefs),
     )
 
     private fun ensureProfiles(prefs: MutablePreferences): List<ApiProfile> {
@@ -579,9 +588,6 @@ class SettingsStore(
         prefs[Keys.TOP_P] = profile.topP
         prefs[Keys.MAX_TOKENS] = profile.maxTokens
         prefs[Keys.WEB_SEARCH] = profile.webSearch
-        prefs[Keys.SEARCH_API] = apiProfileJson.encodeToString(profile.searchApi)
-        prefs[Keys.FILES_API] = apiProfileJson.encodeToString(profile.filesApi)
-        prefs[Keys.IMAGE_GEN_API] = apiProfileJson.encodeToString(profile.imageGenApi)
     }
 
     /** Update a profile without selecting it or changing its recency. */
@@ -682,6 +688,8 @@ class SettingsStore(
         val IMAGE_SKIP_NOTICE = booleanPreferencesKey("show_image_skip_notice")
         val LOADING_WORDS = stringPreferencesKey("loading_words")
         val LOADING_WORDS_USE_THEME_COLOR = booleanPreferencesKey("loading_words_use_theme_color")
+        val SEARCH_REASONING = booleanPreferencesKey("search_reasoning")
+        val READ_ALOUD_ENABLED = booleanPreferencesKey("read_aloud_enabled")
         val SEARCH_INACTIVE_BRANCHES = booleanPreferencesKey("search_inactive_branches")
         val AUTO_READ_ALOUD = booleanPreferencesKey("auto_read_aloud")
         val PROVIDER = stringPreferencesKey("provider_id")

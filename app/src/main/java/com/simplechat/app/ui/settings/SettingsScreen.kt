@@ -266,7 +266,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
             modelContextWindows = profile.modelContextWindows,
             modelMetadata = profile.modelMetadata,
             modelOverrides = profile.modelOverrides,
-            webSearch = profile.webSearch, searchApi = profile.searchApi, filesApi = profile.filesApi)
+            webSearch = profile.webSearch)
     }
     var savingService by remember { mutableStateOf(false) }
     var serviceBack by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -363,8 +363,14 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
             speaker.consumeError()
         }
     }
-    LaunchedEffect(page) {
-        if (page == SettingsPage.VOICE && speechVoices == null) {
+    LaunchedEffect(stored.readAloudEnabled) {
+        if (!stored.readAloudEnabled) {
+            speaker.stop()
+            speechError = null
+        }
+    }
+    LaunchedEffect(page, stored.readAloudEnabled) {
+        if (stored.readAloudEnabled && page == SettingsPage.VOICE && speechVoices == null) {
             speechError = null
             /*
              * 加超时兜底：个别设备的 TTS 引擎初始化回调可能**永远不来**
@@ -389,7 +395,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
     fun requestBack() {
         if (savingService) return
         if (page == SettingsPage.ROOT) onBack()
-        else if (page in listOf(SettingsPage.SEARCH_API, SettingsPage.FILES_API) && settingsLoaded) serviceBack?.invoke()
+        else if (page in listOf(SettingsPage.SEARCH_API, SettingsPage.FILES_API, SettingsPage.IMAGE_API) && settingsLoaded) serviceBack?.invoke()
         else previousPage()
     }
     LaunchedEffect(startAtImageApi) { if (startAtImageApi) page = SettingsPage.IMAGE_API }
@@ -670,6 +676,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                             onToggleSearchInactiveBranches = {
                                 scope.launch { store.setSearchInactiveBranches(it) }
                             },
+                            onToggleSearchReasoning = { scope.launch { store.setSearchReasoning(it) } },
                             onToggleHoldToTalk = {
                                 scope.launch { store.setHoldToTalk(it) }
                             },
@@ -788,8 +795,12 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                         )
 
                         SettingsPage.IMAGE_API -> if (settingsLoaded) ImageGenApiPage(
+                            visit = serviceVisit,
                             stored = stored,
                             store = store,
+                            saving = savingService,
+                            onSavingChange = { savingService = it },
+                            onBackAction = { serviceBack = it },
                             onSaved = { if (page == target) previousPage() },
                         )
 
@@ -825,6 +836,11 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                         )
 
                         SettingsPage.VOICE -> VoicePage(
+                            enabled = stored.readAloudEnabled,
+                            onToggle = { enabled ->
+                                if (!enabled) speaker.stop()
+                                scope.launch { store.setReadAloudEnabled(enabled) }
+                            },
                             selectedName = stored.ttsVoiceName,
                             voices = speechVoices,
                             officialVoices = officialVoices,
@@ -1431,6 +1447,7 @@ private fun ChatBehaviorPage(
     stored: StoredSettings,
     onToggleAutoCollapse: (Boolean) -> Unit,
     onToggleSearchInactiveBranches: (Boolean) -> Unit,
+    onToggleSearchReasoning: (Boolean) -> Unit,
     onToggleHoldToTalk: (Boolean) -> Unit,
     onOpenLoadingWords: () -> Unit,
 ) {
@@ -1469,6 +1486,12 @@ private fun ChatBehaviorPage(
             label = stringResource(R.string.settings_search_inactive_branches),
             checked = stored.searchInactiveBranches,
             onCheckedChange = onToggleSearchInactiveBranches,
+        )
+        RowDivider(inset = Space.Screen)
+        SettingsSwitchRow(
+            label = stringResource(R.string.settings_search_reasoning),
+            checked = stored.searchReasoning,
+            onCheckedChange = onToggleSearchReasoning,
         )
     }
 
@@ -1703,6 +1726,8 @@ internal fun SettingsChoiceRow(
  */
 @Composable
 private fun VoicePage(
+    enabled: Boolean,
+    onToggle: (Boolean) -> Unit,
     selectedName: String,
     voices: List<SpeechVoice>?,
     /** DeepSeek 官方音色；空 = 当前服务商不支持官方朗读（整块不显示）。 */
@@ -1713,6 +1738,9 @@ private fun VoicePage(
     onSelect: (SpeechVoice?) -> Unit,
     onPreview: (SpeechVoice?) -> Unit,
 ) {
+    SettingsCard { SettingsSwitchRow(stringResource(R.string.tts_enabled), enabled, onToggle) }
+    if (!enabled) return
+
     SettingsSectionLabel(stringResource(R.string.tts_voice))
 
     SettingsCard {
@@ -3056,7 +3084,7 @@ fun SettingsNavRow(
 
 /** 二级页面的动作行：标题 +（可选）说明，无图标。 */
 @Composable
-private fun SettingsActionRow(
+internal fun SettingsActionRow(
     label: String,
     hint: String?,
     onClick: () -> Unit,
@@ -3225,7 +3253,7 @@ private fun reasoningWireLabel(wire: ReasoningWire): String = when (wire) {
 }
 
 @Composable
-private fun <T> ChoiceDialog(
+internal fun <T> ChoiceDialog(
     title: String,
     options: List<Pair<T, String>>,
     selected: T?,

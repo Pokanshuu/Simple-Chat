@@ -229,6 +229,8 @@ class ChatViewModel(
     var ttsVoiceName by mutableStateOf("")
         private set
 
+    val readAloudEnabled: Boolean get() = stored.readAloudEnabled
+
     var autoReadAloud by mutableStateOf(false)
         private set
     private val replyCompletions = MutableSharedFlow<CompletedReply>(extraBufferCapacity = 1)
@@ -268,6 +270,9 @@ class ChatViewModel(
      * `AUTO` 时 DeepSeek 官方走扩展通道（能拿到搜索 / 引用 / 服务端标题），
      * 其余端点走 OpenAI 兼容。
      */
+    val supportsContinuation: Boolean
+        get() = apiStyle == ApiStyle.ANTHROPIC && com.simplechat.app.net.claudeAdaptiveModel(settings.model.id) == null
+
     var apiStyle by mutableStateOf(ApiStyle.ANTHROPIC)
         private set
 
@@ -530,9 +535,9 @@ class ChatViewModel(
 
     fun dismissSearch() { searchTarget = null }
 
-    fun openConversation(id: String, targetMessageId: String? = null, query: String = "") {
+    fun openConversation(id: String, targetMessageId: String? = null, query: String = "", reasoningMatch: Boolean = false) {
         if (id == currentConversationId && targetMessageId == null) return
-        searchTarget = targetMessageId?.let { SearchTarget(it, query, ++searchRequest) }
+        searchTarget = targetMessageId?.let { SearchTarget(it, query, ++searchRequest, reasoningMatch = reasoningMatch) }
         imageSkipNotice = null
         retrySkipNotice = null
         stop()
@@ -1303,7 +1308,7 @@ class ChatViewModel(
      * 扩展通道回复才允许续写。不满足就静默返回 —— 按钮本来也不该出现。
      */
     fun continueMessage(target: UiMessage) {
-        if (target.imageGeneration || isStreaming || apiStyle != ApiStyle.ANTHROPIC) return
+        if (target.imageGeneration || isStreaming || !supportsContinuation) return
         val conversationId = currentConversationId ?: return
         val index = messages.indexOfFirst { it.id == target.id }
         if (index < 0) return

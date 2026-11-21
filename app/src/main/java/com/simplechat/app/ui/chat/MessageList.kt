@@ -503,9 +503,13 @@ private fun MessageRow(
             message.reasoning?.takeIf { it.isNotEmpty() }?.let {
                 Text(stringResource(R.string.large_message_reasoning), style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-                CompositionLocalProvider(LocalSearchHighlight provides null) { PagedMessageBody(it) }
+                val highlight = LocalSearchHighlight.current.takeIf { search?.reasoningMatch == true }
+                CompositionLocalProvider(LocalSearchHighlight provides highlight) { PagedMessageBody(it) }
             }
-            SelectableText(selecting, selectionState) { PagedMessageBody(message.content, markdown = !isUser) }
+            val highlight = LocalSearchHighlight.current.takeUnless { search?.reasoningMatch == true }
+            CompositionLocalProvider(LocalSearchHighlight provides highlight) {
+                SelectableText(selecting, selectionState) { PagedMessageBody(message.content, markdown = !isUser) }
+            }
             message.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             menu()
             }
@@ -533,6 +537,7 @@ private fun MessageRow(
                 selecting = selecting,
                 selectionState = selectionState,
                 autoCollapseThinking = autoCollapseThinking,
+                reasoningSearchRequest = search?.takeIf { it.reasoningMatch }?.request,
                 // 点一下 = 看这条是谁写的、占多少 token（再点收起）
                 onClick = onTogglePeek,
                 onLongClick = { menuOpen = true },
@@ -883,6 +888,7 @@ fun AssistantBlock(
     autoCollapseThinking: Boolean = true,
     loadingLabel: String? = null,
     loadingWordsUseThemeColor: Boolean = false,
+    reasoningSearchRequest: Long? = null,
 ) {
     /*
      * 初态由设置决定（`TODO.md` 里那条"只写不读"的开关就是这里接上的）：
@@ -894,6 +900,9 @@ fun AssistantBlock(
      */
     var reasoningExpanded by remember(autoCollapseThinking) {
         androidx.compose.runtime.mutableStateOf(!autoCollapseThinking)
+    }
+    LaunchedEffect(reasoningSearchRequest) {
+        if (reasoningSearchRequest != null) reasoningExpanded = true
     }
     val hasReasoning = message.hasReasoning
     // 只在等待中的消息首次收到思考文本时渐入，已载入的历史消息直接显示。
@@ -983,39 +992,42 @@ fun AssistantBlock(
             Spacer(Modifier.size(MessageGap))
         }
 
-        if (timeline != null) {
-            if (timeline.hasSteps) {
-                TimelinePanel(
-                    view = timeline,
-                    streaming = message.streaming,
-                    expanded = reasoningExpanded,
-                    onToggleExpand = {
-                        reasoningExpanded = !reasoningExpanded
-                        onFoldToggle()
-                    },
-                    onOpenSources = { sourceSheet = it },
-                )
-                Spacer(Modifier.size(MessageGap))
-            }
-        } else {
-            AnimatedVisibility(
-                visibleState = reasoningVisibility,
-                enter = fadeIn(tween(FoldAnimMs, easing = MotionEasing)),
-                exit = ExitTransition.None,
-            ) {
-                Column {
-                    ProcessPanel(
-                        reasoning = message.reasoning.orEmpty(),
-                        reasoningStreaming = message.reasoningStreaming,
-                        reasoningSeconds = message.reasoningSeconds,
+        val reasoningHighlight = LocalSearchHighlight.current.takeIf { reasoningSearchRequest != null }
+        CompositionLocalProvider(LocalSearchHighlight provides reasoningHighlight) {
+            if (timeline != null) {
+                if (timeline.hasSteps) {
+                    TimelinePanel(
+                        view = timeline,
+                        streaming = message.streaming,
                         expanded = reasoningExpanded,
-                        // 点开后先停跟底，避免展开的内容把标题推到屏幕外。
                         onToggleExpand = {
                             reasoningExpanded = !reasoningExpanded
                             onFoldToggle()
                         },
+                        onOpenSources = { sourceSheet = it },
                     )
                     Spacer(Modifier.size(MessageGap))
+                }
+            } else {
+                AnimatedVisibility(
+                    visibleState = reasoningVisibility,
+                    enter = fadeIn(tween(FoldAnimMs, easing = MotionEasing)),
+                    exit = ExitTransition.None,
+                ) {
+                    Column {
+                        ProcessPanel(
+                            reasoning = message.reasoning.orEmpty(),
+                            reasoningStreaming = message.reasoningStreaming,
+                            reasoningSeconds = message.reasoningSeconds,
+                            expanded = reasoningExpanded,
+                            // 点开后先停跟底，避免展开的内容把标题推到屏幕外。
+                            onToggleExpand = {
+                                reasoningExpanded = !reasoningExpanded
+                                onFoldToggle()
+                            },
+                        )
+                        Spacer(Modifier.size(MessageGap))
+                    }
                 }
             }
         }
@@ -1039,8 +1051,9 @@ fun AssistantBlock(
                 { url -> sources.firstOrNull { it.url == url || escapeHref(it.url) == url }?.let { sourceSheet = listOf(it) } }
             }
         }
+        val answerHighlight = LocalSearchHighlight.current.takeIf { reasoningSearchRequest == null }
         SelectableText(selecting, selectionState) {
-            CompositionLocalProvider(LocalCitationClick provides onCitationClick) {
+            CompositionLocalProvider(LocalCitationClick provides onCitationClick, LocalSearchHighlight provides answerHighlight) {
                 MarkdownWithMath(content = answer, streaming = message.streaming)
             }
         }

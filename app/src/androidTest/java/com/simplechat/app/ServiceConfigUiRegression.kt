@@ -3,6 +3,7 @@ package com.simplechat.app
 import android.app.Instrumentation
 import android.content.Intent
 import android.graphics.Rect
+import android.os.Bundle
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
@@ -22,6 +23,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
 internal object ServiceConfigUiRegression {
     suspend fun run(instrumentation: Instrumentation, status: (String) -> Unit) {
@@ -44,14 +46,14 @@ internal object ServiceConfigUiRegression {
         }
 
         suspend fun awaitNode(label: String, matches: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo {
-            return withTimeout(5_000) {
+            return withTimeoutOrNull(5_000) {
                 var found = nodes().firstOrNull(matches)
                 while (found == null) {
                     delay(50)
                     found = nodes().firstOrNull(matches)
                 }
-                checkNotNull(found) { "Missing UI node: $label" }
-            }
+                found
+            } ?: error("Missing UI node: $label. Visible: ${nodes().mapNotNull { it.text }.take(12)}")
         }
 
         fun matchesText(node: AccessibilityNodeInfo, label: String): Boolean =
@@ -83,7 +85,9 @@ internal object ServiceConfigUiRegression {
             return awaitNode(label, matches)
         }
 
-        suspend fun tapText(label: String) = click(revealNode(label) { it.isClickable && matchesText(it, label) })
+        suspend fun tapText(label: String) = click(revealNode(label) { node ->
+            matchesText(node, label) && generateSequence(node) { it.parent }.any { it.isClickable }
+        })
         suspend fun awaitText(label: String) = awaitNode(label) { matchesText(it, label) }
         suspend fun revealText(label: String) = revealNode(label) { matchesText(it, label) }
         suspend fun tapBack(toolbar: Boolean) {
@@ -96,7 +100,8 @@ internal object ServiceConfigUiRegression {
         }
 
         suspend fun tapProfilePencil(profileName: String) {
-            val row = revealNode(profileName) { it.isClickable && matchesText(it, profileName) }
+            val title = revealNode(profileName) { matchesText(it, profileName) }
+            val row = generateSequence(title) { it.parent }.firstOrNull { it.isClickable } ?: title
             val rowBounds = Rect().also(row::getBoundsInScreen)
             val label = activity.getString(R.string.api_profile_edit)
             // Every profile has the same pencil description: use the button beside this row.
@@ -107,7 +112,8 @@ internal object ServiceConfigUiRegression {
         }
 
         suspend fun toolSwitch(label: String, checked: Boolean) = revealNode(label) {
-            it.isCheckable && it.isChecked == checked && it.contentDescription?.toString() == label
+            (it.isCheckable && it.isChecked == checked && it.contentDescription?.toString() == label) ||
+                (matchesText(it, label) && generateSequence(it) { node -> node.parent }.any { node -> node.isClickable })
         }
 
         suspend fun checkNoSaveButton() {
@@ -126,7 +132,6 @@ internal object ServiceConfigUiRegression {
             store.migrateApiProfiles()
             val originalSettings = store.flow.first()
             val legacyId = originalSettings.activeApiProfileId
-            val legacyName = originalSettings.apiProfiles.single { it.id == legacyId }.name
             val profileName = "Fixture tool profile"
             store.createApiProfile(profileName)
             store.setApiKey("fixture-key")
@@ -153,27 +158,63 @@ internal object ServiceConfigUiRegression {
             waitForTransition()
             revealText(profileTitle)
             revealText(toolTitle)
-            revealText(activity.getString(R.string.service_active_profile, legacyName))
+            revealText(activity.getString(R.string.service_shared_settings))
+
+            val imageTitle = activity.getString(R.string.image_api_title)
+            tapText(imageTitle)
+            waitForTransition()
+            click(toolSwitch(activity.getString(R.string.image_api_independent), checked = false))
+            click(toolSwitch(activity.getString(R.string.image_api_reuse_key), checked = true))
+            suspend fun setField(resource: Int, input: String) {
+                val label = activity.getString(resource)
+                suspend fun fieldBounds(): Rect = Rect().also(revealText(label)::getBoundsInScreen)
+                val labelBounds = fieldBounds()
+                val editable = nodes().filter { node ->
+                    node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_SET_TEXT }
+                }
+                val field = editable.firstOrNull { it.contentDescription?.toString() == label }
+                    ?: editable.filter { Rect().also(it::getBoundsInScreen).centerY() >= labelBounds.centerY() }
+                        .minByOrNull { Rect().also(it::getBoundsInScreen).centerY() }
+                    ?: error("Missing editable field: $label")
+                val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, input) }
+                check(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args))
+            }
+            setField(R.string.image_api_base_url, "https://image-fixture.invalid/v1")
+            setField(R.string.image_api_key, "fixture-image-key")
+            setField(R.string.image_api_model, "fixture-image-model")
+            revealText(activity.getString(R.string.image_api_test_models))
+            checkNoSaveButton()
+            tapBack(toolbar = true)
+            withTimeout(5_000) { store.flow.first { it.imageGenApi.enabled } }
+            check(store.flow.first().imageGenApi.key("unused") == "fixture-image-key")
+            waitForTransition()
+            tapText(imageTitle)
+            waitForTransition()
+            revealText(activity.getString(R.string.api_profile_key_saved))
+            tapBack(toolbar = false)
+            waitForTransition()
+            awaitText(apiTitle)
+            status("Image API: separate key auto-saves on Back and shows the saved status when reopened")
 
             for (toolbar in listOf(true, false)) {
                 tapProfilePencil(profileName)
                 waitForTransition()
                 awaitText(profileName)
-                revealNode(renameLabel) { it.isClickable && matchesText(it, renameLabel) }
+                revealText(renameLabel)
                 revealText(providerLabel)
                 check(store.flow.first().activeApiProfileId == legacyId) { "Pencil activated the edited profile" }
                 tapBack(toolbar)
                 waitForTransition()
                 awaitText(apiTitle)
                 revealText(profileTitle)
-                revealText(activity.getString(R.string.service_active_profile, legacyName))
+                revealText(activity.getString(R.string.service_shared_settings))
             }
 
             tapText(profileName)
             withTimeout(5_000) { store.flow.first { it.activeApiProfileId == favoriteId } }
             waitForTransition()
             awaitText(apiTitle)
-            revealText(activity.getString(R.string.service_active_profile, profileName))
+            revealText(activity.getString(R.string.service_shared_settings))
             status("API profiles: pencil opens the inactive profile, both Back controls return to API, and tapping a row switches in place")
 
             for ((files, mode) in listOf(false to ThemeMode.LIGHT, true to ThemeMode.DARK)) {
@@ -188,7 +229,7 @@ internal object ServiceConfigUiRegression {
 
                 tapText(title)
                 waitForTransition()
-                revealNode(endpoint) { it.isEditable && it.contentDescription?.toString() == endpoint }
+                revealText(endpoint)
                 click(toolSwitch(enableLabel, checked = false))
                 toolSwitch(enableLabel, checked = true)
                 waitForTransition()
@@ -236,9 +277,23 @@ internal object ServiceConfigUiRegression {
             waitForTransition()
             awaitText(rootTitle)
             status("API page: both Back controls return to Settings")
+
+            tapText(activity.getString(R.string.tts_voice))
+            waitForTransition()
+            val readAloudLabel = activity.getString(R.string.tts_enabled)
+            val voiceDefault = activity.getString(R.string.tts_voice_default)
+            revealText(voiceDefault)
+            click(toolSwitch(readAloudLabel, checked = true))
+            withTimeout(5_000) { store.flow.first { !it.readAloudEnabled } }
+            waitForTransition()
+            check(nodes().none { matchesText(it, voiceDefault) })
+            click(toolSwitch(readAloudLabel, checked = false))
+            withTimeout(5_000) { store.flow.first { it.readAloudEnabled } }
+            revealText(voiceDefault)
+            status("Read aloud switch hides and restores the voice list")
             store.selectApiProfile(legacyId)
             val legacy = store.flow.first()
-            check(!legacy.searchApi.enabled && !legacy.filesApi.enabled)
+            check(legacy.searchApi.enabled && legacy.filesApi.enabled)
         } finally {
             instrumentation.runOnMainSync { activity.finish() }
             scope.coroutineContext[Job]!!.cancelAndJoin()

@@ -51,7 +51,7 @@ class HistoryViewModel(
 
     private var searchLimit = SearchPageSize
     private var searchJob: Job? = null
-    private var includeInactiveBranches: Boolean? = null
+    private var searchOptions: Pair<Boolean, Boolean>? = null
 
     /** 搜索框内容与结果一起发布，避免用新关键词渲染旧结果。 */
     val query: String get() = searchPage.value.query
@@ -74,10 +74,10 @@ class HistoryViewModel(
 
     init {
         viewModelScope.launch {
-            (settingsStore?.flow?.map { it.searchInactiveBranches } ?: flowOf(true))
+            (settingsStore?.flow?.map { it.searchInactiveBranches to it.searchReasoning } ?: flowOf(false to false))
                 .distinctUntilChanged()
-                .collect { includeInactive ->
-                    includeInactiveBranches = includeInactive
+                .collect { options ->
+                    searchOptions = options
                     if (query.isNotBlank()) startSearch(query)
                 }
         }
@@ -101,11 +101,11 @@ class HistoryViewModel(
             else -> SearchPage(query = value, isLoading = true)
         }
         if (keyword.isEmpty()) return
-        val includeInactive = includeInactiveBranches ?: return
+        val (includeInactive, includeReasoning) = searchOptions ?: return
         val limit = searchLimit
         searchJob = viewModelScope.launch {
             if (!keepHits) delay(SearchDebounceMs)
-            repository.searchConversations(keyword, limit + 1, includeInactive).collect { hits ->
+            repository.searchConversations(keyword, limit + 1, includeInactive, includeReasoning).collect { hits ->
                 // A cancelled query may still finish its database read.
                 currentCoroutineContext().ensureActive()
                 _searchPage.value = SearchPage(

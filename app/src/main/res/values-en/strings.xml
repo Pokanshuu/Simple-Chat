@@ -797,6 +797,19 @@
     <string name="settings_memory_status_basic">Cross-chat memory</string>
     <string name="settings_memory_status_enhanced">Enhanced memory</string>
     <string name="settings_memory_status_indexing">Building index…</string>
+    <string name="settings_search_reasoning">Search reasoning content</string>
+    <string name="tts_enabled">Enable read aloud</string>
+    <string name="image_api_protocol">API protocol</string>
+    <string name="image_api_connection">Connection</string>
+    <string name="image_api_options">Model and output</string>
+    <string name="image_api_test_models">Test connection and fetch models</string>
+    <string name="image_api_pick_model">Choose from model list</string>
+    <string name="service_shared_settings">Tool settings are shared across chat API profiles. Reused URLs and keys come from the active chat API profile.</string>
+    <string name="reasoning_default">Default</string>
+    <string name="reasoning_minimal">minimal</string>
+    <string name="reasoning_medium">medium</string>
+    <string name="reasoning_xhigh">xhigh</string>
+    <string name="reasoning_ultra">ultra</string>
 </resources>
 
 

@@ -195,7 +195,7 @@ internal fun modelListingRequest(baseUrl: String, apiKey: String, apiStyle: ApiS
     }
     return Request.Builder().url(url).get().header("Accept", "application/json").apply {
         if (nativeAnthropic) {
-            header("anthropic-version", "2023-06-01")
+            header("anthropic-version", com.simplechat.app.net.anthropic.claudeVersionFor(baseUrl) ?: "2023-06-01")
             if (apiKey.isNotBlank()) header("x-api-key", apiKey)
         } else if (apiKey.isNotBlank()) {
             header("Authorization", "Bearer $apiKey")

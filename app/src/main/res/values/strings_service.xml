@@ -7,7 +7,6 @@
     <string name="service_uploading">正在上传并解析文件…</string>
     <string name="service_long_text_prompt">本轮用户的完整输入在 message.txt 文件中。请完整阅读，并按文件中的用户要求作答。</string>
     <string name="service_group">独立工具 API</string>
-    <string name="service_active_profile">工具设置应用于当前 API 配置：%1$s</string>
     <string name="service_connection">连接</string>
     <string name="service_search_title">搜索与网页读取 API</string>
     <string name="service_files_title">文件 API</string>

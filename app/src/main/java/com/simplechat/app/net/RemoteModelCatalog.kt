@@ -69,15 +69,21 @@ internal fun parseRemoteModelCatalog(json: Json, raw: String): RemoteModelCatalo
         val modalities = (entry["input_modalities"] as? JsonArray)
             ?: (entry["inputModalities"] as? JsonArray)
             ?: (architecture?.get("input_modalities") as? JsonArray)
+        val imageInput = ((capabilities?.get("image_input")) as? JsonObject)?.get("supported").flag()
+        val nativeThinking = capabilities?.get("thinking") as? JsonObject
         val vision = entry["supports_vision"].flag() ?: entry["supportsVision"].flag()
-            ?: capabilities?.get("vision").flag()
+            ?: capabilities?.get("vision").flag() ?: imageInput
             ?: modalities?.any { it.label()?.lowercase() in setOf("image", "image_url") }
         val effort = entry["effort"] as? JsonObject
+        val nativeLevels = (capabilities?.get("effort") as? JsonObject)
+            ?.filter { (key, value) -> key != "supported" && (value as? JsonObject)?.get("supported").flag() == true }
+            ?.keys?.toList()?.takeIf { it.isNotEmpty() }
         val levels = ((effort?.get("supported_levels") ?: entry["reasoning_effort_levels"]) as? JsonArray)
-            ?.mapNotNull { it.label()?.lowercase() }?.distinct()
+            ?.mapNotNull { it.label()?.lowercase() }?.distinct() ?: nativeLevels
         val parameters = (entry["supported_parameters"] as? JsonArray)?.mapNotNull { it.label() }.orEmpty()
         val thinking = entry["supports_thinking"].flag() ?: entry["supportsThinking"].flag()
             ?: capabilities?.get("reasoning").flag() ?: capabilities?.get("thinking").flag()
+            ?: nativeThinking?.get("supported").flag()
             ?: levels?.any { it !in ReasoningWire.offLevels }
             ?: true.takeIf { parameters.any { it in setOf("reasoning", "reasoning_effort", "thinking", "enable_thinking") } }
         val wire = when {

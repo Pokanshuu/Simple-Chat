@@ -31,23 +31,27 @@ internal object ServiceApiRegression {
             val a = store.flow.first().activeApiProfileId
             val config = ServiceApiConfig(enabled = true, baseUrl = "https://api.deepseek.com", reuseChatKey = false,
                 apiKeyEncrypted = store.encryptServiceKey("file-fixture"))
-            store.setServiceApi(true, config, a)
-            store.setServiceApi(false, config.copy(count = 7), a)
+            store.setServiceApi(true, config)
+            store.setServiceApi(false, config.copy(count = 7))
+            val image = ImageGenConfig(enabled = true, baseUrl = "https://images.example/v1", reuseChatKey = false,
+                modelId = "image-fixture", apiKeyEncrypted = store.encryptServiceKey("image-key-fixture"))
+            store.setImageGenApi(image)
             check(store.flow.first().filesApi.key("unused") == "file-fixture")
             store.createApiProfile("B")
             val b = store.flow.first().activeApiProfileId
-            check(!store.flow.first().filesApi.enabled && !store.flow.first().searchApi.enabled)
-            store.setServiceApi(true, config, a)
-            check(!store.flow.first().filesApi.enabled)
+            check(store.flow.first().filesApi == config && store.flow.first().searchApi.count == 7)
+            check(store.flow.first().imageGenApi == image)
             store.selectApiProfile(a)
             check(store.flow.first().filesApi == config && store.flow.first().searchApi.count == 7)
             store.createApiProfile("copy", true)
             check(store.flow.first().filesApi == config)
             store.selectApiProfile(b); store.selectApiProfile(a)
-            check(SettingsStore(ctx, preferences).flow.first().filesApi.key("unused") == "file-fixture")
+            val reopened = SettingsStore(ctx, preferences).flow.first()
+            check(reopened.filesApi.key("unused") == "file-fixture")
+            check(reopened.imageGenApi.key("unused") == "image-key-fixture")
             val disk = File(root, "prefs.preferences_pb").readBytes().toString(Charsets.ISO_8859_1)
-            check(!disk.contains("chat-fixture") && !disk.contains("file-fixture"))
-            status("independent tool config: encryption, restart, profile switching/copy and stale-save guard")
+            check(!disk.contains("chat-fixture") && !disk.contains("file-fixture") && !disk.contains("image-key-fixture"))
+            status("shared tool config: encryption, restart, profile switching and copy")
 
             val uploads = AtomicInteger()
             val client = ChatApi.defaultClient().newBuilder().addInterceptor { chain ->

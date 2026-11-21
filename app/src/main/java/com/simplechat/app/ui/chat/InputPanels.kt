@@ -173,9 +173,22 @@ fun ThinkingPanelContent(
     webSearchEnabled: Boolean = false,
     onToggleWebSearch: () -> Unit = {},
     modifier: Modifier = Modifier,
+    supportsExplicitThinkingOff: Boolean = false,
 ) {
     val colors = LocalChatColors.current
-    val levels = ReasoningLevel.sliderOrder
+    val levels = ReasoningLevel.forModel(settings.model)
+    val selectedLevel = if (settings.reasoningLevel in levels) settings.reasoningLevel else {
+        val effort = settings.model.resolveReasoningEffort(settings.reasoningLevel.apiValue)
+        levels.firstOrNull { it.apiValue == effort } ?: ReasoningLevel.OFF
+    }
+    val selectedTick = levels.indexOf(selectedLevel)
+    val defaultLabel = stringResource(R.string.reasoning_default)
+    val labels = levels.map { level ->
+        val usesDefault = level == ReasoningLevel.OFF && !supportsExplicitThinkingOff && settings.model.effortLevels?.none {
+            it in com.simplechat.app.net.ReasoningWire.offLevels
+        } == true
+        if (usesDefault) defaultLabel else level.label
+    }
     val supportsThinking = settings.model.supportsThinking
 
     Column(modifier = modifier.fillMaxWidth()) {
@@ -216,7 +229,7 @@ fun ThinkingPanelContent(
             text = stringResource(R.string.input_thinking),
             trailing = {
                 Text(
-                    text = if (supportsThinking) settings.reasoningLevel.label else stringResource(R.string.input_model_unsupported),
+                    text = if (supportsThinking) labels[selectedTick] else stringResource(R.string.input_model_unsupported),
                     style = MaterialTheme.typography.labelMedium,
                     color = if (supportsThinking) MaterialTheme.colorScheme.primary else colors.placeholder,
                 )
@@ -226,12 +239,12 @@ fun ThinkingPanelContent(
         Spacer(Modifier.size(4.dp))
 
         // 与「字体大小」页用**同一个** AppSlider：正圆指示器、按压缩放、点击可跳档
-        AppSlider(
-            value = ReasoningLevel.sliderPositionOf(settings.reasoningLevel).toFloat(),
+        if (levels.size > 1) AppSlider(
+            value = selectedTick.toFloat(),
             onValueChange = { raw ->
                 onSettingsChange(
                     settings.copy(
-                        reasoningLevel = ReasoningLevel.fromSliderPosition(raw.roundToInt()),
+                        reasoningLevel = levels[raw.roundToInt().coerceIn(levels.indices)],
                     ),
                 )
             },
@@ -239,8 +252,8 @@ fun ThinkingPanelContent(
             intervals = (levels.size - 1).coerceAtLeast(0),
             enabled = supportsThinking,
             // 文案交给滑块自己排，中心才会和刻度严格对齐
-            tickLabels = levels.map { it.label },
-            selectedTick = ReasoningLevel.sliderPositionOf(settings.reasoningLevel),
+            tickLabels = labels,
+            selectedTick = selectedTick,
         )
 
         Spacer(Modifier.size(8.dp))

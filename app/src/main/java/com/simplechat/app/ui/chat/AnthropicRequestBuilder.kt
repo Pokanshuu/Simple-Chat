@@ -118,7 +118,8 @@ internal fun buildAnthropicRequest(
         maxTokens?.takeIf { it > 0 } ?: AnthropicRequestDefaults.MaxTokens
     }
     effectiveMaxTokens = effectiveMaxTokens?.let { minOf(it, outputLimit ?: it) }
-    val vanillaThinking = !deepSeekExtensions && thinkingEnabled &&
+    val claudeAdaptive = if (deepSeekExtensions) null else com.simplechat.app.net.claudeAdaptiveModel(model)
+    val vanillaThinking = !deepSeekExtensions && claudeAdaptive == null && thinkingEnabled &&
         (outputLimit == null || outputLimit > AnthropicRequestDefaults.MinThinkingBudgetTokens)
     var thinkingBudget = AnthropicRequestDefaults.MaxThinkingBudgetTokens
     if (vanillaThinking) {
@@ -182,6 +183,10 @@ internal fun buildAnthropicRequest(
         thinking = when {
             deepSeekExtensions && thinkingEnabled -> AnthropicThinking.Enabled
             deepSeekExtensions -> AnthropicThinking.Disabled
+            claudeAdaptive != null && (thinkingEnabled || !claudeAdaptive.canDisableThinking) -> AnthropicThinking(
+                "adaptive", display = "summarized".takeIf { claudeAdaptive.explicitDisplay },
+            )
+            claudeAdaptive != null -> AnthropicThinking.Disabled
             vanillaThinking -> AnthropicThinking.enabledWithBudget(
                 thinkingBudget,
             )
@@ -195,12 +200,17 @@ internal fun buildAnthropicRequest(
         temperature = when {
             serverSampling -> null
             deepSeekExtensions -> temperature.takeUnless { thinkingEnabled }
+            claudeAdaptive != null && (!claudeAdaptive.acceptsTemperature || thinkingEnabled) -> null
             !vanillaThinking -> temperature ?: 1.0
             else -> null
         },
         topP = topP.takeIf { deepSeekExtensions && !serverSampling && com.simplechat.app.net.adjustableTopP(model, thinkingEnabled) },
-        outputConfig = if (deepSeekExtensions && thinkingEnabled && reasoningEffort != null)
-            com.simplechat.app.net.anthropic.AnthropicOutputConfig(reasoningEffort) else null,
+        outputConfig = when {
+            !thinkingEnabled -> null
+            deepSeekExtensions -> reasoningEffort
+            claudeAdaptive != null -> reasoningEffort
+            else -> null
+        }?.let { com.simplechat.app.net.anthropic.AnthropicOutputConfig(it) },
     )
 }
 

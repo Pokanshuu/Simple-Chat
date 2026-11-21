@@ -249,7 +249,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                             scope.launch {
                                 try {
                                     if (!docked) drawerState.close()
-                                    chatViewModel.openConversation(hit.conversation.id, hit.messageId, displayedPage.query.trim())
+                                    chatViewModel.openConversation(hit.conversation.id, hit.messageId, displayedPage.query.trim(), hit.reasoningMatch)
                                 } finally {
                                     openingSearchResult = false
                                 }
@@ -402,7 +402,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                                                         readingSearchResult = true
                                                         scope.launch {
                                                             try {
-                                                                chatViewModel.openConversation(hit.conversation.id, hit.messageId, keyword)
+                                                                chatViewModel.openConversation(hit.conversation.id, hit.messageId, keyword, hit.reasoningMatch)
                                                                 if (!searchWasDocked) exitSearch()
                                                             } finally { openingSearchResult = false }
                                                         }

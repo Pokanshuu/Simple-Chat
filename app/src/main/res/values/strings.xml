@@ -807,6 +807,19 @@
     <string name="settings_memory_status_basic">跨对话记忆</string>
     <string name="settings_memory_status_enhanced">增强记忆</string>
     <string name="settings_memory_status_indexing">建立索引中…</string>
+    <string name="settings_search_reasoning">搜索深度思考内容</string>
+    <string name="tts_enabled">启用朗读</string>
+    <string name="image_api_protocol">接口协议</string>
+    <string name="image_api_connection">连接</string>
+    <string name="image_api_options">模型与输出</string>
+    <string name="image_api_test_models">测试连接并拉取模型</string>
+    <string name="image_api_pick_model">从模型列表选择</string>
+    <string name="service_shared_settings">工具配置在所有聊天 API 配置中通用。复用聊天地址或密钥时，使用当前聊天 API 的值。</string>
+    <string name="reasoning_default">默认</string>
+    <string name="reasoning_minimal">minimal</string>
+    <string name="reasoning_medium">medium</string>
+    <string name="reasoning_xhigh">xhigh</string>
+    <string name="reasoning_ultra">ultra</string>
 </resources>
 
 

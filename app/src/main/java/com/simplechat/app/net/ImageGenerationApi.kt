@@ -5,6 +5,7 @@ import com.simplechat.app.data.OPENAI_DEFAULT_IMAGE_MODEL
 import com.simplechat.app.data.usesGeminiInteractions
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.net.SocketTimeoutException
 import java.util.Base64
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -12,6 +13,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import okhttp3.Response
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -27,6 +29,23 @@ class ImageGenerationApi(
         .retryOnConnectionFailure(false).followRedirects(false).followSslRedirects(false).build(),
 ) {
     private val json = Json { ignoreUnknownKeys = true }
+
+    /** List models without creating an image or consuming image generation quota. */
+    suspend fun fetchModels(config: ImageGenConfig, chatBaseUrl: String, chatKey: String): List<String> =
+        withTimeoutOrNull(30_000) {
+            withContext(Dispatchers.IO) {
+                val request = imageModelListingRequest(config, chatBaseUrl, chatKey)
+                cancellableRequest(request) { response ->
+                    if (!response.isSuccessful) throw ServiceApi.HttpFailure(response.code, null)
+                    val source = response.body.source()
+                    val limit = 2 * 1024 * 1024L
+                    if (source.request(limit + 1)) throw IOException("Model listing is too large")
+                    parseRemoteModelCatalog(json, source.readUtf8()).ids.map {
+                        if (config.adapter == "GEMINI") it.removePrefix("models/") else it
+                    }.distinct()
+                }
+            }
+        } ?: throw SocketTimeoutException("Model listing timed out")
 
     suspend fun generateIndependent(config: ImageGenConfig, chatBaseUrl: String, chatKey: String, prompt: String): GeneratedImage {
         require(config.enabled) { "Independent image API is disabled" }
@@ -218,7 +237,7 @@ class ImageGenerationApi(
             throw IOException("Image URL must use HTTPS")
         }
         val request = Request.Builder().url(parsed).get().build()
-        cancellableRequest(request) { response ->
+        cancellableRequest(request, downloads) { response ->
             if (!response.isSuccessful) throw IOException("Image download failed (HTTP ${response.code})")
             val body = response.body
             if (body.contentLength() > MaxImageBytes) throw IOException("Generated image is too large")
@@ -236,8 +255,12 @@ class ImageGenerationApi(
         }
     }
 
-    private suspend fun <T> cancellableRequest(request: Request, action: suspend (Response) -> T): T {
-        val call = (if (request.method == "GET") downloads else client).newCall(request)
+    private suspend fun <T> cancellableRequest(
+        request: Request,
+        requestClient: OkHttpClient = client,
+        action: suspend (Response) -> T,
+    ): T {
+        val call = requestClient.newCall(request)
         val cancellation = call.cancelWithCoroutine()
         try {
             return call.execute().use { action(it) }
@@ -278,4 +301,33 @@ class ImageGenerationApi(
     private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
 
     companion object { private const val MaxImageBytes = 20 * 1024 * 1024 }
+}
+
+internal fun imageModelListingRequest(config: ImageGenConfig, chatBaseUrl: String, chatKey: String): Request {
+    val base = config.connectionBase(chatBaseUrl).trimEnd('/')
+        .removeSuffix("/chat/completions").removeSuffix("/responses")
+    val endpoint = when (config.adapter) {
+        "GEMINI" -> {
+            val root = base.substringBefore("/models/").removeSuffix("/models")
+                .removeSuffix("/openai").removeSuffix("/interactions")
+            if (root.endsWith("/v1") || root.endsWith("/v1beta")) "$root/models" else "$root/v1beta/models"
+        }
+        "DASHSCOPE" -> {
+            val root = base.substringBefore("/api/v1").substringBefore("/compatible-mode/v1")
+            "$root/compatible-mode/v1/models"
+        }
+        else -> {
+            val root = base.removeSuffix("/images/generations").removeSuffix("/models")
+            if (root.endsWith("/v1")) "$root/models" else "$root/v1/models"
+        }
+    }
+    val key = config.key(chatKey)
+    val url = endpoint.toHttpUrlOrNull() ?: throw IllegalArgumentException("Invalid image model listing URL")
+    val listingUrl = if (config.adapter == "GEMINI" && url.host == "generativelanguage.googleapis.com") {
+        url.newBuilder().addQueryParameter("pageSize", "500").build()
+    } else url
+    return Request.Builder().url(listingUrl).get().header("Accept", "application/json").apply {
+        if (config.adapter == "GEMINI") header("x-goog-api-key", key)
+        else header("Authorization", "Bearer $key")
+    }.build()
 }

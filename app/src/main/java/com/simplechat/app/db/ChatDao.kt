@@ -35,9 +35,13 @@ interface ConversationDao {
     @Query(
         """
         SELECT c.*,
-            CASE WHEN m.id IS NULL THEN NULL ELSE
-                substr(m.content, max(1, instr(lower(m.content), lower(:query)) - 60), max(180, length(:query) + 120))
+            CASE WHEN m.id IS NULL THEN NULL
+                 WHEN instr(lower(m.content), lower(:query)) > 0 THEN
+                    substr(m.content, max(1, instr(lower(m.content), lower(:query)) - 60), max(180, length(:query) + 120))
+                 ELSE substr(m.reasoning, max(1, instr(lower(m.reasoning), lower(:query)) - 60), max(180, length(:query) + 120))
             END AS snippet,
+            CASE WHEN m.id IS NOT NULL AND instr(lower(m.content), lower(:query)) = 0
+                THEN 1 ELSE 0 END AS reasoningMatch,
             m.id AS messageId, m.role AS messageRole, m.createdAt AS messageCreatedAt,
             CASE WHEN m.id IS NOT NULL THEN
                 (SELECT count(*) FROM messages sibling WHERE sibling.conversationId = m.conversationId
@@ -49,7 +53,8 @@ interface ConversationDao {
             END AS variantCount
         FROM conversations c
         LEFT JOIN messages m ON m.conversationId = c.id
-            AND instr(lower(m.content), lower(:query)) > 0
+            AND (instr(lower(m.content), lower(:query)) > 0
+                 OR (:includeReasoning AND instr(lower(m.reasoning), lower(:query)) > 0))
             AND (:includeInactiveBranches OR m.active = 1)
         WHERE length(:query) > 0 AND (m.id IS NOT NULL OR instr(lower(c.title), lower(:query)) > 0)
         ORDER BY c.pinned DESC,
@@ -60,8 +65,9 @@ interface ConversationDao {
     )
     fun search(
         query: String,
-        includeInactiveBranches: Boolean = true,
+        includeInactiveBranches: Boolean = false,
         limit: Int = Int.MAX_VALUE,
+        includeReasoning: Boolean = false,
     ): Flow<List<ConversationSearchHit>>
 
     @Query("SELECT * FROM conversations WHERE id = :id")
@@ -152,6 +158,7 @@ data class ConversationSearchHit(
     val messageCreatedAt: Long? = null,
     val variantIndex: Int? = null,
     val variantCount: Int = 0,
+    val reasoningMatch: Boolean = false,
 )
 
 /** Bounded fields for lossless export of messages larger than CursorWindow. */

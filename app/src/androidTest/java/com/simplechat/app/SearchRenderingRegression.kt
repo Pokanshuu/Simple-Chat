@@ -15,6 +15,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.room.Room
+import com.simplechat.app.data.ChatRepository
+import com.simplechat.app.db.AppDatabase
+import kotlinx.coroutines.flow.first
 import com.simplechat.app.ui.chat.*
 import com.simplechat.app.ui.markdown.LocalSearchHighlightObserver
 import com.simplechat.app.ui.markdown.SearchHighlightState
@@ -26,6 +30,26 @@ import kotlinx.coroutines.withTimeout
 
 internal object SearchRenderingRegression {
     suspend fun run(instrumentation: Instrumentation, status: (String) -> Unit) {
+        val context = instrumentation.targetContext
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
+        try {
+            val repository = ChatRepository(db, context)
+            val conversation = repository.createConversation(ConversationMode.CREATIVE, "CUSTOM", "fixture")
+            val parent = repository.appendUserMessage(conversation, "question")
+            val hidden = repository.addActiveVariant(conversation, parent.id, MessageRole.ASSISTANT,
+                "earlier answer", reasoning = "hidden-reasoning-keyword")
+            val active = repository.addActiveVariant(conversation, parent.id, MessageRole.ASSISTANT,
+                "current answer", reasoning = "current-reasoning-keyword")
+            check(repository.searchConversations("reasoning-keyword").first().isEmpty())
+            val hit = repository.searchConversations("reasoning-keyword", includeReasoning = true).first().single()
+            check(hit.messageId == active.id && hit.reasoningMatch && hit.snippet == "current-reasoning-keyword")
+            val allHits = repository.searchConversations("reasoning-keyword", includeInactiveBranches = true,
+                includeReasoning = true).first()
+            check(allHits.mapNotNull { it.messageId }.toSet() == setOf(active.id, hidden.id))
+        } finally {
+            db.close()
+        }
+        status("reasoning search uses independent reasoning and inactive branch settings")
         val automation = instrumentation.uiAutomation
         val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
@@ -41,6 +65,7 @@ internal object SearchRenderingRegression {
         try {
             val paragraphs = (1..80).joinToString("\n\n") { "这是第 $it 段普通正文，含有 **正常加粗** 和可读文字。" }
             val cases = listOf(
+                Triple("reasoning", MessageRole.ASSISTANT, "章鱼：搜索会自动展开思考内容。"),
                 Triple("start", MessageRole.ASSISTANT, "**章鱼**：首条短消息也位于中间偏上。"),
                 Triple("markdown", MessageRole.ASSISTANT, "### 保留正常标题\n\n$paragraphs\n\n- **章鱼**：这条命中必须保留加粗和列表排版。\n\n后文保持不动。"),
                 Triple("code", MessageRole.ASSISTANT, "$paragraphs\n\n```kotlin\n" + (1..100).joinToString("\n") { "val line$it = $it" } + "\nval keyword = \"章鱼\"\n```"),
@@ -52,8 +77,12 @@ internal object SearchRenderingRegression {
             for (theme in listOf(ThemeMode.DARK, ThemeMode.LIGHT)) {
               for ((name, role, body) in cases) {
                 val query = "章鱼${name}${theme.name}"
-                val message = UiMessage("search-$theme-$name", role, body.replace("章鱼", query), status = MessageStatus.DONE)
-                val target = mutableStateOf<SearchTarget?>(SearchTarget(message.id, query, ++request, ready = true))
+                val reasoningMatch = name == "reasoning"
+                val content = body.replace("章鱼", query)
+                val message = UiMessage("search-$theme-$name", role,
+                    content = if (reasoningMatch) "回答正文" else content,
+                    reasoning = content.takeIf { reasoningMatch }, status = MessageStatus.DONE)
+                val target = mutableStateOf<SearchTarget?>(SearchTarget(message.id, query, ++request, ready = true, reasoningMatch = reasoningMatch))
                 var finished = false
                 var obstruction = 0
                 val highlightState = java.util.concurrent.atomic.AtomicReference<SearchHighlightState?>()

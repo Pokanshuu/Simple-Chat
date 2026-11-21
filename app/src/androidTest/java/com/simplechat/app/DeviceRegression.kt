@@ -171,12 +171,11 @@ class DeviceRegression : Instrumentation() {
             check(repeated.alreadyPresent == 6 && repeated.conversations == 0)
             passed("repeat incremental import is idempotent")
 
-            val hits = repository.searchConversations("FIND_DEVICE_KEYWORD").first()
+            val hits = repository.searchConversations("FIND_DEVICE_KEYWORD", includeInactiveBranches = true).first()
             val hit = hits.single()
             check(hit.messageId == "deepseek-branches-2")
             check(repository.searchConversations(
                 "FIND_DEVICE_KEYWORD",
-                includeInactiveBranches = false,
             ).first().isEmpty())
             check(repository.searchConversations(
                 "new branch",
@@ -294,7 +293,7 @@ class DeviceRegression : Instrumentation() {
                 awaitBranch(1, 0, 2)
                 switchTo(1)
                 awaitBranch(3, 1, 2)
-                val hits = db.conversationDao().search("branch-test").first().filter { it.conversation.id == branchId }
+                val hits = db.conversationDao().search("branch-test", includeInactiveBranches = true).first().filter { it.conversation.id == branchId }
                 check(hits.map { it.variantIndex }.sortedBy { it } == listOf(0, 1))
                 val newBranch = repository.addActiveVariant(branchId, parent, role, "new after deletion")
                 check(newBranch.variantIndex == 2 && newBranch.variantCount == 3)

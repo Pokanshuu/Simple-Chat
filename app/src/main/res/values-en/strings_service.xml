@@ -7,7 +7,6 @@
     <string name="service_uploading">Uploading and parsing files…</string>
     <string name="service_long_text_prompt">The complete user input for this turn is in message.txt. Read it and respond to the user request in the file.</string>
     <string name="service_group">Independent Tool API</string>
-    <string name="service_active_profile">Tool settings apply to the active API profile: %1$s</string>
     <string name="service_connection">Connection</string>
     <string name="service_search_title">Search and Fetch API</string>
     <string name="service_files_title">Files API</string>

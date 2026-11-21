@@ -224,9 +224,11 @@ fun ChatScreen(
      * 官方域提供）。不可用时**整颗按钮不出现** —— 用户要求：不支持的 API 直接隐藏。
      */
     val readAloudAvailable =
-        !com.simplechat.app.net.DeepSeekTts.isOfficialVoice(vm.ttsVoiceName) || vm.officialTts != null
+        ReadAloudEnabled && vm.readAloudEnabled &&
+            (!com.simplechat.app.net.DeepSeekTts.isOfficialVoice(vm.ttsVoiceName) || vm.officialTts != null)
 
-    AutoReadAloudEffect(vm, ReadAloudEnabled && readAloudAvailable, speaker::read, speaker::stop)
+    LaunchedEffect(readAloudAvailable) { if (!readAloudAvailable) speaker.stop() }
+    AutoReadAloudEffect(vm, readAloudAvailable, speaker::read, speaker::stop)
 
     val microphonePermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -1091,7 +1093,7 @@ fun ChatScreen(
         } else ChatTopBar(
             title = vm.conversationTitle(),
             autoReadAloud = vm.autoReadAloud,
-            readAloudAvailable = ReadAloudEnabled && readAloudAvailable,
+            readAloudAvailable = readAloudAvailable,
             onToggleAutoReadAloud = {
                 if (vm.autoReadAloud) speaker.stop()
                 vm.toggleAutoReadAloud()
@@ -1201,7 +1203,7 @@ fun ChatScreen(
                                 resumeFollowing()
                                 vm.regenerate(message)
                             },
-                            supportsContinuation = vm.apiStyle == ApiStyle.ANTHROPIC,
+                            supportsContinuation = vm.supportsContinuation,
                             onContinue = { message ->
                                 /*
                                  * 续写**跟底**：新内容接在这条末尾，用户按它就是想看接下来写什么。
@@ -1210,14 +1212,12 @@ fun ChatScreen(
                                 resumeFollowing()
                                 vm.continueMessage(message)
                             },
-                            // 朗读暂时下线（见 ReadAloudEnabled）：开关关着时按钮不出现、
-                            // TTS 引擎也不会被初始化
-                            speakingId = if (ReadAloudEnabled && readAloudAvailable) speaker.speakingId else null,
-                            readAloudAvailable = ReadAloudEnabled && readAloudAvailable,
+                            speakingId = if (readAloudAvailable) speaker.speakingId else null,
+                            readAloudAvailable = readAloudAvailable,
                             autoCollapseThinking = vm.autoCollapseThinking,
                             onSpeak = { message ->
                                 // 朗读正文（不是时间线里的过程文字）：用户要听的是回答本身
-                                if (ReadAloudEnabled) speaker.toggle(message.id, message.content)
+                                if (readAloudAvailable) speaker.toggle(message.id, message.content)
                             },
                             onEdit = { message ->
                                 if (composerOwner == vm.currentConversationId.orEmpty()) {
@@ -1615,6 +1615,8 @@ fun ChatScreen(
                         showWebSearch = vm.supportsWebSearch,
                         webSearchEnabled = vm.webSearch,
                         onToggleWebSearch = { vm.toggleWebSearch() },
+                        supportsExplicitThinkingOff = vm.apiStyle == ApiStyle.ANTHROPIC &&
+                            com.simplechat.app.net.claudeAdaptiveModel(vm.settings.model.id)?.canDisableThinking != false,
                     )
                 }
 

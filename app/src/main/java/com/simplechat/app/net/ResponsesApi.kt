@@ -62,7 +62,7 @@ private fun responsesInputContent(content: JsonElement): JsonElement {
 }
 
 internal fun responsesUrl(baseUrl: String): String {
-    val base = requireNotNull((officialChatRoot(baseUrl) ?: baseUrl.trim()).toHttpUrlOrNull()) { "Invalid base URL" }
+    val base = requireNotNull((officialChatRoot(baseUrl) ?: openAiVersionedBase(baseUrl)).toHttpUrlOrNull()) { "Invalid base URL" }
     val root = base.encodedPath.trimEnd('/').removeSuffix("/responses").removeSuffix("/chat/completions")
     return base.newBuilder().encodedPath("$root/responses").build().toString()
 }

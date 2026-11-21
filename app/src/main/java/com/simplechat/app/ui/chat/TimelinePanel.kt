@@ -1,5 +1,6 @@
 package com.simplechat.app.ui.chat
 
+import com.simplechat.app.ui.markdown.rememberSearchTextDecoration
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -175,6 +176,7 @@ private fun ThinkingStep(step: TimelineStep.Thinking) {
         return
     }
     val colors = LocalChatColors.current
+    val (searchDecoration, onTextLayout) = rememberSearchTextDecoration(step.text)
     Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
         ThinkingGutter(
             modifier = Modifier.width(ThinkingGutterWidth).fillMaxHeight(),
@@ -184,7 +186,8 @@ private fun ThinkingStep(step: TimelineStep.Thinking) {
             text = step.text,
             style = ProcessTextStyle,
             color = colors.processText,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).then(searchDecoration),
+            onTextLayout = onTextLayout,
         )
     }
 }

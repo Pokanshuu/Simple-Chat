@@ -105,6 +105,7 @@ data class AnthropicThinking(
      * DeepSeek 官方扩展不认这个字段（官方 demo 也不传），所以扩展模式置空。
      */
     @SerialName("budget_tokens") val budgetTokens: Int? = null,
+    val display: String? = null,
 ) {
     companion object {
         val Enabled = AnthropicThinking("enabled")

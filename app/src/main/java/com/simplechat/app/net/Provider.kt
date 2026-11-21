@@ -76,7 +76,7 @@ data class ModelInfo(
         val levels = effortLevels ?: return wanted
         val enabled = levels.filterNot { it in ReasoningWire.offLevels }
         if (wanted in enabled) return wanted
-        val ordered = listOf("minimal", "low", "medium", "high", "xhigh", "max")
+        val ordered = listOf("minimal", "low", "medium", "high", "xhigh", "max", "ultra")
         val index = ordered.indexOf(wanted)
         return enabled.filter { it in ordered }.minByOrNull { kotlin.math.abs(ordered.indexOf(it) - index) }
             ?: enabled.firstOrNull()
@@ -217,14 +217,28 @@ object ModelCatalog {
     private val geminiMillionTokenModels = setOf(
         "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
         "gemini-3-pro", "gemini-3-flash", "gemini-3.1-pro", "gemini-3.1-flash-lite",
-        "gemini-3.5-flash",
     )
     private val geminiPreviewSuffix = Regex("-preview(?:-\\d{2}-\\d{2,4})?$")
 
     private fun compatibleBaseline(id: String): ModelInfo? {
         val gemini = id.removePrefix("google/").removePrefix("models/").replace(geminiPreviewSuffix, "")
-        if (gemini in geminiMillionTokenModels) return ModelInfo(id, supportsVision = true,
-            supportsThinking = true, contextWindow = 1_048_576, reasoningWire = ReasoningWire.EFFORT)
+        // Google AI Studio model cards and thinking guide. Gateway metadata can override these limits.
+        val standardEfforts = listOf("low", "medium", "high")
+        val geminiEfforts = when (gemini) {
+            "gemini-3.8-flash", "gemini-4-argon", "gemini-4-carbon" -> standardEfforts
+            "gemini-3.5-flash", "gemini-3.5-flash-lite" -> listOf("minimal") + standardEfforts
+            // This gateway alias selects the high-effort Flash variant.
+            "gemini-3.8-flash-high" -> listOf("high")
+            "gemini-4-hydrogen" -> standardEfforts + "xhigh"
+            else -> null
+        }
+        if (geminiEfforts != null || gemini in geminiMillionTokenModels) return ModelInfo(
+            id, supportsVision = true, supportsThinking = true, contextWindow = 1_048_576,
+            reasoningWire = ReasoningWire.EFFORT, effortLevels = geminiEfforts,
+            maxOutputTokens = 65_536.takeIf { geminiEfforts != null },
+        )
+        modernClaudeBaseline(id)?.let { return it }
+        modernGptBaseline(id)?.let { return it }
         val openAi = id.removePrefix("openai/").replace(Regex("-\\d{4}-\\d{2}-\\d{2}$"), "")
         return when (openAi) {
             "deepseek-chat" -> ModelInfo(id, contextWindow = 128_000)
@@ -358,12 +372,14 @@ enum class ApiStyle {
          */
         fun resolve(kind: ProviderKind, configuredId: String?, baseUrl: String): ApiStyle =
             fromId(configuredId) ?: run {
-                val path = baseUrl.trim().toHttpUrlOrNull()?.encodedPath?.trimEnd('/').orEmpty()
+                val endpoint = baseUrl.trim().toHttpUrlOrNull()
+                val path = endpoint?.encodedPath?.trimEnd('/').orEmpty()
                 val official = isOfficialDeepSeekEndpoint(baseUrl)
                 when {
                     path.endsWith("/responses") -> OPENAI_RESPONSES
                     path.endsWith("/chat/completions") -> OPENAI
-                    path.endsWith("/messages") || (official && path.startsWith("/anthropic")) -> ANTHROPIC
+                    path.endsWith("/messages") || endpoint?.host == "api.anthropic.com" ||
+                        (official && path.startsWith("/anthropic")) -> ANTHROPIC
                     kind == ProviderKind.DEEPSEEK && official -> ANTHROPIC
                     else -> OPENAI
                 }
@@ -373,15 +389,21 @@ enum class ApiStyle {
 
 /** 拼装 `/chat/completions` 地址，兼容用户填不填 `/v1`、末尾带不带斜杠。 */
 fun chatCompletionsUrl(baseUrl: String): String {
-    val base = officialChatRoot(baseUrl) ?: baseUrl.trim().trimEnd('/')
+    val base = officialChatRoot(baseUrl) ?: openAiVersionedBase(baseUrl)
     return if (base.endsWith("/chat/completions")) base else "$base/chat/completions"
 }
 
 /** 拼装 `/models` 地址。 */
 fun modelsUrl(baseUrl: String): String {
-    val base = baseUrl.trim().trimEnd('/')
+    val base = openAiVersionedBase(baseUrl)
     return if (base.endsWith("/models")) base else "${base.removeSuffix("/chat/completions").removeSuffix("/responses")}/models"
 }
+internal fun openAiVersionedBase(baseUrl: String): String {
+    val base = baseUrl.trim().trimEnd('/')
+    val url = base.toHttpUrlOrNull()
+    return if (url?.host == "api.openai.com" && url.encodedPath == "/") "$base/v1" else base
+}
+
 /**
  * Base URL 是否指向 **DeepSeek 官方域**。
  *

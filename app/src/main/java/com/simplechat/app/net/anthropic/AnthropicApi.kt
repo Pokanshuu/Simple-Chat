@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 
 /**
@@ -54,11 +55,14 @@ class AnthropicApi(
     ): Flow<StreamEvent> = flow {
         val parser = AnthropicStreamParser(json, request.tools.any { it.name == "generate_image" })
         validateRequestBudget(estimatedInputTokens(request), request.maxTokens, contextWindow)
-        val body = StreamingAnthropicRequestBody(json, request)
+        val nativeVersion = claudeVersionFor(url)
+        val wireRequest = if (nativeVersion != null) request.copy(temperature = null, topP = null) else request
+        val body = StreamingAnthropicRequestBody(json, wireRequest)
         val largeRequest = body.contentLength() >= LargeRequestBytes
 
         val builder = Request.Builder().url(url).post(body)
-        anthropicHeaders(apiKey, extraHeaders).forEach { (name, value) -> builder.header(name, value) }
+        val versionHeaders = nativeVersion?.let { mapOf("anthropic-version" to it) }.orEmpty()
+        anthropicHeaders(apiKey, versionHeaders + extraHeaders).forEach { (name, value) -> builder.header(name, value) }
         val httpRequest = builder.build()
 
         fun logEmptyMessagesRejection(message: String?) {
@@ -228,6 +232,9 @@ internal fun isRetryableStatus(code: Int): Boolean =
  * `/anthropic` 前缀下；其余 Anthropic 兼容端点走标准 `/v1/messages`。
  * 纯函数，有单测：这一层错了只表现为 404，从界面上看不出是哪一环。
  */
+internal fun claudeVersionFor(baseUrl: String): String? =
+    "2026-10-21".takeIf { baseUrl.trim().toHttpUrlOrNull()?.host == "api.anthropic.com" }
+
 fun anthropicMessagesUrl(baseUrl: String): String {
     val base = baseUrl.trim().trimEnd('/')
     if (base.isEmpty()) return base

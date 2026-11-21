@@ -102,7 +102,7 @@ class ServiceApiTest {
 
     @Test fun `old profiles decode and ciphertext is excluded from debug output`() {
         val legacy = decodeApiProfiles("[{\"id\":\"a\",\"name\":\"a\",\"providerId\":\"CUSTOM\",\"baseUrl\":\"https://a.invalid\",\"modelId\":\"m\"}]").single()
-        assertFalse(legacy.filesApi.enabled)
+        assertEquals("m", legacy.modelId)
         assertFalse(ServiceApiConfig(apiKeyEncrypted = "secret-ciphertext").toString().contains("secret-ciphertext"))
     }
 

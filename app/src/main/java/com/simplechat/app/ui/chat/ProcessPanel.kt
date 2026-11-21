@@ -1,5 +1,6 @@
 package com.simplechat.app.ui.chat
 
+import com.simplechat.app.ui.markdown.rememberSearchTextDecoration
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -210,6 +211,7 @@ internal fun TailContent(reasoning: String, gutter: Boolean = false) {
 @Composable
 private fun FullContent(reasoning: String) {
     val colors = LocalChatColors.current
+    val (searchDecoration, onTextLayout) = rememberSearchTextDecoration(reasoning)
 
     Row(
         modifier = Modifier
@@ -228,7 +230,8 @@ private fun FullContent(reasoning: String) {
             text = reasoning,
             style = ProcessTextStyle,
             color = colors.processText,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).then(searchDecoration),
+            onTextLayout = onTextLayout,
         )
     }
 }

@@ -56,9 +56,13 @@ enum class MessageStatus { DONE, STREAMING, STOPPED, ERROR }
  */
 enum class ReasoningLevel(val apiValue: String?, @StringRes private val labelRes: Int) {
     OFF(null, R.string.reasoning_off),
+    MINIMAL("minimal", R.string.reasoning_minimal),
     LOW("low", R.string.reasoning_low),
+    MEDIUM("medium", R.string.reasoning_medium),
     HIGH("high", R.string.reasoning_high),
+    XHIGH("xhigh", R.string.reasoning_xhigh),
     MAX("max", R.string.reasoning_max),
+    ULTRA("ultra", R.string.reasoning_ultra),
     ;
 
     /** 档位名。OFF 随界面语言，high / max 是发给 API 的字面值本身。 */
@@ -69,6 +73,11 @@ enum class ReasoningLevel(val apiValue: String?, @StringRes private val labelRes
     companion object {
         /** 滑块档位顺序，索引即滑块位置。 */
         val sliderOrder: List<ReasoningLevel> = listOf(OFF, LOW, HIGH, MAX)
+
+        fun forModel(model: ModelInfo): List<ReasoningLevel> {
+            val advertised = model.effortLevels ?: return sliderOrder
+            return listOf(OFF) + entries.filter { it.apiValue != null && it.apiValue in advertised }
+        }
 
         fun fromSliderPosition(position: Int): ReasoningLevel =
             sliderOrder[position.coerceIn(0, sliderOrder.lastIndex)]

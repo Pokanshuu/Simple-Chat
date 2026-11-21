@@ -70,6 +70,30 @@ class RemoteModelCatalogTest {
     }
 
     @Test
+    fun `new Gemini model IDs use their own effort levels and honor gateway limits`() {
+        val kind = ProviderKind.CUSTOM
+        val flashLite = ModelCatalog.find(kind, "google/gemini-3.5-flash-lite")
+        assertEquals(1_048_576, flashLite.contextWindow)
+        assertEquals(65_536, flashLite.maxOutputTokens)
+        assertEquals(listOf("minimal", "low", "medium", "high"), flashLite.effortLevels)
+        assertEquals(true, flashLite.supportsVision)
+        assertEquals(true, flashLite.supportsThinking)
+        val high = ModelCatalog.find(kind, "gemini-3.8-flash-high")
+        assertEquals(1_048_576, high.contextWindow)
+        assertEquals("high", high.resolveReasoningEffort("medium"))
+        val argon = ModelCatalog.find(kind, "gemini-4-argon")
+        assertEquals(1_048_576, argon.contextWindow)
+        assertEquals(listOf("low", "medium", "high"), argon.effortLevels)
+        val flash = ModelCatalog.find(kind, "gemini-3.8-flash")
+        assertEquals("low", flash.resolveReasoningEffort("minimal"))
+        val hydrogen = ModelCatalog.find(kind, "gemini-4-hydrogen")
+        assertEquals("xhigh", hydrogen.resolveReasoningEffort("max"))
+        val carbon = ModelCatalog.find(kind, "gemini-4-carbon", mapOf("gemini-4-carbon" to 98_000))
+        assertEquals(98_000, carbon.contextWindow)
+        assertEquals("high", carbon.resolveReasoningEffort("max"))
+    }
+
+    @Test
     fun `Gemini fallback matches chat IDs without assuming every Gemini model has one million tokens`() {
         val kind = ProviderKind.CUSTOM
         assertEquals(1_048_576, ModelCatalog.find(kind, "google/gemini-2.5-flash-preview-09-2025").contextWindow)

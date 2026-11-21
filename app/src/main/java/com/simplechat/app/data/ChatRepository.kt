@@ -105,9 +105,10 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     fun searchConversations(
         query: String,
         limit: Int = Int.MAX_VALUE,
-        includeInactiveBranches: Boolean = true,
+        includeInactiveBranches: Boolean = false,
+        includeReasoning: Boolean = false,
     ): Flow<List<ConversationSearchHit>> =
-        conversations.search(query.trim(), includeInactiveBranches, limit)
+        conversations.search(query.trim(), includeInactiveBranches, limit, includeReasoning)
 
     fun observePresets(): Flow<List<Preset>> = presets.observeAll().map { list -> list.map { it.toUi() } }
 
