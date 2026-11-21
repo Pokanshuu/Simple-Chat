@@ -169,6 +169,7 @@ data class MessageEntity(
     val timeline: String? = null,
     /** 结束原因（`end_turn` / `max_tokens` / `tool_use` / `refusal`），仅 Anthropic 通道写入。 */
     val stopReason: String? = null,
+    @ColumnInfo(defaultValue = "0") val imageGeneration: Boolean = false,
     val createdAt: Long,
 ) {
     companion object {

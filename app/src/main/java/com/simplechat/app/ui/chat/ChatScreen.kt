@@ -115,7 +115,7 @@ import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.fillMaxHeight
 
 /** 输入栏下方最多同时展开一个面板。 */
-private enum class InputPanelState { NONE, THINKING, STATS, SETTINGS, ATTACH }
+private enum class InputPanelState { NONE, THINKING, STATS, SETTINGS, ATTACH, IMAGE }
 
 /** 切换会话的淡入时长。**快** —— 慢一点就从"过渡"变成"等待"了。 */
 private const val SwitchFadeInMs = 160
@@ -170,6 +170,7 @@ fun ChatScreen(
     onOpenDrawer: () -> Unit,
     onNewConversation: () -> Unit,
     modifier: Modifier = Modifier,
+    onConfigureImageApi: () -> Unit = {},
 ) {
     val colors = LocalChatColors.current
     val focusManager = LocalFocusManager.current
@@ -259,6 +260,9 @@ fun ChatScreen(
     val composerKey = vm.currentConversationId.orEmpty()
     var composerExpanded by remember(composerKey) { mutableStateOf(false) }
     val pendingByConversation = remember { mutableStateMapOf<String, List<Attachment>>() }
+    val imagePromptByConversation = vm.imageDrafts
+    var imagePrompt by remember { mutableStateOf("") }
+    var imageSize by rememberSaveable(composerKey) { mutableStateOf<String?>(null) }
     data class ComposerEditDraft(val target: UiMessage, val text: String, val previousDraft: String)
     val editingByConversation = remember { mutableStateMapOf<String, ComposerEditDraft>() }
     var composerOwner by remember { mutableStateOf<String?>(null) }
@@ -279,6 +283,7 @@ fun ChatScreen(
         composerOwner?.let { previous ->
             val draft = draftToPersist()
             pendingByConversation[previous] = pending
+            imagePromptByConversation[previous] = imagePrompt
             val target = editingMessage
             if (target != null) {
                 editingByConversation[previous] = ComposerEditDraft(target, input, inputBeforeEdit)
@@ -291,6 +296,7 @@ fun ChatScreen(
         val edit = editingByConversation[composerKey]
         replaceInput(edit?.text ?: vm.loadDraft(composerKey).orEmpty())
         pending = pendingByConversation[composerKey].orEmpty()
+        imagePrompt = imagePromptByConversation[composerKey].orEmpty()
         editingMessage = edit?.target
         inputBeforeEdit = edit?.previousDraft.orEmpty()
         composerOwner = composerKey
@@ -1128,6 +1134,7 @@ fun ChatScreen(
                         MessageList(
                             messages = vm.messages,
                             loadingLabelFor = vm::loadingLabelFor,
+                            onStopImage = vm::stop,
                             loadingWordsUseThemeColor = vm.loadingWordsUseThemeColor,
                             textSelection = textSelection,
                             shareSelection = shareSelection,
@@ -1566,6 +1573,29 @@ fun ChatScreen(
                         onPickFile = {
                             panel = InputPanelState.NONE
                             pickFile()
+                        },
+                        onGenerateImage = { panel = InputPanelState.IMAGE },
+                    )
+                }
+
+                InputPanel(visible = panel == InputPanelState.IMAGE, modifier = Modifier.padding(top = 10.dp)) {
+                    ImageGenerationPanel(
+                        prompt = imagePrompt,
+                        onPromptChange = { imagePrompt = it; imagePromptByConversation[composerKey] = it },
+                        modelLabel = if (vm.attachmentSettings.imageGenApi.enabled) vm.attachmentSettings.imageGenApi.modelId else vm.settings.model.displayName,
+                        size = imageSize,
+                        onSizeChange = { imageSize = it },
+                        sizesAvailable = vm.attachmentSettings.imageGenApi.enabled && vm.attachmentSettings.imageGenApi.adapter in setOf("OPENAI_IMAGES", "DASHSCOPE"),
+                        available = vm.imageGenerationAvailable,
+                        enabled = vm.imageGenerationAvailable && !vm.isStreaming,
+                        onConfigure = onConfigureImageApi,
+                        onGenerate = {
+                            resumeFollowing()
+                            vm.generateImage(imagePrompt, imageSize) {
+                                imagePrompt = ""
+                                imagePromptByConversation.remove(composerKey)
+                                panel = InputPanelState.NONE
+                            }
                         },
                     )
                 }

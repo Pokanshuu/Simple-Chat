@@ -28,6 +28,7 @@ data class ApiProfile(
     val lastUsedAt: Long = 0,
     val searchApi: ServiceApiConfig = ServiceApiConfig(),
     val filesApi: ServiceApiConfig = ServiceApiConfig(),
+    val imageGenApi: ImageGenConfig = ImageGenConfig(),
 ) {
     // Neither plaintext nor ciphertext should appear in logs or UI debug output.
     override fun toString(): String = "ApiProfile(id=$id, name=$name, providerId=$providerId)"

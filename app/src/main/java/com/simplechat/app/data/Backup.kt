@@ -104,6 +104,7 @@ data class BackupMessage(
     val timeline: List<com.simplechat.app.net.ReplyBlock> = emptyList(),
     /** 结束原因（`end_turn` / `max_tokens` / `refusal` 等）。 */
     val stopReason: String? = null,
+    val imageGeneration: Boolean = false,
     val createdAt: Long,
 )
 
@@ -163,6 +164,7 @@ internal fun MessageEntity.toBackup(): BackupMessage = BackupMessage(
     tps = tps,
     timeline = com.simplechat.app.net.ReplyBlocks.decode(timeline),
     stopReason = stopReason,
+    imageGeneration = imageGeneration,
     createdAt = createdAt,
 )
 
@@ -184,6 +186,7 @@ internal fun BackupMessage.toEntity(conversationId: String): MessageEntity = Mes
     tps = tps,
     timeline = com.simplechat.app.net.ReplyBlocks.encode(timeline),
     stopReason = stopReason,
+    imageGeneration = imageGeneration,
     createdAt = createdAt,
 )
 

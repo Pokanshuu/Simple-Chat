@@ -29,7 +29,7 @@ import kotlinx.serialization.json.intOrNull
  * —— 与 OpenAI 通道同一条原则。唯一的例外是 `error` 帧，它必须报出来，
  * 否则用户看到的是"流自然结束了、内容却是空的"。
  */
-internal class AnthropicStreamParser(private val json: Json) {
+internal class AnthropicStreamParser(private val json: Json, private val acceptImageTool: Boolean = false) {
 
     sealed interface Result {
         data class Events(val events: List<StreamEvent>) : Result
@@ -113,7 +113,7 @@ internal class AnthropicStreamParser(private val json: Json) {
             "citations_delta" -> delta.obj("citation")?.let { readCitation(it) }?.let {
                 StreamEvent.CitationDelta(index, it)
             }
-            // input_json_delta 属于客户端工具调用，本项目不执行；整块丢弃
+            "input_json_delta" -> if (acceptImageTool) delta.string("partial_json")?.let { StreamEvent.ToolCallDelta(index, null, null, it) } else null
             else -> null
         }
         return listOfNotNull(event)
@@ -122,6 +122,10 @@ internal class AnthropicStreamParser(private val json: Json) {
     private fun blockStart(obj: JsonObject): List<StreamEvent> {
         val index = obj.int("index") ?: return emptyList()
         val block = obj.obj("content_block") ?: return emptyList()
+        if (acceptImageTool && block.string("type") == "tool_use") {
+            val input = block.obj("input")?.takeIf { it.isNotEmpty() }?.toString()
+            return listOf(StreamEvent.ToolCallDelta(index, block.string("id"), block.string("name"), input))
+        }
         val parsed = readBlock(block) ?: return emptyList()
         return listOf(StreamEvent.BlockStart(index, parsed))
     }

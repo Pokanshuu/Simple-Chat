@@ -160,6 +160,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
      * 存档过一次实例状态，重建后就还停在原来那一页（设置）。
      */
     var route by rememberSaveable { mutableStateOf(Route.CHAT) }
+    var openImageSettings by rememberSaveable { mutableStateOf(false) }
 
     /** 抽屉是否处于搜索态。见类注释：它是抽屉的状态，不是一条路由。 */
     var searchMode by rememberSaveable { mutableStateOf(false) }
@@ -425,6 +426,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                                             wideSidebarVisible = !wideSidebarVisible
                                         } else scope.launch { drawerState.open() }
                                     },
+                                    onConfigureImageApi = { openImageSettings = true; route = Route.SETTINGS },
                                     onNewConversation = {
                                         exitSearch()
                                         chatViewModel.newConversation()
@@ -434,7 +436,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                             }
                         }
 
-                        Route.SETTINGS -> SettingsScreen(onBack = { route = Route.CHAT })
+                        Route.SETTINGS -> SettingsScreen(onBack = { openImageSettings = false; route = Route.CHAT }, startAtImageApi = openImageSettings)
                     }
                 }
             }

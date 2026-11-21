@@ -44,8 +44,6 @@ class AnthropicApi(
     private val json: Json,
 ) {
 
-    private val parser = AnthropicStreamParser(json)
-
     fun streamMessage(
         url: String,
         apiKey: String,
@@ -54,6 +52,7 @@ class AnthropicApi(
         contextWindow: Int? = null,
         retryBeforeContent: Boolean = true,
     ): Flow<StreamEvent> = flow {
+        val parser = AnthropicStreamParser(json, request.tools.any { it.name == "generate_image" })
         validateRequestBudget(estimatedInputTokens(request), request.maxTokens, contextWindow)
         val body = StreamingAnthropicRequestBody(json, request)
         val largeRequest = body.contentLength() >= LargeRequestBytes

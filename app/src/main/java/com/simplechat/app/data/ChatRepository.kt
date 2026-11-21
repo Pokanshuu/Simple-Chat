@@ -424,6 +424,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         status: MessageStatus = MessageStatus.DONE,
         /** 这条由哪个模型产生；用户消息传 null。 */
         model: String? = null,
+        imageGeneration: Boolean = false,
     ): MessageEntity {
         val id = UUID.randomUUID().toString()
         val entity = newMessageEntity(
@@ -437,6 +438,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             reasoning = reasoning,
             status = status,
             model = model,
+            imageGeneration = imageGeneration,
         ).withOffloadedImages()
         messages.upsert(entity)
         messages.activate(id, conversationId, parentId)
@@ -495,6 +497,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         conversationId: String,
         parentId: String,
         model: String? = null,
+        imageGeneration: Boolean = false,
     ): String =
         addSibling(
             conversationId = conversationId,
@@ -504,6 +507,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             reasoning = "",
             status = MessageStatus.STREAMING,
             model = model,
+            imageGeneration = imageGeneration,
         ).id
 
     /** 流式 checkpoint。调用频率由 ViewModel 控制在 ~1.5s（§4.4）。 */
@@ -567,6 +571,53 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         tokensOut = tokensOut,
         cacheHitTokens = cacheHitTokens,
     )
+
+    internal suspend fun attachGeneratedImage(messageId: String, bytes: ByteArray, markDone: Boolean = false): Attachment =
+        withContext(Dispatchers.IO) {
+            val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            val mime = bounds.outMimeType
+            require(mime in setOf("image/png", "image/jpeg", "image/webp") && bounds.outWidth > 0 &&
+                bounds.outHeight > 0 && bounds.outWidth.toLong() * bounds.outHeight <= 25_000_000) {
+                "Invalid or oversized generated image"
+            }
+            val sample = android.graphics.BitmapFactory.Options().apply {
+                inSampleSize = (maxOf(bounds.outWidth, bounds.outHeight) / 512).coerceAtLeast(1)
+            }
+            val preview = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, sample)
+                ?: throw IllegalArgumentException("Generated image cannot be decoded")
+            preview.recycle()
+            currentCoroutineContext().ensureActive()
+            val extension = when (mime) { "image/png" -> "png"; "image/webp" -> "webp"; else -> "jpg" }
+            val path = AttachmentFiles.save(context, bytes.inputStream(), mime.orEmpty())
+            val attachment = Attachment(
+                kind = Attachment.Kind.IMAGE,
+                name = "generated-${UUID.randomUUID().toString().take(8)}.${extension}",
+                mime = mime.orEmpty(),
+                data = "",
+                width = bounds.outWidth,
+                height = bounds.outHeight,
+                path = path,
+            )
+            try {
+                db.withTransaction {
+                    val conversationId = messages.conversationIdOf(messageId)
+                        ?: throw IllegalStateException("Generated image message no longer exists")
+                    check(messages.attachGeneratedImage(messageId, Attachments.encode(listOf(attachment)),
+                        if (markDone) "DONE" else "STREAMING") == 1) { "Image request is no longer active" }
+                    attachmentRefs.upsertAll(listOf(AttachmentRefEntity(path = path, conversationId = conversationId)))
+                }
+            } catch (error: Throwable) {
+                AttachmentFiles.delete(context, path)
+                throw error
+            }
+            attachment
+        }
+
+    internal suspend fun settleImageGeneration(id: String, status: MessageStatus, error: String? = null): Boolean =
+        messages.settleImageGeneration(id, status.toStorage(), error) == 1
+
+    suspend fun markImageGeneration(messageId: String) = messages.markImageGeneration(messageId)
 
     /** 全库累计用量（设置 → 用量与余额）。 */
     suspend fun usageTotals(): UsageTotals = messages.usageTotals()

@@ -179,6 +179,18 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId")
     suspend fun getAllFor(conversationId: String): List<MessageEntity>
 
+    @Query("UPDATE messages SET attachments = :attachments, status = :status WHERE id = :id AND status = 'STREAMING'")
+    suspend fun attachGeneratedImage(id: String, attachments: String?, status: String): Int
+
+    @Query("UPDATE messages SET status = :status, errorMessage = :error WHERE id = :id AND status = 'STREAMING'")
+    suspend fun settleImageGeneration(id: String, status: String, error: String?): Int
+
+    @Query("UPDATE messages SET imageGeneration = 1 WHERE id = :id")
+    suspend fun markImageGeneration(id: String)
+
+    @Query("SELECT conversationId FROM messages WHERE id = :id")
+    suspend fun conversationIdOf(id: String): String?
+
     /**
      * 同 [getAllFor]，但把 `attachments` 截断到 [cap] 字符。
      *
@@ -192,7 +204,7 @@ interface MessageDao {
                substr(attachments, 1, :cap) AS attachments,
                reasoning, status, errorMessage, model, excluded,
                thinkingMs, ttftMs, tps, tokens_in, tokens_out, tokens_cache_hit,
-               timeline, stopReason, createdAt
+               timeline, stopReason, imageGeneration, createdAt
         FROM messages WHERE conversationId = :conversationId
         """,
     )
@@ -216,7 +228,7 @@ interface MessageDao {
                '' AS content, NULL AS attachments, NULL AS reasoning,
                status, NULL AS errorMessage,
                model, excluded, thinkingMs, ttftMs, tps, tokens_in, tokens_out, tokens_cache_hit,
-               NULL AS timeline, stopReason, createdAt
+               NULL AS timeline, stopReason, imageGeneration, createdAt
         FROM messages WHERE id = :id
         """,
     )
@@ -303,7 +315,7 @@ interface MessageDao {
                substr(attachments, 1, :cap) AS attachments,
                reasoning, status, errorMessage, model, excluded,
                thinkingMs, ttftMs, tps, tokens_in, tokens_out, tokens_cache_hit,
-               timeline, stopReason, createdAt
+               timeline, stopReason, imageGeneration, createdAt
         FROM messages WHERE id IN (:ids)
         """,
     )

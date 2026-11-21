@@ -9,6 +9,9 @@ sealed interface StreamEvent {
     /** 思维链增量（DeepSeek 的 `reasoning_content`）。 */
     data class Reasoning(val text: String) : StreamEvent
 
+    /** Incremental OpenAI-compatible function call. Arguments are emitted as wire fragments. */
+    data class ToolCallDelta(val index: Int, val id: String?, val name: String?, val arguments: String?) : StreamEvent
+
     /** 用量统计，通常在流末尾到达。 */
     data class Usage(
         val promptTokens: Int,

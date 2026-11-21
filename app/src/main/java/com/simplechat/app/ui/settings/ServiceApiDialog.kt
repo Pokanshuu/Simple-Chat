@@ -3,7 +3,6 @@ package com.simplechat.app.ui.settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -14,6 +13,9 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -39,17 +41,23 @@ import androidx.compose.ui.unit.dp
 import com.simplechat.app.R
 import com.simplechat.app.data.AppTextException
 import com.simplechat.app.data.ServiceApiConfig
+import com.simplechat.app.data.GEMINI_NANO_BANANA
+import com.simplechat.app.data.OPENAI_DEFAULT_IMAGE_MODEL
+import com.simplechat.app.data.ImageGenConfig
 import com.simplechat.app.data.SettingsStore
 import com.simplechat.app.data.StoredSettings
+import com.simplechat.app.data.nativeImageAdapter
 import com.simplechat.app.data.userMessage
 import com.simplechat.app.ui.common.SoftShape
 import com.simplechat.app.ui.common.Space
+import com.simplechat.app.ui.common.AppSwitch
+import com.simplechat.app.ui.common.CapsuleButton
 import com.simplechat.app.ui.theme.LocalChatColors
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
-internal fun ToolApisPage(stored: StoredSettings, onOpenSearch: () -> Unit, onOpenFiles: () -> Unit) {
+internal fun ToolApisPage(stored: StoredSettings, onOpenSearch: () -> Unit, onOpenFiles: () -> Unit, onOpenImage: () -> Unit) {
     val profileName = stored.apiProfiles.firstOrNull { it.id == stored.activeApiProfileId }?.name
     SettingsSectionLabel(stringResource(R.string.service_group))
     SettingsCard {
@@ -60,8 +68,130 @@ internal fun ToolApisPage(stored: StoredSettings, onOpenSearch: () -> Unit, onOp
         SettingsNavRow(null, stringResource(R.string.service_files_title),
             stringResource(if (stored.filesApi.enabled) R.string.service_enabled else R.string.service_disabled),
             onOpenFiles)
+        RowDivider(inset = Space.Screen)
+        SettingsNavRow(null, stringResource(R.string.image_api_title),
+            when {
+                stored.imageGenApi.enabled -> stringResource(
+                    when (stored.imageGenApi.adapter) {
+                        "GEMINI" -> R.string.image_adapter_gemini
+                        "DASHSCOPE" -> R.string.image_adapter_qwen
+                        else -> R.string.image_adapter_openai
+                    },
+                ) + " · " + stored.imageGenApi.modelId.ifBlank { stringResource(R.string.api_model_unset) }
+                stored.nativeImageAdapter() != null -> stringResource(R.string.image_api_native_enabled)
+                else -> stringResource(R.string.service_disabled)
+            }, onOpenImage)
     }
     if (profileName != null) ServiceNote(stringResource(R.string.service_active_profile, profileName))
+}
+
+@Composable
+internal fun ImageGenApiPage(stored: StoredSettings, store: SettingsStore, onSaved: () -> Unit) {
+    val profileId = stored.activeApiProfileId
+    key(profileId) {
+        val original = remember { stored.imageGenApi }
+        val scope = rememberCoroutineScope()
+        var enabled by remember { mutableStateOf(original.enabled) }
+        var native by remember { mutableStateOf(original.nativeResponsesEnabled) }
+        var adapter by remember { mutableStateOf(original.adapter) }
+        var reuseKey by remember { mutableStateOf(original.reuseChatKey) }
+        var base by remember { mutableStateOf(original.baseUrl) }
+        var model by remember { mutableStateOf(original.modelId) }
+        var secret by remember { mutableStateOf("") }
+        var size by remember { mutableStateOf(original.size) }
+        var ratio by remember { mutableStateOf(original.aspectRatio) }
+        var geminiSize by remember { mutableStateOf(original.geminiImageSize) }
+        var error by remember { mutableStateOf<String?>(null) }
+        var saving by remember { mutableStateOf(false) }
+
+        SettingsSectionLabel(stringResource(R.string.image_api_route))
+        SettingsCard {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.image_api_independent), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                AppSwitch(enabled, { enabled = it })
+            }
+            if (enabled) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    CapsuleButton("OpenAI Images", { adapter = "OPENAI_IMAGES" }, selected = adapter == "OPENAI_IMAGES")
+                    CapsuleButton("Gemini", {
+                        if (adapter != "GEMINI") {
+                            adapter = "GEMINI"
+                            base = "https://generativelanguage.googleapis.com"
+                            reuseKey = false
+                        }
+                    }, selected = adapter == "GEMINI")
+                }
+                CapsuleButton("Qwen / DashScope", {
+                    if (adapter != "DASHSCOPE") {
+                        adapter = "DASHSCOPE"
+                        base = "https://dashscope.aliyuncs.com"
+                        reuseKey = false
+                    }
+                }, selected = adapter == "DASHSCOPE", modifier = Modifier.padding(horizontal = 12.dp))
+                TextField(value = model, onValueChange = { model = it }, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), label = { Text(stringResource(R.string.image_api_model)) }, placeholder = {
+                    when (adapter) {
+                        "GEMINI" -> Text(GEMINI_NANO_BANANA)
+                        "OPENAI_IMAGES" -> Text(OPENAI_DEFAULT_IMAGE_MODEL)
+                        else -> Text("qwen-image-3.0-pro")
+                    }
+                }, singleLine = true)
+                TextField(value = base, onValueChange = { base = it }, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), label = { Text(stringResource(R.string.image_api_base_url)) }, placeholder = { Text(stringResource(R.string.image_api_chat_base_hint)) }, singleLine = true)
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.image_api_reuse_key), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    AppSwitch(reuseKey, { reuseKey = it })
+                }
+                if (!reuseKey) TextField(value = secret, onValueChange = { secret = it }, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), label = { Text(stringResource(R.string.image_api_key)) }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
+                if (adapter != "GEMINI") {
+                    TextField(value = size, onValueChange = { size = it }, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), label = { Text(stringResource(R.string.image_api_size)) }, singleLine = true)
+                } else {
+                    TextField(value = ratio, onValueChange = { ratio = it }, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), label = { Text(stringResource(R.string.image_api_aspect_ratio)) }, singleLine = true)
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("1K", "2K", "4K").forEach { option -> CapsuleButton(option, { geminiSize = option }, selected = geminiSize == option) }
+                    }
+                }
+            }
+        }
+        SettingsSectionLabel(stringResource(R.string.image_api_fallback))
+        SettingsCard {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.image_api_native_title), style = MaterialTheme.typography.bodyLarge)
+                    Text(stringResource(R.string.image_api_native_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                AppSwitch(native, { native = it })
+            }
+        }
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp)) }
+        CapsuleButton(
+            text = stringResource(R.string.action_save), onClick = {
+                if (saving) return@CapsuleButton
+                saving = true
+                scope.launch {
+                    try {
+                        val encrypted = if (secret.isBlank()) stored.imageGenApi.apiKeyEncrypted else store.encryptServiceKey(secret)
+                        val next = original.copy(
+                            enabled = enabled, adapter = adapter, reuseChatKey = reuseKey,
+                            baseUrl = base.trim(), modelId = model.trim(), apiKeyEncrypted = encrypted,
+                            nativeResponsesEnabled = native, size = size.trim(), aspectRatio = ratio.trim(),
+                            geminiImageSize = geminiSize,
+                        )
+                        if (next.enabled) {
+                            next.connectionBase(stored.baseUrl)
+                            next.key(stored.apiKey)
+                        }
+                        store.setImageGenApi(next, profileId)
+                        secret = ""
+                        error = null
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        error = failure.userMessage()
+                    }
+                    finally { saving = false }
+                }
+            }, enabled = !saving,
+        )
+    }
 }
 
 @Composable

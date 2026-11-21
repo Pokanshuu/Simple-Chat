@@ -83,6 +83,7 @@ data class StoredSettings(
     val activeApiProfileId: String = "legacy",
     val searchApi: ServiceApiConfig = ServiceApiConfig(),
     val filesApi: ServiceApiConfig = ServiceApiConfig(),
+    val imageGenApi: ImageGenConfig = ImageGenConfig(),
     val autoReadAloud: Boolean = false,
     val showImageSkipNotice: Boolean = true,
     val showRetrySkipNotice: Boolean = true,
@@ -213,6 +214,7 @@ class SettingsStore(
             activeApiProfileId = prefs[Keys.ACTIVE_PROFILE] ?: "legacy",
             searchApi = readService(prefs, Keys.SEARCH_API),
             filesApi = readService(prefs, Keys.FILES_API),
+            imageGenApi = readImageGen(prefs),
             autoReadAloud = prefs[Keys.AUTO_READ_ALOUD] ?: false,
             showRetrySkipNotice = prefs[Keys.RETRY_SKIP_NOTICE] ?: true,
             showImageSkipNotice = prefs[Keys.IMAGE_SKIP_NOTICE] ?: true,
@@ -425,6 +427,18 @@ class SettingsStore(
     private fun readService(prefs: Preferences, key: Preferences.Key<String>): ServiceApiConfig =
         prefs[key]?.let { apiProfileJson.decodeFromString<ServiceApiConfig>(it) } ?: ServiceApiConfig()
 
+    private fun readImageGen(prefs: Preferences): ImageGenConfig =
+        prefs[Keys.IMAGE_GEN_API]?.let { apiProfileJson.decodeFromString<ImageGenConfig>(it) } ?: ImageGenConfig()
+
+    suspend fun setImageGenApi(config: ImageGenConfig, expectedProfileId: String) {
+        require(config.adapter in setOf("OPENAI_IMAGES", "GEMINI", "DASHSCOPE"))
+        if (config.enabled && config.modelId.isBlank()) throw AppTextException(com.simplechat.app.R.string.error_no_model)
+        require(config.size.matches(Regex("[0-9]{2,5}x[0-9]{2,5}")))
+        require(config.aspectRatio in setOf("1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16", "21:9"))
+        require(config.geminiImageSize in setOf("1K", "2K", "4K"))
+        editApi(expectedProfileId) { it[Keys.IMAGE_GEN_API] = apiProfileJson.encodeToString(config) }
+    }
+
     suspend fun setServiceApi(files: Boolean, config: ServiceApiConfig, expectedProfileId: String) {
         config.endpoint("https://api.deepseek.com", if (files) config.filesPath else config.searchPath)
         if (!files) config.endpoint("https://api.deepseek.com", config.fetchPath)
@@ -515,6 +529,7 @@ class SettingsStore(
         lastUsedAt = lastUsedAt,
         searchApi = readService(prefs, Keys.SEARCH_API),
         filesApi = readService(prefs, Keys.FILES_API),
+        imageGenApi = readImageGen(prefs),
     )
 
     private fun ensureProfiles(prefs: MutablePreferences): List<ApiProfile> {
@@ -566,6 +581,7 @@ class SettingsStore(
         prefs[Keys.WEB_SEARCH] = profile.webSearch
         prefs[Keys.SEARCH_API] = apiProfileJson.encodeToString(profile.searchApi)
         prefs[Keys.FILES_API] = apiProfileJson.encodeToString(profile.filesApi)
+        prefs[Keys.IMAGE_GEN_API] = apiProfileJson.encodeToString(profile.imageGenApi)
     }
 
     /** Update a profile without selecting it or changing its recency. */
@@ -660,6 +676,7 @@ class SettingsStore(
         val PROFILES = stringPreferencesKey("api_profiles_v1")
         val SEARCH_API = stringPreferencesKey("search_api_config")
         val FILES_API = stringPreferencesKey("files_api_config")
+        val IMAGE_GEN_API = stringPreferencesKey("image_gen_api_config")
         val ACTIVE_PROFILE = stringPreferencesKey("active_api_profile")
         val RETRY_SKIP_NOTICE = booleanPreferencesKey("show_retry_skip_notice")
         val IMAGE_SKIP_NOTICE = booleanPreferencesKey("show_image_skip_notice")

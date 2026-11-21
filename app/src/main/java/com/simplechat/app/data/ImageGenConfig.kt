@@ -1,0 +1,77 @@
+package com.simplechat.app.data
+
+import kotlinx.serialization.Serializable
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+
+@Serializable
+data class ImageGenConfig(
+    val enabled: Boolean = false,
+    val adapter: String = "OPENAI_IMAGES",
+    val reuseChatKey: Boolean = true,
+    val baseUrl: String = "",
+    val modelId: String = "",
+    val apiKeyEncrypted: String = "",
+    val nativeResponsesEnabled: Boolean = false,
+    val size: String = "1024x1024",
+    val aspectRatio: String = "1:1",
+    val geminiImageSize: String = "1K",
+) {
+    override fun toString() = "ImageGenConfig(enabled=$enabled, adapter=$adapter, reuseChatKey=$reuseChatKey)"
+
+    internal fun connectionBase(chatBaseUrl: String): String {
+        val target = baseUrl.ifBlank { chatBaseUrl }.toHttpUrlOrNull()
+            ?: throw IllegalArgumentException("Invalid image API URL")
+        require(target.username.isEmpty() && target.password.isEmpty() && target.query == null && target.fragment == null) {
+            "Image API URL must not include credentials, a query, or a fragment"
+        }
+        if (reuseChatKey) {
+            val chat = chatBaseUrl.toHttpUrlOrNull()
+            require(chat != null && target.scheme == chat.scheme && target.host == chat.host && target.port == chat.port) {
+                "Use a separate key for a different image API host"
+            }
+        }
+        return target.toString()
+    }
+
+    fun key(chatKey: String): String {
+        val key = if (reuseChatKey) chatKey else SecretBox.decrypt(apiKeyEncrypted)
+        require(key.isNotBlank()) { "Image API key is missing" }
+        require(ApiKey.isHeaderSafe(key)) { "Image API key contains invalid characters" }
+        return key
+    }
+}
+
+internal fun StoredSettings.nativeImageAdapter(model: String = modelId): String? {
+    if (model.isBlank()) return null
+    val endpoint = baseUrl.toHttpUrlOrNull() ?: return null
+    if (endpoint.host == "generativelanguage.googleapis.com" && endpoint.isHttps && isGeminiImageModel(model)) {
+        return "GEMINI"
+    }
+    if (resolvedApiStyle != com.simplechat.app.net.ApiStyle.OPENAI_RESPONSES) return null
+    if (imageGenApi.nativeResponsesEnabled || endpoint.isHttps && endpoint.host == "api.openai.com" && model in responsesImageToolModels) {
+        return "RESPONSES"
+    }
+    return null
+}
+
+// Official model capabilities checked 2026-11-21. Custom Images API model IDs are user-entered.
+internal const val GEMINI_NANO_BANANA = "gemini-nano-banana-2.1"
+internal const val OPENAI_DEFAULT_IMAGE_MODEL = "gpt-image-2.6-sunburst"
+private fun isGeminiImageModel(model: String): Boolean = model.removePrefix("models/") in geminiImageModels
+
+internal fun usesGeminiInteractions(model: String): Boolean = model in geminiInteractionsModels
+
+private val geminiInteractionsModels = setOf(
+    GEMINI_NANO_BANANA, "gemini-3-pro-image", "gemini-3.1-flash-image",
+    "gemini-3.1-flash-lite-image",
+)
+
+private val geminiImageModels = geminiInteractionsModels + "gemini-2.5-flash-image"
+
+// Verified on the official model detail pages. Other Responses endpoints can opt in.
+private val responsesImageToolModels = setOf(
+    "chat-latest", "gpt-5.2", "gpt-5.2-pro", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-pro",
+    "gpt-5.5", "gpt-5.5-pro", "gpt-5.6-cyber", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra",
+    "gpt-6-astra", "gpt-6-cyber", "gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra",
+    "gpt-6.2-astra", "gpt-6.2-sol",
+)

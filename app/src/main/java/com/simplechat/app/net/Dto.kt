@@ -12,7 +12,22 @@ import kotlinx.serialization.json.JsonElement
  */
 
 @Serializable
-data class DeepSeekTool(val type: String)
+data class DeepSeekTool(
+    val type: String,
+    val function: FunctionDefinitionDto? = null,
+    val name: String? = null,
+    val description: String? = null,
+    val parameters: JsonElement? = null,
+)
+
+@Serializable
+data class FunctionDefinitionDto(val name: String, val description: String, val parameters: JsonElement)
+
+@Serializable
+data class ToolCallDto(val index: Int = 0, val id: String? = null, val function: FunctionCallDto? = null)
+
+@Serializable
+data class FunctionCallDto(val name: String? = null, val arguments: String? = null)
 
 @Serializable
 data class DeepSeekTitle(val enabled: Boolean = true)
@@ -30,6 +45,7 @@ data class ChatRequestDto(
      */
     val stream: Boolean,
     val tools: List<DeepSeekTool>? = null,
+    @SerialName("tool_choice") val toolChoice: String? = null,
     val title: DeepSeekTitle? = null,
     /** DeepSeek 思考模式开关。不支持的模型不能带此字段。 */
     val thinking: ThinkingDto? = null,
@@ -114,6 +130,7 @@ data class DeltaDto(
     val title: String? = null,
     val annotations: JsonElement? = null,
     val refusal: JsonElement? = null,
+    @SerialName("tool_calls") val toolCalls: List<ToolCallDto> = emptyList(),
 )
 
 @Serializable

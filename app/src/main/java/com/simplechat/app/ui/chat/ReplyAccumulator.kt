@@ -96,7 +96,7 @@ class ReplyAccumulator {
 
             // OpenAI 通道的增量事件不走这个累加器；流量到了这里说明通道配错，忽略即可
             is StreamEvent.Content, is StreamEvent.Reasoning, is StreamEvent.Usage,
-            StreamEvent.Done, is StreamEvent.Error -> Unit
+            StreamEvent.Done, is StreamEvent.Error, is StreamEvent.ToolCallDelta -> Unit
         }
     }
 

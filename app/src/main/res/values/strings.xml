@@ -555,6 +555,36 @@
     <string name="attach_camera">拍照</string>
     <string name="attach_gallery">相册</string>
     <string name="attach_file">文件</string>
+    <string name="image_size_default">默认</string>
+    <string name="image_model_unavailable">当前没有可用的生图模型</string>
+    <string name="image_configure">配置生图 API</string>
+    <string name="image_adapter_gemini">Gemini</string>
+    <string name="image_adapter_qwen">Qwen Image</string>
+    <string name="image_adapter_openai">OpenAI Images</string>
+    <string name="image_api_title">生图 API</string>
+    <string name="image_api_route">生图服务</string>
+    <string name="image_api_independent">使用独立生图 API</string>
+    <string name="image_api_native_title">允许聊天模型原生生图</string>
+    <string name="image_api_native_hint">当前首版支持 Responses 协议图像生成</string>
+    <string name="image_api_native_enabled">聊天模型原生生图</string>
+    <string name="image_api_fallback">聊天模型</string>
+    <string name="image_api_model">生图模型 ID</string>
+    <string name="image_api_base_url">生图 API Base URL</string>
+    <string name="image_api_chat_base_hint">留空以使用聊天 API 地址</string>
+    <string name="image_api_reuse_key">复用聊天 API Key</string>
+    <string name="image_api_key">生图 API Key</string>
+    <string name="image_api_size">图片尺寸</string>
+    <string name="image_api_aspect_ratio">Gemini 画幅，例如 1:1、16:9</string>
+    <string name="image_generate_action">生成图片</string>
+    <string name="image_generated">图片已生成。</string>
+    <string name="image_generate_title">生成图片</string>
+    <string name="image_prompt_label">画面描述</string>
+    <string name="image_prompt_hint">描述主体、环境、风格和构图</string>
+    <string name="image_generating">正在生成图片</string>
+    <string name="image_generate_failed">图片生成失败</string>
+    <string name="image_generate_stopped">已停止生成</string>
+    <string name="image_generate_retry">重试</string>
+    <string name="image_generate_stop">停止</string>
     <string name="attach_viewer_multi">　（本条共 %1$d 张，此处只放大第一张）</string>
 
     <!-- ── 顶栏（TopBar.kt） ─────────────────────────────────── -->

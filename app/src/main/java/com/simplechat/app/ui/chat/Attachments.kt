@@ -26,12 +26,24 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Button
+import androidx.compose.material3.TextButton
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -396,17 +408,16 @@ fun AttachmentPanelContent(
     onCapture: () -> Unit,
     onPickImage: () -> Unit,
     onPickFile: () -> Unit,
+    onGenerateImage: () -> Unit = {},
 ) {
     /*
-     * 三个格子，和官方那套一致：拍照 / 相册 / 文件。
+     * 两行等宽入口：拍照 / 相册 / 文件 / 生图。
      *
      * 等宽而不是按内容自适应 —— 三个入口的地位是平等的，
      * 谁宽谁窄会让人觉得有一个"更主要"。
      */
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         AttachmentTile(
             label = stringResource(R.string.attach_camera),
             icon = AppIcons.Camera,
@@ -419,12 +430,91 @@ fun AttachmentPanelContent(
             onClick = onPickImage,
             modifier = Modifier.weight(1f),
         )
+      }
+      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         AttachmentTile(
             label = stringResource(R.string.attach_file),
             icon = AppIcons.FileText,
             onClick = onPickFile,
             modifier = Modifier.weight(1f),
         )
+        AttachmentTile(
+            label = stringResource(R.string.image_generate_action),
+            icon = AppIcons.Image,
+            onClick = onGenerateImage,
+            modifier = Modifier.weight(1f),
+        )
+      }
+    }
+}
+
+@Composable
+internal fun ImageGenerationPanel(
+    prompt: String,
+    onPromptChange: (String) -> Unit,
+    modelLabel: String,
+    size: String?,
+    onSizeChange: (String?) -> Unit,
+    onGenerate: () -> Unit,
+    enabled: Boolean,
+    sizesAvailable: Boolean,
+    available: Boolean,
+    onConfigure: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.image_generate_title), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            Text(modelLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+        }
+        OutlinedTextField(value = prompt, onValueChange = onPromptChange, modifier = Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.image_prompt_label)) }, placeholder = { Text(stringResource(R.string.image_prompt_hint)) }, minLines = 2, maxLines = 4)
+        if (sizesAvailable) {
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                val sizes = listOf(null to stringResource(R.string.image_size_default), "1024x1024" to "1:1", "1536x1024" to "3:2", "1024x1536" to "2:3")
+                for ((option, label) in sizes) {
+                    FilterChip(selected = size == option, onClick = { onSizeChange(option) }, label = { Text(label) })
+                }
+            }
+        }
+        if (available) {
+            Button(onClick = onGenerate, enabled = enabled && prompt.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.image_generate_action))
+            }
+        } else {
+            Text(stringResource(R.string.image_model_unavailable), style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = onConfigure) { Text(stringResource(R.string.image_configure)) }
+        }
+    }
+}
+
+@Composable
+fun ImageGenerationPlaceholder(stopped: Boolean, failed: Boolean, onStop: () -> Unit, onRetry: () -> Unit) {
+    val colors = LocalChatColors.current
+    val dotColor = MaterialTheme.colorScheme.onSurface
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val phase = if (!stopped && !failed) rememberInfiniteTransition(label = "imageGrid")
+        .animateFloat(0f, 1f, infiniteRepeatable(tween(2800, easing = LinearEasing), RepeatMode.Restart), label = "imageGridPhase") else null
+    Column(Modifier.widthIn(max = BubbleImageWidth).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Canvas(Modifier.fillMaxWidth().aspectRatio(1f).clip(SoftShape).background(colors.fieldBackground)) {
+            val step = 8.dp.toPx()
+            val r0 = with(density) { .55.dp.toPx() }
+            val dr = with(density) { .90.dp.toPx() }
+            val count = (size.width / step).toInt().coerceAtLeast(1)
+            val inset = (size.width - (count - 1) * step) / 2f
+            for (j in 0 until count) for (i in 0 until count) {
+                val u = (inset + i * step) / size.width
+                val v = (inset + j * step) / size.height
+                val wave = ((1 + kotlin.math.cos(2 * Math.PI * ((phase?.value ?: .3f) - .85 * u - .55 * v))) / 2).toFloat().let { it * it }
+                val edge = .35f + .65f * minOf(1f, minOf(u, v, 1 - u, 1 - v) * 6)
+                drawCircle(dotColor.copy(alpha = (.10f + .28f * wave) * edge), r0 + dr * wave, Offset(inset + i * step, inset + j * step))
+            }
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(when { failed -> R.string.image_generate_failed; stopped -> R.string.image_generate_stopped; else -> R.string.image_generating }), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+            if (failed || stopped) TextButton(onClick = onRetry) { Text(stringResource(R.string.image_generate_retry)) } else TextButton(onClick = onStop) { Text(stringResource(R.string.image_generate_stop)) }
+        }
     }
 }
 

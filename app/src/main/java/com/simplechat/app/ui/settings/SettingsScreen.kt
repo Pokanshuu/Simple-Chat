@@ -148,6 +148,7 @@ private enum class SettingsPage(private val parentName: String?) {
     API_PROFILE("API_PROFILES"),
     SEARCH_API("API_PROFILES"),
     FILES_API("API_PROFILES"),
+    IMAGE_API("API_PROFILES"),
     PRESETS("ROOT"),
     MEMORY("ROOT"),
     /** 外观：主题模式、主题色、字体大小入口。 */
@@ -239,13 +240,14 @@ private enum class ApiStylePreference(val labelRes: Int) {
 fun SettingsScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    startAtImageApi: Boolean = false,
 ) {
     val context = LocalContext.current
-    SettingsScreen(onBack, modifier, (context.applicationContext as App).container.settingsStore)
+    SettingsScreen(onBack, modifier, (context.applicationContext as App).container.settingsStore, startAtImageApi)
 }
 
 @Composable
-internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: SettingsStore) {
+internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: SettingsStore, startAtImageApi: Boolean = false) {
     val colors = LocalChatColors.current
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
@@ -255,7 +257,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
     var stored by remember { mutableStateOf(StoredSettings()) }
     var settingsLoaded by remember { mutableStateOf(false) }
     // 换语言会重建 Activity，保留设置页的当前位置。
-    var page by rememberSaveable { mutableStateOf(SettingsPage.ROOT) }
+    var page by rememberSaveable { mutableStateOf(if (startAtImageApi) SettingsPage.IMAGE_API else SettingsPage.ROOT) }
     var editingProfileId by rememberSaveable { mutableStateOf<String?>(null) }
     val editingProfile = stored.apiProfiles.firstOrNull { it.id == editingProfileId }
     val editingSettings = editingProfile?.let { profile ->
@@ -390,6 +392,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
         else if (page in listOf(SettingsPage.SEARCH_API, SettingsPage.FILES_API) && settingsLoaded) serviceBack?.invoke()
         else previousPage()
     }
+    LaunchedEffect(startAtImageApi) { if (startAtImageApi) page = SettingsPage.IMAGE_API }
     BackHandler(enabled = page != SettingsPage.ROOT) { requestBack() }
     LaunchedEffect(stored.activeApiProfileId, stored.baseUrl) { testResult = null }
 
@@ -588,6 +591,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                     ?: stringResource(R.string.settings_api)
                 SettingsPage.SEARCH_API -> stringResource(R.string.service_search_title)
                 SettingsPage.FILES_API -> stringResource(R.string.service_files_title)
+                SettingsPage.IMAGE_API -> stringResource(R.string.image_api_title)
                 SettingsPage.PRESETS -> stringResource(R.string.settings_presets)
                 SettingsPage.MEMORY -> stringResource(R.string.settings_group_memory)
                 SettingsPage.APPEARANCE -> stringResource(R.string.settings_appearance)
@@ -768,6 +772,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                                 stored = stored,
                                 onOpenSearch = { openService(SettingsPage.SEARCH_API) },
                                 onOpenFiles = { openService(SettingsPage.FILES_API) },
+                                onOpenImage = { openService(SettingsPage.IMAGE_API) },
                             )
                         }
 
@@ -779,6 +784,12 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                             saving = savingService,
                             onSavingChange = { savingService = it },
                             onBackAction = { serviceBack = it },
+                            onSaved = { if (page == target) previousPage() },
+                        )
+
+                        SettingsPage.IMAGE_API -> if (settingsLoaded) ImageGenApiPage(
+                            stored = stored,
+                            store = store,
                             onSaved = { if (page == target) previousPage() },
                         )
 

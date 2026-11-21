@@ -266,6 +266,7 @@ data class UiMessage(
     val tokensOut: Int? = null,
     /** 输入里命中 prompt 缓存的部分。 */
     val cacheHitTokens: Int? = null,
+    val imageGeneration: Boolean = false,
 ) {
     val streaming: Boolean get() = status == MessageStatus.STREAMING
     internal val hasReasoning: Boolean get() = !reasoning.isNullOrBlank()

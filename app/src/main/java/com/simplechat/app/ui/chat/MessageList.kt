@@ -148,6 +148,7 @@ fun MessageList(
     onVariantChange: (UiMessage, Int) -> Unit = { _, _ -> },
     onOpenImage: (UiMessage, Attachment) -> Unit = { _, _ -> },
     onRetry: (UiMessage) -> Unit = {},
+    onStopImage: () -> Unit = {},
     onChooseModel: (() -> Unit)? = null,
     onRetryWithoutAttachmentsAndTools: ((UiMessage) -> Unit)? = null,
     /**
@@ -321,6 +322,7 @@ fun MessageList(
                 onVariantChange = { onVariantChange(message, it) },
                 onOpenImage = { onOpenImage(message, it) },
                 onRetry = { onRetry(message) },
+                onStopImage = onStopImage,
                 onChooseModel = onChooseModel,
                 onRetryWithoutAttachmentsAndTools = onRetryWithoutAttachmentsAndTools?.let { retry -> { retry(message) } },
             )
@@ -371,6 +373,7 @@ private fun MessageRow(
     onVariantChange: (Int) -> Unit,
     onOpenImage: (Attachment) -> Unit,
     onRetry: () -> Unit,
+    onStopImage: () -> Unit,
     onChooseModel: (() -> Unit)?,
     onRetryWithoutAttachmentsAndTools: (() -> Unit)?,
     onFoldToggle: () -> Unit,
@@ -536,6 +539,7 @@ private fun MessageRow(
                 onDoubleClick = { selectionFromMenu = false; onSelectingChange(selectionState) },
                 onOpenImage = onOpenImage,
                 onRetry = onRetry,
+                onStopImage = onStopImage,
                 onChooseModel = onChooseModel,
                 onRetryWithoutAttachmentsAndTools = onRetryWithoutAttachmentsAndTools,
                 menu = menu,
@@ -866,6 +870,7 @@ fun AssistantBlock(
     onDoubleClick: (() -> Unit)? = null,
     onOpenImage: (Attachment) -> Unit = {},
     onRetry: () -> Unit = {},
+    onStopImage: () -> Unit = {},
     onChooseModel: (() -> Unit)? = null,
     onRetryWithoutAttachmentsAndTools: (() -> Unit)? = null,
     menu: @Composable () -> Unit = {},
@@ -953,7 +958,7 @@ fun AssistantBlock(
          * 仍可能迟迟不出现；保留等待提示，避免长上下文下回复气泡再次显得空白。
          */
         AnimatedVisibility(
-            visible = message.streaming && answer.isBlank(),
+            visible = message.streaming && answer.isBlank() && !message.imageGeneration,
             enter = fadeIn(tween(120, easing = MotionEasing)),
             exit = fadeOut(tween(240, easing = MotionEasing)),
         ) {
@@ -961,6 +966,21 @@ fun AssistantBlock(
                 WaitingIndicator(loadingLabel, useThemeColor = loadingWordsUseThemeColor)
                 Spacer(Modifier.size(MessageGap))
             }
+        }
+
+        if (message.imageGeneration && message.attachments.isEmpty()) {
+            ImageGenerationPlaceholder(
+                stopped = message.status == MessageStatus.STOPPED,
+                failed = message.status == MessageStatus.ERROR,
+                onStop = onStopImage,
+                onRetry = onRetry,
+            )
+            Spacer(Modifier.size(MessageGap))
+        }
+
+        if (message.attachments.isNotEmpty()) {
+            MessageAttachments(message.attachments, onOpenImage)
+            Spacer(Modifier.size(MessageGap))
         }
 
         if (timeline != null) {
@@ -1053,7 +1073,7 @@ fun AssistantBlock(
                     CapsuleButton(text = stringResource(R.string.error_choose_model), onClick = onChooseModel)
                     Spacer(Modifier.size(8.dp))
                 }
-                if (!contentRisk) CapsuleButton(
+                if (!contentRisk && !message.imageGeneration) CapsuleButton(
                     text = stringResource(R.string.action_retry),
                     onClick = onRetry,
                     leadingIcon = AppIcons.Refresh,

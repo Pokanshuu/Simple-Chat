@@ -71,6 +71,7 @@ internal fun responsesUrl(baseUrl: String): String {
 internal class ResponsesSseLineParser(private val json: Json) {
     private enum class Kind { SUMMARY, REASONING, TEXT, REFUSAL }
     private data class Part(val kind: Kind, val output: Int, val index: Int)
+    private val completedImageCalls = mutableSetOf<Int>()
     private val delivered = mutableMapOf<Part, StringBuilder>()
 
     fun parse(line: String): SseLineParser.Result {
@@ -118,7 +119,11 @@ internal class ResponsesSseLineParser(private val json: Json) {
                 val reason = (response?.get("incomplete_details") as? JsonObject)?.text("reason")
                 events += StreamEvent.Stopped(when (reason) {
                     "max_output_tokens" -> "length"
-                    null -> if (type == "response.incomplete") "incomplete" else "stop"
+                    null -> when {
+                        type == "response.incomplete" -> "incomplete"
+                        completedImageCalls.isNotEmpty() -> "tool_calls"
+                        else -> "stop"
+                    }
                     else -> reason
                 })
             }
@@ -134,6 +139,13 @@ internal class ResponsesSseLineParser(private val json: Json) {
 
     private fun item(item: JsonObject?, output: Int, events: MutableList<StreamEvent>) {
         when (item?.text("type")) {
+            "function_call" -> {
+                val arguments = item.text("arguments")
+                if (item.text("name") == imageToolDefinition.name && arguments != null &&
+                    completedImageCalls.add(output)) {
+                    events += StreamEvent.ToolCallDelta(output, item.text("call_id"), imageToolDefinition.name, arguments)
+                }
+            }
             "reasoning" -> {
                 val summary = item["summary"] as? JsonArray
                 val hasSummary = summary.orEmpty().any { (it as? JsonObject)?.text("text")?.isNotBlank() == true } ||

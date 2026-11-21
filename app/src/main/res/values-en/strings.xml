@@ -540,6 +540,36 @@
     <string name="attach_camera">Camera</string>
     <string name="attach_gallery">Photos</string>
     <string name="attach_file">File</string>
+    <string name="image_size_default">Default</string>
+    <string name="image_model_unavailable">No image generation model is configured</string>
+    <string name="image_configure">Configure image API</string>
+    <string name="image_adapter_gemini">Gemini</string>
+    <string name="image_adapter_qwen">Qwen Image</string>
+    <string name="image_adapter_openai">OpenAI Images</string>
+    <string name="image_api_title">Image generation API</string>
+    <string name="image_api_route">Image service</string>
+    <string name="image_api_independent">Use independent image API</string>
+    <string name="image_api_native_title">Allow native image generation</string>
+    <string name="image_api_native_hint">Native generation currently supports the Responses protocol</string>
+    <string name="image_api_native_enabled">Native chat image generation</string>
+    <string name="image_api_fallback">Chat model</string>
+    <string name="image_api_model">Image model ID</string>
+    <string name="image_api_base_url">Image API Base URL</string>
+    <string name="image_api_chat_base_hint">Leave blank to use the chat API endpoint</string>
+    <string name="image_api_reuse_key">Reuse chat API key</string>
+    <string name="image_api_key">Image API key</string>
+    <string name="image_api_size">Image size</string>
+    <string name="image_api_aspect_ratio">Gemini aspect ratio, e.g. 1:1 or 16:9</string>
+    <string name="image_generate_action">Generate image</string>
+    <string name="image_generated">Image generated.</string>
+    <string name="image_generate_title">Generate image</string>
+    <string name="image_prompt_label">Image description</string>
+    <string name="image_prompt_hint">Describe the subject, setting, style, and composition</string>
+    <string name="image_generating">Generating image</string>
+    <string name="image_generate_failed">Image generation failed</string>
+    <string name="image_generate_stopped">Generation stopped</string>
+    <string name="image_generate_retry">Retry</string>
+    <string name="image_generate_stop">Stop</string>
     <string name="attach_viewer_multi"> (this message has %1$d images, only the first is enlarged)</string>
 
     <!-- ── Top bar ───────────────────────────────────────────── -->

@@ -60,6 +60,9 @@ internal class SseLineParser(private val json: Json) {
         val events = mutableListOf<StreamEvent>()
 
         chunk.choices.firstOrNull()?.delta?.let { delta ->
+            delta.toolCalls.forEach { call ->
+                events += StreamEvent.ToolCallDelta(call.index, call.id, call.function?.name, call.function?.arguments)
+            }
             events += citationEvents(delta.annotations)
             delta.title?.takeIf(String::isNotBlank)?.let { events += StreamEvent.Title(it) }
             delta.displayReasoning()?.let { events += StreamEvent.Reasoning(it) }

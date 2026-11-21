@@ -116,7 +116,12 @@ data class AnthropicThinking(
 }
 
 @Serializable
-data class AnthropicTool(val type: String, val name: String) {
+data class AnthropicTool(
+    val type: String? = null,
+    val name: String,
+    val description: String? = null,
+    @SerialName("input_schema") val inputSchema: JsonElement? = null,
+) {
     companion object {
         /** 联网搜索（含边想边搜与图搜）。 */
         val WebSearch = AnthropicTool("deepseek_web_search", "deepseek_web_search")

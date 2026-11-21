@@ -63,6 +63,7 @@ fun MessageEntity.toUi(): UiMessage = UiMessage(
     tokensIn = tokensIn,
     tokensOut = tokensOut,
     cacheHitTokens = cacheHitTokens,
+    imageGeneration = imageGeneration,
 )
 
 fun MessageStatus.toStorage(): String = name
@@ -80,6 +81,7 @@ fun newMessageEntity(
     status: MessageStatus = MessageStatus.DONE,
     active: Boolean = true,
     model: String? = null,
+    imageGeneration: Boolean = false,
     now: Long = System.currentTimeMillis(),
 ): MessageEntity = MessageEntity(
     id = id,
@@ -93,5 +95,6 @@ fun newMessageEntity(
     reasoning = reasoning,
     status = status.toStorage(),
     model = model,
+    imageGeneration = imageGeneration,
     createdAt = now,
 )

@@ -77,6 +77,7 @@ class ChatApi(
         search: Boolean = false,
         readLink: Boolean = false,
         requestTitle: Boolean = false,
+        generateImageTool: Boolean = false,
     ): Flow<StreamEvent> {
         val flash = isOfficialDeepSeekEndpoint(baseUrl) && model.id == DEEPSEEK_FLASH
         val tools = if (flash) buildList {
@@ -90,13 +91,18 @@ class ChatApi(
             return sseClient.streamResponses(
                 url = responsesUrl(baseUrl), apiKey = apiKey,
                 request = buildResponsesRequest(model, messages, thinkingEnabled, reasoningEffort, maxTokens, temperature).let { request ->
-                    request.copy(tools = tools, title = title, reasoning = if (isOfficialDeepSeekEndpoint(baseUrl) && !thinkingEnabled) ResponsesReasoningDto("none") else request.reasoning)
+                    val imageTool = imageToolDefinition.takeIf { generateImageTool }?.let {
+                        DeepSeekTool("function", name = it.name, description = it.description, parameters = it.parameters)
+                    }
+                    request.copy(tools = (tools.orEmpty() + listOfNotNull(imageTool)).ifEmpty { null }, title = title, reasoning = if (isOfficialDeepSeekEndpoint(baseUrl) && !thinkingEnabled) ResponsesReasoningDto("none") else request.reasoning)
                 },
                 messages = messages, model = model, extraHeaders = extraHeaders, retryBeforeContent = retryBeforeContent,
             )
         }
+        val imageTool = if (generateImageTool) DeepSeekTool("function", imageToolDefinition) else null
+        val allTools = (tools.orEmpty() + listOfNotNull(imageTool)).ifEmpty { null }
         val request = buildChatRequest(model, messages, thinkingEnabled, reasoningEffort, maxTokens, temperature, topP, isOfficialDeepSeekEndpoint(baseUrl))
-            .let { if (tools == null && title == null) it else it.copy(tools = tools, title = title, temperature = null, topP = null) }
+            .let { if (allTools == null && title == null) it else it.copy(tools = allTools, toolChoice = if (imageTool != null) "auto" else null, title = title, temperature = null, topP = null) }
 
         return sseClient.stream(
             url = chatCompletionsUrl(baseUrl),
@@ -276,4 +282,20 @@ object MessageContent {
 data class ImageInput(
     val dataUrl: String,
     val detail: String = "high",
+)
+
+internal val imageToolDefinition = FunctionDefinitionDto(
+    name = "generate_image",
+    description = "Generate an image when the latest user message asks to create or draw an image. Use only the visual description from the request. Do not call for image analysis or discussion.",
+    parameters = buildJsonObject {
+        put("type", "object")
+        putJsonObject("properties") {
+            putJsonObject("prompt") {
+                put("type", "string")
+                put("description", "Visual description of the requested image")
+            }
+        }
+        put("required", buildJsonArray { add(JsonPrimitive("prompt")) })
+        put("additionalProperties", false)
+    },
 )
