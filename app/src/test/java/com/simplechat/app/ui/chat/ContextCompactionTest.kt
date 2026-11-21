@@ -24,18 +24,26 @@ class ContextCompactionTest {
         assertFalse(material.contains("file-api-1"))
     }
 
-    @Test fun `missing files are reported together before yielding any compression material`() {
-        val available = UiMessage("text", MessageRole.USER, "available".repeat(40_000))
+    @Test fun `unreadable attachments do not block compaction of the remaining history`() = runBlocking {
+        val available = UiMessage("text", MessageRole.USER, "Earlier conversation")
         val missing = UiMessage("files", MessageRole.USER, "read attachments", attachments = listOf(
             Attachment(Attachment.Kind.TEXT, "report.pdf", data = "", fileId = "file-api-1"),
-            Attachment(Attachment.Kind.TEXT, "slides.pptx", data = "", fileId = "file-api-2")))
-        val source = compactionSegments(listOf(available, missing), "old summary", prompts).iterator()
-        try { source.hasNext(); fail("Missing files must be detected before first batch") }
-        catch (error: AppTextException) {
-            assertEquals("report.pdf、slides.pptx", error.text.args.single())
+            Attachment(Attachment.Kind.TEXT, "local.txt", data = "Complete local text"),
+            Attachment(Attachment.Kind.TEXT, "slides.pptx", data = " \n", fileId = "file-api-2")))
+        val later = UiMessage("later", MessageRole.ASSISTANT, "Later answer")
+        val source = compactionSegments(listOf(available, missing, later), "old summary", prompts)
+        val result = compactInBatches(source, prompts, 128_000) { input, _, _ ->
+            listOf("old summary", "Earlier conversation", "read attachments", "Complete local text",
+                prompts.unreadableAttachment, "Later answer").forEach { assertTrue(input.contains(it)) }
+            assertFalse(input.contains("file-api-"))
+            assertFalse(input.contains("report.pdf"))
+            assertFalse(input.contains("slides.pptx"))
+            "new summary"
         }
+        assertEquals("new summary", result)
+        assertEquals("file-api-1", missing.attachments.first().fileId)
     }
-    private val prompts = CompactionPrompts("Summarize", "[Summary]\n", "\n[New]\n", "User: ", "AI: ", "[Image]")
+    private val prompts = CompactionPrompts("Summarize", "[Summary]\n", "\n[New]\n", "User: ", "AI: ", "[Image]", "[Unreadable attachment omitted]")
     private fun messages(count: Int, content: String = "short") = (0 until count).map {
         UiMessage("$it", if (it % 2 == 0) MessageRole.USER else MessageRole.ASSISTANT, content)
     }
@@ -99,15 +107,12 @@ class ContextCompactionTest {
         assertEquals(listOf("a", "😀", "z"), boundedCompactionChunks(sequenceOf("a😀z"), 2).toList())
     }
 
-    @Test fun `attachments without readable content are never silently marked as summarized`() {
-        val message = UiMessage("file", MessageRole.USER, "read this file",
+    @Test fun `attachment only messages retain a marker without pretending the document was read`() {
+        val message = UiMessage("file", MessageRole.USER, "",
             attachments = listOf(Attachment(Attachment.Kind.TEXT, "remote.pdf", data = "")))
-        try {
-            compactionSegments(listOf(message), null, prompts).toList()
-            fail("A file reference must not be treated as an empty document")
-        } catch (error: AppTextException) {
-            assertEquals(com.simplechat.app.R.string.compact_attachment_unavailable, error.text.resId)
-        }
+        val input = compactionSegments(listOf(message), null, prompts).joinToString("")
+        assertTrue(input.contains(prompts.unreadableAttachment))
+        assertFalse(input.contains("remote.pdf"))
     }
 
     @Test fun `fresh history that fits is summarized in one request`() = runBlocking {

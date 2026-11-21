@@ -495,7 +495,7 @@
     <string name="compact_interrupted">The connection was interrupted or the service is temporarily unavailable. Compaction has stopped. Retry to resume saved progress. Your previous summary and local messages have not changed.</string>
     <string name="compact_incomplete">A complete summary could not be generated. Retry to resume saved progress. Your previous summary and local messages have not changed.</string>
     <string name="compact_no_progress">The summaries could not be reduced to a usable size. Retry or choose another model. Your previous summary and local messages have not changed.</string>
-    <string name="compact_attachment_unavailable">These attachments have no complete readable text for compaction: %1$s. A file ID is not its content. Provide the file text and retry. No compaction request was sent; your previous summary and local messages are unchanged.</string>
+    <string name="prompt_compact_attachment_skipped">(This message contains attachments omitted from compaction because their text could not be read. Do not infer their contents.)</string>
 
     <!-- Panel 4: chat settings -->
     <string name="input_conversation_name">Conversation name</string>

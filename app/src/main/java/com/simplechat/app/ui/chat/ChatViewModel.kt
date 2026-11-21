@@ -988,6 +988,7 @@ class ChatViewModel(
             user = Res.get(R.string.prompt_user_prefix),
             assistant = Res.get(R.string.prompt_ai_prefix),
             image = Res.get(R.string.prompt_has_image),
+            unreadableAttachment = Res.get(R.string.prompt_compact_attachment_skipped),
         )
 
         compacting = true

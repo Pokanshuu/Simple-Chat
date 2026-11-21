@@ -40,6 +40,7 @@ internal data class CompactionPrompts(
     val user: String,
     val assistant: String,
     val image: String,
+    val unreadableAttachment: String,
 )
 
 internal enum class CompactionStyle { GENERAL, CREATIVE, TECHNICAL }
@@ -77,13 +78,6 @@ internal fun compactionSegments(
     previousSummary: String?,
     prompts: CompactionPrompts,
 ): Sequence<String> = sequence {
-    val unreadableFiles = messages.flatMap { it.attachments }
-        .filter { it.kind == Attachment.Kind.TEXT && it.data.isBlank() }
-        .map { it.name }.distinct()
-    if (unreadableFiles.isNotEmpty()) throw AppTextException(
-        R.string.compact_attachment_unavailable,
-        unreadableFiles.take(5).joinToString("、") + if (unreadableFiles.size > 5) "… (${unreadableFiles.size})" else "",
-    )
     if (!previousSummary.isNullOrBlank()) {
         yield(prompts.existing)
         yield(previousSummary)
@@ -92,15 +86,20 @@ internal fun compactionSegments(
     for (message in messages) {
         yield(if (message.role == MessageRole.USER) prompts.user else prompts.assistant)
         yield(message.content)
+        var skippedAttachment = false
         for (attachment in message.attachments) {
             if (attachment.kind == Attachment.Kind.TEXT) {
-                // A remote file reference is not its contents. Never mark an unread file as summarized.
-                if (attachment.data.isBlank()) throw AppTextException(R.string.compact_attachment_unavailable, attachment.name)
+                // A remote file ID is not its contents; keep the message without inventing the document.
+                if (attachment.data.isBlank()) {
+                    skippedAttachment = true
+                    continue
+                }
                 yield("\n<<<附件开始：${attachment.name}>>>\n")
                 yield(attachment.data)
                 yield("\n<<<附件结束：${attachment.name}>>>\n")
             }
         }
+        if (skippedAttachment) yield("\n${prompts.unreadableAttachment}\n")
         if (message.attachments.any { it.isImage }) yield(prompts.image)
         yield("\n\n")
     }
