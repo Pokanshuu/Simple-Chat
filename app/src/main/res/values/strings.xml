@@ -562,6 +562,11 @@
     <string name="attach_file">文件</string>
     <string name="image_size_default">默认</string>
     <string name="image_model_unavailable">当前没有可用的生图模型</string>
+    <string name="image_capability_available">当前对话已配置生图工具，可以生成图片。</string>
+    <string name="image_capability_unavailable">当前对话没有配置可用的生图模型。</string>
+    <string name="image_tool_reference_missing">没有找到要修改的原图。请附上图片再试。</string>
+    <string name="image_tool_not_called">本次没有收到有效的生图调用，未生成图片。</string>
+    <string name="image_generate_direct">直接生成</string>
     <string name="image_configure">配置生图 API</string>
     <string name="image_adapter_gemini">Gemini</string>
     <string name="image_adapter_qwen">Qwen Image</string>

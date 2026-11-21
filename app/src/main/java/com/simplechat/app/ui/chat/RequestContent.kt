@@ -8,6 +8,23 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
+/** Request-only attachment, so the same generated image is not resent on unrelated turns. */
+internal fun UiMessage.withVisualFollowUp(latestUserId: String?, image: Attachment?): UiMessage =
+    if (image != null && role == MessageRole.USER && id == latestUserId && attachments.none { it.isImage }) {
+        copy(attachments = attachments + image)
+    } else this
+
+/** Only explicit image references may look past the immediately preceding message. */
+internal fun recentGeneratedImage(path: List<UiMessage>, latestUserId: String, explicitReference: Boolean): UiMessage? {
+    val userIndex = path.indexOfLast { it.id == latestUserId && it.role == MessageRole.USER }
+    if (userIndex <= 0) return null
+    val count = if (explicitReference) 6 else 1
+    return path.subList((userIndex - count).coerceAtLeast(0), userIndex).asReversed().firstOrNull {
+        it.role == MessageRole.ASSISTANT && it.status == MessageStatus.DONE &&
+            it.imageGeneration && it.attachments.any { attachment -> attachment.isImage }
+    }
+}
+
 /**
  * 组装一条 **user** 消息的 `content`。
  *

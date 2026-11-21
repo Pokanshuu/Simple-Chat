@@ -567,6 +567,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         tokensIn: Int? = null,
         tokensOut: Int? = null,
         cacheHitTokens: Int? = null,
+        directImageRequest: ImageRequest? = null,
     ) = messages.finish(
         id = id,
         content = content,
@@ -581,6 +582,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         tokensIn = tokensIn,
         tokensOut = tokensOut,
         cacheHitTokens = cacheHitTokens,
+        directImageRequest = directImageRequest?.encode(),
     )
 
     internal suspend fun attachGeneratedImage(messageId: String, bytes: ByteArray, markDone: Boolean = false): Attachment =

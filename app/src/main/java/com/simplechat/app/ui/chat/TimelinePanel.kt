@@ -67,12 +67,13 @@ fun TimelinePanel(
     onToggleExpand: () -> Unit,
     onOpenSources: (List<SourceRef>) -> Unit,
     modifier: Modifier = Modifier,
+    hasGeneratedImage: Boolean = false,
 ) {
     val colors = LocalChatColors.current
-    val hasAnswer = view.hasAnswer
+    val hasAnswer = view.hasAnswer || hasGeneratedImage
     val running = streaming && !hasAnswer
     // 没有标题（这一轮没思考过）时不折叠，直接展示步骤
-    val header = timelineHeader(view, streaming)
+    val header = timelineHeader(view, streaming, hasAnswer)
     val showHeader = header != null
 
     Column(
@@ -124,8 +125,8 @@ fun TimelinePanel(
  * 有正文就说思考用时 —— 后者才是用户折叠过程之后真正想知道的量。
  */
 @Composable
-private fun timelineHeader(view: TimelineView, streaming: Boolean): String? {
-    if (view.hasAnswer) {
+private fun timelineHeader(view: TimelineView, streaming: Boolean, hasAnswer: Boolean): String? {
+    if (hasAnswer) {
         // 只有真实思考文本才显示标题。网关可在正文之后才送来摘要，此时没有思考时长。
         if (view.steps.none { it is TimelineStep.Thinking }) return null
         val seconds = view.thinkingSeconds()

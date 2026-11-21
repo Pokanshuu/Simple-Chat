@@ -931,7 +931,7 @@ fun AssistantBlock(
      * 角标占位换真链接这一步很便宜（纯字符串替换），但**不能省** ——
      * 没换的话点角标会去打不开的 `#cite-N`。
      */
-    val answer = if (timeline == null || message.imageGeneration) {
+    val answer = if (timeline == null || message.imageGeneration || !timeline.hasAnswer) {
         message.content
     } else {
         remember(timeline) { resolveCitationLinks(timeline.answer, timeline.sources) }
@@ -977,18 +977,7 @@ fun AssistantBlock(
             }
         }
 
-        if (message.imageGeneration) {
-            GeneratedImageContent(
-                attachment = message.attachments.firstOrNull { it.isImage },
-                requestedRatio = message.imageRequest?.previewAspectRatio(),
-                stopped = message.status == MessageStatus.STOPPED,
-                failed = message.status == MessageStatus.ERROR,
-                onStop = onStopImage,
-                onRetry = onRetry,
-                onOpen = onOpenImage,
-            )
-            Spacer(Modifier.size(MessageGap))
-        } else if (message.attachments.isNotEmpty()) {
+        if (!message.imageGeneration && message.attachments.isNotEmpty()) {
             MessageAttachments(message.attachments, onOpenImage)
             Spacer(Modifier.size(MessageGap))
         }
@@ -999,6 +988,8 @@ fun AssistantBlock(
                 if (timeline.hasSteps) {
                     TimelinePanel(
                         view = timeline,
+                        hasGeneratedImage = message.imageGeneration && message.status == MessageStatus.DONE &&
+                            message.attachments.any { it.isImage },
                         streaming = message.streaming,
                         expanded = reasoningExpanded,
                         onToggleExpand = {
@@ -1031,6 +1022,19 @@ fun AssistantBlock(
                     }
                 }
             }
+        }
+
+        if (message.imageGeneration) {
+            GeneratedImageContent(
+                attachment = message.attachments.firstOrNull { it.isImage },
+                requestedRatio = message.imageRequest?.previewAspectRatio(),
+                stopped = message.status == MessageStatus.STOPPED,
+                failed = message.status == MessageStatus.ERROR,
+                onStop = onStopImage,
+                onRetry = onRetry,
+                onOpen = onOpenImage,
+            )
+            Spacer(Modifier.size(MessageGap))
         }
 
         /*
@@ -1070,6 +1074,11 @@ fun AssistantBlock(
 
         sourceSheet?.let { sources ->
             SourceSheet(sources = sources, onDismiss = { sourceSheet = null })
+        }
+
+        if (!message.imageGeneration && message.imageRequest != null && message.status == MessageStatus.DONE) {
+            Spacer(Modifier.size(8.dp))
+            CapsuleButton(text = stringResource(R.string.image_generate_direct), onClick = onRetry, leadingIcon = AppIcons.ImageEdit)
         }
 
         message.errorMessage?.let { error ->

@@ -73,7 +73,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import com.simplechat.app.net.ImageToolCall
-import com.simplechat.app.net.requestsImageGeneration
+import com.simplechat.app.net.ImageGenerationIntent
+import com.simplechat.app.net.ImageToolOperation
+import com.simplechat.app.net.blocksImageToolExecution
+import com.simplechat.app.net.isExplicitImageRequest
+import com.simplechat.app.net.requestsContextualImageEdit
+import com.simplechat.app.net.imageGenerationIntent
+import com.simplechat.app.net.mentionsRecentGeneratedImage
 
 /**
  * 对话状态与流式调度。
@@ -1271,7 +1277,7 @@ class ChatViewModel(
      */
     fun retryMessage(target: UiMessage, omitAttachmentsAndTools: Boolean = false) {
         if (isStreaming || switching || target.role != MessageRole.ASSISTANT) return
-        if (target.imageGeneration && !omitAttachmentsAndTools) { regenerate(target); return }
+        if ((target.imageGeneration || target.imageRequest != null) && !omitAttachmentsAndTools) { regenerate(target); return }
         val conversationId = currentConversationId ?: return
         viewModelScope.launch {
             if (!sendMutex.tryLock()) return@launch
@@ -1295,11 +1301,16 @@ class ChatViewModel(
      * 于是旧回复没被替换、新回复排到了队尾 —— 表现就是"一个接一个"。
      */
     fun regenerate(target: UiMessage) {
-        if (target.imageGeneration) {
+        if (target.imageGeneration || target.imageRequest != null) {
             val parent = messages.firstOrNull { it.id == target.parentId && it.role == MessageRole.USER } ?: return
             val request = target.imageRequest
+            val referenceSource = request?.referenceMessageId?.let { id -> messages.firstOrNull { it.id == id } }
             generateImage(request?.prompt ?: parent.content, retryParentId = parent.id,
-                references = parent.attachments.takeIf { request?.usesReferences != false }.orEmpty(),
+                references = when {
+                    request?.usesReferences == false -> emptyList()
+                    request?.referenceMessageId != null -> referenceSource?.attachments.orEmpty()
+                    else -> parent.attachments
+                },
                 retryRequest = request)
             return
         }
@@ -1754,22 +1765,45 @@ class ChatViewModel(
         val options = settings
         val latestUser = messages.lastOrNull { it.role == MessageRole.USER }
         val latestQuestion = latestUser?.content.orEmpty()
-        val imageIntent = prefix == null && requestsImageGeneration(latestQuestion)
+        val explicitReference = mentionsRecentGeneratedImage(latestQuestion)
+        val previousImage = latestUser?.let { recentGeneratedImage(messages, it.id, explicitReference) }
+        val attachedImages = latestUser?.attachments.orEmpty().filter { it.isImage }
+        val imageIntent = if (prefix == null && !omitAttachmentsAndTools) {
+            imageGenerationIntent(latestQuestion, attachedImages.isNotEmpty() || previousImage != null)
+        } else ImageGenerationIntent.NONE
+        val inheritedImage = previousImage.takeIf { attachedImages.isEmpty() }
+        val editReferences = attachedImages.ifEmpty { inheritedImage?.attachments.orEmpty().filter { it.isImage } }
+        val discussingImage = imageIntent == ImageGenerationIntent.NONE && explicitReference
+        val visualFollowUp = previousImage?.attachments?.firstOrNull { it.isImage }?.takeIf {
+            prefix == null && options.model.supportsVision && attachedImages.isEmpty() &&
+                (discussingImage || imageIntent == ImageGenerationIntent.EDIT)
+        }
+        val wantsImage = imageIntent == ImageGenerationIntent.CREATE || imageIntent == ImageGenerationIntent.EDIT
         val nativeImageAdapter = route.nativeImageAdapter(options.model.id)
-        val nativeGeminiTurn = imageIntent && !route.imageGenApi.enabled && nativeImageAdapter == "GEMINI"
-        val imageToolEnabled = imageIntent && !nativeGeminiTurn &&
-            (if (route.imageGenApi.enabled) route.imageGenApi.modelId.isNotBlank() else nativeImageAdapter != null)
+        val imageRouteAvailable = if (route.imageGenApi.enabled) route.imageGenApi.modelId.isNotBlank() else nativeImageAdapter != null
+        val nativeGeminiTurn = wantsImage && !route.imageGenApi.enabled && nativeImageAdapter == "GEMINI"
         val selectedApiStyle = apiStyle
         val extended = selectedApiStyle == ApiStyle.ANTHROPIC
 
         val routeProvider = providerKind
-        val searchRequested = webSearch && !com.simplechat.app.net.usesAutomaticOpenAiSearch(options.model.id, selectedApiStyle)
+        val automaticSearch = com.simplechat.app.net.usesAutomaticOpenAiSearch(options.model.id, selectedApiStyle)
+        val searchRequested = webSearch && !automaticSearch
+        // Preserve Flash's built-in link reader/search where the backend cannot combine them with client tools.
+        val prefersBuiltInTool = route.officialFlash && !wantsImage && (HttpLink.containsMatchIn(latestQuestion) ||
+            searchRequested && !route.searchApi.enabled && !options.thinkingEnabled)
+        val imageToolEnabled = imageRouteAvailable && !nativeGeminiTurn && !automaticSearch && !prefersBuiltInTool &&
+            prefix == null && !omitAttachmentsAndTools && imageIntent != ImageGenerationIntent.CAPABILITY
+        val contextualEdit = requestsContextualImageEdit(latestQuestion)
         Diagnostics.log(
             "CHAT",
             "start model=${options.model.id} style=$selectedApiStyle " +
                 "base=${route.baseUrl} search=$searchRequested " +
                 "messages=${messages.size}",
         )
+        if (imageIntent != ImageGenerationIntent.NONE || discussingImage) {
+            Diagnostics.log("IMG", "intent=$imageIntent route=$imageRouteAvailable direct=$nativeGeminiTurn " +
+                "tool=$imageToolEnabled references=${editReferences.size} vision=${visualFollowUp != null}")
+        }
         streamJob = viewModelScope.launch {
             val startedAt = SystemClock.elapsedRealtime()
             var lastCheckpointAt = startedAt
@@ -1779,6 +1813,8 @@ class ChatViewModel(
             var canDegrade = false
             var pendingImageTool = false
             var generatedImageAttached = false
+            var imageFallback: ImageRequest? = null
+            var localAnswer: String? = null
             var contextRejection: CompactionRequestFailure? = null
 
             /*
@@ -1888,23 +1924,46 @@ class ChatViewModel(
             var cancelled = false
             var serverTitle: String? = null
 
+            fun turnImageRequest(prompt: String, edit: Boolean): ImageRequest {
+                val config = route.imageGenApi
+                return ImageRequest(
+                    prompt = prompt, modelId = if (config.enabled) config.modelId else options.model.id,
+                    adapter = if (config.enabled) config.adapter else checkNotNull(nativeImageAdapter),
+                    independent = config.enabled, size = config.size.takeIf { config.enabled },
+                    aspectRatio = config.aspectRatio, geminiImageSize = config.geminiImageSize,
+                    usesReferences = edit, referenceMessageId = inheritedImage?.id.takeIf { edit },
+                )
+            }
+
+            suspend fun generateTurnImage(request: ImageRequest) {
+                canDegrade = false
+                pendingImageTool = true
+                noteBody()
+                val imageReferences = if (request.usesReferences) editReferences else emptyList()
+                repository.markImageGeneration(replyId, request)
+                patch(replyId) { it.copy(imageGeneration = true, imageRequest = request) }
+                Diagnostics.log("IMG", "request adapter=${request.adapter} references=${imageReferences.size}")
+                val result = executeImageRequest(request, route, imageReferences)
+                ensureActive()
+                val attachment = repository.attachGeneratedImage(replyId, result.bytes)
+                generatedImageAttached = true
+                patch(replyId) { it.copy(attachments = listOf(attachment), imageGeneration = true) }
+                Diagnostics.log("IMG", "attached")
+                dirty = true
+            }
+
             var memorySnapshot: String? = null
             suspend fun streamAttempt(textOnly: Boolean) {
+                if (imageIntent == ImageGenerationIntent.CAPABILITY && !textOnly) {
+                    localAnswer = Res.get(if (imageRouteAvailable) R.string.image_capability_available else R.string.image_capability_unavailable)
+                    return
+                }
+                val systemContext = if (discussingImage && previousImage != null && !options.model.supportsVision) {
+                    listOf(research.context, "The user refers to an image generated earlier in this chat. This chat model cannot view the image pixels. Do not claim to have seen the image or deny that the app generated it.")
+                        .filter { it.isNotBlank() }.joinToString("\n\n")
+                } else research.context
                 if (nativeGeminiTurn && !textOnly) {
-                    pendingImageTool = true
-                    noteBody()
-                    val request = ImageRequest(
-                        latestQuestion, options.model.id, "GEMINI", independent = false,
-                        aspectRatio = route.imageGenApi.aspectRatio, geminiImageSize = route.imageGenApi.geminiImageSize,
-                        usesReferences = latestUser?.attachments?.any { it.isImage } == true,
-                    )
-                    repository.markImageGeneration(replyId, request)
-                    patch(replyId) { it.copy(imageGeneration = true, imageRequest = request) }
-                    val result = executeImageRequest(request, route, latestUser?.attachments.orEmpty())
-                    ensureActive()
-                    val attachment = repository.attachGeneratedImage(replyId, result.bytes)
-                    generatedImageAttached = true
-                    patch(replyId) { it.copy(attachments = listOf(attachment)) }
+                    generateTurnImage(turnImageRequest(latestQuestion, imageIntent == ImageGenerationIntent.EDIT || attachedImages.isNotEmpty()))
                     return
                 }
                 val imageTool = ImageToolCall()
@@ -1912,8 +1971,9 @@ class ChatViewModel(
                     .also { memorySnapshot = it }
                 if (accumulator != null) {
                     val request = buildAnthropicRequestNow(
-                        prefix, research.context, route, options, searchRequested, textOnly, memoryText,
+                        prefix, systemContext, route, options, searchRequested, textOnly, memoryText,
                         generateImageTool = imageToolEnabled && !textOnly,
+                        visualFollowUp = visualFollowUp,
                     )
                     optionalFieldsSent = !textOnly && (request.tools.isNotEmpty() || request.title != null ||
                         request.messages.any { it.role == "user" && it.content is kotlinx.serialization.json.JsonArray } || research.context.isNotBlank())
@@ -1980,7 +2040,7 @@ class ChatViewModel(
                         }
                     }
                 } else {
-                    val outgoing = buildRequestMessages(research.context, route, options, textOnly, memoryText)
+                    val outgoing = buildRequestMessages(systemContext, route, options, textOnly, memoryText, visualFollowUp)
                     val builtInFlash = route.officialFlash && !textOnly
                     val readLink = builtInFlash && HttpLink.containsMatchIn(latestQuestion)
                     val title = builtInFlash && shouldRequestTitle()
@@ -2060,29 +2120,34 @@ class ChatViewModel(
                         }
                     }
                 }
-                val prompt = if (failure == null && imageToolEnabled && !textOnly) imageTool.prompt() else null
-                if (prompt != null) {
-                    val imageConfig = route.imageGenApi
-                    canDegrade = false
-                    pendingImageTool = true
-                    noteBody()
-                    val request = ImageRequest(
-                        prompt = prompt, modelId = if (imageConfig.enabled) imageConfig.modelId else options.model.id,
-                        adapter = if (imageConfig.enabled) imageConfig.adapter else checkNotNull(nativeImageAdapter),
-                        independent = imageConfig.enabled, size = imageConfig.size.takeIf { imageConfig.enabled },
-                        aspectRatio = imageConfig.aspectRatio, geminiImageSize = imageConfig.geminiImageSize,
-                        usesReferences = latestUser?.attachments?.any { it.isImage } == true,
-                    )
-                    repository.markImageGeneration(replyId, request)
-                    patch(replyId) { it.copy(imageGeneration = true, imageRequest = request) }
-                    val result = executeImageRequest(request, route, latestUser?.attachments.orEmpty())
-                    ensureActive()
-                    val attachment = repository.attachGeneratedImage(replyId, result.bytes)
-                    generatedImageAttached = true
-                    patch(replyId) {
-                        it.copy(attachments = listOf(attachment), imageGeneration = true)
+                if (imageToolEnabled && !textOnly) {
+                    val invocation = if (failure == null) imageTool.invocation() else null
+                    val blocked = invocation != null && blocksImageToolExecution(latestQuestion)
+                    Diagnostics.log("IMG", "tool_result=${when {
+                        failure != null -> "stream_error"
+                        blocked -> "blocked"
+                        invocation != null -> "valid_call"
+                        else -> "no_call"
+                    }}")
+                    if (invocation != null && !blocked) {
+                        ensureActive()
+                        val edit = invocation.operation == ImageToolOperation.EDIT ||
+                            contextualEdit && (explicitReference || editReferences.isNotEmpty())
+                        if (edit && editReferences.isEmpty()) {
+                            localAnswer = Res.get(R.string.image_tool_reference_missing)
+                        } else {
+                            generateTurnImage(turnImageRequest(invocation.prompt, edit))
+                        }
+                    } else if (blocked) {
+                        localAnswer = Res.get(R.string.image_tool_not_called)
+                    } else if (failure == null && imageTool.endedWithoutCall) {
+                        if (contextualEdit && explicitReference && editReferences.isEmpty()) {
+                            localAnswer = Res.get(R.string.image_tool_reference_missing)
+                        } else if (isExplicitImageRequest(latestQuestion, imageIntent)) {
+                            imageFallback = turnImageRequest(latestQuestion, imageIntent == ImageGenerationIntent.EDIT)
+                            localAnswer = Res.get(R.string.image_tool_not_called)
+                        }
                     }
-                    dirty = true
                 }
             }
 
@@ -2102,16 +2167,52 @@ class ChatViewModel(
                 generation == streamGeneration && !stoppedByUser
 
             try {
-                if (!nativeGeminiTurn && !omitAttachmentsAndTools && searchRequested && route.searchApi.enabled) {
+                if (!nativeGeminiTurn && imageIntent != ImageGenerationIntent.CAPABILITY &&
+                    prefix == null && !omitAttachmentsAndTools && searchRequested && route.searchApi.enabled) {
                     val question = messages.lastOrNull { it.role == MessageRole.USER }?.content.orEmpty()
                     val previousBlocks = prefix?.timeline.orEmpty()
+                    val baseUrl = route.baseUrl.ifBlank { routeProvider.defaultBaseUrl }
+                    val recentTurns = messages.asSequence().filter { it.id != latestUser?.id && it.id != replyId &&
+                        it.status == MessageStatus.DONE && it.content.isNotBlank() }
+                        .map { (if (it.role == MessageRole.USER) "user" else "assistant") to it.content.take(700) }
+                        .toList().takeLast(6)
                     try {
-                        research = com.simplechat.app.net.searchAugmentation(route, question) { progress ->
+                        research = com.simplechat.app.net.searchAugmentation(
+                            route.copy(baseUrl = baseUrl), question,
+                            recentTurns = recentTurns, date = java.time.LocalDate.now().toString(),
+                            plan = { input ->
+                                val instruction = com.simplechat.app.net.ResearchPlannerInstruction
+                                val headers = routeProvider.headersFor(openCodeSessionId)
+                                val stream = if (extended) {
+                                    chatApi.streamMessage(
+                                        baseUrl = baseUrl, apiKey = route.apiKey, extraHeaders = headers,
+                                        contextWindow = options.model.contextWindow, retryBeforeContent = false,
+                                        request = buildAnthropicRequest(
+                                            model = options.model.id, systemPrompt = instruction,
+                                            path = listOf(UiMessage("research-plan", MessageRole.USER, input)),
+                                            searchEnabled = false, thinkingEnabled = false, requestTitle = false,
+                                            latestReminder = null, maxTokens = 512, outputLimit = options.model.maxOutputTokens,
+                                            deepSeekExtensions = isOfficialDeepSeekEndpoint(baseUrl), allowServerTools = false,
+                                        ),
+                                    )
+                                } else {
+                                    chatApi.streamChat(
+                                        apiStyle = selectedApiStyle, baseUrl = baseUrl, apiKey = route.apiKey,
+                                        model = options.model, thinkingEnabled = false, maxTokens = 512,
+                                        extraHeaders = headers, retryBeforeContent = false,
+                                        messages = listOf(OutMessageDto("system", MessageContent.text(instruction)),
+                                            OutMessageDto("user", MessageContent.text(input))),
+                                    )
+                                }
+                                collectCompactionSummary(stream, maxChars = 2_048)
+                            },
+                        ) { progress ->
                             research = research.copy(blocks = progress)
                             timeline = previousBlocks + progress
                             accumulator?.seed(timeline)
                             patch(replyId) { it.copy(timeline = timeline) }
                         }
+                        if (research.incomplete && route.showRetrySkipNotice) retrySkipNotice = Res.get(R.string.tool_request_skipped_continue)
                     } catch (cancelled: kotlinx.coroutines.CancellationException) {
                         throw cancelled
                     } catch (toolError: Exception) {
@@ -2125,7 +2226,7 @@ class ChatViewModel(
                 }
                 sendAttempt(omitAttachmentsAndTools)
                 var textOnly = omitAttachmentsAndTools
-                if (canDegrade && !textOnly && canRetryThisTurn()) {
+                if (canDegrade && !textOnly && !wantsImage && canRetryThisTurn()) {
                     textOnly = true
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
                     failure = null
@@ -2193,9 +2294,11 @@ class ChatViewModel(
             val finalContent = when {
                 generatedImageAttached && status == MessageStatus.DONE -> Res.get(R.string.image_generated)
                 pendingImageTool -> ""
+                localAnswer != null && status == MessageStatus.DONE -> localAnswer.orEmpty()
                 else -> contentText
             }
-            if (pendingImageTool) timeline = timeline.filterNot { it is ReplyBlock.Text }
+            val directImageRequest = imageFallback.takeIf { status == MessageStatus.DONE }
+            if (pendingImageTool || localAnswer != null) timeline = timeline.filterNot { it is ReplyBlock.Text }
             val finalReasoning = reasoningText
             /*
              * **真实**思考时长 = 首条思维链 → 首条正文。
@@ -2223,6 +2326,7 @@ class ChatViewModel(
                     reasoningSeconds = thinkingMs?.let { thinkingSeconds(it) },
                     timeline = timeline,
                     stopReason = accumulator?.stopReason,
+                    imageRequest = directImageRequest ?: it.imageRequest,
                 )
             }
 
@@ -2246,6 +2350,7 @@ class ChatViewModel(
                             tokensIn = lastUsage?.promptTokens?.takeIf { it > 0 },
                             tokensOut = lastUsage?.completionTokens?.takeIf { it > 0 },
                             cacheHitTokens = lastUsage?.cacheHitTokens,
+                            directImageRequest = directImageRequest,
                         )
                         repository.touchConversation(conversationId)
                     }
@@ -2327,6 +2432,7 @@ class ChatViewModel(
         prefix: UiMessage?, research: String, route: StoredSettings, options: ConversationSettings,
         searchRequested: Boolean, omitAttachmentsAndTools: Boolean, memoryText: String,
         generateImageTool: Boolean = false,
+        visualFollowUp: Attachment? = null,
     ): AnthropicRequest {
         skippedNoVision = 0; skippedUnreadable = 0; skippedUnsupportedFiles = 0
         val active = validCompaction(messages, compaction)
@@ -2351,6 +2457,7 @@ class ChatViewModel(
          * 留在历史里就是同一轮回答发了两遍，服务端会把它当成两个不同的回答。
          */
         val outgoingMessages = orderedOutgoingMessages(messages, active)
+        val lastUserId = outgoingMessages.lastOrNull { it.role == MessageRole.USER }?.id
         val preparedPath = outgoingMessages
             .filter { it.id != prefix?.id }
             /*
@@ -2364,7 +2471,7 @@ class ChatViewModel(
             .map { message ->
                 val outgoing = if (message.role != MessageRole.USER) message
                 else if (omitAttachmentsAndTools) message.copy(attachments = emptyList())
-                else prepareOutgoingUser(message, route, options.model)
+                else prepareOutgoingUser(message.withVisualFollowUp(lastUserId, visualFollowUp), route, options.model)
                 preserveTurnWhenAttachmentsSkipped(message, outgoing)
             }
 
@@ -2372,8 +2479,6 @@ class ChatViewModel(
          * 跨对话记忆：与 OpenAI 通道同一策略 —— 只拼在**最后一条 user 消息**前，
          * 历史与落库内容都不动。
          */
-        val lastUser = outgoingMessages.lastOrNull { it.role == MessageRole.USER }
-        val lastUserId = lastUser?.id
         val path = if (memoryText.isNotBlank() && lastUserId != null) {
             preparedPath.map { message ->
                 if (message.role == MessageRole.USER && message.id == lastUserId) {
@@ -2689,6 +2794,7 @@ class ChatViewModel(
     private suspend fun buildRequestMessages(
         research: String, route: StoredSettings, options: ConversationSettings,
         omitAttachmentsAndTools: Boolean, memoryText: String,
+        visualFollowUp: Attachment? = null,
     ): List<OutMessageDto> {
         skippedNoVision = 0; skippedUnreadable = 0; skippedUnsupportedFiles = 0
         val request = mutableListOf<OutMessageDto>()
@@ -2734,7 +2840,7 @@ class ChatViewModel(
              */
             val outgoing = if (message.role == MessageRole.USER) {
                 if (omitAttachmentsAndTools) message.copy(attachments = emptyList())
-                else prepareOutgoingUser(message, route, options.model)
+                else prepareOutgoingUser(message.withVisualFollowUp(lastUserId, visualFollowUp), route, options.model)
             } else message
             val sendable = preserveTurnWhenAttachmentsSkipped(message, outgoing)
             if (!isSendableOutgoing(sendable)) return@forEach
@@ -2751,8 +2857,7 @@ class ChatViewModel(
                  * 只有 user 消息可能带图；组装规则见 `userContent`
                  * （无附件 → 纯字符串；只有文本附件 → 纯字符串；有图 → content 数组）。
                  *
-                 * assistant 消息即使历史里挂着附件也只发正文：图片放进 assistant
-                 * 在协议里是不合法的（会 400），而 AI 回复本来也不该带图。
+                 * 生图结果不直接放在 assistant 消息里；需要看图时只附到本轮 user 消息。
                  */
                 content = if (message.role != MessageRole.USER || sendable.attachments.isEmpty()) {
                     MessageContent.text(body)

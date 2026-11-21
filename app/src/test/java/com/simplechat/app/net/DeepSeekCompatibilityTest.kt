@@ -86,4 +86,27 @@ class DeepSeekCompatibilityTest {
     @Test fun providerErrorExplainsHowToRecover() {
         assertEquals(R.string.error_deepseek_flash_feature, providerHintRes("The server-side tool calls (deepseek_web_search, deepseek_read_url) and the title generation feature are unavailable for model deepseek-v4-pro. Please use deepseek-flash instead."))
     }
+
+    @Test fun onlyOfficialNonThinkingImageRequestsCanRequireTheImageTool() = runBlocking {
+        val captured = mutableListOf<JsonObject>()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val body = Buffer().also { chain.request().body!!.writeTo(it) }
+            captured += json.parseToJsonElement(body.readUtf8()).jsonObject
+            val data = """{"choices":[{"delta":{},"finish_reason":"stop"}]}"""
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body("data: $data\n\ndata: [DONE]\n\n".toResponseBody()).build()
+        }.build()
+        val api = ChatApi(client, SseClient(client, json), AnthropicApi(client, json), json)
+        for ((base, thinking, offerTool) in listOf(
+            Triple(official, false, true), Triple(official, true, true),
+            Triple("https://gw.example/v1", false, true), Triple(official, false, false),
+        )) {
+            api.streamChat(base, "test", ModelCatalog.find(ProviderKind.DEEPSEEK, DEEPSEEK_FLASH),
+                listOf(OutMessageDto("user", JsonPrimitive("Draw a picture"))), thinking,
+                generateImageTool = offerTool, requireImageTool = true).toList()
+        }
+        assertEquals(listOf("required", "auto", "auto", null), captured.map { it["tool_choice"]?.jsonPrimitive?.content })
+        assertEquals("generate_image", captured.first()["tools"]!!.jsonArray.single().jsonObject["function"]!!.jsonObject["name"]!!.jsonPrimitive.content)
+        assertFalse("tools" in captured.last())
+    }
 }

@@ -374,7 +374,7 @@ interface MessageDao {
         UPDATE messages
         SET content = :content, reasoning = :reasoning, status = :status, errorMessage = :error,
             ttftMs = :ttftMs, tps = :tps, thinkingMs = :thinkingMs,
-            timeline = :timeline, stopReason = :stopReason,
+            timeline = :timeline, stopReason = :stopReason, imageRequest = COALESCE(:directImageRequest, imageRequest),
             tokens_in = :tokensIn, tokens_out = :tokensOut, tokens_cache_hit = :cacheHitTokens
         WHERE id = :id
         """,
@@ -393,6 +393,7 @@ interface MessageDao {
         tokensIn: Int?,
         tokensOut: Int?,
         cacheHitTokens: Int?,
+        directImageRequest: String? = null,
     )
 
     /**
@@ -485,7 +486,7 @@ interface MessageDao {
         UPDATE messages
         SET content = '', reasoning = NULL, model = :model,
             status = :status, errorMessage = NULL,
-            timeline = NULL, stopReason = NULL
+            timeline = NULL, stopReason = NULL, imageRequest = NULL, imageGeneration = 0, attachments = NULL
         WHERE id = :id
         """,
     )
