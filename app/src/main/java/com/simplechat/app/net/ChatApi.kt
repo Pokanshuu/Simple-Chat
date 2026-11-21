@@ -81,27 +81,31 @@ class ChatApi(
     ): Flow<StreamEvent> {
         val flash = isOfficialDeepSeekEndpoint(baseUrl) && model.id == DEEPSEEK_FLASH
         val tools = if (flash) buildList {
-            if (search) add(DeepSeekTool("deepseek_web_search"))
-            if (readLink) add(DeepSeekTool("deepseek_read_url"))
+            // Flash accepts client tools alongside built-in search only in thinking mode.
+            if (search && (!generateImageTool || thinkingEnabled)) add(DeepSeekTool("deepseek_web_search"))
+            if (readLink && !generateImageTool) add(DeepSeekTool("deepseek_read_url"))
         }.ifEmpty { null } else null
+        val requestMessages = if (generateImageTool) {
+            listOf(OutMessageDto("system", MessageContent.text(imageToolInstruction))) + messages
+        } else messages
         val title = if (flash && requestTitle && messages.sumOf {
             ((it.content as? JsonPrimitive)?.content?.length ?: 8_001).toLong() + 32
         } <= 8_000) DeepSeekTitle() else null
         if (apiStyle == ApiStyle.OPENAI_RESPONSES) {
             return sseClient.streamResponses(
                 url = responsesUrl(baseUrl), apiKey = apiKey,
-                request = buildResponsesRequest(model, messages, thinkingEnabled, reasoningEffort, maxTokens, temperature).let { request ->
+                request = buildResponsesRequest(model, requestMessages, thinkingEnabled, reasoningEffort, maxTokens, temperature).let { request ->
                     val imageTool = imageToolDefinition.takeIf { generateImageTool }?.let {
                         DeepSeekTool("function", name = it.name, description = it.description, parameters = it.parameters)
                     }
                     request.copy(tools = (tools.orEmpty() + listOfNotNull(imageTool)).ifEmpty { null }, title = title, reasoning = if (isOfficialDeepSeekEndpoint(baseUrl) && !thinkingEnabled) ResponsesReasoningDto("none") else request.reasoning)
                 },
-                messages = messages, model = model, extraHeaders = extraHeaders, retryBeforeContent = retryBeforeContent,
+                messages = requestMessages, model = model, extraHeaders = extraHeaders, retryBeforeContent = retryBeforeContent,
             )
         }
         val imageTool = if (generateImageTool) DeepSeekTool("function", imageToolDefinition) else null
         val allTools = (tools.orEmpty() + listOfNotNull(imageTool)).ifEmpty { null }
-        val request = buildChatRequest(model, messages, thinkingEnabled, reasoningEffort, maxTokens, temperature, topP, isOfficialDeepSeekEndpoint(baseUrl))
+        val request = buildChatRequest(model, requestMessages, thinkingEnabled, reasoningEffort, maxTokens, temperature, topP, isOfficialDeepSeekEndpoint(baseUrl))
             .let { if (allTools == null && title == null) it else it.copy(tools = allTools, toolChoice = if (imageTool != null) "auto" else null, title = title, temperature = null, topP = null) }
 
         return sseClient.stream(
@@ -218,7 +222,7 @@ internal fun buildChatRequest(
     val effort = when {
         wire == null -> null
         thinkingEnabled -> model.resolveReasoningEffort(reasoningEffort ?: "high")
-        wire == ReasoningWire.EFFORT -> model.effortLevels?.firstOrNull { it in ReasoningWire.offLevels }
+        wire == ReasoningWire.EFFORT -> model.disabledReasoningEffort()
         else -> null
     }
     val output = model.clampOutputTokens(maxTokens)
@@ -284,9 +288,11 @@ data class ImageInput(
     val detail: String = "high",
 )
 
+internal const val imageToolInstruction = "For requests to create, regenerate, or edit an image, call generate_image. The app displays the image after the tool succeeds. Never say an image was generated or edited in a text-only reply."
+
 internal val imageToolDefinition = FunctionDefinitionDto(
     name = "generate_image",
-    description = "Generate an image when the latest user message asks to create or draw an image. Use only the visual description from the request. Do not call for image analysis or discussion.",
+    description = "Generate an image for an explicit request to create, redraw, or edit one. Describe the intended visual result and relevant details from any references. Do not call for image analysis or discussion.",
     parameters = buildJsonObject {
         put("type", "object")
         putJsonObject("properties") {

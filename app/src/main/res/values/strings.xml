@@ -505,6 +505,8 @@
 
     <!-- 面板四：对话设置 -->
     <string name="input_conversation_name">对话名称</string>
+    <string name="input_conversation_memory">当前会话记忆设置</string>
+    <string name="input_conversation_memory_hint">关闭后，本会话不会引用其他会话的记忆，其他会话也不会引用本会话的内容。</string>
     <string name="input_conversation_name_hint">给这个对话起个名字</string>
     <string name="input_system_prompt">系统提示词</string>
     <string name="input_preset_count">%1$d/%2$d 预设</string>
@@ -565,7 +567,7 @@
     <string name="image_api_route">生图服务</string>
     <string name="image_api_independent">使用独立生图 API</string>
     <string name="image_api_native_title">允许聊天模型原生生图</string>
-    <string name="image_api_native_hint">当前首版支持 Responses 协议图像生成</string>
+    <string name="image_api_native_hint">网关需要提供 Gemini 原生生图或兼容的 Responses 生图接口。</string>
     <string name="image_api_native_enabled">聊天模型原生生图</string>
     <string name="image_api_fallback">聊天模型</string>
     <string name="image_api_model">生图模型 ID</string>
@@ -704,6 +706,8 @@
     <string name="tts_empty">这条没有可朗读的正文</string>
     <string name="tts_unavailable">这台设备没有可用的语音合成引擎，请在系统设置里安装 TTS 引擎</string>
     <!-- 朗读音色（设置） -->
+    <string name="settings_read_aloud">朗读</string>
+    <string name="settings_read_aloud_off">关闭</string>
     <string name="tts_voice">朗读音色</string>
     <string name="tts_voice_default">系统默认</string>
     <string name="tts_voice_online">需联网</string>
@@ -813,13 +817,21 @@
     <string name="image_api_connection">连接</string>
     <string name="image_api_options">模型与输出</string>
     <string name="image_api_test_models">测试连接并拉取模型</string>
-    <string name="image_api_pick_model">从模型列表选择</string>
+    <string name="image_api_pick_model">选择模型</string>
     <string name="service_shared_settings">工具配置在所有聊天 API 配置中通用。复用聊天地址或密钥时，使用当前聊天 API 的值。</string>
     <string name="reasoning_default">默认</string>
     <string name="reasoning_minimal">minimal</string>
     <string name="reasoning_medium">medium</string>
     <string name="reasoning_xhigh">xhigh</string>
     <string name="reasoning_ultra">ultra</string>
+    <string name="input_thinking_minimum">此模型始终会思考。最左档使用模型支持的最低强度。</string>
+    <string name="image_aspect_ratio_label">画幅</string>
+    <string name="image_save_original">保存原图</string>
+    <string name="image_original_saved">原图已保存</string>
+    <string name="image_original_save_failed">无法保存原图</string>
+    <string name="image_exit_mode">退出生图模式</string>
+    <string name="settings_search_options">搜索设置</string>
+    <string name="image_reference_unreadable">无法读取参考图片，请重新选择。</string>
 </resources>
 
 

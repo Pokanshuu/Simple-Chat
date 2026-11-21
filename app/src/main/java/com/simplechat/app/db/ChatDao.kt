@@ -25,11 +25,15 @@ interface ConversationDao {
     @Query(
         """
         SELECT id, substr(title, 1, :titleChars) AS title, updatedAt
-        FROM conversations WHERE id != :currentId
+        FROM conversations WHERE id != :currentId AND memoryEnabled = 1
+            AND EXISTS (SELECT 1 FROM conversations WHERE id = :currentId AND memoryEnabled = 1)
         ORDER BY updatedAt DESC, id ASC LIMIT :limit
         """,
     )
     suspend fun memorySessions(currentId: String, limit: Int, titleChars: Int): List<MemorySession>
+
+    @Query("UPDATE conversations SET memoryEnabled = :enabled WHERE id = :id")
+    suspend fun setMemoryEnabled(id: String, enabled: Boolean)
 
     /** One bounded preview per matching message; title-only hits remain visible. */
     @Query(
@@ -192,8 +196,8 @@ interface MessageDao {
     @Query("UPDATE messages SET status = :status, errorMessage = :error WHERE id = :id AND status = 'STREAMING'")
     suspend fun settleImageGeneration(id: String, status: String, error: String?): Int
 
-    @Query("UPDATE messages SET imageGeneration = 1 WHERE id = :id")
-    suspend fun markImageGeneration(id: String)
+    @Query("UPDATE messages SET imageGeneration = 1, imageRequest = :request WHERE id = :id")
+    suspend fun markImageGeneration(id: String, request: String)
 
     @Query("SELECT conversationId FROM messages WHERE id = :id")
     suspend fun conversationIdOf(id: String): String?
@@ -211,7 +215,7 @@ interface MessageDao {
                substr(attachments, 1, :cap) AS attachments,
                reasoning, status, errorMessage, model, excluded,
                thinkingMs, ttftMs, tps, tokens_in, tokens_out, tokens_cache_hit,
-               timeline, stopReason, imageGeneration, createdAt
+               timeline, stopReason, imageGeneration, imageRequest, createdAt
         FROM messages WHERE conversationId = :conversationId
         """,
     )
@@ -235,7 +239,7 @@ interface MessageDao {
                '' AS content, NULL AS attachments, NULL AS reasoning,
                status, NULL AS errorMessage,
                model, excluded, thinkingMs, ttftMs, tps, tokens_in, tokens_out, tokens_cache_hit,
-               NULL AS timeline, stopReason, imageGeneration, createdAt
+               NULL AS timeline, stopReason, imageGeneration, imageRequest, createdAt
         FROM messages WHERE id = :id
         """,
     )
@@ -283,7 +287,9 @@ interface MessageDao {
     @Query(
         """
         WITH RECURSIVE path(id, depth) AS (
-            SELECT '', 0
+            SELECT '', 0 WHERE EXISTS (
+                SELECT 1 FROM conversations WHERE id = :conversationId AND memoryEnabled = 1
+            )
             UNION ALL
             SELECT child.id, path.depth + 1
             FROM path JOIN messages child ON child.id = (
@@ -322,7 +328,7 @@ interface MessageDao {
                substr(attachments, 1, :cap) AS attachments,
                reasoning, status, errorMessage, model, excluded,
                thinkingMs, ttftMs, tps, tokens_in, tokens_out, tokens_cache_hit,
-               timeline, stopReason, imageGeneration, createdAt
+               timeline, stopReason, imageGeneration, imageRequest, createdAt
         FROM messages WHERE id IN (:ids)
         """,
     )

@@ -1,6 +1,7 @@
 package com.simplechat.app.data
 
 import kotlinx.serialization.Serializable
+import com.simplechat.app.net.normalizedGeminiModel
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 @Serializable
@@ -15,8 +16,21 @@ data class ImageGenConfig(
     val size: String = "1024x1024",
     val aspectRatio: String = "1:1",
     val geminiImageSize: String = "1K",
+    val modelIds: List<String> = emptyList(),
+    val modelCatalogBase: String = "",
 ) {
     override fun toString() = "ImageGenConfig(enabled=$enabled, adapter=$adapter, reuseChatKey=$reuseChatKey)"
+
+    internal fun previewAspectRatio(adapter: String): Float? {
+        val dimensions = when (adapter) {
+            "GEMINI" -> aspectRatio.split(':')
+            "OPENAI_IMAGES", "DASHSCOPE", "RESPONSES" -> size.split('x')
+            else -> return null
+        }
+        val width = dimensions.firstOrNull()?.toFloatOrNull() ?: return null
+        val height = dimensions.getOrNull(1)?.toFloatOrNull() ?: return null
+        return (width / height).takeIf { it.isFinite() && it > 0f }
+    }
 
     internal fun connectionBase(chatBaseUrl: String): String {
         val target = baseUrl.ifBlank { chatBaseUrl }.toHttpUrlOrNull()
@@ -44,7 +58,8 @@ data class ImageGenConfig(
 internal fun StoredSettings.nativeImageAdapter(model: String = modelId): String? {
     if (model.isBlank()) return null
     val endpoint = baseUrl.toHttpUrlOrNull() ?: return null
-    if (endpoint.host == "generativelanguage.googleapis.com" && endpoint.isHttps && isGeminiImageModel(model)) {
+    val officialGemini = endpoint.isHttps && endpoint.host == "generativelanguage.googleapis.com"
+    if ((officialGemini || imageGenApi.nativeResponsesEnabled) && isGeminiImageModel(model)) {
         return "GEMINI"
     }
     if (resolvedApiStyle != com.simplechat.app.net.ApiStyle.OPENAI_RESPONSES) return null
@@ -57,9 +72,9 @@ internal fun StoredSettings.nativeImageAdapter(model: String = modelId): String?
 // Official model capabilities checked 2026-11-21. Custom Images API model IDs are user-entered.
 internal const val GEMINI_NANO_BANANA = "gemini-nano-banana-2.1"
 internal const val OPENAI_DEFAULT_IMAGE_MODEL = "gpt-image-2.6-sunburst"
-private fun isGeminiImageModel(model: String): Boolean = model.removePrefix("models/") in geminiImageModels
+private fun isGeminiImageModel(model: String): Boolean = normalizedGeminiModel(model) in geminiImageModels
 
-internal fun usesGeminiInteractions(model: String): Boolean = model in geminiInteractionsModels
+internal fun usesGeminiInteractions(model: String): Boolean = normalizedGeminiModel(model) in geminiInteractionsModels
 
 private val geminiInteractionsModels = setOf(
     GEMINI_NANO_BANANA, "gemini-3-pro-image", "gemini-3.1-flash-image",

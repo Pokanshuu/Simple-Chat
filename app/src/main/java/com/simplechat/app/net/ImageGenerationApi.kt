@@ -1,10 +1,16 @@
 package com.simplechat.app.net
 
 import com.simplechat.app.data.ImageGenConfig
+import com.simplechat.app.data.Attachment
+import com.simplechat.app.data.ApiImage
 import com.simplechat.app.data.OPENAI_DEFAULT_IMAGE_MODEL
 import com.simplechat.app.data.usesGeminiInteractions
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.EOFException
+import java.net.SocketException
+import java.net.ProtocolException
+import kotlinx.coroutines.delay
 import java.net.SocketTimeoutException
 import java.util.Base64
 import java.util.concurrent.TimeUnit
@@ -18,6 +24,7 @@ import kotlinx.serialization.json.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
@@ -47,12 +54,15 @@ class ImageGenerationApi(
             }
         } ?: throw SocketTimeoutException("Model listing timed out")
 
-    suspend fun generateIndependent(config: ImageGenConfig, chatBaseUrl: String, chatKey: String, prompt: String): GeneratedImage {
+    suspend fun generateIndependent(
+        config: ImageGenConfig, chatBaseUrl: String, chatKey: String, prompt: String,
+        references: List<Attachment> = emptyList(),
+    ): GeneratedImage {
         require(config.enabled) { "Independent image API is disabled" }
         require(prompt.isNotBlank()) { "Prompt is empty" }
         require(config.modelId.isNotBlank()) { "Image model is missing" }
-        if (config.adapter == "GEMINI") return generateGemini(config, chatBaseUrl, chatKey, prompt)
-        if (config.adapter == "DASHSCOPE") return generateDashScope(config, chatBaseUrl, chatKey, prompt)
+        if (config.adapter == "GEMINI") return generateGemini(config, chatBaseUrl, chatKey, prompt, references)
+        if (config.adapter == "DASHSCOPE") return generateDashScope(config, chatBaseUrl, chatKey, prompt, references)
         require(config.adapter == "OPENAI_IMAGES") { "Unsupported image API protocol" }
         val base = config.connectionBase(chatBaseUrl).trimEnd('/').removeSuffix("/chat/completions").removeSuffix("/responses")
         val endpoint = when {
@@ -66,10 +76,20 @@ class ImageGenerationApi(
             put("size", config.size)
             put("n", 1)
         }
-        val request = Request.Builder().url(endpoint)
-            .header("Authorization", "Bearer ${config.key(chatKey)}")
-            .post(body.toString().toRequestBody("application/json".toMediaType())).build()
-        return execute(request) { root ->
+        val request = Request.Builder().header("Authorization", "Bearer ${config.key(chatKey)}")
+        if (references.isEmpty()) {
+            request.url(endpoint).post(body.toString().toRequestBody("application/json".toMediaType()))
+        } else {
+            val editBody = MultipartBody.Builder().setType(MultipartBody.FORM)
+                .addFormDataPart("model", config.modelId).addFormDataPart("prompt", prompt)
+                .addFormDataPart("size", config.size)
+            references.forEach { reference ->
+                val bytes = Base64.getDecoder().decode(reference.data)
+                editBody.addFormDataPart("image[]", reference.name, bytes.toRequestBody(ApiImage.legalMediaType(reference.mime).toMediaType()))
+            }
+            request.url(endpoint.removeSuffix("/generations") + "/edits").post(editBody.build())
+        }
+        return execute(request.build()) { root ->
             val item = (root["data"] as? JsonArray)?.firstOrNull() as? JsonObject
                 ?: throw IOException(errorMessage(root) ?: "Image API returned no image")
             val encoded = item.string("b64_json")
@@ -79,7 +99,9 @@ class ImageGenerationApi(
         }
     }
 
-    private suspend fun generateDashScope(config: ImageGenConfig, chatBaseUrl: String, chatKey: String, prompt: String): GeneratedImage {
+    private suspend fun generateDashScope(
+        config: ImageGenConfig, chatBaseUrl: String, chatKey: String, prompt: String, references: List<Attachment>,
+    ): GeneratedImage {
         val path = "/api/v1/services/aigc/multimodal-generation/generation"
         val base = config.connectionBase(chatBaseUrl).trimEnd('/')
         val endpoint = if (base.endsWith(path)) base else base.removeSuffix("/api/v1") + path
@@ -88,7 +110,10 @@ class ImageGenerationApi(
             putJsonObject("input") {
                 putJsonArray("messages") { addJsonObject {
                     put("role", "user")
-                    putJsonArray("content") { addJsonObject { put("text", prompt) } }
+                    putJsonArray("content") {
+                        references.forEach { image -> addJsonObject { put("image", image.toDataUrl()) } }
+                        addJsonObject { put("text", prompt) }
+                    }
                 } }
             }
             putJsonObject("parameters") { put("size", config.size.replace('x', '*')) }
@@ -107,16 +132,20 @@ class ImageGenerationApi(
         }
     }
 
-    internal suspend fun generateGemini(config: ImageGenConfig, chatBaseUrl: String, chatKey: String, prompt: String): GeneratedImage {
+    internal suspend fun generateGemini(
+        config: ImageGenConfig, chatBaseUrl: String, chatKey: String, prompt: String,
+        references: List<Attachment> = emptyList(),
+    ): GeneratedImage {
         require(config.modelId.isNotBlank()) { "Choose a Gemini image model" }
         val base = config.connectionBase(chatBaseUrl).trimEnd('/').removeSuffix("/chat/completions").removeSuffix("/openai")
-        val model = config.modelId.trim().removePrefix("models/")
+        val model = config.modelId.trim().removePrefix("google/").removePrefix("models/")
+        val images = references.filter { it.isImage && !it.remoteImage && it.data.isNotBlank() }
         val interactionsBase = if (base.toHttpUrlOrNull()?.host == "generativelanguage.googleapis.com") {
             base.removeSuffix("/v1beta").removeSuffix("/v1")
         } else base
         if (base.endsWith("/interactions") || usesGeminiInteractions(model) &&
             base.toHttpUrlOrNull()?.host == "generativelanguage.googleapis.com" && !base.endsWith(":generateContent")) {
-            return generateGeminiInteraction(interactionsBase, model, config, chatKey, prompt)
+            return generateGeminiInteraction(interactionsBase, model, config, chatKey, prompt, images)
         }
         val encodedModel = java.net.URLEncoder.encode(model, Charsets.UTF_8.name())
         val endpoint = when {
@@ -128,7 +157,15 @@ class ImageGenerationApi(
             put("contents", buildJsonArray {
                 add(buildJsonObject {
                     put("role", "user")
-                    put("parts", buildJsonArray { add(buildJsonObject { put("text", prompt) }) })
+                    put("parts", buildJsonArray {
+                        add(buildJsonObject { put("text", prompt) })
+                        images.forEach { image -> addJsonObject {
+                            putJsonObject("inlineData") {
+                                put("mimeType", ApiImage.legalMediaType(image.mime))
+                                put("data", image.data)
+                            }
+                        } }
+                    })
                 })
             })
             put("generationConfig", buildJsonObject {
@@ -158,7 +195,10 @@ class ImageGenerationApi(
         }
     }
 
-    private suspend fun generateGeminiInteraction(base: String, model: String, config: ImageGenConfig, chatKey: String, prompt: String): GeneratedImage {
+    private suspend fun generateGeminiInteraction(
+        base: String, model: String, config: ImageGenConfig, chatKey: String, prompt: String,
+        images: List<Attachment>,
+    ): GeneratedImage {
         val endpoint = when {
             base.endsWith("/interactions") -> base
             base.endsWith("/v1beta") || base.endsWith("/v1") -> "$base/interactions"
@@ -166,7 +206,14 @@ class ImageGenerationApi(
         }
         val body = buildJsonObject {
             put("model", model)
-            put("input", prompt)
+            if (images.isEmpty()) put("input", prompt) else putJsonArray("input") {
+                addJsonObject { put("type", "text"); put("text", prompt) }
+                images.forEach { image -> addJsonObject {
+                    put("type", "image")
+                    put("mime_type", ApiImage.legalMediaType(image.mime))
+                    put("data", image.data)
+                } }
+            }
             put("store", false)
             putJsonObject("response_format") {
                 put("type", "image")
@@ -188,15 +235,29 @@ class ImageGenerationApi(
         }
     }
 
-    suspend fun generateWithResponses(baseUrl: String, apiKey: String, model: String, prompt: String): GeneratedImage {
+    suspend fun generateWithResponses(
+        baseUrl: String, apiKey: String, model: String, prompt: String,
+        references: List<Attachment> = emptyList(), size: String? = null,
+    ): GeneratedImage {
         require(prompt.isNotBlank()) { "Prompt is empty" }
         val endpoint = responsesUrl(baseUrl).toHttpUrlOrNull() ?: throw IOException("Invalid Responses URL")
         val body = buildJsonObject {
             put("model", model)
-            put("input", prompt)
+            if (references.isEmpty()) put("input", prompt) else putJsonArray("input") {
+                addJsonObject {
+                    put("role", "user")
+                    putJsonArray("content") {
+                        addJsonObject { put("type", "input_text"); put("text", prompt) }
+                        references.forEach { image -> addJsonObject {
+                            put("type", "input_image"); put("image_url", image.toDataUrl())
+                        } }
+                    }
+                }
+            }
             put("store", false)
             putJsonArray("tools") { addJsonObject {
                 put("type", "image_generation")
+                if (size != null) put("size", size)
                 if (endpoint.isHttps && endpoint.host == "api.openai.com" && endpoint.port == 443) {
                     put("model", OPENAI_DEFAULT_IMAGE_MODEL)
                 }
@@ -216,6 +277,11 @@ class ImageGenerationApi(
     }
 
     private suspend fun <T> execute(request: Request, parse: suspend (JsonObject) -> T): T = withContext(Dispatchers.IO) {
+        val root = retryImageTransport { readImageResponse(request) }
+        parse(root)
+    }
+
+    private suspend fun readImageResponse(request: Request): JsonObject =
         cancellableRequest(request) { response ->
             val source = response.body.source()
             val limit = if (response.isSuccessful) MaxImageBytes * 4L / 3 + 65_536 else 65_536L
@@ -225,10 +291,8 @@ class ImageGenerationApi(
                 val detail = runCatching { json.parseToJsonElement(text).jsonObject.let(::errorMessage) }.getOrNull()
                 throw IOException(detail ?: "Image request failed (HTTP ${response.code})")
             }
-            val root = json.parseToJsonElement(text) as? JsonObject ?: throw IOException("Invalid image response")
-            parse(root)
+            json.parseToJsonElement(text) as? JsonObject ?: throw IOException("Invalid image response")
         }
-    }
 
     private suspend fun downloadImage(url: String): GeneratedImage = withContext(Dispatchers.IO) {
         val parsed = url.toHttpUrlOrNull()
@@ -237,7 +301,7 @@ class ImageGenerationApi(
             throw IOException("Image URL must use HTTPS")
         }
         val request = Request.Builder().url(parsed).get().build()
-        cancellableRequest(request, downloads) { response ->
+        retryImageTransport { cancellableRequest(request, downloads) { response ->
             if (!response.isSuccessful) throw IOException("Image download failed (HTTP ${response.code})")
             val body = response.body
             if (body.contentLength() > MaxImageBytes) throw IOException("Generated image is too large")
@@ -252,7 +316,7 @@ class ImageGenerationApi(
                 }
             }
             GeneratedImage(output.toByteArray(), body.contentType()?.let { "image/${it.subtype}" } ?: "image/png")
-        }
+        } }
     }
 
     private suspend fun <T> cancellableRequest(
@@ -330,4 +394,19 @@ internal fun imageModelListingRequest(config: ImageGenConfig, chatBaseUrl: Strin
         if (config.adapter == "GEMINI") header("x-goog-api-key", key)
         else header("Authorization", "Bearer $key")
     }.build()
+}
+
+/** Reopen a broken connection once. Provider responses and cancellations are terminal. */
+internal suspend fun <T> retryImageTransport(block: suspend () -> T): T {
+    try {
+        return block()
+    } catch (error: IOException) {
+        val droppedConnection = error is SocketException || error is EOFException ||
+            error is SocketTimeoutException || error is ProtocolException && error.message?.contains("unexpected end", ignoreCase = true) == true ||
+            error.cause is EOFException
+        if (!droppedConnection) throw error
+        currentCoroutineContext().ensureActive()
+        delay(350)
+        return block()
+    }
 }

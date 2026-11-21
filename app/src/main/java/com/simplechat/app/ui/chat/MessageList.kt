@@ -931,7 +931,7 @@ fun AssistantBlock(
      * 角标占位换真链接这一步很便宜（纯字符串替换），但**不能省** ——
      * 没换的话点角标会去打不开的 `#cite-N`。
      */
-    val answer = if (timeline == null) {
+    val answer = if (timeline == null || message.imageGeneration) {
         message.content
     } else {
         remember(timeline) { resolveCitationLinks(timeline.answer, timeline.sources) }
@@ -977,17 +977,18 @@ fun AssistantBlock(
             }
         }
 
-        if (message.imageGeneration && message.attachments.isEmpty()) {
-            ImageGenerationPlaceholder(
+        if (message.imageGeneration) {
+            GeneratedImageContent(
+                attachment = message.attachments.firstOrNull { it.isImage },
+                requestedRatio = message.imageRequest?.previewAspectRatio(),
                 stopped = message.status == MessageStatus.STOPPED,
                 failed = message.status == MessageStatus.ERROR,
                 onStop = onStopImage,
                 onRetry = onRetry,
+                onOpen = onOpenImage,
             )
             Spacer(Modifier.size(MessageGap))
-        }
-
-        if (message.attachments.isNotEmpty()) {
+        } else if (message.attachments.isNotEmpty()) {
             MessageAttachments(message.attachments, onOpenImage)
             Spacer(Modifier.size(MessageGap))
         }

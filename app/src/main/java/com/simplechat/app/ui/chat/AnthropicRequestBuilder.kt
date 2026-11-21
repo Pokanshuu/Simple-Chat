@@ -4,6 +4,8 @@ import com.simplechat.app.data.ApiImage
 import com.simplechat.app.data.Attachment
 import com.simplechat.app.net.DEEPSEEK_FLASH
 import com.simplechat.app.net.ReplyBlock
+import com.simplechat.app.net.imageToolDefinition
+import com.simplechat.app.net.imageToolInstruction
 import com.simplechat.app.net.anthropic.AnthropicMessageParam
 import com.simplechat.app.net.anthropic.AnthropicRequestDefaults
 import com.simplechat.app.net.anthropic.AnthropicRequest
@@ -69,6 +71,7 @@ internal fun buildAnthropicRequest(
     topP: Double? = null,
     reasoningEffort: String? = null,
     outputLimit: Int? = null,
+    generateImageTool: Boolean = false,
 ): AnthropicRequest {
     val flashExtensions = deepSeekExtensions && allowServerTools && model == DEEPSEEK_FLASH
     val messages = mutableListOf<AnthropicMessageParam>()
@@ -169,16 +172,20 @@ internal fun buildAnthropicRequest(
     }
 
     val tools = buildList {
-        if (!flashExtensions) return@buildList
-        val latestUser = path.lastOrNull { it.role == MessageRole.USER }
-        if (latestUser != null && HttpLink.containsMatchIn(latestUser.content)) add(AnthropicTool.ReadUrl)
-        if (searchEnabled) add(AnthropicTool.WebSearch)
+        if (flashExtensions) {
+            // Flash rejects mixing the URL reader with client tools. Search may coexist in thinking mode.
+            val latestUser = path.lastOrNull { it.role == MessageRole.USER }
+            if (!generateImageTool && latestUser != null && HttpLink.containsMatchIn(latestUser.content)) add(AnthropicTool.ReadUrl)
+            if (searchEnabled && (!generateImageTool || thinkingEnabled)) add(AnthropicTool.WebSearch)
+        }
+        if (generateImageTool) add(AnthropicTool(name = imageToolDefinition.name,
+            description = imageToolDefinition.description, inputSchema = imageToolDefinition.parameters))
     }
     val title = if (flashExtensions && requestTitle && titleFitsInline(effectiveSystem, outgoingMessages)) AnthropicTitle() else null
-    val serverSampling = tools.isNotEmpty() || title != null
+    val serverSampling = tools.any { it.type != null } || title != null
     return AnthropicRequest(
         model = model,
-        system = effectiveSystem,
+        system = if (generateImageTool) "$effectiveSystem\n\n$imageToolInstruction".trim() else effectiveSystem,
         messages = outgoingMessages,
         thinking = when {
             deepSeekExtensions && thinkingEnabled -> AnthropicThinking.Enabled

@@ -64,6 +64,7 @@ data class BackupConversation(
     /** 挂载的预设 id，按拼接顺序。 */
     val enabledPresetIds: List<String> = emptyList(),
     val messages: List<BackupMessage> = emptyList(),
+    val memoryEnabled: Boolean = true,
 )
 
 @Serializable
@@ -135,6 +136,7 @@ internal fun ConversationEntity.toBackup(
     createdAt = createdAt,
     updatedAt = updatedAt,
     enabledPresetIds = presetIds,
+    memoryEnabled = memoryEnabled,
     messages = messages.map { it.toBackup() },
 )
 

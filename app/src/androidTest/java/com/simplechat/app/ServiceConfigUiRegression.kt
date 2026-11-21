@@ -180,9 +180,24 @@ internal object ServiceConfigUiRegression {
                 check(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args))
             }
             setField(R.string.image_api_base_url, "https://image-fixture.invalid/v1")
-            setField(R.string.image_api_key, "fixture-image-key")
-            setField(R.string.image_api_model, "fixture-image-model")
-            revealText(activity.getString(R.string.image_api_test_models))
+            suspend fun fillDialog(input: String) {
+                val field = revealNode("dialog input") { node ->
+                    node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_SET_TEXT }
+                }
+                val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, input) }
+                if (!field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
+                    field.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    instrumentation.sendStringSync(input)
+                }
+                tapText(activity.getString(R.string.action_save))
+                waitForTransition()
+            }
+            tapText(activity.getString(R.string.image_api_key))
+            fillDialog("fixture-image-key")
+            tapText(activity.getString(R.string.image_api_pick_model))
+            tapText(activity.getString(R.string.api_model_manual))
+            fillDialog("fixture-image-model")
+            revealText(activity.getString(R.string.api_test))
             checkNoSaveButton()
             tapBack(toolbar = true)
             withTimeout(5_000) { store.flow.first { it.imageGenApi.enabled } }
@@ -278,7 +293,7 @@ internal object ServiceConfigUiRegression {
             awaitText(rootTitle)
             status("API page: both Back controls return to Settings")
 
-            tapText(activity.getString(R.string.tts_voice))
+            tapText(activity.getString(R.string.settings_read_aloud))
             waitForTransition()
             val readAloudLabel = activity.getString(R.string.tts_enabled)
             val voiceDefault = activity.getString(R.string.tts_voice_default)
@@ -287,6 +302,9 @@ internal object ServiceConfigUiRegression {
             withTimeout(5_000) { store.flow.first { !it.readAloudEnabled } }
             waitForTransition()
             check(nodes().none { matchesText(it, voiceDefault) })
+            tapBack(toolbar = true)
+            revealText(activity.getString(R.string.settings_read_aloud_off))
+            tapText(activity.getString(R.string.settings_read_aloud))
             click(toolSwitch(readAloudLabel, checked = false))
             withTimeout(5_000) { store.flow.first { it.readAloudEnabled } }
             revealText(voiceDefault)

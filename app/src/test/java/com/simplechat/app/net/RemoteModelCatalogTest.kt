@@ -94,6 +94,23 @@ class RemoteModelCatalogTest {
     }
 
     @Test
+    fun `Gemini minimum stays active and supported Flash models can explicitly disable thinking`() {
+        fun settings(id: String) = com.simplechat.app.ui.chat.ConversationSettings(
+            model = ModelCatalog.find(ProviderKind.CUSTOM, id),
+        )
+        val mandatory = settings("google/gemini-3.8-flash")
+        assertEquals(true, mandatory.thinkingEnabled)
+        assertEquals("low", mandatory.reasoningEffort)
+        assertEquals("low", buildChatRequest(mandatory.model, emptyList(), false).reasoningEffort)
+        val lite = settings("gemini-3.5-flash-lite")
+        assertEquals(true, lite.thinkingEnabled)
+        assertEquals("minimal", lite.reasoningEffort)
+        val flash25 = settings("gemini-2.5-flash")
+        assertEquals(false, flash25.thinkingEnabled)
+        assertEquals("none", buildChatRequest(flash25.model, emptyList(), false).reasoningEffort)
+    }
+
+    @Test
     fun `Gemini fallback matches chat IDs without assuming every Gemini model has one million tokens`() {
         val kind = ProviderKind.CUSTOM
         assertEquals(1_048_576, ModelCatalog.find(kind, "google/gemini-2.5-flash-preview-09-2025").contextWindow)

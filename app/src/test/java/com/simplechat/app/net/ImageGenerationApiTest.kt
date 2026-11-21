@@ -1,6 +1,9 @@
 package com.simplechat.app.net
 
+import com.simplechat.app.data.Attachment
 import com.simplechat.app.data.ImageGenConfig
+import com.simplechat.app.data.StoredSettings
+import com.simplechat.app.data.nativeImageAdapter
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -22,6 +25,37 @@ class ImageGenerationApiTest {
         }.build(),
     )
 
+    @Test fun imageRequestResendsExactlyOnceAfterConnectionDrops() = runBlocking {
+        val attempts = mutableListOf<String>()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            attempts += Buffer().also { request.body!!.writeTo(it) }.readUtf8()
+            if (attempts.size == 1) throw java.net.SocketException("Connection reset")
+            Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body("""{"data":[{"b64_json":"AQID"}]}""".toResponseBody()).build()
+        }.build()
+        val config = ImageGenConfig(enabled = true, modelId = "fixture", size = "1536x1024")
+        val image = ImageGenerationApi(client).generateIndependent(config, base, "fixture-key", "a fox")
+        assertArrayEquals(byteArrayOf(1, 2, 3), image.bytes)
+        assertEquals(2, attempts.size)
+        assertEquals(attempts[0], attempts[1])
+    }
+
+    @Test fun httpRejectionDoesNotResendImageRequest() = runBlocking {
+        var attempts = 0
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            attempts++
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(400)
+                .message("Bad Request").body("{}".toResponseBody()).build()
+        }.build()
+        val config = ImageGenConfig(enabled = true, modelId = "fixture")
+        val result = runCatching {
+            ImageGenerationApi(client).generateIndependent(config, base, "fixture-key", "a fox")
+        }
+        assertTrue(result.isFailure)
+        assertEquals(1, attempts)
+    }
+
     @Test fun geminiUsesNativeEndpointAndReturnsInlineImage() = runBlocking {
         val api = api("""{"candidates":[{"content":{"parts":[{"text":"caption"},{"inlineData":{"mimeType":"image/png","data":"AQID"}}]}}]}""") { body, request ->
             assertEquals("/v1beta/models/fixture:generateContent", request.url.encodedPath)
@@ -30,6 +64,22 @@ class ImageGenerationApiTest {
         }
         val image = api.generateIndependent(ImageGenConfig(enabled = true, adapter = "GEMINI", modelId = "fixture"), base, "fixture-key", "a fox")
         assertArrayEquals(byteArrayOf(1, 2, 3), image.bytes)
+    }
+
+    @Test fun nativeGeminiGatewayRequiresOptInAndIncludesReferenceImage() = runBlocking {
+        val route = StoredSettings(baseUrl = "$base/v1beta/openai/", modelId = "google/gemini-3-pro-image-preview")
+        assertNull(route.nativeImageAdapter())
+        val configured = route.copy(imageGenApi = ImageGenConfig(nativeResponsesEnabled = true))
+        assertEquals("GEMINI", configured.nativeImageAdapter())
+        assertNull(configured.nativeImageAdapter("gemini-3.8-flash"))
+        val api = api("""{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"AQID"}}]}}]}""") { body, request ->
+            assertEquals("/v1beta/models/gemini-3-pro-image-preview:generateContent", request.url.encodedPath)
+            assertTrue(body.contains("\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"YWJj\"}"))
+        }
+        val reference = Attachment(Attachment.Kind.IMAGE, "reference.png", "image/png", "YWJj")
+        val result = api.generateGemini(configured.imageGenApi.copy(modelId = route.modelId),
+            route.baseUrl, "fixture-key", "a fox", listOf(reference))
+        assertArrayEquals(byteArrayOf(1, 2, 3), result.bytes)
     }
 
     @Test fun nanoBanana21UsesTheOfficialInteractionsContract() = runBlocking {

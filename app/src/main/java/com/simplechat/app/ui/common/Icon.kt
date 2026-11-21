@@ -657,6 +657,30 @@ object AppIcons {
         }
     }
 
+    val ImageEdit: ImageVector by lazy {
+        vector("ImageEdit") {
+            stroke {
+                moveTo(13f, 21f); horizontalLineTo(5f); arcToRelative(2f, 2f, 0f, false, true, -2f, -2f)
+                verticalLineTo(5f); arcToRelative(2f, 2f, 0f, false, true, 2f, -2f); horizontalLineTo(19f)
+                arcToRelative(2f, 2f, 0f, false, true, 2f, 2f); verticalLineTo(8f)
+                moveTo(3f, 17f); lineTo(8f, 12f); lineTo(11f, 15f)
+                moveTo(8.5f, 7.5f); lineTo(8.5f, 8f)
+                moveTo(14f, 17f); lineTo(19f, 12f); lineTo(22f, 15f)
+                lineTo(17f, 20f); lineTo(13f, 21f); close()
+            }
+        }
+    }
+
+    val Import: ImageVector by lazy {
+        vector("Import") {
+            stroke {
+                moveTo(4f, 15f); verticalLineTo(20f); horizontalLineTo(20f); verticalLineTo(15f)
+                moveTo(12f, 3f); verticalLineTo(15f)
+                moveTo(7f, 10f); lineTo(12f, 15f); lineTo(17f, 10f)
+            }
+        }
+    }
+
     /** 拍照（Lucide: camera） */
     val Camera: ImageVector by lazy {
         vector("Camera") {

@@ -41,6 +41,7 @@ data class ConversationEntity(
     val updatedAt: Long,
     val pinned: Boolean = false,
     val pinnedAt: Long? = null,
+    @ColumnInfo(defaultValue = "1") val memoryEnabled: Boolean = true,
 )
 
 /**
@@ -64,6 +65,7 @@ data class DraftEntity(
     val updatedAt: Long,
     /** 「新对话」的待用标题；会话建出来后由 `conversations.title` 接管，此处清空。 */
     val title: String? = null,
+    @ColumnInfo(defaultValue = "1") val memoryEnabled: Boolean = true,
 ) {
     companion object {
         /** 「新对话」的 key —— 会话尚未创建，没有 id 可用。 */
@@ -170,6 +172,7 @@ data class MessageEntity(
     /** 结束原因（`end_turn` / `max_tokens` / `tool_use` / `refusal`），仅 Anthropic 通道写入。 */
     val stopReason: String? = null,
     @ColumnInfo(defaultValue = "0") val imageGeneration: Boolean = false,
+    val imageRequest: String? = null,
     val createdAt: Long,
 ) {
     companion object {

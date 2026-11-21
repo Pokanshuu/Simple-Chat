@@ -121,10 +121,11 @@ data class ConversationSettings(
     val maxTokens: Int? = null,
 ) {
     /** 实际是否开启思考：模型支持且档位非 OFF。 */
-    val thinkingEnabled: Boolean get() = model.supportsThinking && reasoningLevel.enabled
+    val thinkingEnabled: Boolean
+        get() = model.supportsThinking && (reasoningLevel.enabled || model.minimumGeminiEffort() != null)
 
     val reasoningEffort: String?
-        get() = if (thinkingEnabled) reasoningLevel.apiValue else null
+        get() = if (thinkingEnabled) reasoningLevel.apiValue ?: model.minimumGeminiEffort() else null
 
     /** 最终系统提示词：预设按序拼接 + 会话补充。用于预览，避免黑盒。 */
     fun composedSystemPrompt(presets: List<Preset>): String {
@@ -276,6 +277,7 @@ data class UiMessage(
     /** 输入里命中 prompt 缓存的部分。 */
     val cacheHitTokens: Int? = null,
     val imageGeneration: Boolean = false,
+    val imageRequest: com.simplechat.app.data.ImageRequest? = null,
 ) {
     val streaming: Boolean get() = status == MessageStatus.STREAMING
     internal val hasReasoning: Boolean get() = !reasoning.isNullOrBlank()

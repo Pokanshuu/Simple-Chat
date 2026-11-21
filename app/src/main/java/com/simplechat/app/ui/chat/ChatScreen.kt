@@ -87,6 +87,9 @@ import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.R
+import com.simplechat.app.data.nativeImageAdapter
+import com.simplechat.app.data.imageAspectRatios
+import com.simplechat.app.ui.common.CapsuleButton
 import com.simplechat.app.data.Attachment
 import com.simplechat.app.data.AttachmentImport
 import com.simplechat.app.data.Res
@@ -115,7 +118,7 @@ import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.fillMaxHeight
 
 /** 输入栏下方最多同时展开一个面板。 */
-private enum class InputPanelState { NONE, THINKING, STATS, SETTINGS, ATTACH, IMAGE }
+private enum class InputPanelState { NONE, THINKING, STATS, SETTINGS, ATTACH, IMAGE_MODELS, IMAGE_RATIOS }
 
 /** 切换会话的淡入时长。**快** —— 慢一点就从"过渡"变成"等待"了。 */
 private const val SwitchFadeInMs = 160
@@ -244,7 +247,7 @@ fun ChatScreen(
     }
 
     /** 全屏查看的图片：本条的全部图片 + 当前点开的那张。 */
-    var viewingImage by remember { mutableStateOf<Pair<List<Attachment>, Attachment>?>(null) }
+    var viewingImage by remember { mutableStateOf<Triple<List<Attachment>, Attachment, Int>?>(null) }
 
     /*
      * ⚠️⚠️ **输入状态必须按会话分开。**
@@ -263,8 +266,12 @@ fun ChatScreen(
     var composerExpanded by remember(composerKey) { mutableStateOf(false) }
     val pendingByConversation = remember { mutableStateMapOf<String, List<Attachment>>() }
     val imagePromptByConversation = vm.imageDrafts
-    var imagePrompt by remember { mutableStateOf("") }
-    var imageSize by rememberSaveable(composerKey) { mutableStateOf<String?>(null) }
+    val imageFieldState = remember { TextFieldState() }
+    var imageMode by rememberSaveable(composerKey) { mutableStateOf(false) }
+    var imageAspectRatio by rememberSaveable(composerKey) { mutableStateOf<String?>(null) }
+    var pickedImageModel by rememberSaveable(composerKey) { mutableStateOf<String?>(null) }
+    val referenceImages = remember(vm) { mutableStateMapOf<String, List<Attachment>>() }
+    var referencePickerOwner by rememberSaveable { mutableStateOf<String?>(null) }
     data class ComposerEditDraft(val target: UiMessage, val text: String, val previousDraft: String)
     val editingByConversation = remember { mutableStateMapOf<String, ComposerEditDraft>() }
     var composerOwner by remember { mutableStateOf<String?>(null) }
@@ -285,7 +292,7 @@ fun ChatScreen(
         composerOwner?.let { previous ->
             val draft = draftToPersist()
             pendingByConversation[previous] = pending
-            imagePromptByConversation[previous] = imagePrompt
+            imagePromptByConversation[previous] = imageFieldState.text.toString()
             val target = editingMessage
             if (target != null) {
                 editingByConversation[previous] = ComposerEditDraft(target, input, inputBeforeEdit)
@@ -298,7 +305,7 @@ fun ChatScreen(
         val edit = editingByConversation[composerKey]
         replaceInput(edit?.text ?: vm.loadDraft(composerKey).orEmpty())
         pending = pendingByConversation[composerKey].orEmpty()
-        imagePrompt = imagePromptByConversation[composerKey].orEmpty()
+        imageFieldState.setTextAndPlaceCursorAtEnd(imagePromptByConversation[composerKey].orEmpty())
         editingMessage = edit?.target
         inputBeforeEdit = edit?.previousDraft.orEmpty()
         composerOwner = composerKey
@@ -309,6 +316,15 @@ fun ChatScreen(
         viewingImage = null
         attachError = null
         panel = InputPanelState.NONE
+    }
+
+    LaunchedEffect(composerKey) {
+        snapshotFlow { composerOwner to imageFieldState.text.toString() }.collect { (owner, draft) ->
+            if (owner == composerKey) {
+                if (draft.isBlank()) imagePromptByConversation.remove(composerKey)
+                else imagePromptByConversation[composerKey] = draft
+            }
+        }
     }
 
     /*
@@ -374,6 +390,7 @@ fun ChatScreen(
      */
     /** 消息索引的手势状态（§34）—— 左滑跟手，从右侧滑出。 */
     val messageIndex = rememberMessageIndexDragState()
+    BackHandler(enabled = imageMode && panel == InputPanelState.NONE && !composerExpanded) { imageMode = false }
     BackHandler(enabled = panel != InputPanelState.NONE) { panel = InputPanelState.NONE }
     BackHandler(enabled = messageIndex.isOpen) { messageIndex.collapse() }
     BackHandler(enabled = editingMessage != null) { cancelEdit() }
@@ -561,6 +578,21 @@ fun ChatScreen(
             importBatch(owner, uris) { uri ->
                 AttachmentImport.image(context, uri)
                     .map { listOf(it) to (null as String?) }
+            }
+        }
+    }
+
+    val referencePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(3)) { uris ->
+        val owner = referencePickerOwner
+        referencePickerOwner = null
+        if (owner == null || uris.isEmpty()) return@rememberLauncherForActivityResult
+        scope.launch {
+            for (uri in uris) {
+                if (referenceImages[owner].orEmpty().size >= 3) break
+                AttachmentImport.image(context, uri).onSuccess { image ->
+                    val current = referenceImages[owner].orEmpty()
+                    if (current.size < 3) referenceImages[owner] = current + image
+                }.onFailure { error -> onImportFailed(error.userMessage()) }
             }
         }
     }
@@ -1243,7 +1275,11 @@ fun ChatScreen(
                                 vm.switchVariant(message, index)
                             },
                             onOpenImage = { message, attachment ->
-                                viewingImage = message.attachments.filter { it.isImage } to attachment
+                                val imageEntries = vm.messages.flatMap { item ->
+                                    item.attachments.filter { it.isImage }.map { item.id to it }
+                                }
+                                val index = imageEntries.indexOf(message.id to attachment)
+                                viewingImage = Triple(imageEntries.map { it.second }, attachment, index)
                             },
                             onChooseModel = { openPanel(InputPanelState.THINKING) },
                             onRetryWithoutAttachmentsAndTools = { message ->
@@ -1417,10 +1453,13 @@ fun ChatScreen(
                 }
 
                 // 待发送附件排在输入栏**上面**：先看到"我挂了什么"，再看到输入框
-                PendingAttachmentsRow(
+                if (!imageMode) PendingAttachmentsRow(
                     attachments = pending,
                     onRemove = { spec -> pending = pending - spec },
-                    onOpen = { spec -> viewingImage = pending.filter { it.isImage } to spec },
+                    onOpen = { spec ->
+                        val images = pending.filter { it.isImage }
+                        viewingImage = Triple(images, spec, images.indexOf(spec))
+                    },
                 )
 
                 fun submitComposer() {
@@ -1497,8 +1536,49 @@ fun ChatScreen(
                     return started
                 }
 
+                val imageRoute = vm.attachmentSettings
+                val imageConfig = imageRoute.imageGenApi
+                val showImageEntry = imageConfig.enabled || imageConfig.nativeResponsesEnabled
+                val imageModels = if (imageMode) {
+                    if (imageConfig.enabled) {
+                        val matchingCatalog = runCatching { imageConfig.connectionBase(imageRoute.baseUrl) }.getOrNull() == imageConfig.modelCatalogBase
+                        (listOf(imageConfig.modelId) + imageConfig.modelIds.takeIf { matchingCatalog }.orEmpty())
+                            .filter { it.isNotBlank() }.distinct().map { it to it }
+                    } else {
+                        (listOf(vm.settings.model) + vm.models).distinctBy { it.id }
+                            .filter { imageRoute.nativeImageAdapter(it.id) != null }
+                            .map { it.id to it.displayName }
+                    }
+                } else emptyList()
+                val imageModel = imageModels.firstOrNull { it.first == pickedImageModel } ?: imageModels.firstOrNull()
+                val imageAdapter = if (imageConfig.enabled) imageConfig.adapter else imageModel?.let { imageRoute.nativeImageAdapter(it.first) }
+                val imageRatios = imageAspectRatios(imageAdapter, imageModel?.first)
+                val imageReferences = referenceImages[composerKey].orEmpty()
+                if (imageMode) PendingAttachmentsRow(
+                    attachments = imageReferences,
+                    onRemove = { referenceImages[composerKey] = imageReferences - it },
+                    onOpen = { viewingImage = Triple(imageReferences, it, imageReferences.indexOf(it)) },
+                )
                 InputBar(
-                    fieldState = inputState,
+                    fieldState = if (imageMode) imageFieldState else inputState,
+                    imageMode = imageMode,
+                    sendAllowed = !imageMode || (imageModel != null && (imageConfig.enabled || imageRoute.hasKey)),
+                    imageControls = {
+                        CapsuleButton(
+                            text = imageModel?.second ?: stringResource(R.string.image_api_pick_model),
+                            modifier = Modifier.weight(1f, fill = false),
+                            trailingIcon = AppIcons.ChevronDown,
+                            selected = panel == InputPanelState.IMAGE_MODELS,
+                            onClick = { openPanel(InputPanelState.IMAGE_MODELS) },
+                        )
+                        CapsuleButton(
+                            text = imageAspectRatio?.takeIf { it in imageRatios } ?: stringResource(R.string.image_aspect_ratio_label),
+                            trailingIcon = AppIcons.ChevronDown,
+                            selected = panel == InputPanelState.IMAGE_RATIOS,
+                            enabled = imageRatios.isNotEmpty(),
+                            onClick = { openPanel(InputPanelState.IMAGE_RATIOS) },
+                        )
+                    },
                     expanded = composerExpanded,
                     onToggleExpanded = if (composerOwner == composerKey) {
                         {
@@ -1507,14 +1587,20 @@ fun ChatScreen(
                             composerExpanded = !composerExpanded
                         }
                     } else null,
-                    editingLabel = if (editingMessage != null) stringResource(R.string.msg_edit_input) else null,
-                    onCancelEdit = { cancelEdit() },
+                    editingLabel = when {
+                        imageMode -> stringResource(R.string.image_generate_title)
+                        editingMessage != null -> stringResource(R.string.msg_edit_input)
+                        else -> null
+                    },
+                    onCancelEdit = {
+                        if (imageMode) { imageMode = false; panel = InputPanelState.NONE } else cancelEdit()
+                    },
                     // 面板展开时输入栏投影淡出，两块合看成一体
                     panelExpanded = panel != InputPanelState.NONE,
                     contextStats = vm.contextStats,
                     statsPanelOpen = panel == InputPanelState.STATS,
                     onOpenStatsPanel = { openPanel(InputPanelState.STATS) },
-                    holdToTalkEnabled = canUseVoice && vm.holdToTalk,
+                    holdToTalkEnabled = !imageMode && canUseVoice && vm.holdToTalk,
                     voiceState = voice.state,
                     voiceLevel = { voice.level },
                     voiceSourceLabel = stringResource(
@@ -1531,7 +1617,7 @@ fun ChatScreen(
                         }
                     },
                     onVoiceTap = { if (voiceTapMode) voice.finish() else startVoice(tapMode = true) },
-                    thinkingEnabled = vm.settings.thinkingEnabled,
+                    thinkingEnabled = vm.settings.thinkingEnabled || vm.defaultThinkingActive,
                     // 搜索也在这个面板里，开着就算激活（见 InputBar 的说明）
                     webSearchEnabled = vm.supportsWebSearch && vm.webSearch,
                     thinkingPanelOpen = panel == InputPanelState.THINKING,
@@ -1539,13 +1625,38 @@ fun ChatScreen(
                     settingsPanelOpen = panel == InputPanelState.SETTINGS,
                     onOpenSettingsPanel = { openPanel(InputPanelState.SETTINGS) },
                     streaming = vm.isStreaming,
-                    onSend = ::submitComposer,
+                    onSend = {
+                        if (!imageMode) submitComposer() else {
+                            val owner = composerOwner
+                            val submitted = imageFieldState.text.toString()
+                            if (owner != null && owner == composerKey && submitted.isNotBlank()) {
+                                val ratio = imageAspectRatio?.takeIf { it in imageRatios }
+                                resumeFollowing()
+                                vm.generateImage(submitted, requestedAspectRatio = ratio, references = imageReferences,
+                                    requestedModelId = imageModel?.first) {
+                                    if (referenceImages[owner].orEmpty() == imageReferences) referenceImages.remove(owner)
+                                    if (imagePromptByConversation[owner] == submitted) imagePromptByConversation.remove(owner)
+                                    if (composerOwner == owner && imageFieldState.text.toString() == submitted) {
+                                        imageFieldState.setTextAndPlaceCursorAtEnd("")
+                                        imageMode = false
+                                        dismissInput()
+                                    }
+                                }
+                            }
+                        }
+                    },
                     onStop = { vm.stop() },
                     // ⊕ 真的能用了：展开与其它面板同一个容器（浮在输入栏上方的卡片）
-                    canAttach = true,
-                    onAttachClick = { openPanel(InputPanelState.ATTACH) },
+                    canAttach = !imageMode || imageReferences.size < 3,
+                    onAttachClick = {
+                        if (imageMode) {
+                            referencePickerOwner = composerKey
+                            panel = InputPanelState.NONE
+                            referencePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        } else openPanel(InputPanelState.ATTACH)
+                    },
                     attachPanelOpen = panel == InputPanelState.ATTACH,
-                    pendingCount = pending.size,
+                    pendingCount = if (imageMode) 0 else pending.size,
                     onTextFieldFocused = { panel = InputPanelState.NONE },
                 )
 
@@ -1574,29 +1685,39 @@ fun ChatScreen(
                             panel = InputPanelState.NONE
                             pickFile()
                         },
-                        onGenerateImage = { panel = InputPanelState.IMAGE },
+                        onGenerateImage = if (showImageEntry) ({
+                            panel = InputPanelState.NONE
+                            textSelection.dismiss()
+                            if (imageFieldState.text.isBlank() && editingMessage == null && inputState.text.isNotBlank()) {
+                                imageFieldState.setTextAndPlaceCursorAtEnd(inputState.text.toString())
+                            }
+                            imageMode = true
+                        }) else null,
                     )
                 }
 
-                InputPanel(visible = panel == InputPanelState.IMAGE, modifier = Modifier.padding(top = 10.dp)) {
-                    ImageGenerationPanel(
-                        prompt = imagePrompt,
-                        onPromptChange = { imagePrompt = it; imagePromptByConversation[composerKey] = it },
-                        modelLabel = if (vm.attachmentSettings.imageGenApi.enabled) vm.attachmentSettings.imageGenApi.modelId else vm.settings.model.displayName,
-                        size = imageSize,
-                        onSizeChange = { imageSize = it },
-                        sizesAvailable = vm.attachmentSettings.imageGenApi.enabled && vm.attachmentSettings.imageGenApi.adapter in setOf("OPENAI_IMAGES", "DASHSCOPE"),
-                        available = vm.imageGenerationAvailable,
-                        enabled = vm.imageGenerationAvailable && !vm.isStreaming,
-                        onConfigure = onConfigureImageApi,
-                        onGenerate = {
-                            resumeFollowing()
-                            vm.generateImage(imagePrompt, imageSize) {
-                                imagePrompt = ""
-                                imagePromptByConversation.remove(composerKey)
-                                panel = InputPanelState.NONE
-                            }
-                        },
+                InputPanel(imageMode && panel == InputPanelState.IMAGE_MODELS, Modifier.padding(top = 10.dp)) {
+                    ImageOptionRows(
+                        title = stringResource(R.string.image_api_pick_model),
+                        options = imageModels,
+                        selected = imageModel?.first,
+                        onSelect = { pickedImageModel = it; panel = InputPanelState.NONE },
+                    )
+                    if (imageConfig.enabled || imageModels.isEmpty()) {
+                        CapsuleButton(
+                            stringResource(R.string.image_configure),
+                            onClick = onConfigureImageApi,
+                            modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 8.dp),
+                        )
+                    }
+                }
+                InputPanel(imageMode && panel == InputPanelState.IMAGE_RATIOS, Modifier.padding(top = 10.dp)) {
+                    ImageOptionRows(
+                        title = stringResource(R.string.image_aspect_ratio_label),
+                        options = listOf("" to stringResource(R.string.image_size_default)) + imageRatios.map { it to it },
+                        selected = imageAspectRatio?.takeIf { it in imageRatios }.orEmpty(),
+                        showAspectRatioIcons = true,
+                        onSelect = { imageAspectRatio = it.ifEmpty { null }; panel = InputPanelState.NONE },
                     )
                 }
 
@@ -1657,6 +1778,9 @@ fun ChatScreen(
                          * 建会话时一并落库，AI 起名那条路不再覆盖它。
                          */
                         onTitleChange = { vm.renameCurrentConversation(it) },
+                        memoryEnabled = vm.conversationMemoryEnabled.takeIf { vm.showConversationMemorySetting },
+                        memoryToggleEnabled = !vm.switching,
+                        onMemoryChange = vm::setConversationMemoryEnabled,
                         onExportMarkdown = if (vm.currentConversationId != null) {
                             {
                                 exportHint = null
@@ -1767,10 +1891,11 @@ fun ChatScreen(
 
     // ── 图片放大查看 ──────────────────────────────────────
 
-    viewingImage?.let { (all, one) ->
+    viewingImage?.let { (all, one, index) ->
         AttachmentViewerDialog(
             images = all,
             initial = one,
+            initialIndex = index,
             onDismiss = { viewingImage = null },
         )
     }

@@ -45,6 +45,8 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import com.simplechat.app.R
@@ -176,10 +178,14 @@ fun ThinkingPanelContent(
     supportsExplicitThinkingOff: Boolean = false,
 ) {
     val colors = LocalChatColors.current
-    val levels = ReasoningLevel.forModel(settings.model)
+    val minimumGeminiEffort = settings.model.minimumGeminiEffort()
+    val availableLevels = ReasoningLevel.forModel(settings.model)
+    val levels = if (minimumGeminiEffort != null) availableLevels.filter { it.enabled }.ifEmpty {
+        ReasoningLevel.entries.filter { it.apiValue == minimumGeminiEffort }.ifEmpty { availableLevels }
+    } else availableLevels
     val selectedLevel = if (settings.reasoningLevel in levels) settings.reasoningLevel else {
-        val effort = settings.model.resolveReasoningEffort(settings.reasoningLevel.apiValue)
-        levels.firstOrNull { it.apiValue == effort } ?: ReasoningLevel.OFF
+        val effort = settings.model.resolveReasoningEffort(settings.reasoningLevel.apiValue) ?: minimumGeminiEffort
+        levels.firstOrNull { it.apiValue == effort } ?: levels.first()
     }
     val selectedTick = levels.indexOf(selectedLevel)
     val defaultLabel = stringResource(R.string.reasoning_default)
@@ -259,10 +265,10 @@ fun ThinkingPanelContent(
         Spacer(Modifier.size(8.dp))
 
         Text(
-            text = if (supportsThinking) {
-                stringResource(R.string.input_thinking_hint)
-            } else {
-                stringResource(R.string.input_thinking_unsupported)
+            text = when {
+                !supportsThinking -> stringResource(R.string.input_thinking_unsupported)
+                minimumGeminiEffort != null -> stringResource(R.string.input_thinking_minimum)
+                else -> stringResource(R.string.input_thinking_hint)
             },
             style = MaterialTheme.typography.labelSmall,
             color = colors.placeholder,
@@ -872,6 +878,9 @@ fun ConversationSettingsPanelContent(
     onExportJson: (() -> Unit)? = null,
     exportHint: String? = null,
     officialPro: Boolean = false,
+    memoryEnabled: Boolean? = null,
+    memoryToggleEnabled: Boolean = true,
+    onMemoryChange: (Boolean) -> Unit = {},
 ) {
     val colors = LocalChatColors.current
     var promptPreviewExpanded by remember { mutableStateOf(false) }
@@ -896,6 +905,23 @@ fun ConversationSettingsPanelContent(
                 title = title,
                 onTitleChange = onTitleChange,
             )
+            Spacer(Modifier.size(12.dp))
+        }
+
+        if (memoryEnabled != null) {
+            val memoryLabel = stringResource(R.string.input_conversation_memory)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(memoryLabel, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                AppSwitch(
+                    checked = memoryEnabled,
+                    onCheckedChange = onMemoryChange,
+                    enabled = memoryToggleEnabled,
+                    modifier = Modifier.semantics { contentDescription = memoryLabel },
+                )
+            }
+            Spacer(Modifier.size(4.dp))
+            Text(stringResource(R.string.input_conversation_memory_hint), style = MaterialTheme.typography.labelSmall,
+                color = colors.placeholder)
             Spacer(Modifier.size(12.dp))
         }
 

@@ -499,6 +499,8 @@
 
     <!-- Panel 4: chat settings -->
     <string name="input_conversation_name">Conversation name</string>
+    <string name="input_conversation_memory">Memory for this conversation</string>
+    <string name="input_conversation_memory_hint">When off, this conversation neither uses memories from other conversations nor contributes to them.</string>
     <string name="input_conversation_name_hint">Give this conversation a name</string>
     <string name="input_system_prompt">System prompt</string>
     <string name="input_preset_count">%1$d/%2$d presets</string>
@@ -550,7 +552,7 @@
     <string name="image_api_route">Image service</string>
     <string name="image_api_independent">Use independent image API</string>
     <string name="image_api_native_title">Allow native image generation</string>
-    <string name="image_api_native_hint">Native generation currently supports the Responses protocol</string>
+    <string name="image_api_native_hint">Your gateway must provide native Gemini image generation or a compatible Responses image endpoint.</string>
     <string name="image_api_native_enabled">Native chat image generation</string>
     <string name="image_api_fallback">Chat model</string>
     <string name="image_api_model">Image model ID</string>
@@ -691,6 +693,8 @@
     <string name="tts_empty">This reply has no text to read</string>
     <string name="tts_unavailable">No text-to-speech engine is available. Install one in system settings</string>
     <!-- Read-aloud voice (Settings) -->
+    <string name="settings_read_aloud">Read aloud</string>
+    <string name="settings_read_aloud_off">Off</string>
     <string name="tts_voice">Reading voice</string>
     <string name="tts_voice_default">System default</string>
     <string name="tts_voice_online">online</string>
@@ -803,13 +807,21 @@
     <string name="image_api_connection">Connection</string>
     <string name="image_api_options">Model and output</string>
     <string name="image_api_test_models">Test connection and fetch models</string>
-    <string name="image_api_pick_model">Choose from model list</string>
+    <string name="image_api_pick_model">Choose model</string>
     <string name="service_shared_settings">Tool settings are shared across chat API profiles. Reused URLs and keys come from the active chat API profile.</string>
     <string name="reasoning_default">Default</string>
     <string name="reasoning_minimal">minimal</string>
     <string name="reasoning_medium">medium</string>
     <string name="reasoning_xhigh">xhigh</string>
     <string name="reasoning_ultra">ultra</string>
+    <string name="input_thinking_minimum">This model always reasons. The leftmost setting uses its lowest supported effort.</string>
+    <string name="image_aspect_ratio_label">Aspect ratio</string>
+    <string name="image_save_original">Save original</string>
+    <string name="image_original_saved">Original saved</string>
+    <string name="image_original_save_failed">Could not save the original image</string>
+    <string name="image_exit_mode">Exit image mode</string>
+    <string name="settings_search_options">Search settings</string>
+    <string name="image_reference_unreadable">Could not read the reference image. Select it again.</string>
 </resources>
 
 

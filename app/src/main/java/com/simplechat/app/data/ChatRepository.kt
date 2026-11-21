@@ -119,6 +119,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         systemPrompt: String? = null,
         enabledPresetIds: List<String> = emptyList(),
         title: String = Res.get(R.string.conversation_default_title),
+        memoryEnabled: Boolean = true,
     ): String = db.withTransaction {
         val now = System.currentTimeMillis()
         val id = UUID.randomUUID().toString()
@@ -130,6 +131,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
                 provider = provider,
                 model = model,
                 systemPrompt = systemPrompt?.trim()?.takeIf { it.isNotBlank() },
+                memoryEnabled = memoryEnabled,
                 createdAt = now,
                 updatedAt = now,
             ),
@@ -180,6 +182,9 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     }
 
     suspend fun findConversation(id: String): ConversationEntity? = conversations.findById(id)
+
+    internal suspend fun setConversationMemoryEnabled(id: String, enabled: Boolean) =
+        conversations.setMemoryEnabled(id, enabled)
 
     suspend fun revealSearchMessage(conversationId: String, messageId: String) = db.withTransaction {
         val path = MessageTree.ancestry(messages.getLightFor(conversationId), messageId)
@@ -276,6 +281,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
                 provider = origin.provider,
                 model = origin.model,
                 systemPrompt = origin.systemPrompt,
+                memoryEnabled = origin.memoryEnabled,
                 pinned = false,
                 pinnedAt = null,
                 createdAt = now,
@@ -426,6 +432,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         /** 这条由哪个模型产生；用户消息传 null。 */
         model: String? = null,
         imageGeneration: Boolean = false,
+        imageRequest: ImageRequest? = null,
     ): MessageEntity {
         val id = UUID.randomUUID().toString()
         val entity = newMessageEntity(
@@ -440,6 +447,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             status = status,
             model = model,
             imageGeneration = imageGeneration,
+            imageRequest = imageRequest,
         ).withOffloadedImages()
         messages.upsert(entity)
         messages.activate(id, conversationId, parentId)
@@ -499,6 +507,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         parentId: String,
         model: String? = null,
         imageGeneration: Boolean = false,
+        imageRequest: ImageRequest? = null,
     ): String =
         addSibling(
             conversationId = conversationId,
@@ -509,6 +518,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             status = MessageStatus.STREAMING,
             model = model,
             imageGeneration = imageGeneration,
+            imageRequest = imageRequest,
         ).id
 
     /** 流式 checkpoint。调用频率由 ViewModel 控制在 ~1.5s（§4.4）。 */
@@ -618,7 +628,8 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     internal suspend fun settleImageGeneration(id: String, status: MessageStatus, error: String? = null): Boolean =
         messages.settleImageGeneration(id, status.toStorage(), error) == 1
 
-    suspend fun markImageGeneration(messageId: String) = messages.markImageGeneration(messageId)
+    suspend fun markImageGeneration(messageId: String, request: ImageRequest) =
+        messages.markImageGeneration(messageId, request.encode())
 
     /** 全库累计用量（设置 → 用量与余额）。 */
     suspend fun usageTotals(): UsageTotals = messages.usageTotals()
@@ -849,6 +860,13 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     /** 「新对话」的待用标题。 */
     suspend fun findDraftTitle(key: String): String? = drafts.find(key)?.title
 
+    internal suspend fun findNewConversationMemoryEnabled(): Boolean =
+        drafts.find(DraftEntity.NewConversation)?.memoryEnabled ?: true
+
+    internal suspend fun saveNewConversationMemoryEnabled(enabled: Boolean) = mutateDraft(DraftEntity.NewConversation) {
+        it.copy(memoryEnabled = enabled, updatedAt = System.currentTimeMillis())
+    }
+
     /**
      * 落草稿。
      *
@@ -870,10 +888,10 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
      * 行内两样东西（草稿正文 + 待用标题）共用一行，所以写入一律走这里 ——
      * 否则 `upsert` 整行覆盖会把另一样悄悄抹掉。两样都空就删行。
      */
-    private suspend fun mutateDraft(key: String, transform: (DraftEntity) -> DraftEntity) {
+    private suspend fun mutateDraft(key: String, transform: (DraftEntity) -> DraftEntity) = db.withTransaction {
         val current = drafts.find(key) ?: DraftEntity(key, "", System.currentTimeMillis())
         val next = transform(current)
-        if (next.text.isEmpty() && next.title == null) {
+        if (next.text.isEmpty() && next.title == null && next.memoryEnabled) {
             drafts.clear(key)
         } else {
             drafts.upsert(next)
@@ -1762,6 +1780,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
                 updatedAt = conversation.updatedAt,
                 pinned = conversation.pinned,
                 pinnedAt = conversation.pinnedAt,
+                memoryEnabled = conversation.memoryEnabled,
             ),
         )
         return PreparedConversation(conversation, remapId)

@@ -91,6 +91,14 @@ internal object CrossChatMemoryRegression {
             check(sampled.last().content.startsWith("activebranchsecret retrievalanswer"))
             check(sampled.none { "abandonedbranchsecret" in it.content })
             check(db.conversationDao().memorySessions("session-0", 50, 120).size == 50)
+            repository.setConversationMemoryEnabled("session-51", false)
+            check(repository.memorySessions("session-0", 50, 120).none { it.id == "session-51" })
+            check(repository.memoryMessages("session-51", 1000, 100, 120).isEmpty())
+            repository.setConversationMemoryEnabled("session-51", true)
+            repository.setConversationMemoryEnabled("session-0", false)
+            check(repository.memorySessions("session-0", 50, 120).isEmpty())
+            repository.setConversationMemoryEnabled("session-0", true)
+            passed("memory opt-out excludes both the current conversation and reference sources before reading their messages")
             val heap = (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).memoryClass
             val gaps = mutableListOf<Long>()
             val callback = object : Choreographer.FrameCallback {

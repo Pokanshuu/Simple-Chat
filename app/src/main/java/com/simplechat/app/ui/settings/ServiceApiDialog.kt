@@ -98,13 +98,17 @@ internal fun ImageGenApiPage(
     val reusedBase = stored.baseUrl.takeIf { draft.baseUrl.isBlank() || draft.reuseChatKey }
     val reusedKey = stored.apiKey.takeIf { draft.reuseChatKey }
     var models by remember(draft.adapter, draft.baseUrl, draft.reuseChatKey, secret, reusedBase, reusedKey) {
-        mutableStateOf<List<String>?>(null)
+        val catalogBase = runCatching { draft.copy(baseUrl = draft.baseUrl.trim()).connectionBase(stored.baseUrl) }.getOrNull()
+        mutableStateOf(original.modelIds.takeIf { draft.adapter == original.adapter &&
+            draft.reuseChatKey == original.reuseChatKey && secret.isBlank() && catalogBase == original.modelCatalogBase }.orEmpty())
     }
     var testStatus by remember(draft.adapter, draft.baseUrl, draft.reuseChatKey, secret, reusedBase, reusedKey) {
         mutableStateOf<Pair<String, Boolean>?>(null)
     }
     var testing by remember { mutableStateOf(false) }
     var pickingModel by remember { mutableStateOf(false) }
+    var editingModel by remember { mutableStateOf(false) }
+    var editingKey by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var errorAttempt by remember { mutableStateOf(0) }
     var backInProgress by remember { mutableStateOf(false) }
@@ -121,7 +125,7 @@ internal fun ImageGenApiPage(
     val backAction by rememberUpdatedState<() -> Unit>(back@{
         if (saving || backInProgress) return@back
         backInProgress = true
-        if (draft == original && secret.isBlank()) {
+        if (draft == original && secret.isBlank() && models == original.modelIds) {
             finish()
             return@back
         }
@@ -135,7 +139,10 @@ internal fun ImageGenApiPage(
                     next.connectionBase(stored.baseUrl)
                     if (!next.reuseChatKey) next.key(stored.apiKey)
                 }
-                store.setImageGenApi(next)
+                store.setImageGenApi(next.copy(
+                    modelIds = models,
+                    modelCatalogBase = if (models.isEmpty()) "" else next.connectionBase(stored.baseUrl),
+                ))
                 saved = true
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -167,6 +174,7 @@ internal fun ImageGenApiPage(
             draft = draft.copy(nativeResponsesEnabled = it)
         })
     }
+    if (draft.nativeResponsesEnabled) ServiceNote(stringResource(R.string.image_api_native_hint))
     if (draft.enabled) {
         SettingsSectionLabel(stringResource(R.string.image_api_protocol))
         SettingsCard {
@@ -196,15 +204,15 @@ internal fun ImageGenApiPage(
             SettingsSwitchRow(stringResource(R.string.image_api_reuse_key), draft.reuseChatKey, { draft = draft.copy(reuseChatKey = it) })
             if (!draft.reuseChatKey) {
                 RowDivider(inset = Space.Screen)
-                ServiceField(stringResource(R.string.image_api_key), secret, { secret = it }, KeyboardType.Password,
-                    hint = stringResource(if (draft.apiKeyEncrypted.isBlank()) R.string.api_key_unset else R.string.api_profile_key_saved))
+                SettingsNavRow(null, stringResource(R.string.image_api_key),
+                    stringResource(if (secret.isBlank() && draft.apiKeyEncrypted.isBlank()) R.string.api_key_unset else R.string.api_profile_key_saved),
+                    { editingKey = true })
             }
             RowDivider(inset = Space.Screen)
-            val testLabel = stringResource(if (testing) R.string.api_testing else R.string.image_api_test_models)
+            val testLabel = stringResource(if (testing) R.string.api_testing else R.string.api_test)
             val appContext = LocalContext.current
             SettingsActionRow(label = testLabel, hint = null, enabled = !testing && !saving, onClick = {
                 testing = true
-                models = null
                 testStatus = null
                 scope.launch {
                     try {
@@ -224,11 +232,8 @@ internal fun ImageGenApiPage(
         testStatus?.let { (message, failed) -> ServiceNote(message, failed) }
         SettingsSectionLabel(stringResource(R.string.image_api_options))
         SettingsCard {
-            ServiceField(stringResource(R.string.image_api_model), draft.modelId, { draft = draft.copy(modelId = it) }, KeyboardType.Text)
-            if (!models.isNullOrEmpty()) {
-                RowDivider(inset = Space.Screen)
-                SettingsNavRow(null, stringResource(R.string.image_api_pick_model), null, { pickingModel = true })
-            }
+            SettingsNavRow(null, stringResource(R.string.image_api_pick_model),
+                draft.modelId.ifBlank { stringResource(R.string.api_model_unset) }, { pickingModel = true })
             RowDivider(inset = Space.Screen)
             if (draft.adapter == "GEMINI") {
                 ServiceField(stringResource(R.string.image_api_aspect_ratio), draft.aspectRatio,
@@ -244,15 +249,28 @@ internal fun ImageGenApiPage(
             }
         }
     }
-    if (pickingModel && !models.isNullOrEmpty()) {
+    if (pickingModel) {
         ChoiceDialog(
             title = stringResource(R.string.image_api_pick_model),
-            options = models.orEmpty().map { it to it },
+            options = models.map { it to it },
+            emptyHint = stringResource(R.string.api_model_empty_hint),
+            extraAction = stringResource(R.string.api_model_manual) to { pickingModel = false; editingModel = true },
             selected = draft.modelId,
             onDismiss = { pickingModel = false },
             onSelect = { draft = draft.copy(modelId = it); pickingModel = false },
         )
     }
+    if (editingModel) TextInputDialog(
+        title = stringResource(R.string.api_model_manual), initial = draft.modelId,
+        placeholder = stringResource(R.string.image_api_model),
+        onDismiss = { editingModel = false; pickingModel = true },
+        onConfirm = { draft = draft.copy(modelId = it.trim()); editingModel = false },
+    )
+    if (editingKey) TextInputDialog(
+        title = stringResource(R.string.image_api_key), initial = secret,
+        placeholder = stringResource(R.string.service_key_hint), secret = true,
+        onDismiss = { editingKey = false }, onConfirm = { secret = it; editingKey = false },
+    )
     error?.let { message ->
         val requester = remember { BringIntoViewRequester() }
         Box(Modifier.bringIntoViewRequester(requester)) { ServiceNote(message, isError = true) }

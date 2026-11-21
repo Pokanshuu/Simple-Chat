@@ -135,6 +135,9 @@ internal fun InputBar(
     onVoiceSlide: (Boolean) -> Unit = {},
     onVoiceTap: () -> Unit = {},
     modifier: Modifier = Modifier,
+    imageMode: Boolean = false,
+    sendAllowed: Boolean = true,
+    imageControls: @Composable (androidx.compose.foundation.layout.RowScope.() -> Unit)? = null,
 ) {
     val colors = LocalChatColors.current
     val shape = ContainerShape
@@ -255,15 +258,11 @@ internal fun InputBar(
                         .padding(bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = editingLabel,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = colors.placeholder,
-                        modifier = Modifier.weight(1f),
-                    )
+                    Text(editingLabel, modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelMedium, color = colors.placeholder)
                     IconCircleButton(
                         icon = AppIcons.Close,
-                        contentDescription = stringResource(R.string.input_cancel_edit),
+                        contentDescription = stringResource(if (imageMode) R.string.image_exit_mode else R.string.input_cancel_edit),
                         onClick = onCancelEdit,
                         size = 26.dp,
                         iconSize = 14.dp,
@@ -315,7 +314,11 @@ internal fun InputBar(
                         decorator = { inner ->
                             Box(Modifier.fillMaxWidth(), propagateMinConstraints = true) {
                                 if (text.isEmpty()) Text(
-                                    text = stringResource(if (fieldFocused) R.string.input_hint else if (holdToTalkActive) R.string.input_hint_hold_to_talk else R.string.input_hint),
+                                    text = stringResource(when {
+                                        imageMode -> R.string.image_prompt_label
+                                        holdToTalkActive -> R.string.input_hint_hold_to_talk
+                                        else -> R.string.input_hint
+                                    }),
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = colors.placeholder,
                                 )
@@ -368,52 +371,61 @@ internal fun InputBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                // 第二行全部按钮**同高**；纯图标一律正圆，只有「图标 + 箭头」用胶囊。
-                // 之前 ⚙ 是 padding 撑出来的椭圆，和 ⊕ / ↑ 的圆并排就很毛糙。
+                if (imageMode) {
+                    Row(
+                        Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) { imageControls?.invoke(this) }
+                } else {
+                    // 第二行全部按钮**同高**；纯图标一律正圆，只有「图标 + 箭头」用胶囊。
+                    // 之前 ⚙ 是 padding 撑出来的椭圆，和 ⊕ / ↑ 的圆并排就很毛糙。
 
-                // ── 对话设置 ─────────────────────────────
-                // 与右侧思考入口同一套样式：灰图标 + 描边；展开时换品牌色底
-                IconCircleButton(
-                    icon = AppIcons.Settings,
-                    contentDescription = stringResource(R.string.input_settings),
-                    onClick = onOpenSettingsPanel,
-                    size = RowButtonSize,
-                    iconSize = 18.dp,
-                    background = if (settingsPanelOpen) colors.capsuleSelected else null,
-                    tint = if (settingsPanelOpen) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        // 未激活也画**黑**（原来是灰的）—— 与 ⊕ / 发送键统一，对齐官方
-                        MaterialTheme.colorScheme.onSurface
-                    },
-                    /*
-                     * 描边**常驻**，激活时换成品牌色。
-                     *
-                     * 官方那套激活样式是「淡底 + 同色描边 + 同色内容」；
-                     * 原来激活态把描边去掉只铺底，在并排的几个按钮里会显得"矮一层"。
-                     */
-                    outlined = true,
-                    outlineColor = if (settingsPanelOpen) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        null
-                    },
-                )
+                    // ── 对话设置 ─────────────────────────────
+                    // 与右侧思考入口同一套样式：灰图标 + 描边；展开时换品牌色底
+                    IconCircleButton(
+                        icon = AppIcons.Settings,
+                        contentDescription = stringResource(R.string.input_settings),
+                        onClick = onOpenSettingsPanel,
+                        size = RowButtonSize,
+                        iconSize = 18.dp,
+                        background = if (settingsPanelOpen) colors.capsuleSelected else null,
+                        tint = if (settingsPanelOpen) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            // 未激活也画**黑**（原来是灰的）—— 与 ⊕ / 发送键统一，对齐官方
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                        /*
+                         * 描边**常驻**，激活时换成品牌色。
+                         *
+                         * 官方那套激活样式是「淡底 + 同色描边 + 同色内容」；
+                         * 原来激活态把描边去掉只铺底，在并排的几个按钮里会显得"矮一层"。
+                         */
+                        outlined = true,
+                        outlineColor = if (settingsPanelOpen) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            null
+                        },
+                    )
 
-                // ── 思考档位 + 模型 ───────────────────────
-                ThinkingToggle(
-                    enabled = thinkingEnabled || webSearchEnabled,
-                    expanded = thinkingPanelOpen,
-                    onClick = onOpenThinkingPanel,
-                )
-                // ── 上下文占用 ────────────────────────────
-                ContextMeterPill(
-                    stats = contextStats,
-                    expanded = statsPanelOpen,
-                    onClick = onOpenStatsPanel,
-                )
+                    // ── 思考档位 + 模型 ───────────────────────
+                    ThinkingToggle(
+                        enabled = thinkingEnabled || webSearchEnabled,
+                        expanded = thinkingPanelOpen,
+                        onClick = onOpenThinkingPanel,
+                    )
+                    // ── 上下文占用 ────────────────────────────
+                    ContextMeterPill(
+                        stats = contextStats,
+                        expanded = statsPanelOpen,
+                        onClick = onOpenStatsPanel,
+                    )
 
-                Spacer(Modifier.weight(1f))
+                }
+
+                if (!imageMode) Spacer(Modifier.weight(1f))
 
                 /*
                  * 附件入口。图标是**圆圈加号**（⊕），与顶栏的「新建对话」区分开 ——
@@ -445,7 +457,8 @@ internal fun InputBar(
 
                 SendButton(
                     streaming = streaming,
-                    enabled = streaming || text.isNotBlank() || pendingCount > 0,
+                    enabled = streaming || (sendAllowed && (text.isNotBlank() || pendingCount > 0)),
+                    imageMode = imageMode,
                     onClick = { if (streaming) onStop() else onSend() },
                 )
             }
@@ -645,6 +658,7 @@ private fun ContextMeterPill(
 @Composable
 private fun SendButton(
     streaming: Boolean,
+    imageMode: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
@@ -662,7 +676,11 @@ private fun SendButton(
     ) {
         Icon(
             imageVector = if (streaming) AppIcons.Stop else AppIcons.ArrowUp,
-            contentDescription = if (streaming) stringResource(R.string.input_stop) else stringResource(R.string.input_send),
+            contentDescription = stringResource(when {
+                streaming -> R.string.input_stop
+                imageMode -> R.string.image_generate_action
+                else -> R.string.input_send
+            }),
             tint = content,
             modifier = Modifier.size(if (streaming) 16.dp else 19.dp),
         )

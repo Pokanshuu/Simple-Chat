@@ -181,6 +181,57 @@ internal object ComposerRegression {
         }
     }
 
+    private suspend fun verifySaveOriginal(
+        instrumentation: Instrumentation,
+        activity: MainActivity,
+        awaitNode: suspend ((AccessibilityNodeInfo) -> Boolean) -> AccessibilityNodeInfo,
+        passed: (String) -> Unit,
+    ) {
+        val bitmap = android.graphics.Bitmap.createBitmap(48, 32, android.graphics.Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(android.graphics.Color.BLUE)
+        val original = java.io.ByteArrayOutputStream().use { output ->
+            check(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output))
+            output.toByteArray()
+        }
+        bitmap.recycle()
+        val attachment = com.simplechat.app.data.Attachment(
+            com.simplechat.app.data.Attachment.Kind.IMAGE,
+            "original-regression-${java.util.UUID.randomUUID()}.png",
+            "image/png",
+            android.util.Base64.encodeToString(original, android.util.Base64.NO_WRAP),
+        )
+        instrumentation.runOnMainSync {
+            activity.setContent {
+                SimpleChatTheme {
+                    com.simplechat.app.ui.chat.AttachmentViewerDialog(listOf(attachment), attachment, {})
+                }
+            }
+        }
+        val saveLabel = activity.getString(R.string.image_save_original)
+        val longPress = awaitNode { node -> node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_LONG_CLICK && it.label == saveLabel } }
+        check(longPress.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK))
+        val menuLabel = awaitNode { it.text?.toString() == saveLabel }
+        val item = generateSequence(menuLabel) { it.parent }.first { it.isClickable }
+        check(item.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        val images = android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        val resolver = activity.contentResolver
+        fun savedUri(): android.net.Uri? = resolver.query(images, arrayOf("_id"), "_display_name = ? AND is_pending = 0",
+            arrayOf(attachment.name), null)?.use {
+            if (it.moveToFirst()) android.content.ContentUris.withAppendedId(images, it.getLong(0)) else null
+        }
+        val target = withTimeout(5_000) {
+            var uri = savedUri()
+            while (uri == null) { delay(50); uri = savedUri() }
+            checkNotNull(uri)
+        }
+        try {
+            check(resolver.openInputStream(target)?.use { it.readBytes() }?.contentEquals(original) == true)
+            passed("full-screen photo long press saves a byte-for-byte copy to the gallery")
+        } finally {
+            resolver.delete(target, null, null)
+        }
+    }
+
     private suspend fun editAndResend(
         instrumentation: Instrumentation,
         activity: MainActivity,
@@ -214,8 +265,19 @@ internal object ComposerRegression {
         try {
             store.setProvider("OPENCODE_GO", "https://composer-test.invalid", "deepseek-flash")
             store.setApiStyle("OPENAI")
+            store.setImageGenApi(com.simplechat.app.data.ImageGenConfig(enabled = true, modelId = "fixture-image-model"))
             val id = repo.createConversation(ConversationMode.CREATIVE, "OPENCODE_GO", "deepseek-flash")
             val otherId = repo.createConversation(ConversationMode.CREATIVE, "OPENCODE_GO", "deepseek-flash")
+            val originalImageRequest = com.simplechat.app.data.ImageRequest(
+                "Tool-generated prompt", "fixture-image-model", "OPENAI_IMAGES", independent = true, size = "1536x1024",
+            )
+            val imageParent = repo.appendUserMessage(otherId, "Render this")
+            val imageReply = repo.beginAssistantMessage(otherId, imageParent.id)
+            repo.markImageGeneration(imageReply, originalImageRequest)
+            repo.resolveDanglingStreams(otherId)
+            val restoredImage = repo.loadActivePath(otherId).last()
+            check(restoredImage.status == MessageStatus.STOPPED && restoredImage.imageRequest == originalImageRequest)
+            passed("interrupted image tool request preserves its prompt, model and aspect ratio after reload")
             val target = repo.appendUserMessage(id, original)
             val oldReply = repo.beginAssistantMessage(id, target.id)
             repo.finishMessage(oldReply, "Previous reply", null, MessageStatus.DONE)
@@ -248,6 +310,27 @@ internal object ComposerRegression {
                 check(bubble.performAction(AccessibilityNodeInfo.ACTION_CLICK))
             }
             editor(draft)
+            suspend fun clickNode(label: String, predicate: (AccessibilityNodeInfo) -> Boolean) {
+                val node = find(label, predicate)
+                val action = generateSequence(node) { it.parent }.first { it.isClickable }
+                check(action.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            }
+            clickNode("attachment button") { it.contentDescription?.toString() == activity.getString(R.string.input_attach_add) }
+            clickNode("generate image tile") { it.text?.toString() == activity.getString(R.string.image_generate_action) }
+            clickNode("image model capsule") { it.text?.toString() == "fixture-image-model" }
+            find("image model drawer") { it.text?.toString() == activity.getString(R.string.image_api_pick_model) }
+            clickNode("image model selected in drawer") { it.text?.toString() == "fixture-image-model" && it.parent?.isClickable == true }
+            delay(300)
+            clickNode("aspect ratio capsule") { it.text?.toString() == activity.getString(R.string.image_aspect_ratio_label) }
+            clickNode("landscape ratio") { it.text?.toString() == "3:2" }
+            find("selected ratio capsule") { it.text?.toString() == "3:2" }
+            check(editor(draft).performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "Image-only draft")
+            }))
+            clickNode("exit image mode") { it.contentDescription?.toString() == activity.getString(R.string.image_exit_mode) }
+            editor(draft)
+            check(repo.findDraft(id) == draft)
+            passed("image mode reuses the composer, shows its model, changes ratio and restores the chat draft")
             openOriginalBubble()
             check(editor(original).performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, edited)
@@ -275,6 +358,7 @@ internal object ComposerRegression {
             editor(draft)
             check(repo.findDraft(id) == draft)
             passed("edited prompt survives reopening the bubble and switching conversations, then reaches the API and database")
+            if (android.os.Build.VERSION.SDK_INT >= 29) verifySaveOriginal(instrumentation, activity, awaitNode, passed)
         } finally {
             instrumentation.runOnMainSync { activity.setContent {} }
             scope.cancel()

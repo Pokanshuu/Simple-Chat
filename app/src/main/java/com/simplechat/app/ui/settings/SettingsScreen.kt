@@ -157,6 +157,7 @@ private enum class SettingsPage(private val parentName: String?) {
     FONT("APPEARANCE"),
     /** 对话行为：思考折叠、搜索范围等开关。 */
     CHAT("ROOT"),
+    SEARCH_SETTINGS("CHAT"),
     LOADING_WORDS("CHAT"),
     /** 朗读音色（系统 TTS）。 */
     VOICE("ROOT"),
@@ -388,6 +389,10 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
 
     fun previousPage() {
         if (savingService) return
+        if (page == SettingsPage.IMAGE_API && startAtImageApi) {
+            onBack()
+            return
+        }
         profileError = null
         testResult = null
         page = page.parent ?: SettingsPage.ROOT
@@ -603,8 +608,9 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                 SettingsPage.APPEARANCE -> stringResource(R.string.settings_appearance)
                 SettingsPage.FONT -> stringResource(R.string.settings_font_size)
                 SettingsPage.CHAT -> stringResource(R.string.settings_chat_behavior)
+                SettingsPage.SEARCH_SETTINGS -> stringResource(R.string.settings_search_options)
                 SettingsPage.LOADING_WORDS -> stringResource(R.string.settings_loading_words)
-                SettingsPage.VOICE -> stringResource(R.string.tts_voice)
+                SettingsPage.VOICE -> stringResource(R.string.settings_read_aloud)
                 SettingsPage.USAGE -> stringResource(
                     if (isOfficialDeepSeekEndpoint(stored.baseUrl)) R.string.settings_usage_title else R.string.settings_usage_only,
                 )
@@ -673,14 +679,17 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                             onToggleAutoCollapse = {
                                 scope.launch { store.setAutoCollapseThinking(it) }
                             },
-                            onToggleSearchInactiveBranches = {
-                                scope.launch { store.setSearchInactiveBranches(it) }
-                            },
-                            onToggleSearchReasoning = { scope.launch { store.setSearchReasoning(it) } },
+                            onOpenSearch = { page = SettingsPage.SEARCH_SETTINGS },
                             onToggleHoldToTalk = {
                                 scope.launch { store.setHoldToTalk(it) }
                             },
                             onOpenLoadingWords = { page = SettingsPage.LOADING_WORDS },
+                        )
+
+                        SettingsPage.SEARCH_SETTINGS -> SearchSettingsPage(
+                            stored,
+                            onToggleSearchInactiveBranches = { scope.launch { store.setSearchInactiveBranches(it) } },
+                            onToggleSearchReasoning = { scope.launch { store.setSearchReasoning(it) } },
                         )
 
                         SettingsPage.MEMORY -> MemoryPage(
@@ -1325,20 +1334,19 @@ private fun RootPage(
         )
         RowDivider()
         SettingsNavRow(
+            icon = AppIcons.Volume,
+            label = stringResource(R.string.settings_read_aloud),
+            value = if (stored.readAloudEnabled) {
+                stored.ttsVoiceLabel.ifBlank { stringResource(R.string.tts_voice_default) }
+            } else stringResource(R.string.settings_read_aloud_off),
+            onClick = { onOpen(SettingsPage.VOICE) },
+        )
+        RowDivider()
+        SettingsNavRow(
             icon = AppIcons.Sliders,
             label = stringResource(R.string.settings_chat_behavior),
             value = null,
             onClick = { onOpen(SettingsPage.CHAT) },
-        )
-
-        RowDivider()
-
-        // 朗读音色：系统 TTS 引擎提供，进二级页挑选（见 VoicePage）
-        SettingsNavRow(
-            icon = AppIcons.Volume,
-            label = stringResource(R.string.tts_voice),
-            value = stored.ttsVoiceLabel.ifBlank { stringResource(R.string.tts_voice_default) },
-            onClick = { onOpen(SettingsPage.VOICE) },
         )
     }
 
@@ -1446,8 +1454,7 @@ private fun AppearancePage(
 private fun ChatBehaviorPage(
     stored: StoredSettings,
     onToggleAutoCollapse: (Boolean) -> Unit,
-    onToggleSearchInactiveBranches: (Boolean) -> Unit,
-    onToggleSearchReasoning: (Boolean) -> Unit,
+    onOpenSearch: () -> Unit,
     onToggleHoldToTalk: (Boolean) -> Unit,
     onOpenLoadingWords: () -> Unit,
 ) {
@@ -1479,10 +1486,19 @@ private fun ChatBehaviorPage(
     }
 
     SettingsSectionLabel(stringResource(R.string.settings_group_search))
+    SettingsCard {
+        SettingsNavRow(AppIcons.Search, stringResource(R.string.settings_search_options), null, onOpenSearch)
+    }
+}
 
+@Composable
+private fun SearchSettingsPage(
+    stored: StoredSettings,
+    onToggleSearchInactiveBranches: (Boolean) -> Unit,
+    onToggleSearchReasoning: (Boolean) -> Unit,
+) {
     SettingsCard {
         SettingsSwitchRow(
-            icon = AppIcons.Search,
             label = stringResource(R.string.settings_search_inactive_branches),
             checked = stored.searchInactiveBranches,
             onCheckedChange = onToggleSearchInactiveBranches,
@@ -1908,6 +1924,7 @@ private fun DataPage(
             label = stringResource(R.string.settings_import_all),
             hint = stringResource(R.string.settings_import_all_summary),
             onClick = onImport,
+            icon = AppIcons.Import,
             enabled = !reading && progress == null && exportProgress == null,
         )
     }
@@ -3091,27 +3108,32 @@ internal fun SettingsActionRow(
     destructive: Boolean = false,
     /** 导入进行中之类的"暂时不能点"。 */
     enabled: Boolean = true,
+    icon: ImageVector? = null,
 ) {
     val colors = LocalChatColors.current
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = enabled, onClick = onClick)
             .heightIn(min = Space.Row)
             .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
-        verticalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.IconGap),
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.titleSmall,
-            color = if (destructive) colors.danger else MaterialTheme.colorScheme.onSurface,
-        )
-        if (hint != null) {
+        if (icon != null) Icon(icon, contentDescription = null, modifier = Modifier.size(Space.Icon))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
-                text = hint,
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.placeholder,
+                text = label,
+                style = MaterialTheme.typography.titleSmall,
+                color = if (destructive) colors.danger else MaterialTheme.colorScheme.onSurface,
             )
+            if (hint != null) {
+                Text(
+                    text = hint,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.placeholder,
+                )
+            }
         }
     }
 }
@@ -3344,7 +3366,7 @@ internal fun <T> ChoiceDialog(
 }
 
 @Composable
-private fun TextInputDialog(
+internal fun TextInputDialog(
     title: String,
     initial: String,
     placeholder: String,

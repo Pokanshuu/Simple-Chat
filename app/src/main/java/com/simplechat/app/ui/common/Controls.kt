@@ -621,6 +621,8 @@ fun CapsuleButton(
             style = MaterialTheme.typography.labelMedium,
             color = contentColor,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = if (trailingIcon != null) Modifier.weight(1f, fill = false) else Modifier,
         )
         if (trailingIcon != null) {
             Icon(

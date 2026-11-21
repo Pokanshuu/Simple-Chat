@@ -70,6 +70,17 @@ data class ModelInfo(
         minOf(it, maxOutputTokens ?: it)
     }
 
+    internal fun disabledReasoningEffort(): String? = effortLevels?.firstOrNull { it in ReasoningWire.offLevels }
+        ?: minimumGeminiEffort()
+
+    internal fun minimumGeminiEffort(): String? {
+        if (!supportsThinking || reasoningWire != ReasoningWire.EFFORT) return null
+        val name = normalizedGeminiModel(id)
+        if (!name.startsWith("gemini-3") && !name.startsWith("gemini-4-") && name != "gemini-2.5-pro") return null
+        if (effortLevels?.any { it in ReasoningWire.offLevels } == true) return null
+        return if (effortLevels == null) "low" else resolveReasoningEffort("minimal")
+    }
+
     /** Match the nearest advertised enabled effort, preserving the selected one when accepted. */
     fun resolveReasoningEffort(requested: String?): String? {
         val wanted = requested ?: return null
@@ -218,15 +229,18 @@ object ModelCatalog {
         "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
         "gemini-3-pro", "gemini-3-flash", "gemini-3.1-pro", "gemini-3.1-flash-lite",
     )
-    private val geminiPreviewSuffix = Regex("-preview(?:-\\d{2}-\\d{2,4})?$")
 
     private fun compatibleBaseline(id: String): ModelInfo? {
-        val gemini = id.removePrefix("google/").removePrefix("models/").replace(geminiPreviewSuffix, "")
+        val gemini = normalizedGeminiModel(id)
         // Google AI Studio model cards and thinking guide. Gateway metadata can override these limits.
         val standardEfforts = listOf("low", "medium", "high")
         val geminiEfforts = when (gemini) {
             "gemini-3.8-flash", "gemini-4-argon", "gemini-4-carbon" -> standardEfforts
-            "gemini-3.5-flash", "gemini-3.5-flash-lite" -> listOf("minimal") + standardEfforts
+            "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3-flash", "gemini-3.1-flash-lite" ->
+                listOf("minimal") + standardEfforts
+            "gemini-3.7-flash", "gemini-3.1-pro", "gemini-2.5-pro" -> standardEfforts
+            "gemini-3-pro" -> listOf("low", "high")
+            "gemini-2.5-flash", "gemini-2.5-flash-lite" -> listOf("none") + standardEfforts
             // This gateway alias selects the high-effort Flash variant.
             "gemini-3.8-flash-high" -> listOf("high")
             "gemini-4-hydrogen" -> standardEfforts + "xhigh"
@@ -235,7 +249,7 @@ object ModelCatalog {
         if (geminiEfforts != null || gemini in geminiMillionTokenModels) return ModelInfo(
             id, supportsVision = true, supportsThinking = true, contextWindow = 1_048_576,
             reasoningWire = ReasoningWire.EFFORT, effortLevels = geminiEfforts,
-            maxOutputTokens = 65_536.takeIf { geminiEfforts != null },
+            maxOutputTokens = 65_536,
         )
         modernClaudeBaseline(id)?.let { return it }
         modernGptBaseline(id)?.let { return it }
@@ -286,6 +300,11 @@ object ModelCatalog {
     ): List<ModelInfo> = (remoteIds.map(String::trim).filter(String::isNotEmpty) + knownModels(kind).map { it.id })
         .distinct().map { find(kind, it, contextWindows, metadata, overrides) }
 }
+
+private val geminiPreviewSuffix = Regex("-preview(?:-\\d{2}-\\d{2,4})?$")
+
+internal fun normalizedGeminiModel(id: String): String = id.lowercase().removePrefix("google/")
+    .removePrefix("models/").replace(geminiPreviewSuffix, "")
 
 const val DEEPSEEK_FLASH = "deepseek-flash"
 const val DEEPSEEK_PRO = "deepseek-v4-pro"

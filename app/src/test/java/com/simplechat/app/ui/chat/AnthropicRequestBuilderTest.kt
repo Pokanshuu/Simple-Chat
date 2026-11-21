@@ -129,6 +129,19 @@ class AnthropicRequestBuilderTest {
     }
 
     @Test
+    fun `official Flash combines the image function only with thinking search`() {
+        fun request(thinking: Boolean, search: Boolean) = buildAnthropicRequest(
+            model = "deepseek-flash", systemPrompt = "", path = listOf(user("Draw https://example.com/reference")),
+            searchEnabled = search, thinkingEnabled = thinking, requestTitle = false,
+            latestReminder = null, generateImageTool = true,
+        )
+        assertEquals(listOf("generate_image"), request(false, true).tools.map { it.name })
+        assertEquals(listOf("deepseek_web_search", "generate_image"), request(true, true).tools.map { it.name })
+        assertEquals(listOf("generate_image"), request(true, false).tools.map { it.name })
+        assertTrue(request(true, true).system.contains("Never say an image was generated"))
+    }
+
+    @Test
     fun `思考开关映射到 thinking 字段`() {
         assertEquals("disabled", build(listOf(user("你好"))).thinking!!.type)
         assertEquals("enabled", build(listOf(user("你好")), thinking = true).thinking!!.type)

@@ -88,7 +88,7 @@ import kotlinx.coroutines.launch
  */
 private enum class Route(val depth: Int) {
     CHAT(0),
-    SETTINGS(1),
+    SETTINGS(1), IMAGE_SETTINGS(1),
 }
 
 /** 抽屉平时的宽度。 */
@@ -160,7 +160,6 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
      * 存档过一次实例状态，重建后就还停在原来那一页（设置）。
      */
     var route by rememberSaveable { mutableStateOf(Route.CHAT) }
-    var openImageSettings by rememberSaveable { mutableStateOf(false) }
 
     /** 抽屉是否处于搜索态。见类注释：它是抽屉的状态，不是一条路由。 */
     var searchMode by rememberSaveable { mutableStateOf(false) }
@@ -426,7 +425,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                                             wideSidebarVisible = !wideSidebarVisible
                                         } else scope.launch { drawerState.open() }
                                     },
-                                    onConfigureImageApi = { openImageSettings = true; route = Route.SETTINGS },
+                                    onConfigureImageApi = { route = Route.IMAGE_SETTINGS },
                                     onNewConversation = {
                                         exitSearch()
                                         chatViewModel.newConversation()
@@ -436,7 +435,9 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                             }
                         }
 
-                        Route.SETTINGS -> SettingsScreen(onBack = { openImageSettings = false; route = Route.CHAT }, startAtImageApi = openImageSettings)
+                        Route.SETTINGS, Route.IMAGE_SETTINGS -> SettingsScreen(
+                            onBack = { route = Route.CHAT }, startAtImageApi = target == Route.IMAGE_SETTINGS,
+                        )
                     }
                 }
             }

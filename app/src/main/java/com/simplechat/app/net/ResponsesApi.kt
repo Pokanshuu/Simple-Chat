@@ -22,7 +22,7 @@ internal fun buildResponsesRequest(
         thinkingEnabled -> model.resolveReasoningEffort(reasoningEffort ?: "medium")?.let {
             ResponsesReasoningDto(it, summary = "auto")
         }
-        model.supportsThinking -> model.effortLevels?.firstOrNull { it in ReasoningWire.offLevels }
+        model.supportsThinking -> model.disabledReasoningEffort()
             ?.let { ResponsesReasoningDto(it) }
         else -> null
     }

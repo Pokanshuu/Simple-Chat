@@ -1,8 +1,14 @@
 package com.simplechat.app.ui.chat
 
 import android.graphics.BitmapFactory
+import android.content.Intent
+import android.os.Build
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import android.util.Base64
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,10 +32,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Button
 import androidx.compose.material3.TextButton
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -40,10 +45,20 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.semantics.semantics
+import kotlin.math.roundToInt
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -67,12 +82,20 @@ import com.simplechat.app.R
 import com.simplechat.app.data.Attachment
 import com.simplechat.app.data.AttachmentFiles
 import com.simplechat.app.data.Attachments
+import com.simplechat.app.data.copyOriginalImage
+import com.simplechat.app.data.originalImageMime
+import com.simplechat.app.data.originalImageName
+import com.simplechat.app.data.saveOriginalImageToGallery
 import com.simplechat.app.ui.common.AppIcons
+import com.simplechat.app.ui.common.AppMenu
+import com.simplechat.app.ui.common.AppMenuItem
 import com.simplechat.app.ui.common.ContainerShape
 import com.simplechat.app.ui.common.PillShape
 import com.simplechat.app.ui.common.SoftShape
 import com.simplechat.app.ui.theme.LocalChatColors
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.max
 
@@ -408,7 +431,7 @@ fun AttachmentPanelContent(
     onCapture: () -> Unit,
     onPickImage: () -> Unit,
     onPickFile: () -> Unit,
-    onGenerateImage: () -> Unit = {},
+    onGenerateImage: (() -> Unit)? = null,
 ) {
     /*
      * 两行等宽入口：拍照 / 相册 / 文件 / 生图。
@@ -438,9 +461,9 @@ fun AttachmentPanelContent(
             onClick = onPickFile,
             modifier = Modifier.weight(1f),
         )
-        AttachmentTile(
+        if (onGenerateImage == null) Spacer(Modifier.weight(1f)) else AttachmentTile(
             label = stringResource(R.string.image_generate_action),
-            icon = AppIcons.Image,
+            icon = AppIcons.ImageEdit,
             onClick = onGenerateImage,
             modifier = Modifier.weight(1f),
         )
@@ -449,71 +472,120 @@ fun AttachmentPanelContent(
 }
 
 @Composable
-internal fun ImageGenerationPanel(
-    prompt: String,
-    onPromptChange: (String) -> Unit,
-    modelLabel: String,
-    size: String?,
-    onSizeChange: (String?) -> Unit,
-    onGenerate: () -> Unit,
-    enabled: Boolean,
-    sizesAvailable: Boolean,
-    available: Boolean,
-    onConfigure: () -> Unit,
+internal fun ImageOptionRows(
+    title: String,
+    options: List<Pair<String, String>>,
+    selected: String?,
+    showAspectRatioIcons: Boolean = false,
+    onSelect: (String) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(R.string.image_generate_title), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-            Text(modelLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-        }
-        OutlinedTextField(value = prompt, onValueChange = onPromptChange, modifier = Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.image_prompt_label)) }, placeholder = { Text(stringResource(R.string.image_prompt_hint)) }, minLines = 2, maxLines = 4)
-        if (sizesAvailable) {
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                val sizes = listOf(null to stringResource(R.string.image_size_default), "1024x1024" to "1:1", "1536x1024" to "3:2", "1024x1536" to "2:3")
-                for ((option, label) in sizes) {
-                    FilterChip(selected = size == option, onClick = { onSizeChange(option) }, label = { Text(label) })
+    PanelSectionTitle(title)
+    Spacer(Modifier.size(8.dp))
+    options.forEach { (id, label) ->
+        val current = id == selected
+        Row(
+            Modifier.fillMaxWidth().clip(SoftShape)
+                .background(if (current) LocalChatColors.current.capsuleSelected else Color.Transparent)
+                .clickable { onSelect(id) }.padding(horizontal = 10.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val tint = if (current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+            if (showAspectRatioIcons) {
+                val width = id.substringBefore(':').toFloatOrNull() ?: 1f
+                val height = id.substringAfter(':').toFloatOrNull() ?: 1f
+                Canvas(Modifier.size(22.dp)) {
+                    val extent = size.minDimension - 4.dp.toPx()
+                    val scale = extent / maxOf(width, height)
+                    val frame = androidx.compose.ui.geometry.Size(width * scale, height * scale)
+                    drawRoundRect(
+                        tint, topLeft = Offset((size.width - frame.width) / 2, (size.height - frame.height) / 2),
+                        size = frame, cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx()),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(1.5.dp.toPx()),
+                    )
                 }
+                Spacer(Modifier.width(8.dp))
             }
-        }
-        if (available) {
-            Button(onClick = onGenerate, enabled = enabled && prompt.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.image_generate_action))
-            }
-        } else {
-            Text(stringResource(R.string.image_model_unavailable), style = MaterialTheme.typography.bodySmall)
-            TextButton(onClick = onConfigure) { Text(stringResource(R.string.image_configure)) }
+            Text(label, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall,
+                color = tint,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (current) Icon(AppIcons.Check, stringResource(R.string.model_current),
+                Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
         }
     }
 }
 
 @Composable
-fun ImageGenerationPlaceholder(stopped: Boolean, failed: Boolean, onStop: () -> Unit, onRetry: () -> Unit) {
-    val colors = LocalChatColors.current
-    val dotColor = MaterialTheme.colorScheme.onSurface
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val phase = if (!stopped && !failed) rememberInfiniteTransition(label = "imageGrid")
-        .animateFloat(0f, 1f, infiniteRepeatable(tween(2800, easing = LinearEasing), RepeatMode.Restart), label = "imageGridPhase") else null
-    Column(Modifier.widthIn(max = BubbleImageWidth).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Canvas(Modifier.fillMaxWidth().aspectRatio(1f).clip(SoftShape).background(colors.fieldBackground)) {
-            val step = 8.dp.toPx()
-            val r0 = with(density) { .55.dp.toPx() }
-            val dr = with(density) { .90.dp.toPx() }
-            val count = (size.width / step).toInt().coerceAtLeast(1)
-            val inset = (size.width - (count - 1) * step) / 2f
-            for (j in 0 until count) for (i in 0 until count) {
-                val u = (inset + i * step) / size.width
-                val v = (inset + j * step) / size.height
-                val wave = ((1 + kotlin.math.cos(2 * Math.PI * ((phase?.value ?: .3f) - .85 * u - .55 * v))) / 2).toFloat().let { it * it }
-                val edge = .35f + .65f * minOf(1f, minOf(u, v, 1 - u, 1 - v) * 6)
-                drawCircle(dotColor.copy(alpha = (.10f + .28f * wave) * edge), r0 + dr * wave, Offset(inset + i * step, inset + j * step))
+internal fun GeneratedImageContent(
+    attachment: Attachment?,
+    requestedRatio: Float?,
+    stopped: Boolean,
+    failed: Boolean,
+    onStop: () -> Unit,
+    onRetry: () -> Unit,
+    onOpen: (Attachment) -> Unit,
+) {
+    val density = LocalDensity.current
+    val bitmap = attachment?.let { rememberAttachmentImage(it, with(density) { BubbleImageMaxHeight.roundToPx() }) }
+    val actualRatio = attachment?.takeIf { it.width > 0 && it.height > 0 }?.let { it.width.toFloat() / it.height }
+    val ratio by animateFloatAsState(
+        targetValue = (if (bitmap != null) actualRatio ?: requestedRatio else requestedRatio ?: actualRatio) ?: 1f,
+        animationSpec = tween(220), label = "generatedImageRatio",
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Crossfade(
+            targetState = bitmap,
+            modifier = Modifier.widthIn(max = BubbleImageWidth).heightIn(max = BubbleImageMaxHeight)
+                .aspectRatio(ratio).clip(SoftShape),
+            animationSpec = tween(240),
+            label = "generatedImageReveal",
+        ) { image ->
+            if (image == null) {
+                ImageGenerationGrid(running = !stopped && !failed)
+            } else {
+                Image(image, attachment?.name, Modifier.fillMaxSize().clickable { attachment?.let(onOpen) },
+                    contentScale = ContentScale.Fit)
             }
         }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(when { failed -> R.string.image_generate_failed; stopped -> R.string.image_generate_stopped; else -> R.string.image_generating }), modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-            if (failed || stopped) TextButton(onClick = onRetry) { Text(stringResource(R.string.image_generate_retry)) } else TextButton(onClick = onStop) { Text(stringResource(R.string.image_generate_stop)) }
+        if (attachment == null) Row(
+            Modifier.widthIn(max = BubbleImageWidth).fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(stringResource(when {
+                failed -> R.string.image_generate_failed
+                stopped -> R.string.image_generate_stopped
+                else -> R.string.image_generating
+            }), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+            if (failed || stopped) {
+                TextButton(onClick = onRetry) { Text(stringResource(R.string.image_generate_retry)) }
+            } else {
+                TextButton(onClick = onStop) { Text(stringResource(R.string.image_generate_stop)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImageGenerationGrid(running: Boolean) {
+    val color = MaterialTheme.colorScheme.onSurface
+    val background = LocalChatColors.current.fieldBackground
+    val phase = if (running) rememberInfiniteTransition(label = "imageGrid").animateFloat(
+        0f, 1f, infiniteRepeatable(tween(2800, easing = LinearEasing), RepeatMode.Restart), label = "imageGridPhase",
+    ) else null
+    Canvas(Modifier.fillMaxSize().background(background)) {
+        val step = 8.dp.toPx()
+        val columns = (size.width / step).toInt().coerceAtLeast(1)
+        val rows = (size.height / step).toInt().coerceAtLeast(1)
+        val insetX = (size.width - (columns - 1) * step) / 2f
+        val insetY = (size.height - (rows - 1) * step) / 2f
+        for (row in 0 until rows) for (column in 0 until columns) {
+            val x = insetX + column * step
+            val y = insetY + row * step
+            val u = x / size.width
+            val v = y / size.height
+            val wave = ((1 + kotlin.math.cos(2 * Math.PI * ((phase?.value ?: .3f) - .85 * u - .55 * v))) / 2)
+                .toFloat().let { it * it }
+            val edge = .35f + .65f * minOf(1f, minOf(u, v, 1 - u, 1 - v) * 6)
+            drawCircle(color.copy(alpha = (.10f + .28f * wave) * edge), (.55.dp.toPx() + .90.dp.toPx() * wave), Offset(x, y))
         }
     }
 }
@@ -571,6 +643,7 @@ fun AttachmentViewerDialog(
     images: List<Attachment>,
     initial: Attachment,
     onDismiss: () -> Unit,
+    initialIndex: Int? = null,
 ) {
     val density = LocalDensity.current
     val context = LocalContext.current
@@ -578,10 +651,39 @@ fun AttachmentViewerDialog(
     val target = with(density) { 1080.dp.roundToPx() }
 
     val pages = images.ifEmpty { listOf(initial) }
-    val startIndex = pages.indexOfFirst { it.name == initial.name && it.data == initial.data }
-        .coerceAtLeast(0)
+    val startIndex = initialIndex?.takeIf { it in pages.indices } ?: pages.indexOf(initial).coerceAtLeast(0)
     val pagerState = rememberPagerState(initialPage = startIndex) { pages.size }
     val current = pages.getOrNull(pagerState.currentPage) ?: initial
+    val scope = rememberCoroutineScope()
+    var menuPoint by remember { mutableStateOf<IntOffset?>(null) }
+    var menuImage by remember { mutableStateOf<Attachment?>(null) }
+    var pendingExport by remember { mutableStateOf<Attachment?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    val saveLabel = stringResource(R.string.image_save_original)
+    fun save(attachment: Attachment, target: android.net.Uri? = null) {
+        if (saving) return
+        saving = true
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    if (target != null) copyOriginalImage(context, attachment, target)
+                    else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) saveOriginalImageToGallery(context, attachment)
+                }
+                Toast.makeText(context, R.string.image_original_saved, Toast.LENGTH_SHORT).show()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                Toast.makeText(context, R.string.image_original_save_failed, Toast.LENGTH_SHORT).show()
+            } finally {
+                saving = false
+            }
+        }
+    }
+    val export = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val attachment = pendingExport
+        pendingExport = null
+        result.data?.data?.let { target -> if (attachment != null) save(attachment, target) }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -595,8 +697,23 @@ fun AttachmentViewerDialog(
             modifier = Modifier
                 .fillMaxSize()
                 .background(ViewerBackground)
-                // 点任意处关闭（看图时最直觉的退出方式）
-                .clickable(onClick = onDismiss),
+                .pointerInput(current, onDismiss) {
+                    detectTapGestures(
+                        onTap = { onDismiss() },
+                        onLongPress = { point ->
+                            menuPoint = IntOffset(point.x.roundToInt(), point.y.roundToInt())
+                            menuImage = current
+                        },
+                    )
+                }
+                .semantics {
+                    onClick { onDismiss(); true }
+                    onLongClick(label = saveLabel) {
+                        menuPoint = null
+                        menuImage = current
+                        true
+                    }
+                },
         ) {
             HorizontalPager(
                 state = pagerState,
@@ -624,6 +741,34 @@ fun AttachmentViewerDialog(
                             tint = ViewerTextDim,
                             modifier = Modifier.size(28.dp),
                         )
+                    }
+                }
+            }
+
+            AppMenu(
+                expanded = menuImage != null,
+                onDismissRequest = { menuImage = null },
+                touchPoint = menuPoint,
+            ) {
+                AppMenuItem(label = saveLabel, icon = AppIcons.Download) {
+                    val attachment = menuImage
+                    menuImage = null
+                    if (attachment != null && !saving && pendingExport == null) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) save(attachment)
+                        else {
+                            val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                                addCategory(Intent.CATEGORY_OPENABLE)
+                                type = attachment.originalImageMime()
+                                putExtra(Intent.EXTRA_TITLE, attachment.originalImageName())
+                            }
+                            pendingExport = attachment
+                            try {
+                                export.launch(intent)
+                            } catch (_: android.content.ActivityNotFoundException) {
+                                pendingExport = null
+                                Toast.makeText(context, R.string.image_original_save_failed, Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }
                 }
             }
