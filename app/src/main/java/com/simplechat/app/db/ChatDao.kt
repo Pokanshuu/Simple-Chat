@@ -22,9 +22,14 @@ interface ConversationDao {
     )
     fun observeAll(): Flow<List<ConversationEntity>>
 
-    /** 跨对话记忆检索用：一次性取回会话标题与更新时间（不观察）。 */
-    @Query("SELECT * FROM conversations ORDER BY updatedAt DESC")
-    suspend fun allConversations(): List<ConversationEntity>
+    @Query(
+        """
+        SELECT id, substr(title, 1, :titleChars) AS title, updatedAt
+        FROM conversations WHERE id != :currentId
+        ORDER BY updatedAt DESC, id ASC LIMIT :limit
+        """,
+    )
+    suspend fun memorySessions(currentId: String, limit: Int, titleChars: Int): List<MemorySession>
 
     /** One bounded preview per matching message; title-only hits remain visible. */
     @Query(
@@ -129,6 +134,10 @@ data class MessageLight(
     val status: String,
     val createdAt: Long,
 )
+
+data class MemorySession(val id: String, val title: String, val updatedAt: Long)
+
+data class MemoryMessage(val role: String, val content: String)
 
 /**
  * 搜索命中：会话 + 命中的那条消息正文。
@@ -250,6 +259,32 @@ interface MessageDao {
         """,
     )
     suspend fun getLightFor(conversationId: String): List<MessageLight>
+
+    /** 从根沿选中的分支走，优先取扫描范围内靠后的消息。仅返回正文前缀。 */
+    @Query(
+        """
+        WITH RECURSIVE path(id, depth) AS (
+            SELECT '', 0
+            UNION ALL
+            SELECT child.id, path.depth + 1
+            FROM path JOIN messages child ON child.id = (
+                SELECT m.id FROM messages m
+                WHERE m.conversationId = :conversationId AND m.parentId = path.id
+                      AND m.active = 1 AND m.id != ''
+                ORDER BY m.variantIndex LIMIT 1
+            )
+            WHERE path.depth < :maxDepth
+        ), tail AS (
+            SELECT id, depth FROM path WHERE depth > 0 ORDER BY depth DESC LIMIT :maxMessages
+        )
+        SELECT m.role, substr(m.content, 1, :maxChars) AS content
+        FROM tail JOIN messages m ON m.id = tail.id
+        ORDER BY tail.depth
+        """,
+    )
+    suspend fun memoryMessages(
+        conversationId: String, maxDepth: Int, maxMessages: Int, maxChars: Int,
+    ): List<MemoryMessage>
 
     /** 按 id 批量取整条消息（活跃路径上的那些）。 */
     @Query("SELECT * FROM messages WHERE id IN (:ids)")

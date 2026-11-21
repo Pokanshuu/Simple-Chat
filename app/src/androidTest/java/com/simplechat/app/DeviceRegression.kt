@@ -43,6 +43,7 @@ class DeviceRegression : Instrumentation() {
     private var codeFoldTests = false
     private var historyScrollTests = false
     private var streamConcurrencyTests = false
+    private var memoryTests = false
     override fun onCreate(arguments: Bundle?) {
         realArchive = arguments?.getString("source")
         uiOnly = arguments?.getString("ui") == "true"
@@ -62,6 +63,7 @@ class DeviceRegression : Instrumentation() {
         codeFoldTests = arguments?.getString("codeFold") == "true"
         historyScrollTests = arguments?.getString("historyScroll") == "true"
         streamConcurrencyTests = arguments?.getString("streamConcurrency") == "true"
+        memoryTests = arguments?.getString("crossChatMemory") == "true"
         super.onCreate(arguments)
         start()
     }
@@ -70,7 +72,8 @@ class DeviceRegression : Instrumentation() {
         try {
             runBlocking {
                 val source = realArchive
-                if (streamConcurrencyTests) StreamConcurrencyRegression.run(this@DeviceRegression, ::passed)
+                if (memoryTests) CrossChatMemoryRegression.run(this@DeviceRegression, ::passed)
+                else if (streamConcurrencyTests) StreamConcurrencyRegression.run(this@DeviceRegression, ::passed)
                 else if (historyScrollTests) HistoryScrollRegression.run(this@DeviceRegression, ::passed)
                 else if (composerTests) ComposerRegression.run(this@DeviceRegression, ::passed)
                 else if (codeFoldTests) CodeFoldRegression.run(this@DeviceRegression, ::passed)

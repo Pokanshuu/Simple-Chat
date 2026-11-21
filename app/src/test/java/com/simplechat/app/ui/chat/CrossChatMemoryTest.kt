@@ -2,6 +2,7 @@ package com.simplechat.app.ui.chat
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.awaitCancellation
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -20,11 +21,11 @@ import org.junit.Test
  */
 class CrossChatMemoryTest {
 
-    private fun user(id: String, text: String) =
-        UiMessage(id = id, role = MessageRole.USER, content = text)
+    private fun user(text: String) =
+        CrossChatMemory.Message("user", text)
 
-    private fun reply(id: String, text: String) =
-        UiMessage(id = id, role = MessageRole.ASSISTANT, content = text)
+    private fun reply(text: String) =
+        CrossChatMemory.Message("assistant", text)
 
     private fun session(id: String, title: String, updatedAt: Long = 1_700_000_000_000L) =
         CrossChatMemory.SessionRef(id = id, title = title, updatedAt = updatedAt)
@@ -34,7 +35,7 @@ class CrossChatMemoryTest {
         current: String = "current",
         limit: Int = 4,
         sessions: List<CrossChatMemory.SessionRef> = emptyList(),
-        messages: Map<String, List<UiMessage>> = emptyMap(),
+        messages: Map<String, List<CrossChatMemory.Message>> = emptyMap(),
     ): CrossChatMemory.Result = runBlocking {
         CrossChatMemory.build(
             query = query,
@@ -51,7 +52,7 @@ class CrossChatMemoryTest {
             query = "你好",
             sessions = listOf(session("a", "问候")),
             messages = mapOf(
-                "a" to listOf(user("u", "你好"), reply("r", "你好！有什么可以帮你的吗？")),
+                "a" to listOf(user("你好"), reply("你好！有什么可以帮你的吗？")),
             ),
         )
 
@@ -64,7 +65,7 @@ class CrossChatMemoryTest {
         val result = build(
             query = "hi",
             sessions = listOf(session("a", "greeting")),
-            messages = mapOf("a" to listOf(user("u", "hi"), reply("r", "Hello! How can I help?"))),
+            messages = mapOf("a" to listOf(user("hi"), reply("Hello! How can I help?"))),
         )
 
         assertEquals("short-query", result.reason)
@@ -77,7 +78,7 @@ class CrossChatMemoryTest {
             query = "之前聊过的 hello 还记得吗",
             sessions = listOf(session("current", "当前会话")),
             messages = mapOf(
-                "current" to listOf(user("u", "hello"), reply("r", "你好！")),
+                "current" to listOf(user("hello"), reply("你好！")),
             ),
         )
 
@@ -91,7 +92,7 @@ class CrossChatMemoryTest {
         val result = build(
             query = "我们之前聊过什么",
             sessions = sessions,
-            messages = sessions.associate { it.id to listOf(user("u", "无关内容"), reply("r", "回答")) },
+            messages = sessions.associate { it.id to listOf(user("无关内容"), reply("回答")) },
         )
 
         assertTrue(result.injected)
@@ -105,7 +106,7 @@ class CrossChatMemoryTest {
         val result = build(
             query = "帮我写一段 Python 脚本",
             sessions = sessions,
-            messages = sessions.associate { it.id to listOf(user("u", "无关内容"), reply("r", "回答")) },
+            messages = sessions.associate { it.id to listOf(user("无关内容"), reply("回答")) },
         )
 
         assertFalse(result.injected)
@@ -118,7 +119,7 @@ class CrossChatMemoryTest {
             query = "帮我看看这个",
             sessions = listOf(session("a", "读书笔记")),
             messages = mapOf(
-                "a" to listOf(user("u", "这本书很好看"), reply("r", "确实很好看")),
+                "a" to listOf(user("这本书很好看"), reply("确实很好看")),
             ),
         )
 
@@ -132,8 +133,8 @@ class CrossChatMemoryTest {
             query = "还记得我们聊过的 hello 吗",
             sessions = listOf(session("a", "问候回应"), session("b", "别的话题")),
             messages = mapOf(
-                "a" to listOf(user("u1", "hello"), reply("r1", "你好！有什么可以帮你的吗？")),
-                "b" to listOf(user("u2", "今天天气如何"), reply("r2", "晴。")),
+                "a" to listOf(user("hello"), reply("你好！有什么可以帮你的吗？")),
+                "b" to listOf(user("今天天气如何"), reply("晴。")),
             ),
         )
 
@@ -148,7 +149,7 @@ class CrossChatMemoryTest {
             query = "我们之前聊过什么",
             limit = 0,
             sessions = listOf(session("a", "会话")),
-            messages = mapOf("a" to listOf(user("u", "内容"), reply("r", "回答"))),
+            messages = mapOf("a" to listOf(user("内容"), reply("回答"))),
         )
 
         assertEquals("disabled", result.reason)
@@ -191,6 +192,23 @@ class CrossChatMemoryTest {
             }
         }
         assertEquals(listOf("a"), loaded)
+    }
+
+    @Test
+    fun `扫描超时后保留已有命中`() = runBlocking {
+        val result = CrossChatMemory.build(
+            query = "recall project marker",
+            currentConversationId = "current",
+            limit = 4,
+            sessions = listOf(session("fast", "Fast"), session("blocked", "Blocked")),
+            loadMessages = { id ->
+                if (id == "blocked") awaitCancellation()
+                listOf(user("project marker"), reply("retrieval answer"))
+            },
+            scanMillis = 500,
+        )
+        assertEquals("scan-budget", result.reason)
+        assertTrue(result.text.contains("retrieval answer"))
     }
 
     @Test

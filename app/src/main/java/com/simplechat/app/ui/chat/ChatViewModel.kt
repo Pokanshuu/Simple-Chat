@@ -1692,9 +1692,12 @@ class ChatViewModel(
             var cancelled = false
             var serverTitle: String? = null
 
+            var memorySnapshot: String? = null
             suspend fun streamAttempt(textOnly: Boolean) {
+                val memoryText = memorySnapshot ?: crossChatMemoryFor(route, conversationId, latestQuestion)
+                    .also { memorySnapshot = it }
                 if (accumulator != null) {
-                    val request = buildAnthropicRequestNow(prefix, research.context, route, options, searchRequested, textOnly)
+                    val request = buildAnthropicRequestNow(prefix, research.context, route, options, searchRequested, textOnly, memoryText)
                     optionalFieldsSent = !textOnly && (request.tools.isNotEmpty() || request.title != null ||
                         request.messages.any { it.role == "user" && it.content is kotlinx.serialization.json.JsonArray } || research.context.isNotBlank())
                     chatApi.streamMessage(
@@ -1757,7 +1760,7 @@ class ChatViewModel(
                         }
                     }
                 } else {
-                    val outgoing = buildRequestMessages(research.context, route, options, textOnly)
+                    val outgoing = buildRequestMessages(research.context, route, options, textOnly, memoryText)
                     val builtInFlash = route.officialFlash && !textOnly
                     val readLink = builtInFlash && HttpLink.containsMatchIn(latestQuestion)
                     val title = builtInFlash && shouldRequestTitle()
@@ -2065,7 +2068,7 @@ class ChatViewModel(
      */
     private suspend fun buildAnthropicRequestNow(
         prefix: UiMessage?, research: String, route: StoredSettings, options: ConversationSettings,
-        searchRequested: Boolean, omitAttachmentsAndTools: Boolean = false,
+        searchRequested: Boolean, omitAttachmentsAndTools: Boolean, memoryText: String,
     ): AnthropicRequest {
         skippedNoVision = 0; skippedUnreadable = 0; skippedUnsupportedFiles = 0
         val active = validCompaction(messages, compaction)
@@ -2112,7 +2115,6 @@ class ChatViewModel(
          * 历史与落库内容都不动。
          */
         val lastUser = outgoingMessages.lastOrNull { it.role == MessageRole.USER }
-        val memoryText = crossChatMemoryFor(route, lastUser?.content)
         val lastUserId = lastUser?.id
         val path = if (memoryText.isNotBlank() && lastUserId != null) {
             preparedPath.map { message ->
@@ -2362,13 +2364,11 @@ class ChatViewModel(
      *
      * 检索失败时仍可发送；停止生成时则保留取消信号。
      */
-    private suspend fun crossChatMemoryFor(route: StoredSettings, userContent: String?): String {
+    private suspend fun crossChatMemoryFor(route: StoredSettings, activeConversationId: String, userContent: String): String {
         if (!route.crossChatMemory || route.crossChatMemoryLimit <= 0) {
             Diagnostics.log("MEM", "skip(disabled) limit=${route.crossChatMemoryLimit}")
             return ""
         }
-        val activeConversationId = currentConversationId ?: return ""
-        if (activeConversationId.isBlank()) return ""
         return try {
             withContext(Dispatchers.Default) { retrieveCrossChatMemory(route, activeConversationId, userContent) }
         } catch (error: kotlinx.coroutines.CancellationException) {
@@ -2382,32 +2382,37 @@ class ChatViewModel(
     private suspend fun retrieveCrossChatMemory(
         route: StoredSettings,
         activeConversationId: String,
-        userContent: String?,
+        userContent: String,
     ): String {
-        val query = userContent?.trim().orEmpty()
-        if (query.isBlank()) {
+        if (userContent.isEmpty()) {
             Diagnostics.log("MEM", "skip(empty-query)")
             return ""
         }
         val startedAt = android.os.SystemClock.elapsedRealtime()
-        val sessions = repository.allConversations()
+        val sessions = repository.memorySessions(
+            activeConversationId, CrossChatMemory.MAX_SCAN_SESSIONS, CrossChatMemory.MAX_TITLE_CHARS,
+        )
             .map { CrossChatMemory.SessionRef(it.id, it.title, it.updatedAt) }
         if (sessions.isEmpty()) {
             Diagnostics.log("MEM", "skip(no-conversations)")
             return ""
         }
         val result = CrossChatMemory.build(
-            query = query,
+            query = userContent,
             currentConversationId = activeConversationId,
             limit = route.crossChatMemoryLimit,
             sessions = sessions,
-            loadMessages = { id -> repository.loadActivePath(id) },
+            loadMessages = { id ->
+                repository.memoryMessages(id, CrossChatMemory.MAX_DEPTH, CrossChatMemory.MAX_MESSAGES,
+                    CrossChatMemory.MAX_BODY_CHARS).map { CrossChatMemory.Message(it.role, it.content) }
+            },
         )
         val elapsed = android.os.SystemClock.elapsedRealtime() - startedAt
         Diagnostics.log(
             "MEM",
             buildString {
                 append(if (result.injected) "inject" else "skip(${result.reason})")
+                append(" reason=${result.reason}")
                 append(" tokens=${result.queryTokens}")
                 append(" candidates=${result.candidates}")
                 append(" picked=${result.picked}")
@@ -2423,7 +2428,7 @@ class ChatViewModel(
 
     private suspend fun buildRequestMessages(
         research: String, route: StoredSettings, options: ConversationSettings,
-        omitAttachmentsAndTools: Boolean = false,
+        omitAttachmentsAndTools: Boolean, memoryText: String,
     ): List<OutMessageDto> {
         skippedNoVision = 0; skippedUnreadable = 0; skippedUnsupportedFiles = 0
         val request = mutableListOf<OutMessageDto>()
@@ -2460,7 +2465,6 @@ class ChatViewModel(
         // 顺序规则见 `orderedOutgoingMessages`（纯函数，有单测钉死）
         val outgoingMessages = orderedOutgoingMessages(messages, active)
         val lastUser = outgoingMessages.lastOrNull { it.role == MessageRole.USER }
-        val memoryText = crossChatMemoryFor(route, lastUser?.content)
         val lastUserId = lastUser?.id
         outgoingMessages.forEach { message ->
             /*

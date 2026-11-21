@@ -13,6 +13,8 @@ import com.simplechat.app.db.ConversationPresetEntity
 import com.simplechat.app.db.UsageTotals
 import com.simplechat.app.db.ConversationSearchHit
 import com.simplechat.app.db.DraftEntity
+import com.simplechat.app.db.MemoryMessage
+import com.simplechat.app.db.MemorySession
 import com.simplechat.app.db.MessageEntity
 import com.simplechat.app.db.MessageTree
 import com.simplechat.app.db.PresetEntity
@@ -84,8 +86,12 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
 
     fun observeConversations(): Flow<List<ConversationEntity>> = conversations.observeAll()
 
-    /** 跨对话记忆检索用：一次性取回全部会话（标题 + 更新时间）。 */
-    suspend fun allConversations(): List<ConversationEntity> = conversations.allConversations()
+    internal suspend fun memorySessions(currentId: String, limit: Int, titleChars: Int): List<MemorySession> =
+        conversations.memorySessions(currentId, limit, titleChars)
+
+    internal suspend fun memoryMessages(
+        conversationId: String, maxDepth: Int, maxMessages: Int, maxChars: Int,
+    ): List<MemoryMessage> = messages.memoryMessages(conversationId, maxDepth, maxMessages, maxChars)
 
     /**
      * 观察**单个会话**。

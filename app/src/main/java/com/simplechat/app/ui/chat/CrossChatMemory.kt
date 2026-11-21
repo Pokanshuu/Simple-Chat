@@ -3,6 +3,7 @@ package com.simplechat.app.ui.chat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withTimeoutOrNull
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -28,7 +29,15 @@ object CrossChatMemory {
     private const val ASSISTANT_SNIPPET_MAX = 360
     private const val MAX_ROUNDS_PER_SESSION = 2
     private const val RECENT_FALLBACK_LIMIT = 3
-    private const val MAX_SCAN_SESSIONS = 50
+    internal const val MAX_SCAN_SESSIONS = 50
+    internal const val MAX_DEPTH = 4096
+    internal const val MAX_MESSAGES = 80
+    internal const val MAX_BODY_CHARS = 1200
+    internal const val MAX_TITLE_CHARS = 120
+    private const val MAX_QUERY_CHARS = 1024
+    private const val MAX_QUERY_TOKENS = 96
+    private const val MAX_SCAN_MS = 220L
+    private const val MAX_SESSION_LOAD_MS = 750L
 
     private val LATIN_TOKEN = Regex("[a-z0-9_.-]{2,}")
     private val HAN_RUN = Regex("[\\u4e00-\\u9fff]+")
@@ -52,6 +61,8 @@ object CrossChatMemory {
 
     /** 一个候选会话的引用信息。 */
     data class SessionRef(val id: String, val title: String, val updatedAt: Long)
+
+    data class Message(val role: String, val content: String)
 
     private data class Round(val user: String, val assistant: String, val tokens: Set<String>)
 
@@ -85,11 +96,14 @@ object CrossChatMemory {
         currentConversationId: String,
         limit: Int,
         sessions: List<SessionRef>,
-        loadMessages: suspend (String) -> List<UiMessage>,
+        loadMessages: suspend (String) -> List<Message>,
+        scanMillis: Long = MAX_SCAN_MS,
     ): Result {
         if (limit <= 0) return Result("", reason = "disabled")
-        val queryTokens = tokenize(query)
-        if (queryTokens.isEmpty()) return Result("", reason = "empty-query")
+        val boundedQuery = query.take(MAX_QUERY_CHARS)
+        if (boundedQuery.isBlank()) return Result("", reason = "empty-query")
+        val queryTokens = tokenize(boundedQuery).asSequence().filter { it.length >= 2 }
+            .take(MAX_QUERY_TOKENS).toSet()
 
         /*
          * 短问候不召回：只有「你 / 好」这种单字命中时，相关性再高也只是巧合 ——
@@ -97,7 +111,7 @@ object CrossChatMemory {
          * 或者用户明确表达了回忆意图。
          */
         val contentTokens = queryTokens.count { it.length >= 2 }
-        if (contentTokens < 2 && !RECALL_INTENT.containsMatchIn(query)) {
+        if (contentTokens < 2 && !RECALL_INTENT.containsMatchIn(boundedQuery)) {
             return Result("", queryTokens.size, 0, reason = "short-query")
         }
 
@@ -110,19 +124,34 @@ object CrossChatMemory {
             return Result("", queryTokens.size, 0, reason = "no-candidates")
         }
 
-        val docs = candidates.mapNotNull { ref ->
+        val started = System.nanoTime()
+        val docs = mutableListOf<Doc>()
+        var budgetHit = false
+        for (ref in candidates) {
             currentCoroutineContext().ensureActive()
-            val shown = try {
-                loadMessages(ref.id)
+            val remaining = scanMillis - (System.nanoTime() - started) / 1_000_000
+            if (remaining <= 0) {
+                budgetHit = true
+                break
+            }
+            val doc = try {
+                // A single bounded batch may finish after the soft limit. Keep its hits.
+                withTimeoutOrNull(MAX_SESSION_LOAD_MS) {
+                    index(ref.copy(title = ref.title.take(MAX_TITLE_CHARS)), loadMessages(ref.id), queryTokens)
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
-                return@mapNotNull null
+                continue
             }
-            index(ref, shown)
-        }.filter { it.rounds.isNotEmpty() }
+            if (doc == null) {
+                budgetHit = true
+                break
+            }
+            if (doc.rounds.isNotEmpty()) docs += doc
+        }
         if (docs.isEmpty()) {
-            return Result("", queryTokens.size, candidates.size, reason = "no-history")
+            return Result("", queryTokens.size, candidates.size, reason = if (budgetHit) "scan-budget" else "no-history")
         }
 
         // 词元文档频率 → IDF。标题命中算双倍。
@@ -167,7 +196,7 @@ object CrossChatMemory {
          * 刻意**不看查询长度**：普通的技术问题（「帮我写一段 Python 脚本」）也可能很长，
          * 长度不等于想回忆；照长度兜底等于把无关历史硬塞进上下文。
          */
-        val allowRecentFallback = RECALL_INTENT.containsMatchIn(query)
+        val allowRecentFallback = !budgetHit && RECALL_INTENT.containsMatchIn(boundedQuery)
         val recentLimit = if (allowRecentFallback) minOf(limit, RECENT_FALLBACK_LIMIT) else 0
         var fallbackUsed = false
         if (recentLimit > 0) {
@@ -180,7 +209,7 @@ object CrossChatMemory {
         }
 
         if (selected.isEmpty()) {
-            return Result("", queryTokens.size, candidates.size, reason = "no-match")
+            return Result("", queryTokens.size, candidates.size, reason = if (budgetHit) "scan-budget" else "no-match")
         }
 
         val header = "以下是用户过往其他对话中的记忆记录（仅在确实与当前问题相关时参考；" +
@@ -188,6 +217,7 @@ object CrossChatMemory {
         val blocks = mutableListOf(header)
         var totalChars = header.length
 
+        var included = 0
         selected.forEachIndexed { index, doc ->
             val scoredRounds = doc.rounds.mapIndexed { roundIndex, round ->
                 Triple(round, roundIndex, score(queryTokens, round.tokens, idf))
@@ -204,14 +234,15 @@ object CrossChatMemory {
             )
             for ((round, _, _) in picked) {
                 if (round.user.isNotBlank()) {
-                    lines += "- 用户：${clip(round.user, USER_SNIPPET_MAX, queryTokens)}"
+                    lines += "- 用户：${round.user}"
                 }
                 if (round.assistant.isNotBlank()) {
-                    lines += "- 助手：${clip(round.assistant, ASSISTANT_SNIPPET_MAX, queryTokens)}"
+                    lines += "- 助手：${round.assistant}"
                 }
             }
             val block = lines.joinToString("\n")
-            if (totalChars + block.length + 2 > MAX_MEMORY_CHARS && blocks.size > 1) return@forEachIndexed
+            if (totalChars + block.length + 2 > MAX_MEMORY_CHARS) return@forEachIndexed
+            included++
             blocks += block
             totalChars += block.length + 2
         }
@@ -221,31 +252,36 @@ object CrossChatMemory {
             text = text,
             queryTokens = queryTokens.size,
             candidates = candidates.size,
-            picked = selected.size,
+            picked = included,
             fallback = fallbackUsed,
-            reason = if (text.isEmpty()) "truncated" else "ok",
+            reason = if (budgetHit) "scan-budget" else if (text.isEmpty()) "truncated" else "ok",
         )
     }
 
-    private suspend fun index(ref: SessionRef, messages: List<UiMessage>): Doc {
+    private suspend fun index(ref: SessionRef, messages: List<Message>, queryTokens: Set<String>): Doc {
         val context = currentCoroutineContext()
-        val titleTokens = tokenize(ref.title)
+        val titleTokens = tokenize(ref.title, queryTokens)
         val allTokens = HashSet(titleTokens)
         val rounds = mutableListOf<Round>()
 
         var pendingUser: String? = null
-        for (message in messages) {
+        for (message in messages.takeLast(MAX_MESSAGES)) {
             context.ensureActive()
             when (message.role) {
-                MessageRole.USER -> pendingUser = compact(message.content)
-                MessageRole.ASSISTANT -> {
+                "user" -> pendingUser = message.content.take(MAX_BODY_CHARS)
+                "assistant" -> {
                     val user = pendingUser.orEmpty()
-                    val assistant = compact(message.content)
+                    val assistant = message.content.take(MAX_BODY_CHARS)
                     pendingUser = null
                     if (user.isBlank() && assistant.isBlank()) continue
-                    val tokens = tokenize("$user\n$assistant")
+                    val tokens = tokenize(user, queryTokens)
+                    tokens += tokenize(assistant, queryTokens)
                     allTokens += tokens
-                    rounds += Round(user, assistant, tokens)
+                    rounds += Round(
+                        clip(compact(user), USER_SNIPPET_MAX, tokens),
+                        clip(compact(assistant), ASSISTANT_SNIPPET_MAX, tokens),
+                        tokens,
+                    )
                 }
             }
         }
@@ -264,21 +300,24 @@ object CrossChatMemory {
     }
 
     /** 中英混合分词：英文/数字按词，中文按单字 + 相邻双字，过滤停用词。 */
-    internal fun tokenize(text: String): Set<String> {
-        val tokens = HashSet<String>()
+    internal fun tokenize(text: String, filter: Set<String>? = null): MutableSet<String> {
+        val tokens = LinkedHashSet<String>()
+        if (filter?.isEmpty() == true) return tokens
         val lower = text.lowercase(Locale.ROOT)
         LATIN_TOKEN.findAll(lower).forEach { match ->
             val word = match.value
-            if (word !in STOP_WORDS) tokens += word
+            if (filter?.contains(word) ?: (word !in STOP_WORDS)) tokens += word
         }
         HAN_RUN.findAll(lower).forEach { match ->
             val run = match.value
             for (i in run.indices) {
-                val ch = run[i].toString()
-                if (ch !in STOP_WORDS) tokens += ch
+                if (filter == null) {
+                    val ch = run[i].toString()
+                    if (ch !in STOP_WORDS) tokens += ch
+                }
                 if (i + 1 < run.length) {
                     val bigram = run.substring(i, i + 2)
-                    if (bigram !in STOP_WORDS) tokens += bigram
+                    if (filter?.contains(bigram) ?: (bigram !in STOP_WORDS)) tokens += bigram
                 }
             }
         }
