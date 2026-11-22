@@ -11,6 +11,8 @@
     <string name="service_search_title">搜索与网页读取 API</string>
     <string name="service_files_title">文件 API</string>
     <string name="service_enabled">已启用</string>
+    <string name="service_enable_search">启用搜索 API</string>
+    <string name="service_enable_files">启用文件 API</string>
     <string name="service_disabled">未启用</string>
     <string name="service_search_hint">兼容 DeepSeek Search / Fetch 协议。启用独立接口后，聊天中的联网搜索会先检索资料，再生成回答，也会读取问题中的网页链接。关闭独立接口后，如果当前聊天 API 支持内置搜索（如 DeepSeek 官方 API 的 Anthropic 兼容通道），仍可在聊天中开启联网搜索。请核对来源，搜索和网页读取可能单独计费。</string>
     <string name="service_files_hint">启用后，选择文件会上传原件并引用文件 ID；图片选择仍使用本地压缩。支持 DeepSeek /files 及相同协议的服务。文件与聊天必须使用同一服务和同一账号，DeepSeek 请使用 deepseek-flash。文件将保留在服务端，解析可能计费；取消等待后服务端仍可能完成上传。</string>

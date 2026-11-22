@@ -11,6 +11,8 @@
     <string name="service_search_title">Search and Fetch API</string>
     <string name="service_files_title">Files API</string>
     <string name="service_enabled">Enabled</string>
+    <string name="service_enable_search">Enable Search API</string>
+    <string name="service_enable_files">Enable File API</string>
     <string name="service_disabled">Disabled</string>
     <string name="service_search_hint">Supports the DeepSeek Search / Fetch protocol. With the independent API enabled, web search retrieves results before generating an answer and reads links in your message. With the independent API disabled, you can still turn on web search in chat if your chat API supports built-in search (for example, the official DeepSeek API via its Anthropic-compatible endpoint). Check the sources. Search and Fetch may incur separate charges.</string>
     <string name="service_files_hint">When enabled, the file picker uploads originals and references their file IDs. The image picker still uses local compression. Supports DeepSeek /files and compatible services. Files and chat must use the same service and account. For DeepSeek, use deepseek-flash. Files remain on the server and parsing may incur charges, even if you cancel waiting after upload.</string>

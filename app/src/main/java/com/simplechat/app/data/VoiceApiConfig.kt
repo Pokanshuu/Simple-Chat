@@ -2,6 +2,7 @@ package com.simplechat.app.data
 
 import com.simplechat.app.R
 import kotlinx.serialization.Serializable
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * 第三方声音模型（TTS）接入配置。
@@ -43,6 +44,11 @@ data class VoiceApiConfig(
     val model: String = "tts-1",
 ) {
     override fun toString() = "VoiceApiConfig(enabled=$enabled, adapter=$adapter, voices=${voices.size})"
+
+    /** Local readiness only; displaying a voice does not make a network request. */
+    internal fun isConfigured(chatBaseUrl: String, chatKey: String): Boolean =
+        enabled && baseUrl.ifBlank { chatBaseUrl }.trim().toHttpUrlOrNull() != null &&
+            (if (reuseChatKey) chatKey.isNotBlank() && ApiKey.isHeaderSafe(chatKey) else apiKeyEncrypted.isNotBlank())
 
     /** 端点到音频合成接口。各协议路径不同，按 [adapter] 分支。 */
     fun speechEndpoint(chatBaseUrl: String): String {

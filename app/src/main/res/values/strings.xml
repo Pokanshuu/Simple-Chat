@@ -965,7 +965,7 @@
     <string name="image_exit_mode">退出生图模式</string>
     <string name="settings_search_options">搜索设置</string>
     <string name="image_reference_unreadable">无法读取参考图片，请重新选择。</string>
-    <string name="settings_icon">图标</string>
+    <string name="settings_icon_style">图标风格</string>
     <string name="settings_icon_classic">经典图标</string>
     <string name="settings_icon_simple_cat" translatable="false">Simple Cat</string>
     <string name="settings_icon_restart_title">需要重新打开应用</string>

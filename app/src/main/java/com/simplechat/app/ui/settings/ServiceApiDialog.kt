@@ -53,7 +53,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
-internal fun ToolApisPage(stored: StoredSettings, onOpenSearch: () -> Unit, onOpenFiles: () -> Unit, onOpenImage: () -> Unit) {
+internal fun ToolApisPage(stored: StoredSettings, onOpenSearch: () -> Unit, onOpenFiles: () -> Unit, onOpenImage: () -> Unit, onOpenVoice: () -> Unit) {
     SettingsSectionLabel(stringResource(R.string.service_group))
     SettingsCard {
         SettingsNavRow(null, stringResource(R.string.service_search_title),
@@ -76,6 +76,10 @@ internal fun ToolApisPage(stored: StoredSettings, onOpenSearch: () -> Unit, onOp
                 stored.nativeImageAdapter() != null -> stringResource(R.string.image_api_native_enabled)
                 else -> stringResource(R.string.service_disabled)
             }, onOpenImage)
+        RowDivider(inset = Space.Screen)
+        SettingsNavRow(null, stringResource(R.string.tts_third_party_api),
+            stringResource(if (stored.voiceApi.enabled) R.string.service_enabled else R.string.service_disabled),
+            onOpenVoice)
     }
     ServiceNote(stringResource(R.string.service_shared_settings))
 }
@@ -352,26 +356,30 @@ private fun ServiceApiForm(
         scope.launch {
             var saved = false
             try {
-                val n = if (files) original.count else count.toIntOrNull()
-                    ?.takeIf { it in 1..50 } ?: throw AppTextException(R.string.service_count_invalid)
-                val chars = if (!files) original.longTextChars else threshold.toIntOrNull()
-                    ?.takeIf { it in 4_000..1_000_000 } ?: throw AppTextException(R.string.service_threshold_invalid)
-                val encrypted = if (secret.isBlank()) original.apiKeyEncrypted else store.encryptServiceKey(secret)
-                val next = original.copy(
-                    enabled = enabled,
-                    baseUrl = base.trim(),
-                    reuseChatKey = reuse,
-                    apiKeyEncrypted = encrypted,
-                    searchPath = if (files) original.searchPath else path.trim(),
-                    filesPath = if (files) path.trim() else original.filesPath,
-                    fetchPath = if (files) original.fetchPath else fetch.trim(),
-                    count = n,
-                    purpose = purpose,
-                    longTextChars = chars,
-                )
-                if (next != original) {
-                    if (enabled && !reuse && encrypted.isBlank()) throw AppTextException(R.string.service_key_missing)
-                    store.setServiceApi(files, next)
+                if (!enabled) {
+                    if (original.enabled) store.setServiceApi(files, original.copy(enabled = false))
+                } else {
+                    val n = if (files) original.count else count.toIntOrNull()
+                        ?.takeIf { it in 1..50 } ?: throw AppTextException(R.string.service_count_invalid)
+                    val chars = if (!files) original.longTextChars else threshold.toIntOrNull()
+                        ?.takeIf { it in 4_000..1_000_000 } ?: throw AppTextException(R.string.service_threshold_invalid)
+                    val encrypted = if (secret.isBlank()) original.apiKeyEncrypted else store.encryptServiceKey(secret)
+                    val next = original.copy(
+                        enabled = enabled,
+                        baseUrl = base.trim(),
+                        reuseChatKey = reuse,
+                        apiKeyEncrypted = encrypted,
+                        searchPath = if (files) original.searchPath else path.trim(),
+                        filesPath = if (files) path.trim() else original.filesPath,
+                        fetchPath = if (files) original.fetchPath else fetch.trim(),
+                        count = n,
+                        purpose = purpose,
+                        longTextChars = chars,
+                    )
+                    if (next != original) {
+                        if (enabled && !reuse && encrypted.isBlank()) throw AppTextException(R.string.service_key_missing)
+                        store.setServiceApi(files, next)
+                    }
                 }
                 saved = true
             } catch (cancelled: CancellationException) {
@@ -399,10 +407,17 @@ private fun ServiceApiForm(
         }
     }
 
+    SettingsCard {
+        SettingsSwitchRow(
+            stringResource(if (files) R.string.service_enable_files else R.string.service_enable_search),
+            enabled,
+            { enabled = it; error = null },
+        )
+    }
+    if (!enabled) return
+
     SettingsSectionLabel(stringResource(R.string.service_connection))
     SettingsCard {
-        SettingsSwitchRow(stringResource(R.string.service_enabled), enabled, { enabled = it })
-        RowDivider(inset = Space.Screen)
         ServiceField("Base URL", base, { base = it }, KeyboardType.Uri,
             hint = stringResource(R.string.service_base_hint))
         RowDivider(inset = Space.Screen)

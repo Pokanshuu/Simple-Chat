@@ -5,7 +5,6 @@ import java.io.File
 import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -116,7 +115,6 @@ import com.simplechat.app.net.ModelCatalog
 import com.simplechat.app.net.DeepSeekTts
 import com.simplechat.app.net.ProviderKind
 import com.simplechat.app.ui.common.AppIcons
-import com.simplechat.app.MainActivity
 import com.simplechat.app.ui.common.AppConfirmDialog
 import com.simplechat.app.ui.common.AppMenu
 import com.simplechat.app.ui.common.AppMenuCheck
@@ -179,7 +177,7 @@ private enum class SettingsPage(private val parentName: String?) {
     /** 朗读音色（系统 TTS）。 */
     VOICE("ROOT"),
     /** 第三方声音模型（朗读 → 第三方声音 API 二级页）。 */
-    VOICE_API("VOICE"),
+    VOICE_API("API_PROFILES"),
     /** 回收站（数据管理 → 二级）。 */
     TRASH("DATA"),
     /** 用量与余额：账户余额 + 全部会话累计消耗。 */
@@ -753,13 +751,12 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                             accentColor = accentColor,
                             onThemeChange = { scope.launch { store.setThemeMode(it.name) } },
                             onAccentChange = { scope.launch { store.setAccentColor(it.name) } },
-                            onIconChange = { activity, enabled ->
+                            onIconChange = { enabled ->
                                 scope.launch {
                                     try {
                                         store.setUseSimpleCatIcon(enabled)
-                                        activity.applyLauncherIconAndExit(enabled)
                                     } catch (_: java.io.IOException) {
-                                        android.widget.Toast.makeText(activity, R.string.diagnostics_save_failed, android.widget.Toast.LENGTH_SHORT).show()
+                                        android.widget.Toast.makeText(context, R.string.diagnostics_save_failed, android.widget.Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             },
@@ -890,6 +887,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                                 onOpenSearch = { openService(SettingsPage.SEARCH_API) },
                                 onOpenFiles = { openService(SettingsPage.FILES_API) },
                                 onOpenImage = { openService(SettingsPage.IMAGE_API) },
+                                onOpenVoice = { page = SettingsPage.VOICE_API },
                             )
                         }
 
@@ -958,8 +956,9 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                             previewing = speaker.previewing,
                             previewingVoice = speaker.previewingVoice,
                             error = speechError,
-                            onOpenThirdPartyApi = { page = SettingsPage.VOICE_API },
-                            thirdPartyVoices = stored.voiceApi.allVoices.map { id ->
+                            thirdPartyVoices = stored.voiceApi.allVoices.takeIf {
+                                stored.voiceApi.isConfigured(stored.baseUrl, stored.apiKey)
+                            }.orEmpty().map { id ->
                                 // 界面上给「名字 · 说明」，落库和发给服务端的始终是 id
                                 SpeechVoice(
                                     name = id,
@@ -967,7 +966,6 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                                     needsNetwork = true,
                                 )
                             },
-                            thirdPartyEnabled = stored.voiceApi.enabled,
                             onSelect = { voice ->
                                 /*
                                  * 落库的 label 只留「名字」那一段：设置主页那一行空间有限，
@@ -1605,26 +1603,12 @@ private fun AppearancePage(
     accentColor: AccentColor,
     onThemeChange: (ThemeMode) -> Unit,
     onAccentChange: (AccentColor) -> Unit,
-    onIconChange: (MainActivity, Boolean) -> Unit,
+    onIconChange: (Boolean) -> Unit,
     onOpenFont: () -> Unit,
     onOpenFonts: () -> Unit,
     onOpenCustomTheme: () -> Unit,
 ) {
-    val activity = LocalActivity.current as? MainActivity
-    var pendingIcon by rememberSaveable { mutableStateOf<Boolean?>(null) }
-
-    pendingIcon?.let { enabled ->
-        AppConfirmDialog(
-            title = stringResource(R.string.settings_icon_restart_title),
-            message = stringResource(R.string.settings_icon_restart_message),
-            confirmText = stringResource(R.string.settings_icon_exit),
-            onDismiss = { pendingIcon = null },
-            onConfirm = {
-                pendingIcon = null
-                activity?.let { onIconChange(it, enabled) }
-            },
-        )
-    }
+    var iconMenuOpen by remember { mutableStateOf(false) }
 
     SettingsSectionLabel(stringResource(R.string.settings_theme_mode))
 
@@ -1642,24 +1626,6 @@ private fun AppearancePage(
                 onClick = { onThemeChange(mode) },
             )
         }
-    }
-
-    SettingsSectionLabel(stringResource(R.string.settings_icon))
-
-    SettingsCard {
-        SettingsChoiceRow(
-            icon = AppIcons.ClassicMessageSquare,
-            label = stringResource(R.string.settings_icon_classic),
-            selected = !stored.useSimpleCatIcon,
-            onClick = { if (stored.useSimpleCatIcon) pendingIcon = false },
-        )
-        RowDivider()
-        SettingsChoiceRow(
-            icon = AppIcons.SimpleCat,
-            label = stringResource(R.string.settings_icon_simple_cat),
-            selected = stored.useSimpleCatIcon,
-            onClick = { if (!stored.useSimpleCatIcon) pendingIcon = true },
-        )
     }
 
     SettingsSectionLabel(stringResource(R.string.settings_accent))
@@ -1680,7 +1646,27 @@ private fun AppearancePage(
                 )
             }
         }
-        RowDivider()
+        RowDivider(inset = Space.Screen)
+        val selectedIcon = stored.useSimpleCatIcon
+        val classicLabel = stringResource(R.string.settings_icon_classic)
+        val catLabel = stringResource(R.string.settings_icon_simple_cat)
+        Box {
+            SettingsNavRow(
+                icon = if (selectedIcon) AppIcons.SimpleCat else AppIcons.ClassicMessageSquare,
+                label = stringResource(R.string.settings_icon_style),
+                value = if (selectedIcon) catLabel else classicLabel,
+                onClick = { iconMenuOpen = true },
+            )
+            AppMenu(expanded = iconMenuOpen, onDismissRequest = { iconMenuOpen = false }) {
+                fun choose(useCat: Boolean) {
+                    iconMenuOpen = false
+                    if (useCat != selectedIcon) onIconChange(useCat)
+                }
+                AppMenuItem(classicLabel, AppIcons.ClassicMessageSquare, selected = !selectedIcon) { choose(false) }
+                AppMenuItem(catLabel, AppIcons.SimpleCat, selected = selectedIcon) { choose(true) }
+            }
+        }
+        RowDivider(inset = Space.Screen)
         SettingsNavRow(
             icon = AppIcons.Image,
             label = stringResource(R.string.settings_custom_theme),
@@ -2031,11 +2017,8 @@ private fun VoicePage(
     previewingVoice: String? = null,
     /** 停止当前试听。 */
     onStopPreview: () -> Unit = {},
-    /** 第三方声音模型 API 的配置入口。 */
-    onOpenThirdPartyApi: () -> Unit = {},
     /** 第三方服务提供的音色（服务端清单 + 手填，已带上显示名）。 */
     thirdPartyVoices: List<SpeechVoice> = emptyList(),
-    thirdPartyEnabled: Boolean = false,
 ) {
     SettingsCard { SettingsSwitchRow(stringResource(R.string.tts_enabled), enabled, onToggle) }
     if (!enabled) return
@@ -2086,52 +2069,22 @@ private fun VoicePage(
         }
     }
 
-    /*
-     * 第三方声音模型：配置入口 + 它自己列出来的音色。
-     *
-     * 音色 id 由服务端清单和用户手填组成（见 VoiceApiConfig.allVoices）；
-     * 选中的 id 走和系统音色同一条 name 通道，播放侧按是否配了第三方来分流。
-     */
-    /*
-     * 合成通道接通前整组隐藏（docs/32 §32.9）：选中第三方音色会写进 ttsVoiceName，
-     * 系统 TTS 不认识这个名字，朗读会悄悄失效。
-     */
-    if (ThirdPartyVoiceReady) {
-    SettingsSectionLabel(stringResource(R.string.tts_third_party_section))
-    SettingsCard {
-        SettingsNavRow(
-            icon = AppIcons.Mic,
-            label = stringResource(R.string.tts_third_party_api),
-            value = if (thirdPartyEnabled) {
-                stringResource(R.string.value_enabled_generic)
-            } else {
-                stringResource(R.string.value_none)
-            },
-            onClick = onOpenThirdPartyApi,
-        )
-        thirdPartyVoices.forEach { voice ->
-            RowDivider()
-            VoiceRow(
-                label = voice.label,
-                selected = voice.name == selectedName,
-                /*
-                 * 只调 onSelect：它在 SettingsScreen 里已经"选中 + 试听"一次。
-                 * 之前这里还额外调了一次 onPreview，点一下会触发两遍 speak ——
-                 * 第一遍刚发出请求就被第二遍 cancel 掉，白白多花一次合成请求。
-                 */
-                onClick = { onSelect(voice) },
-                previewing = voice.name == previewingVoice,
-                onPreview = {
-                    if (voice.name == previewingVoice) {
-                        // 正在试听这一行：按钮是「停止」，再点就是停下来
-                        onStopPreview()
-                    } else {
-                        onPreview(voice)
-                    }
-                },
-            )
+    if (thirdPartyVoices.isNotEmpty()) {
+        SettingsSectionLabel(stringResource(R.string.tts_third_party_section))
+        SettingsCard {
+            thirdPartyVoices.forEachIndexed { index, voice ->
+                if (index > 0) RowDivider()
+                VoiceRow(
+                    label = voice.label,
+                    selected = voice.name == selectedName,
+                    onClick = { onSelect(voice) },
+                    previewing = voice.name == previewingVoice,
+                    onPreview = {
+                        if (voice.name == previewingVoice) onStopPreview() else onPreview(voice)
+                    },
+                )
+            }
         }
-    }
     }
 
     val colors = LocalChatColors.current
@@ -2139,7 +2092,7 @@ private fun VoicePage(
         // 报错优先：引擎缺失 / 合成失败时，"正在试听"之类的说明就是误导
         error != null -> error
         voices == null -> stringResource(R.string.tts_voice_loading)
-        voices.isEmpty() && officialVoices.isEmpty() -> stringResource(R.string.tts_voice_empty)
+        voices.isEmpty() && officialVoices.isEmpty() && thirdPartyVoices.isEmpty() -> stringResource(R.string.tts_voice_empty)
         previewing -> stringResource(R.string.tts_voice_preview_running)
         else -> stringResource(R.string.tts_voice_hint)
     }
@@ -4605,31 +4558,28 @@ private fun VoiceApiPage(
         scope.launch { runCatching { store.setVoiceApi(updated) } }
     }
 
-    SettingsSectionLabel(stringResource(R.string.tts_third_party_section))
-
-    SettingsCard {
-        /*
-         * 快速预设：千问 MaaS 的端点、模型、协议和常用音色一次填好。
-         *
-         * 只填**非密钥**字段 —— key 要么走「复用聊天 API Key」（聊天配置切到千问
-         * 时最省事），要么在下面手填。预设不会把任何密钥写进代码或偏好。
-         */
-        SettingsActionRow(
-            label = stringResource(R.string.tts_third_party_preset_qwen),
-            hint = stringResource(R.string.tts_third_party_preset_qwen_hint),
-            icon = AppIcons.Mic,
-            onClick = { save(com.simplechat.app.data.VoiceApiConfig.qwenDashScopePreset()) },
-        )
-    }
-
     SettingsCard {
         SettingsSwitchRow(
-            icon = AppIcons.Mic,
             label = stringResource(R.string.tts_third_party_enable),
             checked = config.enabled,
             onCheckedChange = { save(config.copy(enabled = it)) },
         )
-        RowDivider()
+    }
+    if (!config.enabled) return
+
+    SettingsSectionLabel(stringResource(R.string.service_connection))
+    SettingsCard {
+        SettingsActionRow(
+            label = stringResource(R.string.tts_third_party_preset_qwen),
+            hint = stringResource(R.string.tts_third_party_preset_qwen_hint),
+            onClick = {
+                val preset = com.simplechat.app.data.VoiceApiConfig.qwenDashScopePreset()
+                save(config.copy(baseUrl = preset.baseUrl, adapter = preset.adapter, model = preset.model,
+                    customVoices = (config.customVoices + preset.customVoices).distinct(),
+                    voiceLabels = preset.voiceLabels + config.voiceLabels))
+            },
+        )
+        RowDivider(inset = Space.Screen)
         /*
          * 协议放最前面：它决定端点路径、请求体结构和内置音色表。
          * 以前只能靠「填入千问预设」间接切换，配别的服务商时根本改不了。
@@ -4640,28 +4590,31 @@ private fun VoiceApiPage(
             value = com.simplechat.app.data.VoiceCatalog.adapterLabel(config.adapter),
             onClick = { dialog = 5 },
         )
-        RowDivider()
+        RowDivider(inset = Space.Screen)
         SettingsNavRow(
             icon = null,
             label = "Base URL",
             value = config.baseUrl.ifBlank { stringResource(R.string.value_follow_system) },
             onClick = { dialog = 1 },
         )
-        RowDivider()
+        RowDivider(inset = Space.Screen)
         SettingsNavRow(
-            icon = AppIcons.Settings,
+            icon = null,
             label = stringResource(R.string.tts_third_party_model),
             value = config.model,
             onClick = { dialog = 2 },
         )
-        RowDivider()
+    }
+
+    SettingsSectionLabel(stringResource(R.string.settings_group_auth))
+    SettingsCard {
         SettingsSwitchRow(
             label = stringResource(R.string.tts_third_party_reuse_key),
             checked = config.reuseChatKey,
             onCheckedChange = { save(config.copy(reuseChatKey = it)) },
         )
         if (!config.reuseChatKey) {
-            RowDivider()
+            RowDivider(inset = Space.Screen)
             SettingsActionRow(
                 label = stringResource(R.string.tts_third_party_key),
                 hint = if (config.apiKeyEncrypted.isBlank()) {
@@ -4692,18 +4645,16 @@ private fun VoiceApiPage(
             onClick = {
                 save(com.simplechat.app.data.VoiceApiConfig.withBuiltInVoices(config))
             },
-            icon = AppIcons.Mic,
         )
-        RowDivider()
+        RowDivider(inset = Space.Screen)
         SettingsActionRow(
             label = stringResource(R.string.tts_third_party_add_voice),
             hint = stringResource(R.string.tts_third_party_voice_custom_hint),
             onClick = { dialog = 4 },
-            icon = AppIcons.PlusCircle,
         )
         if (config.allVoices.isNotEmpty()) {
             config.allVoices.forEach { voiceId ->
-                RowDivider()
+                RowDivider(inset = Space.Screen)
                 val label = config.labelOf(voiceId)
                 Row(
                     modifier = Modifier
@@ -4748,14 +4699,11 @@ private fun VoiceApiPage(
         }
     }
 
-    val colors = LocalChatColors.current
     Text(
         text = stringResource(R.string.tts_third_party_note),
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+        modifier = Modifier.settingsSectionGrid(),
     )
 
     when (dialog) {
@@ -4977,13 +4925,3 @@ private fun formatTrashDate(millis: Long?): String {
         )
     }.getOrDefault("—")
 }
-
-/**
- * 第三方声音合成通道是否已接通。接通前不展示任何第三方入口（docs/32 §32.9）。
- *
- * 上游留这个开关时的理由是："选中第三方音色会写进 ttsVoiceName，而系统 TTS
- * 不认识这个名字，朗读会悄悄失效。" 现在 `SpeechOutput.speak()` 会先按
- * `VoiceApiConfig.allVoices` 分流到 `speakThirdParty`（DashScope / 兼容 OpenAI
- * 两种协议，见 `VoiceTtsClient`），这个前提已经不成立了 —— 所以打开。
- */
-private const val ThirdPartyVoiceReady = true

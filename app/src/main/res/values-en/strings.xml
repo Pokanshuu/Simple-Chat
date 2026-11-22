@@ -955,7 +955,7 @@
     <string name="image_exit_mode">Exit image mode</string>
     <string name="settings_search_options">Search settings</string>
     <string name="image_reference_unreadable">Could not read the reference image. Select it again.</string>
-    <string name="settings_icon">Icon</string>
+    <string name="settings_icon_style">Icon style</string>
     <string name="settings_icon_classic">Classic icon</string>
     <string name="settings_icon_restart_title">Reopen the app</string>
     <string name="settings_icon_restart_message">The app will close after you confirm. Open it again to use the new icon.</string>
