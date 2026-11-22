@@ -123,6 +123,7 @@ private enum class Tool { OPACITY, DIM, BLUR, BRIGHTNESS, CONTRAST, SATURATION }
 @Composable
 internal fun ThemeEditorLayout(
     source: Bitmap?,
+    savedCrop: Rect?,
     onPrepareCrop: () -> Unit,
     isNewImage: Boolean,
     imageAction: Int,
@@ -168,7 +169,8 @@ internal fun ThemeEditorLayout(
     var wallpaperMenu by remember { mutableStateOf(false) }
     val liveBlur = rememberLiveBlurAvailable()
     val cropActive = tab == EditTab.CROP && sourceImage != null
-    val useCrop = cropActive || cropChanged
+    // The saved preview remains visible while the source loads and until an actual edit.
+    val useCrop = cropChanged
     val image = if (useCrop) sourceImage else currentImage
     val imageW = (source?.width ?: 1).toFloat()
     val imageH = (source?.height ?: 1).toFloat()
@@ -179,6 +181,13 @@ internal fun ThemeEditorLayout(
         val maxX = ((imageW * scale - frame.width) / 2f).coerceAtLeast(0f)
         val maxY = ((imageH * scale - frame.height) / 2f).coerceAtLeast(0f)
         return Offset(p.x.coerceIn(-maxX, maxX), p.y.coerceIn(-maxY, maxY))
+    }
+    fun restoreCrop(frame: Size) {
+        if (cropChanged || savedCrop == null) return
+        val scale = max(frame.width / savedCrop.width, frame.height / savedCrop.height)
+        zoom = (scale / coverScale(frame)).coerceAtLeast(1f)
+        val sourceCenter = Offset(imageW / 2f, imageH / 2f)
+        pan = clampPan((sourceCenter - savedCrop.center) * scale, zoom, frame) / frame.width
     }
     fun cropRect(frame: Size): Rect {
         val offset = clampPan(pan * frame.width, zoom, frame)
@@ -279,10 +288,11 @@ internal fun ThemeEditorLayout(
                                 val previewLayer = if (liveBlur && needsLiveSurface(InterfaceControl.INPUT, InterfaceControl.SCROLL_BUTTON)) rememberGraphicsLayer() else null
                                 Box(
                                     Modifier.size(frameWidth, frameHeight).clip(SoftShape).sharedSceneBackground(previewLayer, draw = drawBackground)
-                                        .pointerInput(cropActive, frame, imageAction) {
-                                            if (!cropActive || frame.width <= 0f) return@pointerInput
+                                        .pointerInput(cropActive, savedCrop, frame, imageAction) {
+                                            if (!cropActive || frame.width <= 0f || frame.height <= 0f) return@pointerInput
                                             detectTransformGestures { centroid, translation, zoomChange, _ ->
-                                                val newZoom = (zoom * zoomChange).coerceIn(1f, 5f)
+                                                restoreCrop(frame)
+                                                val newZoom = (zoom * zoomChange).coerceIn(1f, maxOf(5f, zoom))
                                                 val pivot = centroid - Offset(frame.width / 2f, frame.height / 2f)
                                                 val signedPivot = if (edit.flipH) Offset(-pivot.x, pivot.y) else pivot
                                                 val signedTranslation = if (edit.flipH) Offset(-translation.x, translation.y) else translation
@@ -493,6 +503,7 @@ private fun AdvancedControlOptions(panels: PanelAppearance, onChange: (PanelAppe
 
 @Composable
 private fun ThemeEffectSlider(label: Int, value: Float, range: ClosedFloatingPointRange<Float>, enabled: Boolean = true, defaultPercent: Int? = null, onChange: (Float) -> Unit) {
+    val defaultValue = defaultPercent?.div(100f)
     Column(Modifier.fillMaxWidth().padding(horizontal = Space.Screen, vertical = Space.Gap)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -502,9 +513,9 @@ private fun ThemeEffectSlider(label: Int, value: Float, range: ClosedFloatingPoi
                 color = if (enabled) MaterialTheme.colorScheme.onSurface else LocalChatColors.current.placeholder,
             )
             val percent = (value * 100).roundToInt()
-            Text(if (percent == defaultPercent) stringResource(R.string.theme_slider_default) else "$percent%", style = MaterialTheme.typography.labelMedium)
+            Text(if (value == defaultValue) stringResource(R.string.theme_slider_default) else "$percent%", style = MaterialTheme.typography.labelMedium)
         }
-        AppSlider(value, onChange, valueRange = range, enabled = enabled)
+        AppSlider(value, onChange, valueRange = range, enabled = enabled, detent = defaultValue)
     }
 }
 

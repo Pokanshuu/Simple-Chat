@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.compose.ui.geometry.Rect
 import java.io.File
 
 /**
@@ -85,13 +86,31 @@ object WallpaperFiles {
     private fun existingSource(context: Context, name: String): File? =
         sourceFor(context, name).takeIf { it.exists() } ?: sourceOf(context).takeIf { it.exists() }
 
-    /** 读回裁剪原图，兼容使用固定文件名的旧版壁纸。 */
-    fun loadSource(context: Context, current: String): Bitmap? = runCatching {
-        BitmapFactory.decodeFile((existingSource(context, current) ?: fileOf(context, current)).absolutePath)
-    }.getOrNull()
+    internal data class CropSource(val bitmap: Bitmap, val rect: Rect?, val usesOriginal: Boolean)
+
+    private fun cropFile(context: Context, name: String): File = File(dir(context), "crop_$name.txt")
+
+    /** Older wallpapers have no crop coordinates. Start from the saved framing in that case. */
+    internal fun loadSource(context: Context, current: String): CropSource? {
+        val rect = runCatching {
+            val (left, top, right, bottom) = cropFile(context, current).readText().split(',').map(String::toFloat)
+            Rect(left, top, right, bottom)
+        }.getOrNull()
+        if (rect != null) {
+            val original = BitmapFactory.decodeFile(sourceFor(context, current).absolutePath)
+            if (original != null) {
+                if (rect.left >= 0f && rect.top >= 0f && rect.width > 0f && rect.height > 0f &&
+                    rect.right <= original.width && rect.bottom <= original.height
+                ) return CropSource(original, rect, usesOriginal = true)
+                original.recycle()
+            }
+        }
+        return BitmapFactory.decodeFile(fileOf(context, current).absolutePath)
+            ?.let { CropSource(it, null, usesOriginal = false) }
+    }
 
     /** 写入一对新文件，设置指向它们之后才清理旧图。 */
-    fun saveCropped(context: Context, cropped: Bitmap, source: Bitmap, previous: String?): String? {
+    internal fun saveCropped(context: Context, cropped: Bitmap, source: Bitmap, rect: Rect, previous: String?): String? {
         val name = "wallpaper_${java.util.UUID.randomUUID()}.jpg"
         val target = fileOf(context, name)
         val sourceTarget = sourceFor(context, name)
@@ -102,6 +121,7 @@ object WallpaperFiles {
             if (previousSource != null) previousSource.copyTo(sourceTarget)
             else sourceTarget.outputStream().use { check(source.compress(Bitmap.CompressFormat.JPEG, 92, it)) }
             target.outputStream().use { check(scaled.compress(Bitmap.CompressFormat.JPEG, 88, it)) }
+            cropFile(context, name).writeText(listOf(rect.left, rect.top, rect.right, rect.bottom).joinToString(","))
             name
         } catch (_: Exception) {
             deleteWallpaper(context, name)
@@ -116,6 +136,7 @@ object WallpaperFiles {
         runCatching {
             fileOf(context, name).delete()
             sourceFor(context, name).delete()
+            cropFile(context, name).delete()
         }
     }
 

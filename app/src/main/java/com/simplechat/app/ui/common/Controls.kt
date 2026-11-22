@@ -59,6 +59,8 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -74,6 +76,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import kotlin.math.roundToInt
+import kotlin.math.abs
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.ui.theme.LocalChatColors
 import com.simplechat.app.ui.theme.menuGlassBackground
@@ -190,6 +193,8 @@ fun AppSlider(
     tickLabels: List<String>? = null,
     /** 高亮第几个刻度文案。 */
     selectedTick: Int = -1,
+    /** Optional magnetic stop on an otherwise continuous slider. */
+    detent: Float? = null,
 ) {
     val colors = LocalChatColors.current
     val density = LocalDensity.current
@@ -215,12 +220,8 @@ fun AppSlider(
     val span = (valueRange.endInclusive - valueRange.start).takeIf { it > 0f } ?: 1f
     val fraction = ((value - valueRange.start) / span).coerceIn(0f, 1f)
 
-    fun emitAt(x: Float) {
-        if (width <= 0f) return
-        val usable = (width - edge * 2f).coerceAtLeast(1f)
-        val f = ((x - edge) / usable).coerceIn(0f, 1f)
-        changeCallback(valueRange.start + f * span)
-    }
+    val detentFraction = detent?.takeIf { it in valueRange }?.let { (it - valueRange.start) / span }
+    val haptics = LocalHapticFeedback.current
 
     Column(modifier = modifier.fillMaxWidth()) {
         Box(
@@ -228,9 +229,20 @@ fun AppSlider(
                 .fillMaxWidth()
                 .height(44.dp)
                 .onSizeChanged { width = it.width.toFloat() }
-                .pointerInput(enabled, valueRange, width) {
-                    if (!enabled) return@pointerInput
+                .pointerInput(enabled, valueRange, width, edge, detentFraction, haptics) {
+                    if (!enabled || width <= 0f) return@pointerInput
+                    val usable = (width - edge * 2f).coerceAtLeast(1f)
                     awaitEachGesture {
+                        var snapped = false
+                        fun emitAt(x: Float) {
+                            val f = ((x - edge) / usable).coerceIn(0f, 1f)
+                            val snapRadius = if (snapped) 11.dp.toPx() else 7.dp.toPx()
+                            val nextSnapped = detentFraction != null && f > 0f && f < 1f &&
+                                abs(f - detentFraction) * usable <= snapRadius
+                            if (nextSnapped && !snapped) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            snapped = nextSnapped
+                            changeCallback(if (snapped) checkNotNull(detent) else valueRange.start + f * span)
+                        }
                         val down = awaitFirstDown()
                         pressed = true
                         emitAt(down.position.x)
@@ -284,6 +296,10 @@ fun AppSlider(
                 cap = StrokeCap.Round,
             )
 
+            detentFraction?.let {
+                val x = startX + (endX - startX) * it
+                drawCircle(tickColor, radius = 2.dp.toPx(), center = Offset(x, cy + 7.dp.toPx()))
+            }
             drawCircle(color = thumbFill, radius = radius, center = Offset(thumbX, cy))
             drawCircle(
                 color = if (enabled) activeColor else idleColor,

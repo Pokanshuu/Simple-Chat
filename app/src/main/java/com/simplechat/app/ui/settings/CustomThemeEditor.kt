@@ -120,7 +120,7 @@ private fun WallpaperEditDialog(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var original by remember(path) { mutableStateOf<Bitmap?>(null) }
+    var original by remember(path) { mutableStateOf<WallpaperFiles.CropSource?>(null) }
     var picked by remember { mutableStateOf<Bitmap?>(null) }
     var removed by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
@@ -144,9 +144,11 @@ private fun WallpaperEditDialog(
             }
         }
     }
-    val source = if (removed) null else picked ?: original
+    val savedCrop = original.takeIf { !removed && picked == null }
+    val source = if (removed) null else picked ?: savedCrop?.bitmap
     ThemeEditorLayout(
         source = source,
+        savedCrop = savedCrop?.rect,
         onPrepareCrop = { if (!removed && picked == null) loadOriginal = true },
         isNewImage = picked != null,
         imageAction = imageAction,
@@ -169,7 +171,7 @@ private fun WallpaperEditDialog(
         onSave = { rect, edit, panels ->
             val cropSource = source
             val previousPath = path
-            val fromPicker = picked != null
+            val previousSource = path.takeIf { savedCrop?.usesOriginal == true }
             val remove = removed
             saving = true
             scope.launch {
@@ -179,7 +181,7 @@ private fun WallpaperEditDialog(
                         newPath = withContext(Dispatchers.IO) {
                             val cropped = cropSource.cropTo(rect)
                             try {
-                                WallpaperFiles.saveCropped(context, cropped, cropSource, if (fromPicker) null else previousPath)
+                                WallpaperFiles.saveCropped(context, cropped, cropSource, rect, previousSource)
                             } finally {
                                 if (cropped !== cropSource) cropped.recycle()
                             }
