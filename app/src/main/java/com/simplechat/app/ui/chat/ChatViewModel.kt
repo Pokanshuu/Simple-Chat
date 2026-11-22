@@ -281,6 +281,13 @@ class ChatViewModel(
      * - 对话页显不显示朗读按钮（用户要求：不支持的 API 直接隐藏入口）。
      */
     var officialTts by mutableStateOf<DeepSeekTts.Config?>(null)
+
+    /** 第三方声音配置（朗读页配置的），连同聊天 key / 端点一起下发给播放器。 */
+    var thirdPartyVoiceApi by mutableStateOf<com.simplechat.app.data.VoiceApiConfig?>(null)
+        private set
+    var thirdPartyChatKey by mutableStateOf("")
+        private set
+    var thirdPartyChatBaseUrl by mutableStateOf("")
         private set
 
     internal var officialAsr by mutableStateOf<DeepSeekAsr.Config?>(null)
@@ -489,6 +496,10 @@ class ChatViewModel(
         } else {
             null
         }
+        // 第三方声音：把配置和聊天 key / 端点一起推给朗读控制器
+        thirdPartyVoiceApi = value.voiceApi
+        thirdPartyChatKey = value.apiKey
+        thirdPartyChatBaseUrl = value.baseUrl
         settings = settings.copy(
             model = ModelCatalog.find(kind, value.modelId, value.modelContextWindows, value.modelMetadata, value.modelOverrides),
             reasoningLevel = runCatching { ReasoningLevel.valueOf(value.reasoningLevelId) }

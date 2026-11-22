@@ -245,7 +245,13 @@ fun ChatScreen(
         voiceTapMode = false
     }
     // 音色来自设置：设置里换一个，回到对话页立即生效（见 SpeechOutput 的 applyVoice）
-    val speaker = rememberSpeechOutput(vm.ttsVoiceName, vm.officialTts)
+    val speaker = rememberSpeechOutput(
+        vm.ttsVoiceName,
+        vm.officialTts,
+        vm.thirdPartyVoiceApi,
+        vm.thirdPartyChatKey,
+        vm.thirdPartyChatBaseUrl,
+    )
     val lifecycleOwner = LocalLifecycleOwner.current
     /*
      * 朗读入口是否显示：官方音色只在拿到官方配置时可用（官方 /v1/tools/tts 只在
@@ -269,6 +275,10 @@ fun ChatScreen(
             speechError = it
             speaker.consumeError()
         }
+    }
+    // 开始念新的一段时，上一次的朗读报错就该收掉了（失败会重新写一次）
+    LaunchedEffect(speaker.speakingId) {
+        if (speaker.speakingId != null) speechError = null
     }
 
     /** 全屏查看的图片：本条的全部图片 + 当前点开的那张。 */

@@ -825,13 +825,22 @@
     <string name="tts_third_party_section">第三方声音</string>
     <string name="tts_third_party_api">第三方声音 API</string>
     <string name="tts_third_party_model">模型</string>
+    <string name="tts_third_party_adapter">协议</string>
+    <string name="tts_third_party_built_in">填入内置音色（%1$d 个）</string>
+    <string name="tts_third_party_built_in_hint">按当前协议一键加齐，不用记音色 id</string>
+    <string name="tts_third_party_voice_id">音色 id</string>
+    <string name="tts_third_party_voice_name">显示名称（可选）</string>
+    <string name="tts_third_party_voice_name_hint">好认的名字，比如「我的声音」</string>
+    <string name="tts_third_party_voice_custom_hint">去服务商控制台复制 id（自定义 / 克隆音色的 id 也填这里）</string>
     <string name="tts_third_party_reuse_key">复用聊天 API Key</string>
     <string name="tts_third_party_key">API Key</string>
     <string name="tts_third_party_enable">启用第三方声音</string>
+    <string name="tts_third_party_preset_qwen">填入千问 MaaS 预设</string>
+    <string name="tts_third_party_preset_qwen_hint">端点、模型、协议与常用音色一次填好；Key 仍需复用或手填</string>
     <string name="tts_third_party_voices">音色</string>
     <string name="tts_third_party_add_voice">添加自定义音色</string>
     <string name="tts_third_party_add_voice_hint">填服务端的音色 id</string>
-    <string name="tts_third_party_note">第三方声音需要服务商支持 /v1/audio/speech。当前版本仅保存配置与音色，合成通道尚在接入。</string>
+    <string name="tts_third_party_note">选中的音色会出现在「朗读」页，点行尾按钮即可试听。千问 MaaS 走 DashScope 协议，其余服务商走 OpenAI 兼容的 /v1/audio/speech。</string>
     <string name="tts_voice_default">系统默认</string>
     <string name="tts_voice_online">需联网</string>
     <string name="tts_voice_loading">正在读取系统音色…</string>
@@ -839,6 +848,7 @@
     <string name="tts_voice_hint">音色由系统语音合成引擎提供。「需联网」的音色在离线时可能读不出声。</string>
     <string name="tts_voice_preview">试听</string>
     <string name="tts_voice_preview_running">正在试听…再点一次可停止</string>
+    <string name="tts_voice_stop">停止</string>
     <string name="tts_voice_preview_text">你好，这是一段试听，用来挑选朗读音色。</string>
     <!-- DeepSeek 官方 TTS（/v1/tools/tts，音色 stella / tide） -->
     <string name="tts_voice_stella">Stella（女声 · DeepSeek 官方）</string>

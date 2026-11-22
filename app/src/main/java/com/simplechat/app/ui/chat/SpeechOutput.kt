@@ -71,6 +71,16 @@ class SpeechOutputController(private val context: Context) {
     /** 正在念试听样例（设置页据此把「试听」换成「停止」）。 */
     val previewing: Boolean get() = speakingId == PreviewUtteranceId
 
+    /**
+     * 正在试听的是哪一个音色；null = 没在试听。
+     *
+     * 试听态由 [speakingId] 承载，音色只是"这一次试听用的谁"。所以这里用
+     * 派生值而不是独立字段：`speakingId` 一被清掉（播完 / 停止 / 失败），
+     * 这里自动变 null，不会出现"音乐停了、按钮还显示成停止"的错位。
+     */
+    val previewingVoice: String? get() = if (previewing) lastPreviewVoice else null
+    private var lastPreviewVoice: String? = null
+
     private var engine: TextToSpeech? = null
     private var pending: Pair<String, String>? = null
     private var utteranceId: String? = null
@@ -78,6 +88,38 @@ class SpeechOutputController(private val context: Context) {
 
     /** 官方 TTS 的接入参数；null = 当前服务商不支持（界面会隐藏朗读键）。 */
     private var officialConfig: DeepSeekTts.Config? = null
+
+    /**
+     * 第三方声音模型配置；null / 未启用 = 不走第三方通道。
+     * 由设置流推送过来（见 `ChatScreen` 调用 `updateThirdParty`）。
+     */
+    private var thirdPartyConfig: com.simplechat.app.data.VoiceApiConfig? = null
+    private var thirdPartyChatKey: String = ""
+    private var thirdPartyChatBaseUrl: String = ""
+
+    /** 第三方通道的播放器（wav/mp3 都交给 MediaPlayer 解）。 */
+    private var mediaPlayer: android.media.MediaPlayer? = null
+    private var thirdPartyJob: Job? = null
+
+    fun updateThirdParty(
+        config: com.simplechat.app.data.VoiceApiConfig?,
+        chatKey: String,
+        chatBaseUrl: String,
+    ) {
+        thirdPartyConfig = config
+        thirdPartyChatKey = chatKey
+        thirdPartyChatBaseUrl = chatBaseUrl
+    }
+
+    /** 这个音色属于第三方通道时返回配置，否则 null。 */
+    private fun thirdPartyVoice(
+        config: com.simplechat.app.data.VoiceApiConfig?,
+        voiceName: String,
+    ): com.simplechat.app.data.VoiceApiConfig? {
+        if (config == null || !config.enabled) return null
+        if (voiceName.isBlank()) return null
+        return config.takeIf { voiceName in it.allVoices }
+    }
 
     /** 官方朗读任务与它自己的作用域（控制器不是 ViewModel，自己管生命周期）。 */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -224,6 +266,7 @@ class SpeechOutputController(private val context: Context) {
      */
     fun preview(text: String, voiceName: String) {
         applyVoice(voiceName)
+        lastPreviewVoice = voiceName
         speak(PreviewUtteranceId, text)
     }
 
@@ -246,6 +289,22 @@ class SpeechOutputController(private val context: Context) {
         stopPlayback(clearSpeaking = true)
         ActiveController?.takeIf { it !== this }?.stop()
         ActiveController = this
+        /*
+         * 第三方音色优先：它是有意配置的（用户选了具体音色），
+         * 不该被"官方音色恰好有空"或系统引擎抢走。
+         */
+        thirdPartyVoice(thirdPartyConfig, preferredVoice)?.let { config ->
+            com.simplechat.app.data.Diagnostics.log(
+                "TTS",
+                "third-party voice=$preferredVoice adapter=${config.adapter} enabled=${config.enabled}",
+            )
+            speakThirdParty(id, text, config, preferredVoice)
+            return
+        }
+        com.simplechat.app.data.Diagnostics.log(
+            "TTS",
+            "fallback system voice='$preferredVoice' cfg=${thirdPartyConfig?.let { "on/${it.allVoices.size}" } ?: "off"}",
+        )
         // 官方音色：只有当配置在的时候才走官方通道；不在时界面根本不该显示朗读键
         // （见 `showReadAloud`），真走到了这里也只是给一句提示，不发请求。
         val voiceId = DeepSeekTts.voiceIdOf(preferredVoice)
@@ -293,6 +352,7 @@ class SpeechOutputController(private val context: Context) {
      * 主要逻辑在 IO 线程（网络读取 + `AudioTrack.write` 都是阻塞调用），
      * 状态切回主线程 —— Compose 的状态读写在后台线程虽然也能工作，
      * 但"在哪个线程改的"这种事不要靠运气。
+
      */
     private fun speakOfficial(id: String, text: String, voiceId: String) {
         val generation = playbackGeneration
@@ -404,6 +464,91 @@ class SpeechOutputController(private val context: Context) {
             }
         }
     }
+    // ── 第三方 TTS（千问 MaaS / OpenAI 兼容）───────────────
+
+    /**
+     * 第三方通道：整段合成 → 落临时文件 → MediaPlayer 播放。
+     *
+     * 与官方通道（流式 PCM + AudioTrack）的区别：
+     * - 第三方返回的是**完整音频文件**（wav/mp3），不是裸 PCM；
+     * - 所以用 MediaPlayer 省去自己解 wav 头 / 处理采样率的麻烦，
+     *   代价是首包延迟更高（要等合成完）。文字朗读场景可以接受。
+     *
+     * 停止：`stopPlayback` 会 `release()` 播放器并删临时文件；这里每次
+     * 播放前都用新的 [playbackGeneration] 校验，避免"停了又响"。
+     */
+    private fun speakThirdParty(
+        id: String,
+        text: String,
+        config: com.simplechat.app.data.VoiceApiConfig,
+        voiceName: String,
+    ) {
+        val generation = playbackGeneration
+        error = null
+        speakingId = id
+        thirdPartyJob?.cancel()
+        thirdPartyJob = scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                com.simplechat.app.data.VoiceTtsClient.synthesize(
+                    config = config,
+                    chatKey = thirdPartyChatKey,
+                    chatBaseUrl = thirdPartyChatBaseUrl,
+                    text = text,
+                    voiceName = voiceName,
+                )
+            }
+            if (generation != playbackGeneration) return@launch
+            when (result) {
+                is com.simplechat.app.data.VoiceTtsClient.Result.Failed -> {
+                    com.simplechat.app.data.Diagnostics.log("TTS", "synth failed reason=${result.reason}")
+                    speakingId = null
+                    error = result.reason
+                }
+                is com.simplechat.app.data.VoiceTtsClient.Result.Ok -> {
+                    val file = runCatching {
+                        java.io.File(context.cacheDir, "tts-${java.util.UUID.randomUUID()}.wav").apply {
+                            writeBytes(result.bytes)
+                        }
+                    }.getOrNull()
+                    if (file == null) {
+                        speakingId = null
+                        error = Res.get(R.string.tts_failed)
+                        return@launch
+                    }
+                    runCatching {
+                        val player = android.media.MediaPlayer()
+                        player.setDataSource(file.absolutePath)
+                        player.setOnCompletionListener {
+                            if (generation == playbackGeneration) speakingId = null
+                            runCatching { player.release() }
+                            runCatching { file.delete() }
+                        }
+                        player.setOnErrorListener { _, _, _ ->
+                            if (generation == playbackGeneration) {
+                                speakingId = null
+                                error = Res.get(R.string.tts_failed)
+                            }
+                            runCatching { player.release() }
+                            runCatching { file.delete() }
+                            true
+                        }
+                        player.prepare()
+                        player.start()
+                        mediaPlayer = player
+                        com.simplechat.app.data.Diagnostics.log(
+                            "TTS",
+                            "playback start bytes=${result.bytes.size}",
+                        )
+                    }.onFailure {
+                        speakingId = null
+                        error = Res.get(R.string.tts_failed)
+                        runCatching { file.delete() }
+                    }
+                }
+            }
+        }
+    }
+
 
     /**
      * 等轨道把**缓冲区里剩下的音频**播完。
@@ -552,6 +697,11 @@ class SpeechOutputController(private val context: Context) {
         stopRequested = true
         officialJob?.cancel()
         officialJob = null
+        thirdPartyJob?.cancel()
+        thirdPartyJob = null
+        runCatching { mediaPlayer?.stop() }
+        runCatching { mediaPlayer?.release() }
+        mediaPlayer = null
         runCatching { audioTrack?.pause() }
         runCatching { audioTrack?.flush() }
         runCatching { engine?.stop() }
@@ -923,6 +1073,9 @@ private fun flattenInline(line: String): String {
 fun rememberSpeechOutput(
     voiceName: String = "",
     officialConfig: DeepSeekTts.Config? = null,
+    thirdPartyConfig: com.simplechat.app.data.VoiceApiConfig? = null,
+    chatKey: String = "",
+    chatBaseUrl: String = "",
 ): SpeechOutputController {
     val context = LocalContext.current
     // 与语音输入同一个道理：TTS 引擎会持有 Context，别把 Activity 留在地基里
@@ -934,6 +1087,9 @@ fun rememberSpeechOutput(
     }
     LaunchedEffect(controller, voiceName) { controller.applyVoice(voiceName) }
     LaunchedEffect(controller, officialConfig) { controller.applyOfficialConfig(officialConfig) }
+    LaunchedEffect(controller, thirdPartyConfig, chatKey, chatBaseUrl) {
+        controller.updateThirdParty(thirdPartyConfig, chatKey, chatBaseUrl)
+    }
     return controller
 }
 

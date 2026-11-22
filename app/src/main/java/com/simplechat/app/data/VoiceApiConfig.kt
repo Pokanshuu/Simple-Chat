@@ -31,12 +31,20 @@ data class VoiceApiConfig(
     val voices: List<String> = emptyList(),
     /** 用户手填的音色 id（服务端没有列表接口时全靠它）。 */
     val customVoices: List<String> = emptyList(),
+    /**
+     * 音色 id → 显示名。
+     *
+     * 只为一件事：界面上别再出现光秃秃的 `Cherry`，更别出现一串平台生成的
+     * 克隆音色 id。用户给音色起的名字存在这里；缺省时回退到 [VoiceCatalog]
+     * 的内置目录，再回退到 id 本身。
+     */
+    val voiceLabels: Map<String, String> = emptyMap(),
     /** 自定义播放时的模型名（如 `tts-1`、`qwen-tts`）。 */
     val model: String = "tts-1",
 ) {
     override fun toString() = "VoiceApiConfig(enabled=$enabled, adapter=$adapter, voices=${voices.size})"
 
-    /** 端点到音频合成接口。 */
+    /** 端点到音频合成接口。各协议路径不同，按 [adapter] 分支。 */
     fun speechEndpoint(chatBaseUrl: String): String {
         val configured = baseUrl.ifBlank { chatBaseUrl }
         val base = (com.simplechat.app.net.officialChatRoot(configured) ?: configured)
@@ -46,8 +54,62 @@ data class VoiceApiConfig(
             .removeSuffix("/anthropic")
             .removeSuffix("/compatible-mode/v1")
             .removeSuffix("/v1")
-        return "$base/v1/audio/speech"
+        return when (adapter) {
+            /*
+             * 千问 MaaS（实测可用）：
+             *   POST {base}/api/v1/services/aigc/multimodal-generation/generation
+             *   {"model":"qwen3-tts-flash","input":{"text":"..."},
+             *    "parameters":{"voice":"Cherry"}}
+             * 返回 {"output":{"audio":{"url":"...wav?签名"}}}
+             *
+             * 注意两个坑（都踩过）：
+             * - 这个平台**没有** /v1/audio/speech（404）；
+             * - input 必须是 `{"text": ...}`，写成 `{"messages": [...]}`
+             *   会报 "Due to invalid text, invalid audio was returned"。
+             */
+            "DASHSCOPE_TTS" -> "$base/api/v1/services/aigc/multimodal-generation/generation"
+            else -> "$base/v1/audio/speech"        }
     }
+
+    companion object {
+        /** DashScope（千问 MaaS）协议。 */
+        const val AdapterDashScope = "DASHSCOPE_TTS"
+        /** OpenAI 兼容的 `/v1/audio/speech`。 */
+        const val AdapterOpenAi = "OPENAI_TTS"
+        /** 同上，但音色清单只能手填（服务端不提供列表接口）。 */
+        const val AdapterCustomOpenAi = "CUSTOM_OPENAI"
+
+        /** 千问 MaaS 的快速预设（key 仍走复用聊天 key 或手填）。 */
+        fun qwenDashScopePreset(chatKey: String? = null): VoiceApiConfig = VoiceApiConfig(
+            enabled = true,
+            baseUrl = "https://maas.qianwenaiapi.com",
+            reuseChatKey = true,
+            adapter = AdapterDashScope,
+            model = "qwen3-tts-flash",
+            customVoices = VoiceCatalog.dashScope.map { it.id },
+            voiceLabels = VoiceCatalog.dashScope.associate { it.id to it.label },
+        )
+
+        /** 把某个协议的内置音色一次性并进来（保留用户已有的自定义音色）。 */
+        fun withBuiltInVoices(config: VoiceApiConfig): VoiceApiConfig {
+            val entries = VoiceCatalog.builtIn(config.adapter)
+            return config.copy(
+                customVoices = (config.customVoices + entries.map { it.id }).distinct(),
+                voiceLabels = config.voiceLabels + entries.associate { it.id to it.label },
+            )
+        }
+    }
+
+    /**
+     * 音色显示名：用户起的名字 → 内置目录 → id 本身。
+     *
+     * 最后那一层不能省：克隆音色 / 服务端新上线的音色我们不可能都内置，
+     * 显示原 id 总比显示空白强。
+     */
+    fun labelOf(id: String): String =
+        voiceLabels[id]?.takeIf { it.isNotBlank() }
+            ?: VoiceCatalog.builtInLabel(adapter, id)
+            ?: id
 
     fun key(chatKey: String): String {
         val key = if (reuseChatKey) chatKey else SecretBox.decrypt(apiKeyEncrypted)

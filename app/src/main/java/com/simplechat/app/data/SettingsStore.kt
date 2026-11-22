@@ -590,7 +590,7 @@ class SettingsStore(
 
     /** 第三方声音模型配置。 */
     suspend fun setVoiceApi(config: VoiceApiConfig) {
-        require(config.adapter in setOf("OPENAI_TTS", "CUSTOM_OPENAI"))
+        require(config.adapter in setOf("OPENAI_TTS", "CUSTOM_OPENAI", "DASHSCOPE_TTS"))
         preferences.edit { it[Keys.VOICE_API] = apiProfileJson.encodeToString(config) }
     }
 
