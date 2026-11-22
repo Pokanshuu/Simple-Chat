@@ -87,9 +87,20 @@ class ChatApi(
             if (search && (!generateImageTool || thinkingEnabled)) add(DeepSeekTool("deepseek_web_search"))
             if (readLink && !generateImageTool) add(DeepSeekTool("deepseek_read_url"))
         }.ifEmpty { null } else null
-        val requestMessages = if (generateImageTool) {
-            listOf(OutMessageDto("system", MessageContent.text(imageToolInstruction))) + messages
-        } else messages
+        val openAiSearchEnabled = openAiSearch && supportsOpenAiSearchTool(baseUrl, model.id, apiStyle)
+        // DeepSeek native tools use `type` (not `name`); client function tools use the `name` field.
+        val serverSearchEnabled = tools?.any { it.type == "deepseek_web_search" } == true || openAiSearchEnabled
+        val appInstructions = buildList {
+            if (generateImageTool) add(imageToolInstruction)
+            if (serverSearchEnabled || usesAutomaticOpenAiSearch(model.id, apiStyle) && isOfficialOpenAiEndpoint(baseUrl)) {
+                add(serverSearchInstruction)
+            }
+        }
+        val systemPrefixSize = messages.indexOfFirst { it.role != "system" && it.role != "developer" }
+            .let { if (it < 0) messages.size else it }
+        val requestMessages = messages.take(systemPrefixSize) +
+            appInstructions.map { OutMessageDto("system", MessageContent.text(it)) } +
+            messages.drop(systemPrefixSize)
         val title = if (flash && requestTitle && messages.sumOf {
             ((it.content as? JsonPrimitive)?.content?.length ?: 8_001).toLong() + 32
         } <= 8_000) DeepSeekTitle() else null
@@ -101,7 +112,7 @@ class ChatApi(
                         DeepSeekTool("function", name = it.name, description = it.description, parameters = it.parameters)
                     }
                     val searchTool = DeepSeekTool("web_search").takeIf {
-                        openAiSearch && supportsOpenAiSearchTool(baseUrl, model.id, apiStyle)
+                        openAiSearchEnabled
                     }
                     request.copy(
                         tools = (tools.orEmpty() + listOfNotNull(imageTool, searchTool)).ifEmpty { null },
@@ -312,6 +323,8 @@ data class ImageInput(
 )
 
 internal const val imageToolInstruction = "SimpleChat can generate images through generate_image, even when the chat model cannot output images itself. Call the tool only if the latest user actually asks to create or edit an image. Use create for a new image, and edit when the user wants to change or reuse an existing image; the app binds the reference and will not proceed if it cannot find one. Use the user's requested visual details and preserve unchanged details when editing. Do not call for capability questions, image analysis, prompt writing, quoted requests, or requests not to generate. Do not claim that an image was generated or edited in text; the app displays the actual result."
+
+internal const val serverSearchInstruction = "This turn has access to the app's server-side web search tool. For current or time-sensitive questions, use the tool and base your answer on its returned results. When search tool results are present in this turn, you have searched: synthesize them and cite the supplied sources. Never claim that this chat has no search or web tool, or that you cannot search, unless the tool actually failed or was unavailable. Do not invent search results."
 
 internal val imageToolDefinition = FunctionDefinitionDto(
     name = "generate_image",

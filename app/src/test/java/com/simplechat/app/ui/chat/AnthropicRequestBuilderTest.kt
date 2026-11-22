@@ -13,6 +13,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -126,6 +127,8 @@ class AnthropicRequestBuilderTest {
         assertEquals(listOf(AnthropicTool.ReadUrl), build(listOf(link)).tools)
         assertEquals(listOf(AnthropicTool.WebSearch), build(listOf(plain), search = true).tools)
         assertEquals(listOf(AnthropicTool.ReadUrl, AnthropicTool.WebSearch), build(listOf(link), search = true).tools)
+        assertTrue(build(listOf(plain), search = true).system.contains("Never claim that this chat has no search"))
+        assertFalse(build(listOf(plain), search = false).system.contains("Never claim that this chat has no search"))
     }
 
     @Test

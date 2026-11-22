@@ -294,7 +294,12 @@ data class StoredSettings(
 
     /** 当前通道是否支持联网搜索。 */
     val officialFlash: Boolean get() = isOfficialDeepSeekEndpoint(baseUrl) && effectiveModelId(baseUrl, modelId) == DEEPSEEK_FLASH
-    val supportsWebSearch: Boolean get() = searchApi.enabled || officialFlash
+    val hasConfiguredSearchApi: Boolean get() = searchApi.enabled &&
+        (if (searchApi.reuseChatKey) apiKey.isNotBlank() else searchApi.apiKeyEncrypted.isNotBlank()) &&
+        runCatching { searchApi.endpoint(baseUrl, searchApi.searchPath) }.isSuccess
+    val supportsWebSearch: Boolean get() = hasConfiguredSearchApi || officialFlash ||
+        com.simplechat.app.net.usesAutomaticOpenAiSearch(modelId, resolvedApiStyle) ||
+        com.simplechat.app.net.supportsOpenAiSearchTool(baseUrl, modelId, resolvedApiStyle)
     val supportsFileReferences: Boolean get() = !isOfficialDeepSeekEndpoint(baseUrl) || officialFlash
     val useRemoteFiles: Boolean get() = filesApi.enabled && supportsFileReferences
 }
