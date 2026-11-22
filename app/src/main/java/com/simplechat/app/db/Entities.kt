@@ -42,6 +42,13 @@ data class ConversationEntity(
     val pinned: Boolean = false,
     val pinnedAt: Long? = null,
     @ColumnInfo(defaultValue = "1") val memoryEnabled: Boolean = true,
+    /**
+     * 回收站：非空 = 已删除，值是删除时刻（毫秒）。
+     *
+     * 删除会话不再立刻 `DELETE`：先打这个标记，附件与消息原样留着（恢复要它们）。
+     * 超过 15 天由 [com.simplechat.app.data.ChatRepository.purgeExpiredTrash] 真删。
+     */
+    val deletedAt: Long? = null,
 )
 
 /**

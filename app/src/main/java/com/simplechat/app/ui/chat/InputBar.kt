@@ -72,6 +72,8 @@ import com.simplechat.app.ui.common.MotionEasing
 import com.simplechat.app.ui.common.PillShape
 import com.simplechat.app.ui.common.ProgressRing
 import com.simplechat.app.ui.theme.LocalChatColors
+import com.simplechat.app.ui.theme.LocalChatGlassAlpha
+import com.simplechat.app.ui.theme.glassTintedSurface
 import kotlin.math.ceil
 
 /**
@@ -178,11 +180,22 @@ internal fun InputBar(
     val startVoice by rememberUpdatedState(onVoiceHoldStart)
     val finishVoice by rememberUpdatedState(onVoiceHoldFinish)
     val slideVoice by rememberUpdatedState(onVoiceSlide)
+    /*
+     * 玻璃：壁纸设置里开了「透明玻璃面板」时，输入栏底色半透明，透出背后
+     * 已按用户参数模糊过的壁纸 —— 就是毛玻璃。关掉时 alpha = 1（不透明）。
+     * 可读性下限：输入栏里是用户正在打的字，alpha 不能低于 0.35。
+     */
+    val glassAlpha = LocalChatGlassAlpha.current
+    val composerBase = if (glassAlpha > 0f) {
+        glassTintedSurface(colors.card, MaterialTheme.colorScheme.primary, glassAlpha.coerceAtLeast(0.35f))
+    } else {
+        colors.card
+    }
     val background by animateColorAsState(
         targetValue = when {
             voiceCancelling && voiceState.holding -> MaterialTheme.colorScheme.error
             voiceState.active -> MaterialTheme.colorScheme.primary
-            else -> colors.card
+            else -> composerBase
         },
         animationSpec = tween(if (voiceState.active) 140 else FoldAnimMs, easing = MotionEasing),
         label = "composerColor",

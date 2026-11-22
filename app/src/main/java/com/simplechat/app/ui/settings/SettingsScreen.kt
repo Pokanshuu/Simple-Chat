@@ -9,6 +9,7 @@ import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -38,10 +39,12 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.runtime.collectAsState
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -56,6 +59,12 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -78,6 +87,8 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.simplechat.app.ui.common.MenuShape
+import com.simplechat.app.ui.common.SegmentedSwitch
+import com.simplechat.app.ui.theme.drawWallpaper
 import com.simplechat.app.ui.common.BubbleShapeOut
 import com.simplechat.app.App
 import com.simplechat.app.R
@@ -157,12 +168,20 @@ private enum class SettingsPage(private val parentName: String?) {
     APPEARANCE("ROOT"),
     /** 字体大小（外观 → 二级）。 */
     FONT("APPEARANCE"),
+    /** 自定义字体：导入、管理、三层分别选择（外观 → 二级）。 */
+    FONTS("APPEARANCE"),
+    /** 壁纸：从本地选图作为聊天背景（外观 → 二级）。 */
+    WALLPAPER("APPEARANCE"),
     /** 对话行为：思考折叠、搜索范围等开关。 */
     CHAT("ROOT"),
     SEARCH_SETTINGS("CHAT"),
     LOADING_WORDS("CHAT"),
     /** 朗读音色（系统 TTS）。 */
     VOICE("ROOT"),
+    /** 第三方声音模型（朗读 → 第三方声音 API 二级页）。 */
+    VOICE_API("VOICE"),
+    /** 回收站（数据管理 → 二级）。 */
+    TRASH("DATA"),
     /** 用量与余额：账户余额 + 全部会话累计消耗。 */
     USAGE("ROOT"),
     ABOUT("ROOT"),
@@ -257,6 +276,15 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
     val container = (context.applicationContext as App).container
     val scope = rememberCoroutineScope()
     val repository = container.chatRepository
+
+    /*
+     * 回收站的 15 天自动清理：放在这里而不是 Application/WorkManager ——
+     * 设置页是用户几乎必然会打开的地方，粒度又是"天"，启动时顺手跑一次足够。
+     * 失败只吞掉，绝不打扰用户。
+     */
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        runCatching { repository.purgeExpiredTrash() }
+    }
 
     var stored by remember { mutableStateOf(StoredSettings()) }
     var settingsLoaded by remember { mutableStateOf(false) }
@@ -614,10 +642,14 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                 SettingsPage.MEMORY -> stringResource(R.string.settings_group_memory)
                 SettingsPage.APPEARANCE -> stringResource(R.string.settings_appearance)
                 SettingsPage.FONT -> stringResource(R.string.settings_font_size)
+                SettingsPage.FONTS -> stringResource(R.string.settings_custom_fonts)
+                SettingsPage.WALLPAPER -> stringResource(R.string.settings_wallpaper)
                 SettingsPage.CHAT -> stringResource(R.string.settings_chat_behavior)
                 SettingsPage.SEARCH_SETTINGS -> stringResource(R.string.settings_search_options)
                 SettingsPage.LOADING_WORDS -> stringResource(R.string.settings_loading_words)
                 SettingsPage.VOICE -> stringResource(R.string.settings_read_aloud)
+                SettingsPage.VOICE_API -> stringResource(R.string.tts_third_party_api)
+                SettingsPage.TRASH -> stringResource(R.string.trash_title)
                 SettingsPage.USAGE -> stringResource(
                     if (isOfficialDeepSeekEndpoint(stored.baseUrl)) R.string.settings_usage_title else R.string.settings_usage_only,
                 )
@@ -689,6 +721,18 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                                 }
                             },
                             onOpenFont = { page = SettingsPage.FONT },
+                            onOpenFonts = { page = SettingsPage.FONTS },
+                            onOpenWallpaper = { page = SettingsPage.WALLPAPER },
+                        )
+
+                        SettingsPage.FONTS -> FontsPage(
+                            stored = stored,
+                            store = store,
+                        )
+
+                        SettingsPage.WALLPAPER -> WallpaperPage(
+                            stored = stored,
+                            store = store,
                         )
 
                         SettingsPage.CHAT -> ChatBehaviorPage(
@@ -746,6 +790,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                                 importLauncher.launch(arrayOf("*/*"))
                             },
                             onDeleteAll = { dialog = SettingsDialog.DeleteAll },
+                            onOpenTrash = { page = SettingsPage.TRASH },
                         )
 
                         SettingsPage.API_PROFILE -> if (editingProfile != null && editingSettings != null) ApiPage(
@@ -873,6 +918,9 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                             officialAvailable = officialTtsConfig != null,
                             previewing = speaker.previewing,
                             error = speechError,
+                            onOpenThirdPartyApi = { page = SettingsPage.VOICE_API },
+                            thirdPartyVoices = stored.voiceApi.allVoices,
+                            thirdPartyEnabled = stored.voiceApi.enabled,
                             onSelect = { voice ->
                                 scope.launch { store.setTtsVoice(voice?.name.orEmpty(), voice?.label.orEmpty()) }
                                 // 选完顺手念一句：省得用户"选了但不知道变了没有"
@@ -881,6 +929,17 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                             onPreview = { voice ->
                                 speaker.preview(Res.get(R.string.tts_voice_preview_text), voice?.name.orEmpty())
                             },
+                        )
+
+                        SettingsPage.VOICE_API -> VoiceApiPage(
+                            stored = stored,
+                            store = store,
+                        )
+
+                        SettingsPage.TRASH -> TrashPage(
+                            loadTrash = { repository.observeTrash() },
+                            onRestore = { ids -> scope.launch { repository.restoreConversations(ids) } },
+                            onPurge = { ids -> scope.launch { repository.deleteConversations(ids) } },
                         )
                     }
 
@@ -1405,6 +1464,8 @@ private fun AppearancePage(
     onAccentChange: (AccentColor) -> Unit,
     onIconChange: (MainActivity, Boolean) -> Unit,
     onOpenFont: () -> Unit,
+    onOpenFonts: () -> Unit,
+    onOpenWallpaper: () -> Unit,
 ) {
     val activity = LocalActivity.current as? MainActivity
     var pendingIcon by rememberSaveable { mutableStateOf<Boolean?>(null) }
@@ -1494,6 +1555,35 @@ private fun AppearancePage(
                 )
             },
             onClick = onOpenFont,
+        )
+        RowDivider()
+        SettingsNavRow(
+            icon = AppIcons.FontSize,
+            label = stringResource(R.string.settings_custom_fonts),
+            value = when {
+                stored.fonts.isEmpty() -> stringResource(R.string.fonts_none)
+                else -> stringResource(R.string.fonts_count, stored.fonts.size)
+            },
+            onClick = onOpenFonts,
+        )
+    }
+
+    /*
+     * 壁纸单独一个分组：它不属于「文字」。混在字体那一组里，
+     * 用户找壁纸时会在字体设置里翻 —— 语义上就不对。
+     */
+    SettingsSectionLabel(stringResource(R.string.settings_group_background))
+
+    SettingsCard {
+        SettingsNavRow(
+            icon = AppIcons.Image,
+            label = stringResource(R.string.settings_wallpaper),
+            value = if (stored.wallpaperPath.isNullOrBlank()) {
+                stringResource(R.string.value_none)
+            } else {
+                stringResource(R.string.value_enabled_generic)
+            },
+            onClick = onOpenWallpaper,
         )
     }
 }
@@ -1805,6 +1895,11 @@ private fun VoicePage(
     error: String?,
     onSelect: (SpeechVoice?) -> Unit,
     onPreview: (SpeechVoice?) -> Unit,
+    /** 第三方声音模型 API 的配置入口。 */
+    onOpenThirdPartyApi: () -> Unit = {},
+    /** 第三方服务提供的音色 id（服务端清单 + 手填）。 */
+    thirdPartyVoices: List<String> = emptyList(),
+    thirdPartyEnabled: Boolean = false,
 ) {
     SettingsCard { SettingsSwitchRow(stringResource(R.string.tts_enabled), enabled, onToggle) }
     if (!enabled) return
@@ -1846,6 +1941,39 @@ private fun VoicePage(
                     onPreview = { onPreview(voice) },
                 )
             }
+        }
+    }
+
+    /*
+     * 第三方声音模型：配置入口 + 它自己列出来的音色。
+     *
+     * 音色 id 由服务端清单和用户手填组成（见 VoiceApiConfig.allVoices）；
+     * 选中的 id 走和系统音色同一条 name 通道，播放侧按是否配了第三方来分流。
+     */
+    Spacer(Modifier.size(24.dp))
+    SettingsSectionLabel(stringResource(R.string.tts_third_party_section))
+    SettingsCard {
+        SettingsNavRow(
+            icon = AppIcons.Mic,
+            label = stringResource(R.string.tts_third_party_api),
+            value = if (thirdPartyEnabled) {
+                stringResource(R.string.value_enabled_generic)
+            } else {
+                stringResource(R.string.value_none)
+            },
+            onClick = onOpenThirdPartyApi,
+        )
+        thirdPartyVoices.forEach { voiceId ->
+            RowDivider()
+            VoiceRow(
+                label = voiceId,
+                selected = voiceId == selectedName,
+                onClick = {
+                    onSelect(SpeechVoice(name = voiceId, label = voiceId, needsNetwork = true))
+                    onPreview(SpeechVoice(name = voiceId, label = voiceId, needsNetwork = true))
+                },
+                onPreview = { onPreview(SpeechVoice(name = voiceId, label = voiceId, needsNetwork = true)) },
+            )
         }
     }
 
@@ -1944,6 +2072,7 @@ private fun DataPage(
     onExportDeepSeek: () -> Unit,
     onImport: () -> Unit,
     onDeleteAll: () -> Unit,
+    onOpenTrash: () -> Unit,
 ) {
     SettingsSectionLabel(stringResource(R.string.settings_group_backup))
 
@@ -2033,6 +2162,24 @@ private fun DataPage(
                 )
             }
         }
+    }
+
+    /*
+     * 回收站**单独一个分组**，不放进「重置」里。
+     *
+     * 重置组整组都是危险操作（清除历史、清空数据），回收站却是个**安全**入口
+     * （去恢复误删的会话）。混在一起，用户想找回收站时会在"红字区"里翻，
+     * 也容易在确认框弹出前误点旁边的「清除所有历史」。
+     */
+    SettingsSectionLabel(stringResource(R.string.trash_group_section))
+
+    SettingsCard {
+        SettingsNavRow(
+            icon = AppIcons.Trash,
+            label = stringResource(R.string.trash_title),
+            value = null,
+            onClick = onOpenTrash,
+        )
     }
 
     SettingsSectionLabel(stringResource(R.string.settings_group_reset))
@@ -3902,4 +4049,1001 @@ private fun DiagnosticsPage(
             )
         }
     }
+}
+
+// ══════════════════════════════════════════════════════════
+//  自定义字体
+// ══════════════════════════════════════════════════════════
+
+/** 从 content Uri 读展示名（文件管理器里看到的文件名）。 */
+private fun displayNameOf(context: android.content.Context, uri: android.net.Uri): String? =
+    runCatching {
+        context.contentResolver
+            .query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+    }.getOrNull()
+
+private fun fontIdOfSlot(stored: StoredSettings, slot: com.simplechat.app.data.FontSlot): String? =
+    when (slot) {
+        com.simplechat.app.data.FontSlot.UI -> stored.uiFontId
+        com.simplechat.app.data.FontSlot.USER -> stored.userFontId
+        com.simplechat.app.data.FontSlot.ASSISTANT -> stored.assistantFontId
+    }
+
+private fun fontLabelOf(stored: StoredSettings, slot: com.simplechat.app.data.FontSlot): String? =
+    stored.fonts.firstOrNull { it.id == fontIdOfSlot(stored, slot) }?.displayName
+
+/**
+ * 自定义字体页：导入、删除、三层分别选择。
+ *
+ * 导入只负责把文件复制进私有目录并登记元数据；真正"用上"靠
+ * `LocalUserFontFamily` / `LocalAssistantFontFamily` 与主题的 `uiFontFamily`。
+ */
+@Composable
+private fun FontsPage(
+    stored: StoredSettings,
+    store: SettingsStore,
+) {
+    val colors = LocalChatColors.current
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var slotMenu by remember { mutableStateOf<com.simplechat.app.data.FontSlot?>(null) }
+
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        scope.launch {
+            val added = uris.mapNotNull { uri ->
+                com.simplechat.app.data.FontFiles.import(
+                    context = context,
+                    uri = uri,
+                    displayName = displayNameOf(context, uri) ?: "字体",
+                )
+            }
+            if (added.isEmpty()) {
+                android.widget.Toast.makeText(context, R.string.fonts_import_failed, android.widget.Toast.LENGTH_SHORT).show()
+            } else {
+                store.setFonts(stored.fonts + added)
+            }
+        }
+    }
+
+    SettingsSectionLabel(stringResource(R.string.fonts_group_imported))
+
+    SettingsCard {
+        if (stored.fonts.isEmpty()) {
+            SettingsActionRow(
+                label = stringResource(R.string.fonts_empty),
+                hint = stringResource(R.string.fonts_empty_hint),
+                onClick = {},
+                enabled = false,
+            )
+        } else {
+            stored.fonts.forEachIndexed { index, font ->
+                if (index > 0) RowDivider()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = Space.Row)
+                        .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = font.displayName,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = stringResource(R.string.fonts_preview_line),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.placeholder,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                com.simplechat.app.data.FontFiles.delete(context, font)
+                                com.simplechat.app.ui.theme.forgetFontFamily(context, font)
+                                // 正在使用它的层先回到系统字体，否则列表里会留一个悬空 id
+                                listOf(
+                                    com.simplechat.app.data.FontSlot.UI,
+                                    com.simplechat.app.data.FontSlot.USER,
+                                    com.simplechat.app.data.FontSlot.ASSISTANT,
+                                ).forEach { slot ->
+                                    if (fontIdOfSlot(stored, slot) == font.id) store.setFontSlot(slot, null)
+                                }
+                                store.setFonts(stored.fonts.filterNot { it.id == font.id })
+                            }
+                        },
+                    ) {
+                        Text(stringResource(R.string.fonts_remove), color = colors.danger)
+                    }
+                }
+            }
+        }
+    }
+
+    SettingsCard {
+        SettingsActionRow(
+            label = stringResource(R.string.fonts_import),
+            hint = stringResource(R.string.fonts_import_hint),
+            onClick = { picker.launch(arrayOf("*/*")) },
+            icon = AppIcons.PlusCircle,
+        )
+    }
+
+    SettingsSectionLabel(stringResource(R.string.fonts_group_apply))
+
+    SettingsCard {
+        FontSlotRow(
+            title = stringResource(R.string.fonts_slot_ui),
+            hint = stringResource(R.string.fonts_slot_ui_hint),
+            value = fontLabelOf(stored, com.simplechat.app.data.FontSlot.UI),
+            onClick = { slotMenu = com.simplechat.app.data.FontSlot.UI },
+        )
+        RowDivider()
+        FontSlotRow(
+            title = stringResource(R.string.fonts_slot_user),
+            hint = stringResource(R.string.fonts_slot_user_hint),
+            value = fontLabelOf(stored, com.simplechat.app.data.FontSlot.USER),
+            onClick = { slotMenu = com.simplechat.app.data.FontSlot.USER },
+        )
+        RowDivider()
+        FontSlotRow(
+            title = stringResource(R.string.fonts_slot_assistant),
+            hint = stringResource(R.string.fonts_slot_assistant_hint),
+            value = fontLabelOf(stored, com.simplechat.app.data.FontSlot.ASSISTANT),
+            onClick = { slotMenu = com.simplechat.app.data.FontSlot.ASSISTANT },
+        )
+    }
+
+    slotMenu?.let { slot ->
+        AppMenu(expanded = true, onDismissRequest = { slotMenu = null }) {
+            AppMenuItem(
+                label = stringResource(R.string.fonts_system_default),
+                selected = fontIdOfSlot(stored, slot) == null,
+                onClick = {
+                    slotMenu = null
+                    scope.launch { store.setFontSlot(slot, null) }
+                },
+            )
+            stored.fonts.forEach { font ->
+                AppMenuItem(
+                    label = font.displayName,
+                    selected = fontIdOfSlot(stored, slot) == font.id,
+                    onClick = {
+                        slotMenu = null
+                        scope.launch { store.setFontSlot(slot, font.id) }
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** 字体槽位一行：标题 + 说明 + 当前选择。 */
+@Composable
+private fun FontSlotRow(
+    title: String,
+    hint: String,
+    value: String?,
+    onClick: () -> Unit,
+) {
+    val colors = LocalChatColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .heightIn(min = Space.Row)
+            .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.IconGap),
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(text = title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+            Text(text = hint, style = MaterialTheme.typography.labelSmall, color = colors.placeholder)
+        }
+        Text(
+            text = value ?: stringResource(R.string.fonts_system_default),
+            style = MaterialTheme.typography.labelMedium,
+            color = if (value == null) colors.placeholder else MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
+// ══════════════════════════════════════════════════════════
+//  壁纸
+// ══════════════════════════════════════════════════════════
+
+/**
+ * 壁纸页：选图 + 画面调节。
+ *
+ * 只改**聊天页**背景 —— 设置页保持纯色，否则一张照片铺上去，
+ * 开关和分组标签的对比度会一起崩掉。
+ *
+ * 参数分组参照壁纸引擎那套：画面（模糊/亮度/对比度/饱和度/位置/缩放）、
+ * 适配（覆盖/填充/居中/拉伸 + 翻转）、细节（透明度/暗化）。
+ */
+/**
+ * 毛玻璃卡片：半透明底 + 背后壁纸的模糊副本 + 可调圆角。
+ *
+ * 壁纸设置页专用 —— 别的设置页保持原来的实心卡片，那里没有背景图可"透"。
+ * `backdrop` 为空（还没选壁纸）时退回普通半透明卡片。
+ */
+@Composable
+private fun GlassCard(
+    backdrop: androidx.compose.ui.graphics.ImageBitmap?,
+    radius: Float,
+    alpha: Float,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    val colors = LocalChatColors.current
+    val shape = RoundedCornerShape(radius.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Space.Screen, vertical = 4.dp)
+            .clip(shape),
+    ) {
+        if (backdrop != null) {
+            Image(
+                bitmap = backdrop,
+                contentDescription = null,
+                modifier = Modifier
+                    .matchParentSize()
+                    .blur(20.dp),
+                contentScale = ContentScale.Crop,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(colors.card.copy(alpha = alpha)),
+        )
+        Column(modifier = Modifier.fillMaxWidth(), content = content)
+    }
+}
+
+/**
+ * 壁纸页的卡片：按「透明玻璃面板」开关选 GlassCard 或普通实心卡片。
+ *
+ * 玻璃面板好看但可读性依赖壁纸；用户关掉它就回到标准设置页的样子。
+ */
+@Composable
+private fun WallpaperCard(
+    stored: StoredSettings,
+    backdrop: androidx.compose.ui.graphics.ImageBitmap?,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    if (stored.wallpaperGlassPanel) {
+        GlassCard(backdrop, stored.wallpaperPanelRadius, stored.wallpaperPanelAlpha, content)
+    } else {
+        // SettingsCard 的 content 不带 ColumnScope，这里补一层 Column 保持同样的排版
+        SettingsCard {
+            Column(modifier = Modifier.fillMaxWidth()) { content() }
+        }
+    }
+}
+
+@Composable
+private fun WallpaperPage(
+    stored: StoredSettings,
+    store: SettingsStore,
+) {
+    val colors = LocalChatColors.current
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    fun saveTuning(
+        blur: Float = stored.wallpaperBlur,
+        brightness: Float = stored.wallpaperBrightness,
+        contrast: Float = stored.wallpaperContrast,
+        saturation: Float = stored.wallpaperSaturation,
+        offsetX: Float = stored.wallpaperOffsetX,
+        offsetY: Float = stored.wallpaperOffsetY,
+        scale: Float = stored.wallpaperScale,
+        dim: Float = stored.wallpaperDim,
+        fit: String = stored.wallpaperFit,
+        flipH: Boolean = stored.wallpaperFlipH,
+    ) {
+        scope.launch {
+            store.setWallpaperTuning(blur, brightness, contrast, saturation, offsetX, offsetY, scale, dim, fit, flipH)
+        }
+    }
+
+    /*
+     * 裁剪是**独立入口**，不在选图后强制弹出：多数用户换壁纸只是想换张图，
+     * 每次都要过一遍裁剪器是打扰。cropRequest 由「裁剪壁纸」按钮触发，
+     * 结果写回 scale/offsetX/offsetY（fit = COVER），与画面里的滑块同源。
+     */
+    var cropRequest by remember {
+        mutableStateOf<Pair<androidx.compose.ui.graphics.ImageBitmap, android.net.Uri?>?>(null)
+    }
+
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val name = com.simplechat.app.data.WallpaperFiles.import(context, uri)
+            if (name == null) {
+                android.widget.Toast.makeText(context, R.string.wallpaper_import_failed, android.widget.Toast.LENGTH_SHORT).show()
+            } else {
+                store.setWallpaper(name)
+            }
+        }
+    }
+
+    cropRequest?.let { (bitmap, uri) ->
+        WallpaperCropDialog(
+            image = bitmap,
+            initialScale = stored.wallpaperScale,
+            initialOffsetX = stored.wallpaperOffsetX,
+            initialOffsetY = stored.wallpaperOffsetY,
+            onDismiss = { cropRequest = null },
+            onConfirm = { scale, offsetX, offsetY ->
+                cropRequest = null
+                scope.launch {
+                    // uri 非空 = 刚选的新图（要落盘）；为空 = 对现有壁纸重裁
+                    val name = if (uri != null) {
+                        com.simplechat.app.data.WallpaperFiles.import(context, uri)
+                    } else {
+                        stored.wallpaperPath
+                    }
+                    if (name == null) {
+                        android.widget.Toast.makeText(context, R.string.wallpaper_import_failed, android.widget.Toast.LENGTH_SHORT).show()
+                    } else {
+                        if (uri != null) store.setWallpaper(name)
+                        store.setWallpaperTuning(
+                            blur = stored.wallpaperBlur,
+                            brightness = stored.wallpaperBrightness,
+                            contrast = stored.wallpaperContrast,
+                            saturation = stored.wallpaperSaturation,
+                            offsetX = offsetX,
+                            offsetY = offsetY,
+                            scale = scale,
+                            dim = stored.wallpaperDim,
+                            fit = "COVER",
+                            flipH = stored.wallpaperFlipH,
+                        )
+                    }
+                }
+            },
+        )
+    }
+
+
+    val preview by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(
+        initialValue = null,
+        stored.wallpaperPath,
+        stored.wallpaperBlur,
+    ) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                // 与聊天页同一套降采样近似模糊，预览才和实际一致
+                val sample = when {
+                    stored.wallpaperBlur < 1f -> 1
+                    stored.wallpaperBlur < 6f -> 2
+                    stored.wallpaperBlur < 14f -> 4
+                    stored.wallpaperBlur < 24f -> 8
+                    else -> 16
+                }
+                val options = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+                android.graphics.BitmapFactory
+                    .decodeFile(com.simplechat.app.data.WallpaperFiles.fileOf(context).absolutePath, options)
+                    ?.asImageBitmap()
+            }.getOrNull()
+        }
+    }
+    SettingsSectionLabel(stringResource(R.string.wallpaper_group_source))
+    WallpaperCard(stored, preview) {
+        SettingsActionRow(
+            label = stringResource(R.string.wallpaper_pick),
+            hint = stringResource(R.string.wallpaper_pick_hint),
+            onClick = {
+                picker.launch(
+                    androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                )
+            },
+            icon = AppIcons.Image,
+        )
+        if (!stored.wallpaperPath.isNullOrBlank()) {
+            RowDivider()
+            /* 独立入口：对当前壁纸重裁。选图时不弹，避免换张图也要过一遍裁剪器。 */
+            SettingsActionRow(
+                label = stringResource(R.string.wallpaper_crop),
+                hint = stringResource(R.string.wallpaper_crop_hint),
+                onClick = {
+                    scope.launch {
+                        val bitmap = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            runCatching {
+                                android.graphics.BitmapFactory
+                                    .decodeFile(com.simplechat.app.data.WallpaperFiles.fileOf(context).absolutePath)
+                                    ?.asImageBitmap()
+                            }.getOrNull()
+                        }
+                        if (bitmap != null) cropRequest = bitmap to null
+                    }
+                },
+                icon = AppIcons.Image,
+            )
+            RowDivider()
+            SettingsActionRow(
+                label = stringResource(R.string.wallpaper_remove),
+                hint = null,
+                onClick = {
+                    scope.launch {
+                        com.simplechat.app.data.WallpaperFiles.delete(context)
+                        store.setWallpaper(null)
+                    }
+                },
+                destructive = true,
+            )
+        }
+    }
+
+    if (stored.wallpaperPath.isNullOrBlank()) return
+    preview?.let { image ->
+        /*
+         * 预览用**和聊天页相同的绘制函数**：只画原图的话，用户拖模糊/对比度
+         * 看不到变化，会以为滑块没生效。
+         */
+        val previewState = com.simplechat.app.ui.theme.WallpaperState(
+            file = null,
+            opacity = stored.wallpaperOpacity,
+            blur = stored.wallpaperBlur,
+            brightness = stored.wallpaperBrightness,
+            contrast = stored.wallpaperContrast,
+            saturation = stored.wallpaperSaturation,
+            offsetX = stored.wallpaperOffsetX,
+            offsetY = stored.wallpaperOffsetY,
+            scale = stored.wallpaperScale,
+            dim = stored.wallpaperDim,
+            fit = stored.wallpaperFit,
+            flipH = stored.wallpaperFlipH,
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(180.dp)
+                .padding(horizontal = Space.Screen, vertical = Space.RowPadY)
+                .clip(RoundedCornerShape(16.dp))
+                /*
+                 * 自定义截取：开启后在这个预览上拖动 = 选择画面里显示哪一块。
+                 * 拖动方向与"拖图片"一致（往右拖露出左侧），写回的还是画面分组里
+                 * 那两个位置值，所以滑块会同步动。
+                 */
+                .pointerInput(stored.wallpaperCustomCrop) {
+                    if (!stored.wallpaperCustomCrop) return@pointerInput
+                    var startX = stored.wallpaperOffsetX
+                    var startY = stored.wallpaperOffsetY
+                    detectDragGestures(
+                        onDragStart = {
+                            startX = stored.wallpaperOffsetX
+                            startY = stored.wallpaperOffsetY
+                        },
+                        onDrag = { change, drag ->
+                            change.consume()
+                            startX = (startX - drag.x / size.width).coerceIn(0f, 1f)
+                            startY = (startY - drag.y / size.height).coerceIn(0f, 1f)
+                            scope.launch { store.setWallpaperOffset(startX, startY) }
+                        },
+                    )
+                }
+                .background(androidx.compose.ui.graphics.Color.Black)
+                .drawBehind { drawWallpaper(image, previewState) },
+        ) {
+            /*
+             * 预览里放一块**示例面板**（就是 GlassCard 的样子）。
+             * 只画壁纸的话，调「面板圆角 / 面板不透明度」时预览毫无变化，
+             * 用户得退出设置进聊天才能看到 —— 那等于没有预览。
+             */
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 40.dp, vertical = 26.dp)
+                    .clip(RoundedCornerShape(stored.wallpaperPanelRadius.dp))
+                    .background(colors.card.copy(alpha = stored.wallpaperPanelAlpha))
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.wallpaper_preview_sample),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = stringResource(
+                        R.string.wallpaper_preview_sample_detail,
+                        stored.wallpaperPanelRadius.toInt(),
+                        (stored.wallpaperPanelAlpha * 100).toInt(),
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.placeholder,
+                )
+            }
+        }
+    }
+
+    SettingsSectionLabel(stringResource(R.string.wallpaper_group_scene))
+    WallpaperCard(stored, preview) {
+        WallpaperSlider(
+            label = stringResource(R.string.wallpaper_blur),
+            value = stored.wallpaperBlur,
+            range = 0f..20f,
+            display = "${stored.wallpaperBlur.toInt()}px",
+            onChange = { saveTuning(blur = it) },
+        )
+        RowDivider()
+        WallpaperSlider(
+            label = stringResource(R.string.wallpaper_brightness),
+            value = stored.wallpaperBrightness,
+            range = 0.3f..1.7f,
+            display = "${(stored.wallpaperBrightness * 100).toInt()}%",
+            onChange = { saveTuning(brightness = it) },
+        )
+        RowDivider()
+        WallpaperSlider(
+            label = stringResource(R.string.wallpaper_contrast),
+            value = stored.wallpaperContrast,
+            range = 0.5f..1.8f,
+            display = "${(stored.wallpaperContrast * 100).toInt()}%",
+            onChange = { saveTuning(contrast = it) },
+        )
+        RowDivider()
+        WallpaperSlider(
+            label = stringResource(R.string.wallpaper_saturation),
+            value = stored.wallpaperSaturation,
+            range = 0f..2f,
+            display = "${(stored.wallpaperSaturation * 100).toInt()}%",
+            onChange = { saveTuning(saturation = it) },
+        )
+        RowDivider()
+        WallpaperSlider(
+            label = stringResource(R.string.wallpaper_offset_x),
+            value = stored.wallpaperOffsetX,
+            range = 0f..1f,
+            display = "${(stored.wallpaperOffsetX * 100).toInt()}%",
+            onChange = { saveTuning(offsetX = it) },
+        )
+        RowDivider()
+        WallpaperSlider(
+            label = stringResource(R.string.wallpaper_offset_y),
+            value = stored.wallpaperOffsetY,
+            range = 0f..1f,
+            display = "${(stored.wallpaperOffsetY * 100).toInt()}%",
+            onChange = { saveTuning(offsetY = it) },
+        )
+        RowDivider()
+        WallpaperSlider(
+            label = stringResource(R.string.wallpaper_scale),
+            value = stored.wallpaperScale,
+            range = 0.5f..2.5f,
+            display = "${(stored.wallpaperScale * 100).toInt()}%",
+            onChange = { saveTuning(scale = it) },
+        )
+    }
+
+    SettingsSectionLabel(stringResource(R.string.wallpaper_group_fit))
+    WallpaperCard(stored, preview) {
+        val fitLabels = mapOf(
+            "COVER" to stringResource(R.string.wallpaper_fit_cover),
+            "FILL" to stringResource(R.string.wallpaper_fit_fill),
+            "CENTER" to stringResource(R.string.wallpaper_fit_center),
+            "STRETCH" to stringResource(R.string.wallpaper_fit_stretch),
+        )
+        SegmentedSwitch(
+            options = fitLabels.keys.toList(),
+            selected = stored.wallpaperFit.takeIf { it in fitLabels } ?: "COVER",
+            onSelect = { saveTuning(fit = it) },
+            label = { fitLabels[it] ?: it },
+            modifier = Modifier.padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+        )
+        RowDivider()
+        SettingsSwitchRow(
+            label = stringResource(R.string.wallpaper_flip_h),
+            checked = stored.wallpaperFlipH,
+            onCheckedChange = { saveTuning(flipH = it) },
+        )
+        /*
+         * 裁剪入口不在这里：选图后会自动弹裁剪器；想重裁就回「图片」分组点
+         * 「重新裁剪」。这个开关（拖动预览）已由裁剪器取代，不再保留。
+         */
+    }
+
+    SettingsSectionLabel(stringResource(R.string.wallpaper_group_detail))
+    WallpaperCard(stored, preview) {
+        WallpaperSlider(
+            label = stringResource(R.string.wallpaper_opacity),
+            value = stored.wallpaperOpacity,
+            range = 0.05f..1f,
+            display = "${(stored.wallpaperOpacity * 100).toInt()}%",
+            onChange = { scope.launch { store.setWallpaperOpacity(it) } },
+        )
+        RowDivider()
+        WallpaperSlider(
+            label = stringResource(R.string.wallpaper_dim),
+            value = stored.wallpaperDim,
+            range = 0f..0.8f,
+            display = "${(stored.wallpaperDim * 100).toInt()}%",
+            onChange = { saveTuning(dim = it) },
+        )
+    }
+
+    SettingsSectionLabel(stringResource(R.string.wallpaper_group_panel))
+    WallpaperCard(stored, preview) {
+        SettingsSwitchRow(
+            label = stringResource(R.string.wallpaper_glass_panel),
+            checked = stored.wallpaperGlassPanel,
+            onCheckedChange = { scope.launch { store.setWallpaperGlassPanel(it) } },
+        )
+        RowDivider()
+        WallpaperSlider(
+            label = stringResource(R.string.wallpaper_panel_radius),
+            value = stored.wallpaperPanelRadius,
+            range = 4f..32f,
+            display = "${stored.wallpaperPanelRadius.toInt()}dp",
+            onChange = { scope.launch { store.setWallpaperPanel(it, stored.wallpaperPanelAlpha) } },
+        )
+        RowDivider()
+        WallpaperSlider(
+            label = stringResource(R.string.wallpaper_panel_alpha),
+            value = stored.wallpaperPanelAlpha,
+            range = 0.3f..0.95f,
+            display = "${(stored.wallpaperPanelAlpha * 100).toInt()}%",
+            onChange = { scope.launch { store.setWallpaperPanel(stored.wallpaperPanelRadius, it) } },
+        )
+    }
+}
+
+/** 壁纸页的滑块行：标题 + 当前值 + 滑条。 */
+@Composable
+private fun WallpaperSlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    display: String,
+    onChange: (Float) -> Unit,
+) {
+    val colors = LocalChatColors.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = display,
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.placeholder,
+            )
+        }
+        Slider(
+            value = value,
+            onValueChange = onChange,
+            valueRange = range,
+        )
+    }
+}
+// ══════════════════════════════════════════════════════════
+//  第三方声音模型 API
+// ══════════════════════════════════════════════════════════
+
+/**
+ * 第三方声音模型（TTS）配置页。
+ *
+ * 结构对齐「独立工具 API → 搜索 / 文件 / 生图」：端点、密钥、模型、协议。
+ * 音色清单是 TTS 特有的：服务端能列就列，不能列就靠手填（见 [VoiceApiConfig]）。
+ *
+ * ⚠️ 当前**尚未接线播放**：选中的第三方音色会写进 `ttsVoiceName`，
+ * 但真正的合成仍走系统 TTS / DeepSeek 官方通道。接线点在
+ * `SpeechOutput`（按 `stored.voiceApi.enabled` 分流到 `POST /v1/audio/speech`）。
+ */
+@Composable
+private fun VoiceApiPage(
+    stored: StoredSettings,
+    store: SettingsStore,
+) {
+    val config = stored.voiceApi
+    val scope = rememberCoroutineScope()
+    var dialog by remember { mutableIntStateOf(0) }
+
+    fun save(updated: com.simplechat.app.data.VoiceApiConfig) {
+        scope.launch { runCatching { store.setVoiceApi(updated) } }
+    }
+
+    SettingsSectionLabel(stringResource(R.string.tts_third_party_section))
+
+    SettingsCard {
+        SettingsSwitchRow(
+            icon = AppIcons.Mic,
+            label = stringResource(R.string.tts_third_party_enable),
+            checked = config.enabled,
+            onCheckedChange = { save(config.copy(enabled = it)) },
+        )
+        RowDivider()
+        SettingsNavRow(
+            icon = null,
+            label = "Base URL",
+            value = config.baseUrl.ifBlank { stringResource(R.string.value_follow_system) },
+            onClick = { dialog = 1 },
+        )
+        RowDivider()
+        SettingsNavRow(
+            icon = AppIcons.Settings,
+            label = stringResource(R.string.tts_third_party_model),
+            value = config.model,
+            onClick = { dialog = 2 },
+        )
+        RowDivider()
+        SettingsSwitchRow(
+            label = stringResource(R.string.tts_third_party_reuse_key),
+            checked = config.reuseChatKey,
+            onCheckedChange = { save(config.copy(reuseChatKey = it)) },
+        )
+        if (!config.reuseChatKey) {
+            RowDivider()
+            SettingsActionRow(
+                label = stringResource(R.string.tts_third_party_key),
+                hint = if (config.apiKeyEncrypted.isBlank()) {
+                    stringResource(R.string.service_key_missing)
+                } else {
+                    stringResource(R.string.api_profile_key_saved)
+                },
+                onClick = { dialog = 3 },
+            )
+        }
+    }
+
+    SettingsSectionLabel(stringResource(R.string.tts_third_party_voices))
+
+    SettingsCard {
+        SettingsActionRow(
+            label = stringResource(R.string.tts_third_party_add_voice),
+            hint = stringResource(R.string.tts_third_party_add_voice_hint),
+            onClick = { dialog = 4 },
+            icon = AppIcons.PlusCircle,
+        )
+        if (config.allVoices.isNotEmpty()) {
+            config.allVoices.forEach { voiceId ->
+                RowDivider()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = Space.Row)
+                        .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = voiceId,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        onClick = {
+                            save(
+                                config.copy(
+                                    customVoices = config.customVoices - voiceId,
+                                    voices = config.voices - voiceId,
+                                ),
+                            )
+                        },
+                    ) {
+                        Text(stringResource(R.string.fonts_remove), color = LocalChatColors.current.danger)
+                    }
+                }
+            }
+        }
+    }
+
+    val colors = LocalChatColors.current
+    Text(
+        text = stringResource(R.string.tts_third_party_note),
+        style = MaterialTheme.typography.labelSmall,
+        color = colors.placeholder,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+    )
+
+    when (dialog) {
+        1 -> TextInputDialog(
+            title = "Base URL",
+            initial = config.baseUrl,
+            placeholder = "https://api.example.com",
+            onDismiss = { dialog = 0 },
+            onConfirm = { value ->
+                dialog = 0
+                save(config.copy(baseUrl = value.trim()))
+            },
+        )
+        2 -> TextInputDialog(
+            title = stringResource(R.string.tts_third_party_model),
+            initial = config.model,
+            placeholder = "tts-1",
+            onDismiss = { dialog = 0 },
+            onConfirm = { value ->
+                dialog = 0
+                save(config.copy(model = value.trim().ifBlank { "tts-1" }))
+            },
+        )
+        3 -> TextInputDialog(
+            title = stringResource(R.string.tts_third_party_key),
+            initial = "",
+            placeholder = "sk-…",
+            onDismiss = { dialog = 0 },
+            onConfirm = { value ->
+                dialog = 0
+                val trimmed = value.trim()
+                if (trimmed.isNotEmpty()) {
+                    val encrypted = runCatching { store.encryptServiceKey(trimmed) }.getOrNull()
+                    if (encrypted != null) save(config.copy(apiKeyEncrypted = encrypted))
+                }
+            },
+        )
+        4 -> TextInputDialog(
+            title = stringResource(R.string.tts_third_party_add_voice),
+            initial = "",
+            placeholder = "alloy / zh-CN-XiaoxiaoNeural …",
+            onDismiss = { dialog = 0 },
+            onConfirm = { value ->
+                dialog = 0
+                val voiceId = value.trim()
+                if (voiceId.isNotEmpty() && voiceId !in config.allVoices) {
+                    save(config.copy(customVoices = config.customVoices + voiceId))
+                }
+            },
+        )
+    }
+}
+// ══════════════════════════════════════════════════════════
+//  回收站
+// ══════════════════════════════════════════════════════════
+
+/**
+ * 回收站：被删除的会话保留 15 天，可恢复或彻底删除。
+ *
+ * 设计参照本机 `dsh-session-delete` 插件：删除不是 `rm`，而是打标记移入回收站；
+ * 恢复只是清掉标记，消息与附件原样回来。超过 [TRASH_RETENTION_DAYS] 天由启动时的
+ * 自动清理真删（见 `ChatRepository.purgeExpiredTrash`）。
+ */
+@Composable
+private fun TrashPage(
+    loadTrash: () -> kotlinx.coroutines.flow.Flow<List<com.simplechat.app.db.ConversationEntity>>,
+    onRestore: (List<String>) -> Unit,
+    onPurge: (List<String>) -> Unit,
+) {
+    val colors = LocalChatColors.current
+    val trash by remember(loadTrash) { loadTrash() }.collectAsState(initial = null)
+    var confirmPurge by remember { mutableStateOf<com.simplechat.app.db.ConversationEntity?>(null) }
+    var confirmEmptyAll by remember { mutableStateOf(false) }
+
+    val list = trash.orEmpty()
+
+    if (list.isEmpty()) {
+        SettingsCard {
+            SettingsActionRow(
+                label = stringResource(R.string.trash_empty),
+                hint = stringResource(R.string.trash_empty_hint),
+                onClick = {},
+                enabled = false,
+            )
+        }
+        return
+    }
+
+    SettingsSectionLabel(stringResource(R.string.trash_group_items))
+
+    SettingsCard {
+        list.forEachIndexed { index, conversation ->
+            if (index > 0) RowDivider()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = Space.Row)
+                    .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        text = conversation.title.ifBlank { stringResource(R.string.history_untitled) },
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = stringResource(
+                            R.string.trash_deleted_at,
+                            formatTrashDate(conversation.deletedAt),
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.placeholder,
+                    )
+                }
+                TextButton(onClick = { onRestore(listOf(conversation.id)) }) {
+                    Text(stringResource(R.string.trash_restore), color = MaterialTheme.colorScheme.primary)
+                }
+                TextButton(onClick = { confirmPurge = conversation }) {
+                    Text(stringResource(R.string.trash_purge), color = colors.danger)
+                }
+            }
+        }
+    }
+
+    SettingsCard {
+        SettingsActionRow(
+            label = stringResource(R.string.trash_empty_all),
+            hint = stringResource(R.string.trash_empty_all_hint),
+            destructive = true,
+            onClick = { confirmEmptyAll = true },
+        )
+    }
+
+    confirmPurge?.let { target ->
+        AppConfirmDialog(
+            title = stringResource(R.string.trash_purge),
+            message = stringResource(R.string.trash_purge_confirm, target.title),
+            confirmText = stringResource(R.string.trash_purge),
+            onDismiss = { confirmPurge = null },
+            onConfirm = {
+                confirmPurge = null
+                onPurge(listOf(target.id))
+            },
+        )
+    }
+    if (confirmEmptyAll) {
+        AppConfirmDialog(
+            title = stringResource(R.string.trash_empty_all),
+            message = stringResource(R.string.trash_empty_all_confirm),
+            confirmText = stringResource(R.string.trash_empty_all),
+            onDismiss = { confirmEmptyAll = false },
+            onConfirm = {
+                confirmEmptyAll = false
+                onPurge(list.map { it.id })
+            },
+        )
+    }
+}
+
+/** 删除时间 → `MM-dd HH:mm`（跨年才带年份）。 */
+private fun formatTrashDate(millis: Long?): String {
+    if (millis == null) return "—"
+    return runCatching {
+        val calendar = java.util.Calendar.getInstance().apply { timeInMillis = millis }
+        val now = java.util.Calendar.getInstance()
+        val sameYear = calendar.get(java.util.Calendar.YEAR) == now.get(java.util.Calendar.YEAR)
+        String.format(
+            if (sameYear) "%02d-%02d %02d:%02d" else "%04d-%02d-%02d %02d:%02d",
+            *(
+                if (sameYear) {
+                    arrayOf(
+                        calendar.get(java.util.Calendar.MONTH) + 1,
+                        calendar.get(java.util.Calendar.DAY_OF_MONTH),
+                        calendar.get(java.util.Calendar.HOUR_OF_DAY),
+                        calendar.get(java.util.Calendar.MINUTE),
+                    )
+                } else {
+                    arrayOf(
+                        calendar.get(java.util.Calendar.YEAR),
+                        calendar.get(java.util.Calendar.MONTH) + 1,
+                        calendar.get(java.util.Calendar.DAY_OF_MONTH),
+                        calendar.get(java.util.Calendar.HOUR_OF_DAY),
+                        calendar.get(java.util.Calendar.MINUTE),
+                    )
+                }
+            ),
+        )
+    }.getOrDefault("—")
 }

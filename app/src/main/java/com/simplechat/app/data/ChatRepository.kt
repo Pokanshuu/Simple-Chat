@@ -202,6 +202,43 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     suspend fun setPinned(id: String, pinned: Boolean) =
         conversations.setPinned(id, pinned, if (pinned) System.currentTimeMillis() else null)
 
+    /**
+     * 删除会话 = **移入回收站**（软删除）。
+     *
+     * 与 [deleteConversations] 的区别：不碰消息 / 附件 / 引用表 —— 恢复时要原样回来。
+     * 真删交给 [purgeExpiredTrash]（15 天）或回收站里的「彻底删除」。
+     */
+    suspend fun trashConversations(ids: List<String>) {
+        if (ids.isEmpty()) return
+        db.withTransaction { conversations.moveToTrash(ids, System.currentTimeMillis()) }
+    }
+
+    /** 从回收站恢复（清掉 deletedAt）。 */
+    suspend fun restoreConversations(ids: List<String>) {
+        if (ids.isEmpty()) return
+        db.withTransaction { conversations.restoreFromTrash(ids) }
+    }
+
+    /** 回收站列表（Flow）。 */
+    fun observeTrash(): Flow<List<ConversationEntity>> = conversations.observeTrash()
+
+    /**
+     * 回收站超过 [TRASH_RETENTION_DAYS] 天的会话真删，连同附件与草稿。
+     *
+     * 在 App 启动时跑一次即可：15 天粒度不需要后台定时器，
+     * 而 WorkManager 为一个纯本地清理引入一整个依赖也不值。
+     *
+     * @return 被清理的会话数
+     */
+    suspend fun purgeExpiredTrash(now: Long = System.currentTimeMillis()): Int {
+        val threshold = now - TRASH_RETENTION_DAYS * 24L * 60 * 60 * 1000
+        val expired = runCatching { conversations.expiredTrashIds(threshold) }.getOrDefault(emptyList())
+        if (expired.isEmpty()) return 0
+        // 复用真删逻辑：附件引用、草稿、压缩检查点一次清干净
+        deleteConversations(expired)
+        return expired.size
+    }
+
     suspend fun deleteConversations(ids: List<String>) {
         /*
          * 落盘图片的路径从**引用表**查，不读 `messages.attachments` ——
@@ -1877,3 +1914,6 @@ private const val MessageQueryChunk = 400
 
 /** Five byte slices plus metadata stay well below a CursorWindow's capacity. */
 private const val ExportTextChunkBytes = 16_384
+
+/** 回收站保留天数：超过就真删（与 dsh-session-delete 的约定一致）。 */
+const val TRASH_RETENTION_DAYS = 15

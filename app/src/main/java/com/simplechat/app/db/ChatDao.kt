@@ -12,20 +12,41 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface ConversationDao {
 
-    /** 列表页主查询：置顶优先，其次按最近更新。 */
+    /** 列表页主查询：置顶优先，其次按最近更新。**排除回收站**。 */
     @Query(
         """
         SELECT * FROM conversations
+        WHERE deletedAt IS NULL
         ORDER BY pinned DESC,
                  CASE WHEN pinned THEN pinnedAt ELSE updatedAt END DESC
         """,
     )
     fun observeAll(): Flow<List<ConversationEntity>>
 
+    /** 回收站列表：最近删的在前。 */
+    @Query("SELECT * FROM conversations WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
+    fun observeTrash(): Flow<List<ConversationEntity>>
+
+    /** 软删除：打标记，消息与附件原样留着（恢复要用）。 */
+    @Query("UPDATE conversations SET deletedAt = :at WHERE id IN (:ids)")
+    suspend fun moveToTrash(ids: List<String>, at: Long)
+
+    /** 从回收站恢复。 */
+    @Query("UPDATE conversations SET deletedAt = NULL WHERE id IN (:ids)")
+    suspend fun restoreFromTrash(ids: List<String>)
+
+    /** 回收站里超过阈值的会话 id（用于真删 + 清附件）。 */
+    @Query("SELECT id FROM conversations WHERE deletedAt IS NOT NULL AND deletedAt < :before")
+    suspend fun expiredTrashIds(before: Long): List<String>
+
+    /** 清空回收站（真删）。 */
+    @Query("DELETE FROM conversations WHERE deletedAt IS NOT NULL AND deletedAt < :before")
+    suspend fun purgeTrashBefore(before: Long): Int
+
     @Query(
         """
         SELECT id, substr(title, 1, :titleChars) AS title, updatedAt
-        FROM conversations WHERE id != :currentId AND memoryEnabled = 1
+        FROM conversations WHERE id != :currentId AND memoryEnabled = 1 AND deletedAt IS NULL
             AND EXISTS (SELECT 1 FROM conversations WHERE id = :currentId AND memoryEnabled = 1)
         ORDER BY updatedAt DESC, id ASC LIMIT :limit
         """,

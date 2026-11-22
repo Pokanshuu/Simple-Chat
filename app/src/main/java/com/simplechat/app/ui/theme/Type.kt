@@ -1,6 +1,7 @@
 package com.simplechat.app.ui.theme
 
 import androidx.compose.material3.Typography
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -85,8 +86,17 @@ val SimpleChatTypography = Typography(
  * 两份样式都是**常量**（不是 `get()`）：`.copy` 会新建 TextStyle，挂在组合里的
  * 样式每帧读一次，白白的分配没必要。[MarkdownBlockView] 每块都会读它。
  */
-fun markdownBodyStyle(cjk: Boolean): TextStyle =
-    if (cjk) MarkdownBodyCjkStyle else MarkdownBodyWesternStyle
+@Composable
+fun markdownBodyStyle(cjk: Boolean): TextStyle {
+    /*
+     * 模型回复层的自定义字体在这里落地：正文样式是常量，只有用户真的选了字体
+     * 才 `.copy` 一次。没选时仍返回那个常量对象，避免每块 Markdown 都新建样式
+     * （那会让 Compose 判为样式变化，整段重排版）。
+     */
+    val family = LocalAssistantFontFamily.current ?: return if (cjk) MarkdownBodyCjkStyle else MarkdownBodyWesternStyle
+    val base = if (cjk) MarkdownBodyCjkStyle else MarkdownBodyWesternStyle
+    return base.copy(fontFamily = family)
+}
 
 /** 中文档正文：左对齐（原因见上）。 */
 private val MarkdownBodyCjkStyle: TextStyle =

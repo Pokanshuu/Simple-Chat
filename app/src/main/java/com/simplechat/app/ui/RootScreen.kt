@@ -338,8 +338,25 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                         spotColor = AppShadow.RaisedSpot,
                     ),
                 drawerShape = sheetShape,
-                // 与抽屉内容同色，否则状态栏那一条会露出 Material 的默认容器色（淡紫）
-                drawerContainerColor = LocalChatColors.current.card,
+                /*
+                 * 与抽屉内容同色，否则状态栏那一条会露出 Material 的默认容器色（淡紫）。
+                 *
+                 * 玻璃模式下必须同alpha：ModalDrawerSheet 自己会铺一层容器色，
+                 * 盖在 HistoryDrawerContent 的背景之上 —— 只改内容那一层的话，
+                 * 抽屉整体仍然是不透明白（用户看到的就是"侧栏没玻璃"）。
+                 */
+                drawerContainerColor = LocalChatColors.current.card.let { card ->
+                    val glass = com.simplechat.app.ui.theme.LocalChatGlassAlpha.current
+                    if (glass > 0f) {
+                        com.simplechat.app.ui.theme.glassTintedSurface(
+                            card,
+                            androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                            glass.coerceAtLeast(0.40f),
+                        )
+                    } else {
+                        card
+                    }
+                },
                 /*
                  * 系统栏内边距**由抽屉内容自己处理**（`HistoryDrawerContent` 里
                  * 有 `statusBarsPadding` / `navigationBarsPadding`）。
@@ -385,7 +402,30 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                                 exit = shrinkHorizontally(tween(MotionDurationMs, easing = MotionEasing), Alignment.Start) + fadeOut(),
                             ) {
                                 Row(Modifier.width(WideSidebarWidth).fillMaxHeight()) {
-                                    Box(Modifier.weight(1f).fillMaxHeight().background(LocalChatColors.current.card)) {
+                                    /*
+                                     * 宽屏常驻侧栏也要玻璃化：竖屏抽屉走的是
+                                     * ModalDrawerSheet 的容器色，宽屏走的是这一个 Box ——
+                                     * 两条路径不接同一个 alpha 的话，平板/横屏用户就会
+                                     * 看到"聊天区透明、侧栏死白"。
+                                     */
+                                    val sidebarColors = LocalChatColors.current
+                                    val sidebarGlass = com.simplechat.app.ui.theme.LocalChatGlassAlpha.current
+                                    Box(
+                                        Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight()
+                                            .background(
+                                                if (sidebarGlass > 0f) {
+                                                    com.simplechat.app.ui.theme.glassTintedSurface(
+                                                        sidebarColors.card,
+                                                        androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                                                        sidebarGlass.coerceAtLeast(0.40f),
+                                                    )
+                                                } else {
+                                                    sidebarColors.card
+                                                },
+                                            ),
+                                    ) {
                                         if (searchMode) {
                                             SearchContent(
                                                 searchPage = searchPage,

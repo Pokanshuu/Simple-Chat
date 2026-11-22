@@ -40,6 +40,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.ui.theme.LocalChatColors
+import com.simplechat.app.ui.theme.LocalChatGlassAlpha
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -88,11 +89,25 @@ fun <T> SegmentedSwitch(
         }
     }
 
+    /*
+     * 玻璃模式（壁纸页）：轨道与滑块的底色都改成半透明，让背后的模糊壁纸透上来。
+     * 不这么做的话，GlassCard 自己半透明，里面的分段条却是实心 —— 视觉上就是
+     * "卡片是玻璃、控件是贴纸"，和 DSH 那种整体玻璃感差一截。
+     */
+    val glass = LocalChatGlassAlpha.current
+    val trackFill = if (glass > 0f) colors.fieldBackground.copy(alpha = glass.coerceAtLeast(0.30f)) else colors.fieldBackground
+    val indicatorFill = if (glass > 0f) {
+        colors.capsuleSelected.copy(alpha = glass.coerceAtLeast(0.45f))
+    } else {
+        colors.capsuleSelected
+    }
+
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(52.dp)
             .clip(pill)
+            .background(trackFill)
             .border(1.dp, colors.outline, pill)
             .padding(3.dp)
             .onSizeChanged { trackWidthPx = it.width }
@@ -136,8 +151,7 @@ fun <T> SegmentedSwitch(
                     .width(with(density) { segmentWidthPx.toDp() })
                     .fillMaxHeight()
                     .offset { IntOffset(indicator.value.roundToInt(), 0) }
-                    .clip(pill)
-                    .background(colors.capsuleSelected),
+                    .background(indicatorFill),
             )
         }
 

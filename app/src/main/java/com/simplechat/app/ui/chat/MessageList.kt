@@ -97,6 +97,8 @@ import com.simplechat.app.ui.markdown.LocalSearchHighlight
 import com.simplechat.app.ui.markdown.rememberSearchTextDecoration
 import com.simplechat.app.ui.theme.ChatColors
 import com.simplechat.app.ui.theme.LocalChatColors
+import com.simplechat.app.ui.theme.LocalAssistantFontFamily
+import com.simplechat.app.ui.theme.LocalUserFontFamily
 import com.simplechat.app.ui.common.PillShape
 import androidx.compose.animation.animateContentSize
 import com.simplechat.app.ui.common.MotionEasing
@@ -504,11 +506,19 @@ private fun MessageRow(
                 Text(stringResource(R.string.large_message_reasoning), style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 val highlight = LocalSearchHighlight.current.takeIf { search?.reasoningMatch == true }
-                CompositionLocalProvider(LocalSearchHighlight provides highlight) { PagedMessageBody(it) }
+                CompositionLocalProvider(LocalSearchHighlight provides highlight) {
+                    PagedMessageBody(it, fontFamily = LocalAssistantFontFamily.current)
+                }
             }
             val highlight = LocalSearchHighlight.current.takeUnless { search?.reasoningMatch == true }
             CompositionLocalProvider(LocalSearchHighlight provides highlight) {
-                SelectableText(selecting, selectionState) { PagedMessageBody(message.content, markdown = !isUser) }
+                SelectableText(selecting, selectionState) {
+                    PagedMessageBody(
+                        message.content,
+                        markdown = !isUser,
+                        fontFamily = if (isUser) LocalUserFontFamily.current else LocalAssistantFontFamily.current,
+                    )
+                }
             }
             message.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             menu()
@@ -622,6 +632,13 @@ fun UserBubble(
     onFoldToggle: () -> Unit = {},
 ) {
     val colors = LocalChatColors.current
+    /*
+     * 用户发言层的自定义字体（设置 → 外观 → 字体 → 我的发言）。
+     * 未选择时直接用全局排版本身，不 copy —— 保持原来的常量语义。
+     */
+    val userFont = LocalUserFontFamily.current
+    val baseBodyStyle = MaterialTheme.typography.bodyLarge
+    val userTextStyle = if (userFont == null) baseBodyStyle else baseBodyStyle.copy(fontFamily = userFont)
 
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         val maxBubbleWidth = maxWidth * 0.82f
@@ -663,7 +680,21 @@ fun UserBubble(
                 modifier = Modifier
                     .widthIn(max = maxBubbleWidth)
                     // 右下角收紧，给"从右发出"一个方向感
-                    .background(colors.userBubble, BubbleShapeOut)
+                    .background(
+                        /*
+                         * 用户气泡的玻璃化：主题蓝保持，但把不透明度抬到 0.75 左右
+                         * （下限 0.70）。气泡里是用户自己打的字，再透下去就会和背景
+                         * 壁纸糊在一起 —— 玻璃感是次要的，能读才是主要的。
+                         */
+                        com.simplechat.app.ui.theme.LocalChatGlassAlpha.current.let { glass ->
+                            if (glass > 0f) {
+                                colors.userBubble.copy(alpha = (glass + 0.30f).coerceIn(0.70f, 0.95f))
+                            } else {
+                                colors.userBubble
+                            }
+                        },
+                        BubbleShapeOut,
+                    )
                     .then(pressListener)
                     .combinedClickable(
                         interactionSource = interaction,
@@ -791,7 +822,7 @@ fun UserBubble(
                                                     text = chunk,
                                                     modifier = searchModifier,
                                                     onTextLayout = onSearchLayout,
-                                                    style = MaterialTheme.typography.bodyLarge,
+                                                    style = userTextStyle,
                                                     color = colors.onUserBubble,
                                                 )
                                             }
@@ -808,7 +839,7 @@ fun UserBubble(
                                          */
                                         Text(
                                             text = message.content,
-                                            style = MaterialTheme.typography.bodyLarge,
+                                            style = userTextStyle,
                                             color = colors.onUserBubble,
                                             maxLines = UserBubbleCollapsedLines,
                                             overflow = TextOverflow.Clip,

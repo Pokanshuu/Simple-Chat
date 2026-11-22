@@ -14,6 +14,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.Density
 import com.simplechat.app.R
 import com.simplechat.app.data.Res
@@ -253,6 +254,8 @@ fun SimpleChatTheme(
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     accent: AccentColor = AccentColor.BLUE,
     fontScale: Float = 1f,
+    /** 软件 UI 字体层；null = 系统字体。不影响用户发言与模型回复（那两层各自覆盖）。 */
+    uiFontFamily: FontFamily? = null,
     content: @Composable () -> Unit,
 ) {
     val dark = when (themeMode) {
@@ -276,7 +279,11 @@ fun SimpleChatTheme(
     ) {
         MaterialTheme(
             colorScheme = scheme,
-            typography = SimpleChatTypography,
+            typography = if (uiFontFamily != null) {
+                SimpleChatTypography.withFontFamily(uiFontFamily)
+            } else {
+                SimpleChatTypography
+            },
         ) {
             CompositionLocalProvider(LocalContentColor provides scheme.onBackground, content = content)
         }

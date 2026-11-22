@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -25,7 +26,13 @@ import com.simplechat.app.ui.RootScreen
 import com.simplechat.app.ui.common.LocalUseSimpleCatIcon
 import com.simplechat.app.ui.theme.AccentColor
 import com.simplechat.app.ui.theme.ApplySystemBarAppearance
+import com.simplechat.app.ui.theme.LocalAssistantFontFamily
+import com.simplechat.app.ui.theme.LocalUserFontFamily
+import com.simplechat.app.ui.theme.LocalChatGlassAlpha
+import com.simplechat.app.ui.theme.LocalWallpaper
+import com.simplechat.app.ui.theme.WallpaperState
 import com.simplechat.app.ui.theme.SimpleChatTheme
+import com.simplechat.app.ui.theme.fontFamilyOf
 import com.simplechat.app.ui.theme.ThemeMode
 
 class MainActivity : ComponentActivity() {
@@ -91,13 +98,75 @@ class MainActivity : ComponentActivity() {
                 else -> current.fontScale / systemFontScale
             }
 
+            /*
+             * 三层字体各自解析：字体文件在私有目录里，theme 只关心"这一层用哪个
+             * FontFamily"。文件被删掉 / 解析失败时 fontFamilyOf 返回 null，
+             * 自动回退系统字体 —— 不会因为删个字体就白屏。
+             *
+             * 按 id 取而不是直接存 FontFamily：设置流更新后 key 变了才重算，
+             * 否则每次重组都去碰文件。
+             */
+            val uiFont = remember(current?.uiFontId, current?.fonts) {
+                current?.fonts?.firstOrNull { it.id == current.uiFontId }
+                    ?.let { fontFamilyOf(this@MainActivity, it) }
+            }
+            val userFont = remember(current?.userFontId, current?.fonts) {
+                current?.fonts?.firstOrNull { it.id == current.userFontId }
+                    ?.let { fontFamilyOf(this@MainActivity, it) }
+            }
+            val assistantFont = remember(current?.assistantFontId, current?.fonts) {
+                current?.fonts?.firstOrNull { it.id == current.assistantFontId }
+                    ?.let { fontFamilyOf(this@MainActivity, it) }
+            }
+            /*
+             * 壁纸状态整体打包成一个不可变对象：任何一个调节参数变了都要重新下发，
+             * 所以 remember 的 key 用 `current` 里那几个字段的组合值。
+             */
+            val wallpaper = remember(
+                current?.wallpaperPath,
+                current?.wallpaperOpacity,
+                current?.wallpaperBlur,
+                current?.wallpaperBrightness,
+                current?.wallpaperContrast,
+                current?.wallpaperSaturation,
+                current?.wallpaperOffsetX,
+                current?.wallpaperOffsetY,
+                current?.wallpaperScale,
+                current?.wallpaperDim,
+                current?.wallpaperFit,
+                current?.wallpaperFlipH,
+            ) {
+                WallpaperState(
+                    file = current?.wallpaperPath?.takeIf { it.isNotBlank() }
+                        ?.let { com.simplechat.app.data.WallpaperFiles.fileOf(this@MainActivity) },
+                    opacity = current?.wallpaperOpacity ?: 0.35f,
+                    blur = current?.wallpaperBlur ?: 0f,
+                    brightness = current?.wallpaperBrightness ?: 1f,
+                    contrast = current?.wallpaperContrast ?: 1f,
+                    saturation = current?.wallpaperSaturation ?: 1f,
+                    offsetX = current?.wallpaperOffsetX ?: 0.5f,
+                    offsetY = current?.wallpaperOffsetY ?: 0.5f,
+                    scale = current?.wallpaperScale ?: 1f,
+                    dim = current?.wallpaperDim ?: 0f,
+                    fit = current?.wallpaperFit ?: "COVER",
+                    flipH = current?.wallpaperFlipH ?: false,
+                )
+            }
+
             SimpleChatTheme(
                 themeMode = themeMode,
                 accent = accent,
                 fontScale = fontScale,
+                uiFontFamily = uiFont,
             ) {
                 ApplySystemBarAppearance()
-                CompositionLocalProvider(LocalUseSimpleCatIcon provides (current?.useSimpleCatIcon ?: true)) {
+                CompositionLocalProvider(
+                    LocalUseSimpleCatIcon provides (current?.useSimpleCatIcon ?: true),
+                    LocalUserFontFamily provides userFont,
+                    LocalAssistantFontFamily provides assistantFont,
+                    LocalWallpaper provides wallpaper,
+                    LocalChatGlassAlpha provides if (current?.wallpaperGlassPanel == true) (current.wallpaperPanelAlpha.coerceIn(0.3f, 0.95f)) else 0f,
+                ) {
                     RootScreen()
                 }
             }
