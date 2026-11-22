@@ -77,6 +77,9 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.platform.LocalContext
@@ -111,6 +114,7 @@ import com.simplechat.app.ui.common.dismissKeyboardOnTouch
 import com.simplechat.app.ui.theme.LocalChatColors
 import com.simplechat.app.ui.theme.LocalWallpaper
 import com.simplechat.app.ui.theme.drawWallpaper
+import com.simplechat.app.ui.theme.backdropSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -256,6 +260,10 @@ fun ChatScreen(
 
     /** 全屏查看的图片：本条的全部图片 + 当前点开的那张。 */
     var viewingImage by remember { mutableStateOf<Triple<List<Attachment>, Attachment, Int>?>(null) }
+    /** 正在看的是不是待发送附件（只有它们能裁剪）。 */
+    var viewingPending by remember { mutableStateOf(false) }
+    /** 正在裁剪的待发送附件 + 解出来的位图。 */
+    var cropping by remember { mutableStateOf<Pair<Attachment, android.graphics.Bitmap>?>(null) }
 
     /*
      * ⚠️⚠️ **输入状态必须按会话分开。**
@@ -1157,9 +1165,21 @@ fun ChatScreen(
         }
     }
 
+    /*
+     * 悬浮控件实时玻璃（docs/32 §32.3.3）：g = 0 / 不支持 / 省电时不创建源图层。
+     * 源里要垫「页面底色 + 壁纸」，壁纸按整个聊天页的尺寸和位置画，
+     * 否则输入栏里透出来的壁纸会和屏幕上的错位。
+     */
+    val floatingGlass = com.simplechat.app.ui.theme.LocalFloatingGlass.current
+    val liveBlur = com.simplechat.app.ui.theme.rememberLiveBlurAvailable()
+    val glassSource = com.simplechat.app.ui.theme.rememberBackdropSource(floatingGlass > 0f && liveBlur)
+    val pageFrame = remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     Column(
         modifier = modifier
             .fillMaxSize()
+            .then(
+                if (glassSource != null) Modifier.onGloballyPositioned { pageFrame.value = it.boundsInRoot() } else Modifier,
+            )
             .background(colors.pageBackground)
             /*
              * 壁纸画在背景色之上、内容之下：`drawBehind` 就是这一层。
@@ -1201,7 +1221,22 @@ fun ChatScreen(
         )
 
         val backdrop: @Composable () -> Unit = {
-            Box(Modifier.fillMaxSize()) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .then(
+                        Modifier.backdropSource(glassSource) {
+                                drawRect(colors.pageBackground)
+                                val frame = pageFrame.value
+                                val bitmap = wallpaperBitmap
+                                if (bitmap != null && glassSource != null) {
+                                    val dx = frame.left - glassSource.originInRoot.x
+                                    val dy = frame.top - glassSource.originInRoot.y
+                                    translate(dx, dy) { drawWallpaper(bitmap, wallpaper, frame.size) }
+                                }
+                        },
+                    ),
+            ) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -1439,7 +1474,8 @@ fun ChatScreen(
                  * 会把正在读的那行字从中间洗掉，比硬边还难看。正文应该一直清晰到
                  * 输入栏的边，然后被输入栏自己盖住。
                  */
-                    Box(
+                    // 有壁纸时不铺：渐变终点是实色页面底，会在屏幕最底部压出一条白 / 黑带（docs/32 A5）
+                    if (wallpaper.file == null) Box(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
@@ -1509,6 +1545,7 @@ fun ChatScreen(
                     onRemove = { spec -> pending = pending - spec },
                     onOpen = { spec ->
                         val images = pending.filter { it.isImage }
+                        viewingPending = true
                         viewingImage = Triple(images, spec, images.indexOf(spec))
                     },
                 )
@@ -1902,6 +1939,9 @@ fun ChatScreen(
                 modifier = Modifier.fillMaxSize(),
             )
         }
+        androidx.compose.runtime.CompositionLocalProvider(
+            com.simplechat.app.ui.theme.LocalBackdropSource provides glassSource,
+        ) {
         Layout(
             modifier = Modifier
                 .weight(1f)
@@ -1934,6 +1974,7 @@ fun ChatScreen(
                 foreground.placeRelative(0, 0)
             }
         }
+        }
     }
     // ── AI 回复编辑：只有这一处需要区分「保存」与「保存并发送」────
 
@@ -1962,7 +2003,37 @@ fun ChatScreen(
             images = all,
             initial = one,
             initialIndex = index,
-            onDismiss = { viewingImage = null },
+            onDismiss = { viewingImage = null; viewingPending = false },
+            onCrop = if (viewingPending) { target ->
+                viewingImage = null
+                viewingPending = false
+                scope.launch {
+                    val bitmap = com.simplechat.app.data.AttachmentImport.decodeImage(context, target)
+                    if (bitmap != null) cropping = target to bitmap
+                }
+            } else null,
+        )
+    }
+
+    // ── 待发送附件裁剪（通用裁剪器，docs/32 §32.6.5）──────────────
+
+    cropping?.let { (target, bitmap) ->
+        val image = remember(bitmap) { bitmap.asImageBitmap() }
+        com.simplechat.app.ui.common.ImageCropper(
+            image = image,
+            aspects = com.simplechat.app.ui.common.attachmentCropAspects(),
+            onDismiss = { cropping = null },
+            onConfirm = { rect ->
+                cropping = null
+                scope.launch {
+                    val updated = com.simplechat.app.data.AttachmentImport.crop(
+                        bitmap,
+                        target,
+                        android.graphics.Rect(Math.round(rect.left), Math.round(rect.top), Math.round(rect.right), Math.round(rect.bottom)),
+                    )
+                    pending = pending.map { if (it === target) updated else it }
+                }
+            },
         )
     }
 

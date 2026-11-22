@@ -345,18 +345,10 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                  * 盖在 HistoryDrawerContent 的背景之上 —— 只改内容那一层的话，
                  * 抽屉整体仍然是不透明白（用户看到的就是"侧栏没玻璃"）。
                  */
-                drawerContainerColor = LocalChatColors.current.card.let { card ->
-                    val glass = com.simplechat.app.ui.theme.LocalChatGlassAlpha.current
-                    if (glass > 0f) {
-                        com.simplechat.app.ui.theme.glassTintedSurface(
-                            card,
-                            androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                            glass.coerceAtLeast(0.40f),
-                        )
-                    } else {
-                        card
-                    }
-                },
+                drawerContainerColor = com.simplechat.app.ui.theme.glassSurface(
+                    LocalChatColors.current.card,
+                    com.simplechat.app.ui.theme.GlassLayer.DRAWER,
+                ),
                 /*
                  * 系统栏内边距**由抽屉内容自己处理**（`HistoryDrawerContent` 里
                  * 有 `statusBarsPadding` / `navigationBarsPadding`）。
@@ -408,22 +400,15 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                                      * 两条路径不接同一个 alpha 的话，平板/横屏用户就会
                                      * 看到"聊天区透明、侧栏死白"。
                                      */
-                                    val sidebarColors = LocalChatColors.current
-                                    val sidebarGlass = com.simplechat.app.ui.theme.LocalChatGlassAlpha.current
                                     Box(
                                         Modifier
                                             .weight(1f)
                                             .fillMaxHeight()
                                             .background(
-                                                if (sidebarGlass > 0f) {
-                                                    com.simplechat.app.ui.theme.glassTintedSurface(
-                                                        sidebarColors.card,
-                                                        androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                                                        sidebarGlass.coerceAtLeast(0.40f),
-                                                    )
-                                                } else {
-                                                    sidebarColors.card
-                                                },
+                                                com.simplechat.app.ui.theme.glassSurface(
+                                                    LocalChatColors.current.card,
+                                                    com.simplechat.app.ui.theme.GlassLayer.DRAWER,
+                                                ),
                                             ),
                                     ) {
                                         if (searchMode) {
@@ -531,7 +516,8 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
             title = stringResource(R.string.hist_delete_title),
             message = stringResource(R.string.hist_delete_body),
             confirmText = stringResource(R.string.hist_delete_confirm),
-            destructive = true,
+            // 移到回收站可撤销，不用危险红（§7.1：红色只给不可逆操作）
+            destructive = false,
             onDismiss = { deleteTarget = null },
             onConfirm = {
                 // 删的正是当前正在看的会话 → 立刻回到空态，
@@ -551,7 +537,8 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
             title = stringResource(R.string.hist_delete_selected_title, count),
             message = stringResource(R.string.hist_delete_selected_body),
             confirmText = stringResource(R.string.action_delete),
-            destructive = true,
+            // 移到回收站可撤销，不用危险红（§7.1：红色只给不可逆操作）
+            destructive = false,
             onDismiss = { confirmBatchDelete = false },
             onConfirm = {
                 // 当前会话也在被删之列 → 同样立刻回空态

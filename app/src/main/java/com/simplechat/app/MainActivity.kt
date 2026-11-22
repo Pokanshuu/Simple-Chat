@@ -138,7 +138,7 @@ class MainActivity : ComponentActivity() {
             ) {
                 WallpaperState(
                     file = current?.wallpaperPath?.takeIf { it.isNotBlank() }
-                        ?.let { com.simplechat.app.data.WallpaperFiles.fileOf(this@MainActivity) },
+                        ?.let { com.simplechat.app.data.WallpaperFiles.fileOf(this@MainActivity, it) },
                     opacity = current?.wallpaperOpacity ?: 0.35f,
                     blur = current?.wallpaperBlur ?: 0f,
                     brightness = current?.wallpaperBrightness ?: 1f,
@@ -165,7 +165,9 @@ class MainActivity : ComponentActivity() {
                     LocalUserFontFamily provides userFont,
                     LocalAssistantFontFamily provides assistantFont,
                     LocalWallpaper provides wallpaper,
-                    LocalChatGlassAlpha provides if (current?.wallpaperGlassPanel == true) (current.wallpaperPanelAlpha.coerceIn(0.3f, 0.95f)) else 0f,
+                    com.simplechat.app.ui.theme.LocalFloatingGlass provides (current?.floatingGlass ?: 0f),
+                    // R1（docs/32 §32.3）：没有壁纸就没有玻璃 —— 大面积表面不透明、不染色。
+                    LocalChatGlassAlpha provides if (wallpaper.file != null && current?.wallpaperGlassPanel == true) (current.wallpaperPanelAlpha.coerceIn(0.3f, 0.95f)) else 0f,
                 ) {
                     RootScreen()
                 }

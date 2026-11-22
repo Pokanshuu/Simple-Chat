@@ -697,11 +697,11 @@
 
     <!-- ── 会话重命名 / 删除确认弹窗（RootScreen） ──────── -->
     <string name="hist_rename_title">重命名对话</string>
-    <string name="hist_delete_title">删除后，该对话将不可恢复</string>
-    <string name="hist_delete_body">该对话的所有消息与版本都会被一并清除</string>
-    <string name="hist_delete_confirm">删除该对话</string>
-    <string name="hist_delete_selected_title">删除后，这 %1$d 个对话将不可恢复</string>
-    <string name="hist_delete_selected_body">它们的所有消息与版本都会被一并清除</string>
+    <string name="hist_delete_title">移到回收站？</string>
+    <string name="hist_delete_body">15 天内可在「设置 › 数据管理 › 回收站」中恢复</string>
+    <string name="hist_delete_confirm">移到回收站</string>
+    <string name="hist_delete_selected_title">将这 %1$d 个对话移到回收站？</string>
+    <string name="hist_delete_selected_body">15 天内可在「设置 › 数据管理 › 回收站」中恢复</string>
 
     <!-- ── 全屏搜索页 ───────────────────────────────────── -->
     <string name="search_hint">搜索对话内容…</string>
@@ -941,6 +941,43 @@
     <string name="settings_icon_restart_title">需要重新打开应用</string>
     <string name="settings_icon_restart_message">确认后将退出应用，重新打开即可使用新图标。</string>
     <string name="settings_icon_exit">确认并退出</string>
+    <!-- 悬浮控件玻璃（docs/32 §32.3.3） -->
+    <string name="floating_glass_section">悬浮控件</string>
+    <string name="floating_glass_title">玻璃质感</string>
+    <string name="floating_glass_off">关闭</string>
+    <string name="floating_glass_note">输入栏和输入面板会实时模糊并透出背后的内容，越往右越通透。实时模糊每一帧都要重新计算：流式输出、快速滚动时会增加 GPU 负载与耗电，低端机可能掉帧。省电模式下自动只保留半透明。</string>
+    <string name="floating_glass_note_fallback">当前设备不支持实时模糊（需 Android 12 及以上），或正处于省电模式：只保留半透明效果，背后的内容不会被模糊。</string>
+    <!-- 通用裁剪器（docs/32 §32.6.5） -->
+    <string name="crop_title">裁剪</string>
+    <string name="crop_done">完成</string>
+    <string name="crop_aspect_original">原图比例</string>
+    <string name="crop_hint">拖动移动 · 双指缩放 · 双击复位</string>
+    <string name="crop_attachment">裁剪</string>
+    <string name="wallpaper_crop_title">裁剪壁纸</string>
+    <string name="wallpaper_crop_preview">聊天预览</string>
+    <string name="wallpaper_preview_user">帮我写一段开头</string>
+    <string name="wallpaper_preview_reply">夜色像一层薄纱，慢慢落在城市的屋顶上。远处的灯一盏一盏亮起来……</string>
+    <string name="wallpaper_preview_input">发消息</string>
+    <string name="wallpaper_recrop">重新裁剪</string>
+    <string name="wallpaper_recrop_hint">从原图重新选择显示区域</string>
+    <!-- 壁纸编辑器（docs/32 §32.6） -->
+    <string name="wallpaper_editor_title">编辑壁纸</string>
+    <string name="wallpaper_editor_reset_crop">复位</string>
+    <string name="wallpaper_editor_tab_crop">裁切</string>
+    <string name="wallpaper_editor_tab_adjust">调节</string>
+    <string name="wallpaper_editor_tab_panel">面板</string>
+    <string name="wallpaper_editor_opacity">显眼度</string>
+    <string name="wallpaper_editor_compare">按住对比原图</string>
+    <string name="wallpaper_editor_glass_hint">点上方「透明玻璃面板」切换开关：输入栏、抽屉等会变得通透</string>
+    <string name="wallpaper_blur_none">无</string>
+    <string name="wallpaper_blur_light">轻</string>
+    <string name="wallpaper_blur_medium">中</string>
+    <string name="wallpaper_blur_strong">强</string>
+    <string name="value_on">开</string>
+    <string name="value_off">关</string>
+    <string name="wallpaper_edit">编辑壁纸</string>
+    <string name="wallpaper_edit_hint">裁切、调色与面板效果，所见即所得</string>
+    <string name="wallpaper_change">更换图片</string>
 </resources>
 
 

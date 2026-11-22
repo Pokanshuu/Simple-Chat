@@ -683,11 +683,11 @@
 
     <!-- ── Rename / delete confirmation dialogs (RootScreen) ── -->
     <string name="hist_rename_title">Rename conversation</string>
-    <string name="hist_delete_title">Once deleted, this conversation cannot be recovered</string>
-    <string name="hist_delete_body">All messages and versions in this conversation will be removed as well</string>
-    <string name="hist_delete_confirm">Delete this conversation</string>
-    <string name="hist_delete_selected_title">Once deleted, these %1$d conversations cannot be recovered</string>
-    <string name="hist_delete_selected_body">All their messages and versions will be removed as well</string>
+    <string name="hist_delete_title">Move to Recycle bin?</string>
+    <string name="hist_delete_body">You can restore it from Settings › Data management › Recycle bin within 15 days</string>
+    <string name="hist_delete_confirm">Move to Recycle bin</string>
+    <string name="hist_delete_selected_title">Move these %1$d conversations to Recycle bin?</string>
+    <string name="hist_delete_selected_body">You can restore them from Settings › Data management › Recycle bin within 15 days</string>
 
     <!-- ── Full-screen search page ──────────────────────── -->
     <string name="search_hint">Search conversation content…</string>
@@ -930,6 +930,43 @@
     <string name="settings_icon_restart_title">Reopen the app</string>
     <string name="settings_icon_restart_message">The app will close after you confirm. Open it again to use the new icon.</string>
     <string name="settings_icon_exit">Confirm and exit</string>
+    <!-- 悬浮控件玻璃（docs/32 §32.3.3） -->
+    <string name="floating_glass_section">Floating controls</string>
+    <string name="floating_glass_title">Glass effect</string>
+    <string name="floating_glass_off">Off</string>
+    <string name="floating_glass_note">The input bar and input panels blur and show the content behind them in real time; further right is more see-through. Live blur is recomputed every frame: while replies stream or you scroll fast it adds GPU load and battery use, and low-end devices may drop frames. Battery Saver automatically falls back to translucency only.</string>
+    <string name="floating_glass_note_fallback">Live blur is unavailable (requires Android 12+) or Battery Saver is on: controls are only translucent and the content behind them is not blurred.</string>
+    <!-- 通用裁剪器（docs/32 §32.6.5） -->
+    <string name="crop_title">Crop</string>
+    <string name="crop_done">Done</string>
+    <string name="crop_aspect_original">Original</string>
+    <string name="crop_hint">Drag to move · Pinch to zoom · Double-tap to reset</string>
+    <string name="crop_attachment">Crop</string>
+    <string name="wallpaper_crop_title">Crop wallpaper</string>
+    <string name="wallpaper_crop_preview">Chat preview</string>
+    <string name="wallpaper_preview_user">Write me an opening</string>
+    <string name="wallpaper_preview_reply">Night settled over the rooftops like a thin veil. One by one, the distant lights came on…</string>
+    <string name="wallpaper_preview_input">Message</string>
+    <string name="wallpaper_recrop">Re-crop</string>
+    <string name="wallpaper_recrop_hint">Choose the visible area again from the original</string>
+    <!-- 壁纸编辑器（docs/32 §32.6） -->
+    <string name="wallpaper_editor_title">Edit wallpaper</string>
+    <string name="wallpaper_editor_reset_crop">Reset</string>
+    <string name="wallpaper_editor_tab_crop">Crop</string>
+    <string name="wallpaper_editor_tab_adjust">Adjust</string>
+    <string name="wallpaper_editor_tab_panel">Panels</string>
+    <string name="wallpaper_editor_opacity">Prominence</string>
+    <string name="wallpaper_editor_compare">Hold to compare with original</string>
+    <string name="wallpaper_editor_glass_hint">Tap \"Translucent glass panel\" above to toggle: the input bar, drawer and more become see-through</string>
+    <string name="wallpaper_blur_none">None</string>
+    <string name="wallpaper_blur_light">Light</string>
+    <string name="wallpaper_blur_medium">Medium</string>
+    <string name="wallpaper_blur_strong">Strong</string>
+    <string name="value_on">On</string>
+    <string name="value_off">Off</string>
+    <string name="wallpaper_edit">Edit wallpaper</string>
+    <string name="wallpaper_edit_hint">Crop, color and panel effects, previewed live</string>
+    <string name="wallpaper_change">Change image</string>
 </resources>
 
 

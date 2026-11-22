@@ -174,6 +174,39 @@ object AttachmentImport {
     }
 
     /** 压到白底上：JPEG 没有透明通道，直接压会让透明区域变成黑块。 */
+    /** 解出待发送图片附件的位图（内联 base64 或落盘文件），给裁剪器用。 */
+    suspend fun decodeImage(context: Context, attachment: Attachment): Bitmap? = withContext(Dispatchers.IO) {
+        runCatching {
+            val bytes = if (attachment.path != null) {
+                AttachmentFiles.open(context, attachment).use { it.readBytes() }
+            } else {
+                Base64.decode(attachment.data, Base64.DEFAULT)
+            }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        }.getOrNull()
+    }
+
+    /** 按原图像素坐标裁出新附件：重新压成 JPEG 内联，宽高同步更新。 */
+    suspend fun crop(source: Bitmap, attachment: Attachment, rect: android.graphics.Rect): Attachment =
+        withContext(Dispatchers.IO) {
+            val x = rect.left.coerceIn(0, source.width - 1)
+            val y = rect.top.coerceIn(0, source.height - 1)
+            val w = rect.width().coerceIn(1, source.width - x)
+            val h = rect.height().coerceIn(1, source.height - y)
+            val cropped = Bitmap.createBitmap(source, x, y, w, h)
+            val bytes = ByteArrayOutputStream().use { out ->
+                cropped.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
+                out.toByteArray()
+            }
+            attachment.copy(
+                mime = "image/jpeg",
+                data = Base64.encodeToString(bytes, Base64.NO_WRAP),
+                width = w,
+                height = h,
+                path = null,
+            )
+        }
+
     private fun flatten(src: Bitmap): Bitmap {
         if (!src.hasAlpha()) return src
         val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)

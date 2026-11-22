@@ -72,8 +72,7 @@ import com.simplechat.app.ui.common.MotionEasing
 import com.simplechat.app.ui.common.PillShape
 import com.simplechat.app.ui.common.ProgressRing
 import com.simplechat.app.ui.theme.LocalChatColors
-import com.simplechat.app.ui.theme.LocalChatGlassAlpha
-import com.simplechat.app.ui.theme.glassTintedSurface
+import com.simplechat.app.ui.theme.floatingGlassBackground
 import kotlin.math.ceil
 
 /**
@@ -181,16 +180,15 @@ internal fun InputBar(
     val finishVoice by rememberUpdatedState(onVoiceHoldFinish)
     val slideVoice by rememberUpdatedState(onVoiceSlide)
     /*
-     * 玻璃：壁纸设置里开了「透明玻璃面板」时，输入栏底色半透明，透出背后
-     * 已按用户参数模糊过的壁纸 —— 就是毛玻璃。关掉时 alpha = 1（不透明）。
-     * 可读性下限：输入栏里是用户正在打的字，alpha 不能低于 0.35。
+     * 悬浮玻璃（docs/32 §32.3.3）：一个值同时决定混色与模糊。
+     * 有实时模糊源时下限 0.58，没有（Android 12 以下 / 省电）时下限 0.86。
+     * g = 0 时就是原来的实色卡片。不掺主题色。
      */
-    val glassAlpha = LocalChatGlassAlpha.current
-    val composerBase = if (glassAlpha > 0f) {
-        glassTintedSurface(colors.card, MaterialTheme.colorScheme.primary, glassAlpha.coerceAtLeast(0.35f))
-    } else {
-        colors.card
-    }
+    val floatingGlass = com.simplechat.app.ui.theme.LocalFloatingGlass.current
+    val liveBlur = com.simplechat.app.ui.theme.LocalBackdropSource.current != null
+    val composerBase = colors.card.copy(
+        alpha = colors.card.alpha * com.simplechat.app.ui.theme.floatingSurfaceAlpha(floatingGlass, liveBlur),
+    )
     val background by animateColorAsState(
         targetValue = when {
             voiceCancelling && voiceState.holding -> MaterialTheme.colorScheme.error
@@ -253,7 +251,11 @@ internal fun InputBar(
                     contactColor = AppShadow.PanelContactColor,
                 )
                 .clip(shape)
-                .background(background)
+                // 语音态是实心主色 / 错误色，不参与玻璃
+                .then(
+                    if (voiceState.active) Modifier.background(background)
+                    else Modifier.floatingGlassBackground(background, floatingGlass),
+                )
                 .border(
                     width = 1.dp,
                     color = if (voiceState.active) Color.Transparent else colors.outline.copy(

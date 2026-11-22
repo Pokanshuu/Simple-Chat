@@ -141,6 +141,11 @@ data class StoredSettings(
     val wallpaperPath: String? = null,
     /** 壁纸叠在背景色上的不透明度（0..1）。太实会盖住气泡对比度，默认偏淡。 */
     val wallpaperOpacity: Float = 0.35f,
+    /**
+     * 悬浮控件（输入栏 / 输入面板）的玻璃质感 0..1：一个值同时驱动混色与实时模糊。
+     * 0 = 实色，与旧版完全一致，且不创建任何离屏图层（docs/32 §32.3.3）。
+     */
+    val floatingGlass: Float = 0f,
     /** 壁纸模糊半径（dp）；0 = 不模糊。 */
     val wallpaperBlur: Float = 0f,
     /** 亮度倍率（1 = 原样）。 */
@@ -292,6 +297,7 @@ class SettingsStore(
             assistantFontId = prefs[Keys.ASSISTANT_FONT],
             wallpaperPath = prefs[Keys.WALLPAPER],
             wallpaperOpacity = prefs[Keys.WALLPAPER_OPACITY] ?: StoredSettings().wallpaperOpacity,
+            floatingGlass = prefs[Keys.FLOATING_GLASS] ?: StoredSettings().floatingGlass,
             wallpaperBlur = prefs[Keys.WALLPAPER_BLUR] ?: StoredSettings().wallpaperBlur,
             wallpaperBrightness = prefs[Keys.WALLPAPER_BRIGHTNESS] ?: StoredSettings().wallpaperBrightness,
             wallpaperContrast = prefs[Keys.WALLPAPER_CONTRAST] ?: StoredSettings().wallpaperContrast,
@@ -562,6 +568,10 @@ class SettingsStore(
         preferences.edit {
             if (fileName.isNullOrBlank()) it.remove(Keys.WALLPAPER) else it[Keys.WALLPAPER] = fileName
         }
+    }
+
+    suspend fun setFloatingGlass(value: Float) {
+        preferences.edit { it[Keys.FLOATING_GLASS] = value.coerceIn(0f, 1f) }
     }
 
     /** 壁纸不透明度 0..1（叠在背景色上）。 */
@@ -901,6 +911,7 @@ class SettingsStore(
         /** 壁纸文件名（filesDir/wallpaper 下）；空 = 不使用。 */
         val WALLPAPER = stringPreferencesKey("wallpaper")
         val WALLPAPER_OPACITY = floatPreferencesKey("wallpaper_opacity")
+        val FLOATING_GLASS = floatPreferencesKey("floating_glass")
         val WALLPAPER_BLUR = floatPreferencesKey("wallpaper_blur")
         val WALLPAPER_BRIGHTNESS = floatPreferencesKey("wallpaper_brightness")
         val WALLPAPER_CONTRAST = floatPreferencesKey("wallpaper_contrast")

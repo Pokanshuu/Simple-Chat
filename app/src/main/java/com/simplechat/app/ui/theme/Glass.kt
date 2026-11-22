@@ -1,26 +1,55 @@
 package com.simplechat.app.ui.theme
 
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import com.simplechat.app.ui.theme.tokens.AppTheme
+import kotlin.math.max
 
 /**
- * 玻璃表面色：在「卡片色 × alpha」里混入一点主题色。
+ * 壁纸玻璃作用的表面层（docs/32 §32.3.2）。每层的最透下限由
+ * [com.simplechat.app.ui.theme.tokens.SurfaceTokens] 提供，主题文件可调（但不低于安全线）。
  *
- * 纯白半透明压在亮壁纸上会发灰、发白（用户原话"太白了"），
- * 混 12% 的主题色之后整片玻璃带上主题色相，和侧栏/输入栏/头像圈形成同一套色调，
- * 也顺手把纯白的"塑料感"去掉了。
+ * 悬浮控件（输入栏 / 输入面板）不在这里：它们走 FloatingGlass（实时模糊 + 独立滑块）。
+ */
+enum class GlassLayer { DRAWER, USER_BUBBLE, ROW, SEGMENTED_TRACK, SEGMENTED_INDICATOR }
+
+/**
+ * 某一层在壁纸玻璃下的表面色。**组件只调这个**，不要自己 `copy(alpha)` / `coerceAtLeast`。
  *
- * @param base 卡片底色（亮色主题是白、暗色主题是深灰）
- * @param tint 主题色（MaterialTheme.colorScheme.primary）
- * @param alpha 玻璃不透明度（0..1）
- * @param strength 主题色混入比例，默认 0.12（再高就会盖住文字的对比度）
+ * - 没有壁纸或没开玻璃（`LocalChatGlassAlpha == 0`）→ 原样返回 [base]（R1：不透明、不染色）；
+ * - 否则 alpha = max(用户的面板不透明度, 该层下限)，按 token 的 accentTint 掺主色（默认 0）。
+ */
+@Composable
+fun glassSurface(base: Color, layer: GlassLayer): Color {
+    val glass = LocalChatGlassAlpha.current
+    if (glass <= 0f) return base
+    val surface = AppTheme.tokens.surface
+    val floor = when (layer) {
+        GlassLayer.DRAWER -> surface.drawerFloor
+        GlassLayer.USER_BUBBLE -> surface.userBubbleFloor
+        GlassLayer.ROW -> surface.rowFloor
+        GlassLayer.SEGMENTED_TRACK -> surface.segmentedTrackFloor
+        GlassLayer.SEGMENTED_INDICATOR -> surface.segmentedIndicatorFloor
+    }
+    val alpha = base.alpha * max(glass, floor)
+    return glassTintedSurface(base, MaterialTheme.colorScheme.primary, alpha, surface.accentTint)
+}
+
+/**
+ * 玻璃表面色：`base × alpha`，可选掺入 [strength] 的主题色。
+ *
+ * 默认不掺（docs/32 B7）：表面染色是 §7.2 已否定的做法；需要时由主题文件的
+ * `surface.accentTint` 打开，上限 0.12。
  */
 fun glassTintedSurface(
     base: Color,
     tint: Color,
     alpha: Float,
-    strength: Float = 0.12f,
+    strength: Float = 0f,
 ): Color {
-    val tinted = tint.copy(alpha = alpha)
-    return lerp(base.copy(alpha = alpha), tinted, strength)
+    val plain = base.copy(alpha = alpha)
+    if (strength <= 0f) return plain
+    return lerp(plain, tint.copy(alpha = alpha), strength)
 }
