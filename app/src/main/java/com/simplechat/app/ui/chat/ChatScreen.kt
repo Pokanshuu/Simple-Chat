@@ -62,6 +62,11 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -104,6 +109,8 @@ import com.simplechat.app.ui.common.IconCircleButton
 import com.simplechat.app.ui.common.MotionEasing
 import com.simplechat.app.ui.common.dismissKeyboardOnTouch
 import com.simplechat.app.ui.theme.LocalChatColors
+import com.simplechat.app.ui.theme.LocalWallpaper
+import com.simplechat.app.ui.theme.drawWallpaper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -1115,10 +1122,53 @@ fun ChatScreen(
     LaunchedEffect(shareGroups) { if (shareSelection.active) shareSelection.reconcile(shareGroups) }
     BackHandler(enabled = shareSelection.active) { shareSelection.close() }
 
+    /*
+     * 壁纸：只在聊天页画。解码放 IO，按最外层尺寸 cover 绘制（不拉伸变形）。
+     * 设置里换图 / 删图时 file 变了会重新解码。
+     */
+    val wallpaper = LocalWallpaper.current
+    val wallpaperBitmap by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(
+        initialValue = null,
+        wallpaper.file?.absolutePath,
+        wallpaper.blur,
+    ) {
+        val file = wallpaper.file
+        value = if (file == null) {
+            null
+        } else {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    /*
+                     * 低版本没有真模糊可用（RenderEffect 要 31+，BlurMaskFilter 对
+                     * bitmap 无效）。这里用**降采样再放大**做近似：解码时按模糊档位
+                     * 丢细节，绘制时放大，得到接近高斯模糊的柔化效果，代价是零。
+                     */
+                    val sample = when {
+                        wallpaper.blur < 1f -> 1
+                        wallpaper.blur < 6f -> 2
+                        wallpaper.blur < 14f -> 4
+                        wallpaper.blur < 24f -> 8
+                        else -> 16
+                    }
+                    val options = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+                    android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)?.asImageBitmap()
+                }.getOrNull()
+            }
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(colors.pageBackground)
+            /*
+             * 壁纸画在背景色之上、内容之下：`drawBehind` 就是这一层。
+             *
+             * 画面调节交给 Android 的 ColorMatrix（亮度 / 对比度 / 饱和度），
+             * 适配方式与位置在绘制矩形里算 —— 用 nativeCanvas 是因为 Compose 的
+             * `drawImage` 不接受 colorFilter，而重新编码一张位图来调色既慢又占内存。
+             */
+            .drawBehind { wallpaperBitmap?.let { drawWallpaper(it, wallpaper) } }
             .dismissMessageSelectionOnTap(textSelection),
     ) {
         if (shareSelection.active) {

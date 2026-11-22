@@ -105,7 +105,21 @@ fun InputPanel(
                     contactColor = AppShadow.PanelContactColor,
                 )
                 .clip(shape)
-                .background(colors.card)
+                .background(
+                    // 玻璃模式：面板半透明，透出壁纸；下限 0.55 —— 面板里有列表和按钮，
+                    // 再透下去文字就不够清楚了
+                    com.simplechat.app.ui.theme.LocalChatGlassAlpha.current.let { glass ->
+                        if (glass > 0f) {
+                            com.simplechat.app.ui.theme.glassTintedSurface(
+                                colors.card,
+                                androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                                glass.coerceAtLeast(0.55f),
+                            )
+                        } else {
+                            colors.card
+                        }
+                    },
+                )
                 .border(1.dp, colors.outline, shape)
                 .heightIn(max = 360.dp)
                 .verticalScroll(rememberScrollState())

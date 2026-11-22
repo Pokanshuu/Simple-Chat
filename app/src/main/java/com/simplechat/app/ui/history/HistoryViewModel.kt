@@ -157,7 +157,8 @@ class HistoryViewModel(
     }
 
     fun delete(id: String) {
-        viewModelScope.launch { repository.deleteConversations(listOf(id)) }
+        // 删除 = 移入回收站（15 天内可恢复）
+        viewModelScope.launch { repository.trashConversations(listOf(id)) }
     }
 
     // ── 批量操作 ──────────────────────────────────────────
@@ -173,7 +174,7 @@ class HistoryViewModel(
     fun deleteSelected() {
         val ids = selectedIds.toList()
         viewModelScope.launch {
-            repository.deleteConversations(ids)
+            repository.trashConversations(ids)
             exitSelection()
         }
     }

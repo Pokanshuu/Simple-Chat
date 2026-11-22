@@ -84,6 +84,8 @@ data class StoredSettings(
     val searchApi: ServiceApiConfig = ServiceApiConfig(),
     val filesApi: ServiceApiConfig = ServiceApiConfig(),
     val imageGenApi: ImageGenConfig = ImageGenConfig(),
+    /** 第三方声音模型（朗读）配置。 */
+    val voiceApi: VoiceApiConfig = VoiceApiConfig(),
     val autoReadAloud: Boolean = false,
     val showImageSkipNotice: Boolean = true,
     val showRetrySkipNotice: Boolean = true,
@@ -127,6 +129,45 @@ data class StoredSettings(
      * `AUTO` 按端点解析 —— DeepSeek 官方走扩展通道，其余走 OpenAI 兼容（见 `ApiStyle`）。
      */
     val apiStyleId: String = "AUTO",
+    /** 用户导入的字体（元数据；字节在 filesDir/fonts）。 */
+    val fonts: List<ImportedFont> = emptyList(),
+    /** 软件 UI 字体层选中的字体 id；null = 系统字体。 */
+    val uiFontId: String? = null,
+    /** 用户发言层选中的字体 id；null = 系统字体。 */
+    val userFontId: String? = null,
+    /** 模型回复层选中的字体 id；null = 系统字体。 */
+    val assistantFontId: String? = null,
+    /** 聊天背景壁纸：`filesDir/wallpaper/` 下的文件名；null = 不使用。 */
+    val wallpaperPath: String? = null,
+    /** 壁纸叠在背景色上的不透明度（0..1）。太实会盖住气泡对比度，默认偏淡。 */
+    val wallpaperOpacity: Float = 0.35f,
+    /** 壁纸模糊半径（dp）；0 = 不模糊。 */
+    val wallpaperBlur: Float = 0f,
+    /** 亮度倍率（1 = 原样）。 */
+    val wallpaperBrightness: Float = 1f,
+    /** 对比度倍率（1 = 原样）。 */
+    val wallpaperContrast: Float = 1f,
+    /** 饱和度倍率（1 = 原样，0 = 黑白）。 */
+    val wallpaperSaturation: Float = 1f,
+    /** 画面横向/纵向位置（0..1，0.5 = 居中）。 */
+    val wallpaperOffsetX: Float = 0.5f,
+    val wallpaperOffsetY: Float = 0.5f,
+    /** 缩放倍率（1 = 适配后原尺寸）。 */
+    val wallpaperScale: Float = 1f,
+    /** 额外压暗（0..1，叠一层黑色）。 */
+    val wallpaperDim: Float = 0f,
+    /** 适配方式：COVER / FILL / CENTER / STRETCH。 */
+    val wallpaperFit: String = "COVER",
+    /** 水平翻转。 */
+    val wallpaperFlipH: Boolean = false,
+    /** 自定义截取位置：开启后可在预览上拖动选择显示区域。 */
+    val wallpaperCustomCrop: Boolean = false,
+    /** 壁纸设置页的毛玻璃面板圆角（dp）。 */
+    val wallpaperPanelRadius: Float = 18f,
+    /** 壁纸设置页的毛玻璃面板不透明度（0..1，越大越实）。 */
+    val wallpaperPanelAlpha: Float = 0.72f,
+    /** 壁纸设置页是否用透明玻璃面板；关掉回到普通卡片。 */
+    val wallpaperGlassPanel: Boolean = true,
     /**
      * 智能搜索（联网搜索）开关。
      *
@@ -218,6 +259,7 @@ class SettingsStore(
             searchApi = readService(prefs, Keys.SEARCH_API),
             filesApi = readService(prefs, Keys.FILES_API),
             imageGenApi = readImageGen(prefs),
+            voiceApi = prefs[Keys.VOICE_API]?.let { runCatching { apiProfileJson.decodeFromString<VoiceApiConfig>(it) }.getOrNull() } ?: VoiceApiConfig(),
             autoReadAloud = prefs[Keys.AUTO_READ_ALOUD] ?: false,
             showRetrySkipNotice = prefs[Keys.RETRY_SKIP_NOTICE] ?: true,
             showImageSkipNotice = prefs[Keys.IMAGE_SKIP_NOTICE] ?: true,
@@ -242,6 +284,28 @@ class SettingsStore(
             defaultModeId = prefs[Keys.DEFAULT_MODE] ?: StoredSettings().defaultModeId,
             languageId = prefs[LANGUAGE_KEY] ?: StoredSettings().languageId,
             apiStyleId = prefs[Keys.API_STYLE] ?: StoredSettings().apiStyleId,
+            fonts = prefs[Keys.FONTS]?.let { raw ->
+                runCatching { apiProfileJson.decodeFromString<List<ImportedFont>>(raw) }.getOrNull()
+            } ?: emptyList(),
+            uiFontId = prefs[Keys.UI_FONT],
+            userFontId = prefs[Keys.USER_FONT],
+            assistantFontId = prefs[Keys.ASSISTANT_FONT],
+            wallpaperPath = prefs[Keys.WALLPAPER],
+            wallpaperOpacity = prefs[Keys.WALLPAPER_OPACITY] ?: StoredSettings().wallpaperOpacity,
+            wallpaperBlur = prefs[Keys.WALLPAPER_BLUR] ?: StoredSettings().wallpaperBlur,
+            wallpaperBrightness = prefs[Keys.WALLPAPER_BRIGHTNESS] ?: StoredSettings().wallpaperBrightness,
+            wallpaperContrast = prefs[Keys.WALLPAPER_CONTRAST] ?: StoredSettings().wallpaperContrast,
+            wallpaperSaturation = prefs[Keys.WALLPAPER_SATURATION] ?: StoredSettings().wallpaperSaturation,
+            wallpaperOffsetX = prefs[Keys.WALLPAPER_OFFSET_X] ?: StoredSettings().wallpaperOffsetX,
+            wallpaperOffsetY = prefs[Keys.WALLPAPER_OFFSET_Y] ?: StoredSettings().wallpaperOffsetY,
+            wallpaperScale = prefs[Keys.WALLPAPER_SCALE] ?: StoredSettings().wallpaperScale,
+            wallpaperDim = prefs[Keys.WALLPAPER_DIM] ?: StoredSettings().wallpaperDim,
+            wallpaperFit = prefs[Keys.WALLPAPER_FIT] ?: StoredSettings().wallpaperFit,
+            wallpaperFlipH = prefs[Keys.WALLPAPER_FLIP_H] ?: StoredSettings().wallpaperFlipH,
+            wallpaperCustomCrop = prefs[Keys.WALLPAPER_CUSTOM_CROP] ?: StoredSettings().wallpaperCustomCrop,
+            wallpaperPanelRadius = prefs[Keys.WALLPAPER_PANEL_RADIUS] ?: StoredSettings().wallpaperPanelRadius,
+            wallpaperPanelAlpha = prefs[Keys.WALLPAPER_PANEL_ALPHA] ?: StoredSettings().wallpaperPanelAlpha,
+            wallpaperGlassPanel = prefs[Keys.WALLPAPER_GLASS_PANEL] ?: StoredSettings().wallpaperGlassPanel,
             webSearch = prefs[Keys.WEB_SEARCH] ?: StoredSettings().webSearch,
             locationRegion = prefs[Keys.LOCATION] ?: StoredSettings().locationRegion,
             searchReasoning = prefs[Keys.SEARCH_REASONING] ?: false,
@@ -449,6 +513,29 @@ class SettingsStore(
         preferences.edit { it[Keys.IMAGE_GEN_API] = apiProfileJson.encodeToString(config) }
     }
 
+    /** 第三方声音模型配置。 */
+    suspend fun setVoiceApi(config: VoiceApiConfig) {
+        require(config.adapter in setOf("OPENAI_TTS", "CUSTOM_OPENAI"))
+        preferences.edit { it[Keys.VOICE_API] = apiProfileJson.encodeToString(config) }
+    }
+
+    /** 保存导入的字体列表（只存元数据，字节在 filesDir/fonts）。 */
+    suspend fun setFonts(fonts: List<ImportedFont>) {
+        preferences.edit { it[Keys.FONTS] = apiProfileJson.encodeToString(fonts) }
+    }
+
+    /** 设置某一层用哪个字体；`null` 表示回到系统字体。 */
+    suspend fun setFontSlot(slot: FontSlot, fontId: String?) {
+        val key = when (slot) {
+            FontSlot.UI -> Keys.UI_FONT
+            FontSlot.USER -> Keys.USER_FONT
+            FontSlot.ASSISTANT -> Keys.ASSISTANT_FONT
+        }
+        preferences.edit {
+            if (fontId == null) it.remove(key) else it[key] = fontId
+        }
+    }
+
     suspend fun setServiceApi(files: Boolean, config: ServiceApiConfig) {
         config.endpoint("https://api.deepseek.com", if (files) config.filesPath else config.searchPath)
         if (!files) config.endpoint("https://api.deepseek.com", config.fetchPath)
@@ -468,6 +555,74 @@ class SettingsStore(
     suspend fun setLocationRegion(region: String) {
         // 存**洗过**的值：逗号会把时间地点提醒的五个字段挤成六段（见 normalizeRegion）
         preferences.edit { it[Keys.LOCATION] = normalizeRegion(region) }
+    }
+
+    /** 壁纸：传 null 表示不使用；只存文件名，字节在 filesDir/wallpaper。 */
+    suspend fun setWallpaper(fileName: String?) {
+        preferences.edit {
+            if (fileName.isNullOrBlank()) it.remove(Keys.WALLPAPER) else it[Keys.WALLPAPER] = fileName
+        }
+    }
+
+    /** 壁纸不透明度 0..1（叠在背景色上）。 */
+    suspend fun setWallpaperOpacity(opacity: Float) {
+        preferences.edit { it[Keys.WALLPAPER_OPACITY] = opacity.coerceIn(0f, 1f) }
+    }
+
+    /**
+     * 壁纸画面调节（模糊 / 亮度 / 对比度 / 饱和度 / 位置 / 缩放 / 暗化 / 适配 / 翻转）。
+     *
+     * 一次写全量而不是十个 setter：这些参数共用同一批 slider，
+     * 每次拖动都会带上其余字段的当前值，合并成一次 DataStore 编辑更省。
+     */
+    suspend fun setWallpaperTuning(
+        blur: Float,
+        brightness: Float,
+        contrast: Float,
+        saturation: Float,
+        offsetX: Float,
+        offsetY: Float,
+        scale: Float,
+        dim: Float,
+        fit: String,
+        flipH: Boolean,
+    ) {
+        preferences.edit { prefs ->
+            prefs[Keys.WALLPAPER_BLUR] = blur.coerceIn(0f, 30f)
+            prefs[Keys.WALLPAPER_BRIGHTNESS] = brightness.coerceIn(0.2f, 2f)
+            prefs[Keys.WALLPAPER_CONTRAST] = contrast.coerceIn(0.2f, 2f)
+            prefs[Keys.WALLPAPER_SATURATION] = saturation.coerceIn(0f, 2f)
+            prefs[Keys.WALLPAPER_OFFSET_X] = offsetX.coerceIn(0f, 1f)
+            prefs[Keys.WALLPAPER_OFFSET_Y] = offsetY.coerceIn(0f, 1f)
+            prefs[Keys.WALLPAPER_SCALE] = scale.coerceIn(0.5f, 3f)
+            prefs[Keys.WALLPAPER_DIM] = dim.coerceIn(0f, 1f)
+            prefs[Keys.WALLPAPER_FIT] = fit.ifBlank { "COVER" }
+            prefs[Keys.WALLPAPER_FLIP_H] = flipH
+        }
+    }
+
+    /** 壁纸设置页的毛玻璃面板：圆角与不透明度。 */
+    suspend fun setWallpaperPanel(radius: Float, alpha: Float) {
+        preferences.edit {
+            it[Keys.WALLPAPER_PANEL_RADIUS] = radius.coerceIn(4f, 32f)
+            it[Keys.WALLPAPER_PANEL_ALPHA] = alpha.coerceIn(0.3f, 0.95f)
+        }
+    }
+    /** 壁纸设置页是否用透明玻璃面板。 */
+    suspend fun setWallpaperGlassPanel(enabled: Boolean) {
+        preferences.edit { it[Keys.WALLPAPER_GLASS_PANEL] = enabled }
+    }
+    /** 自定义截取位置开关。 */
+    suspend fun setWallpaperCustomCrop(enabled: Boolean) {
+        preferences.edit { it[Keys.WALLPAPER_CUSTOM_CROP] = enabled }
+    }
+
+    /** 拖动预览时更新截取位置（0..1）。 */
+    suspend fun setWallpaperOffset(x: Float, y: Float) {
+        preferences.edit {
+            it[Keys.WALLPAPER_OFFSET_X] = x.coerceIn(0f, 1f)
+            it[Keys.WALLPAPER_OFFSET_Y] = y.coerceIn(0f, 1f)
+        }
     }
 
     /** 朗读音色：名字用来精确选中，标签用来在设置页显示（见 [StoredSettings.ttsVoiceName]）。 */
@@ -688,6 +843,7 @@ class SettingsStore(
         val PROFILES = stringPreferencesKey("api_profiles_v1")
         val SEARCH_API = stringPreferencesKey("search_api_config")
         val FILES_API = stringPreferencesKey("files_api_config")
+        val VOICE_API = stringPreferencesKey("voice_api_config")
         val IMAGE_GEN_API = stringPreferencesKey("image_gen_api_config")
         val ACTIVE_PROFILE = stringPreferencesKey("active_api_profile")
         val RETRY_SKIP_NOTICE = booleanPreferencesKey("show_retry_skip_notice")
@@ -733,6 +889,32 @@ class SettingsStore(
 
         /** 当前端点 `/models` 拉回来的 id，换行分隔（[ModelIdList]）。 */
         val MODEL_IDS = stringPreferencesKey("model_ids")
+
+        /** 导入的字体列表（JSON，见 [ImportedFont]）。 */
+        val FONTS = stringPreferencesKey("fonts")
+
+        /** 三层各自选中的字体 id；空 = 该层用系统字体。 */
+        val UI_FONT = stringPreferencesKey("ui_font")
+        val USER_FONT = stringPreferencesKey("user_font")
+        val ASSISTANT_FONT = stringPreferencesKey("assistant_font")
+
+        /** 壁纸文件名（filesDir/wallpaper 下）；空 = 不使用。 */
+        val WALLPAPER = stringPreferencesKey("wallpaper")
+        val WALLPAPER_OPACITY = floatPreferencesKey("wallpaper_opacity")
+        val WALLPAPER_BLUR = floatPreferencesKey("wallpaper_blur")
+        val WALLPAPER_BRIGHTNESS = floatPreferencesKey("wallpaper_brightness")
+        val WALLPAPER_CONTRAST = floatPreferencesKey("wallpaper_contrast")
+        val WALLPAPER_SATURATION = floatPreferencesKey("wallpaper_saturation")
+        val WALLPAPER_OFFSET_X = floatPreferencesKey("wallpaper_offset_x")
+        val WALLPAPER_OFFSET_Y = floatPreferencesKey("wallpaper_offset_y")
+        val WALLPAPER_SCALE = floatPreferencesKey("wallpaper_scale")
+        val WALLPAPER_DIM = floatPreferencesKey("wallpaper_dim")
+        val WALLPAPER_PANEL_RADIUS = floatPreferencesKey("wallpaper_panel_radius")
+        val WALLPAPER_PANEL_ALPHA = floatPreferencesKey("wallpaper_panel_alpha")
+        val WALLPAPER_GLASS_PANEL = booleanPreferencesKey("wallpaper_glass_panel")
+        val WALLPAPER_CUSTOM_CROP = booleanPreferencesKey("wallpaper_custom_crop")
+        val WALLPAPER_FIT = stringPreferencesKey("wallpaper_fit")
+        val WALLPAPER_FLIP_H = booleanPreferencesKey("wallpaper_flip_h")
         val MODEL_CONTEXT_WINDOWS = stringPreferencesKey("model_context_windows")
         val MODEL_METADATA = stringPreferencesKey("model_metadata")
         val MODEL_OVERRIDES = stringPreferencesKey("model_overrides")
