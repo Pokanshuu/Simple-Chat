@@ -75,7 +75,7 @@ internal fun readStoredLanguageSync(context: Context): AppLanguage = runCatching
 }.getOrDefault(AppLanguage.SYSTEM)
 
 internal const val MaxPanelAccentOpacity = 1f
-internal const val MaxWallpaperBlur = 192f
+internal const val MaxWallpaperBlur = 160f
 
 @kotlinx.serialization.Serializable
 internal data class WallpaperAppearance(

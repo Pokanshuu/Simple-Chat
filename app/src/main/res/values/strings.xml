@@ -826,7 +826,7 @@
     <string name="tts_third_party_api">第三方声音 API</string>
     <string name="tts_third_party_model">模型</string>
     <string name="tts_third_party_adapter">协议</string>
-    <string name="tts_third_party_built_in">填入内置音色（%1$d 个）</string>
+    <string name="tts_third_party_built_in">补齐内置音色（%1$d 个）</string>
     <string name="tts_third_party_built_in_hint">按当前协议一键加齐，不用记音色 id</string>
     <string name="tts_third_party_voice_id">音色 id</string>
     <string name="tts_third_party_voice_name">显示名称（可选）</string>
@@ -969,7 +969,7 @@
     <string name="settings_icon_classic">经典图标</string>
     <string name="settings_icon_simple_cat" translatable="false">Simple Cat</string>
     <string name="settings_icon_restart_title">需要重新打开应用</string>
-    <string name="settings_icon_restart_message">确认后将退出应用，重新打开即可使用新图标。</string>
+    <string name="settings_icon_restart_message">图标风格已保存。如果桌面图标还没刷新，请关闭并重新打开应用。</string>
     <string name="settings_icon_exit">确认并退出</string>
     <!-- 悬浮控件玻璃（docs/32 §32.3.3） -->
     <string name="floating_glass_section">悬浮控件</string>
@@ -978,7 +978,7 @@
     <string name="theme_base_opacity">底色不透明度</string>
     <string name="floating_glass_off">关闭</string>
     <string name="floating_glass_note">亚克力效果调整背景的模糊与混色，底色不透明度只调整覆盖在其上的底色。</string>
-    <string name="floating_glass_note_fallback">当前设备无法实时模糊（需 Android 12 及以上且未开启省电模式）。悬浮控件仍可调整混色和底色不透明度。</string>
+    <string name="floating_glass_note_fallback">当前设备无法实时模糊（需 Android 12 及以上）。悬浮控件仍可调整混色和底色不透明度。</string>
     <!-- 通用裁剪器（docs/32 §32.6.5） -->
     <string name="crop_title">裁剪</string>
     <string name="crop_done">完成</string>

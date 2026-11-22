@@ -861,9 +861,13 @@ fun ChatScreen(
         while (true) {
             // Wake on layout growth or resumed following, not on every frame spent reading history.
             if (!needsFollow()) snapshotFlow { needsFollow() }.first { it }
+            var previousFrame = 0L
             while (needsFollow()) {
-                listState.followBottom()
-                withFrameNanos { }
+                val frame = withFrameNanos { it }
+                if (!needsFollow()) break
+                val elapsed = if (previousFrame == 0L) 16_666_667L else frame - previousFrame
+                previousFrame = frame
+                listState.followBottom(elapsed)
             }
         }
     }

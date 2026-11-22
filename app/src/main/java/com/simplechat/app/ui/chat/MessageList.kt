@@ -23,6 +23,9 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.expandVertically
+import androidx.compose.runtime.SideEffect
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -1088,12 +1091,21 @@ fun AssistantBlock(
             }
         }
 
-        // 正文下方的来源条：与正文角标同一套编号，两条路都能点开
-        if (timeline != null && timeline.sources.isNotEmpty()) {
-            Spacer(Modifier.size(10.dp))
+        // On a live reply, grow the footer into place instead of adding its whole
+        // height in one frame while the list is following the bottom.
+        val sourcesVisibility = remember(message.id) { MutableTransitionState(sources.isNotEmpty()) }
+        sourcesVisibility.targetState = sources.isNotEmpty()
+        AnimatedVisibility(
+            visibleState = sourcesVisibility,
+            enter = expandVertically(tween(180, easing = MotionEasing), expandFrom = Alignment.Top) + fadeIn(tween(150)),
+            exit = shrinkVertically(tween(140, easing = MotionEasing), shrinkTowards = Alignment.Top) + fadeOut(tween(100)),
+        ) {
+            val visibleSources = remember { mutableStateOf(sources) }
+            SideEffect { if (sources.isNotEmpty()) visibleSources.value = sources }
             SourcesStrip(
-                sources = timeline.sources,
+                sources = sources.ifEmpty { visibleSources.value },
                 onOpenSources = { sourceSheet = it },
+                modifier = Modifier.padding(top = 10.dp),
             )
         }
 

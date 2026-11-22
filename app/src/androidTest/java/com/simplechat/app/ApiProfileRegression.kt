@@ -93,8 +93,8 @@ internal object ApiProfileRegression {
         store.setBaseUrl("https://b.invalid/v1")
         store.setModel("b-model")
         store.setApiKey("fixture-key-b")
-        store.updateApiProfile(b) { it.copy(modelIds = listOf("b1"), modelContextWindows = mapOf("b1" to 64_000)) }
         store.setApiStyle("OPENAI")
+        store.updateApiProfile(b) { it.copy(modelIds = listOf("b1"), modelContextWindows = mapOf("b1" to 64_000)) }
         store.selectApiProfile(a)
         stored = store.flow.first()
         check(stored.apiKey == "fixture-legacy-key" && stored.modelId == "legacy-model" && stored.apiStyleId == "ANTHROPIC")

@@ -7,7 +7,7 @@
 
 ## 文件地图
 
-最新预发布功能见 [v1.2.5-beta.4 发布说明](../release-notes/RELEASE_NOTES_v1.2.5-beta.4.md)；正式版说明见 [v1.2.4](../release-notes/RELEASE_NOTES_v1.2.4.md)。
+最新预发布功能见 [v1.2.5 发布说明](../release-notes/RELEASE_NOTES_v1.2.5.md)；正式版说明见 [v1.2.4](../release-notes/RELEASE_NOTES_v1.2.4.md)。
 
 欢迎引导及思考强度见[使用说明](25-首次启动引导与思考强度.md)。
 

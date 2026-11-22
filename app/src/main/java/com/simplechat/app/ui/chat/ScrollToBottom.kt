@@ -118,40 +118,18 @@ fun LazyListState.distanceToBottom(): Float {
         .toFloat()
 }
 
-/**
- * 跟底时每帧吃掉剩余距离的比例。见 [followBottom]。
- *
- * 取 0.7：一步吃掉七成，两三帧就贴住；同时剩下的三成把"内容更新之间的台阶"
- * 摊平。再高（→1）就退回"每帧一把跳到位"，再低则滞后明显。
- */
-private const val FollowFraction = 0.7f
+/** Use wall time so following feels similar at 60 Hz and 120 Hz. Clamp long frame stalls. */
+internal fun followScrollStep(remaining: Float, frameNanos: Long): Float {
+    if (remaining <= 1f) return remaining
+    val elapsedMs = (frameNanos / 1_000_000.0).coerceIn(1.0, 32.0)
+    return (remaining * -kotlin.math.expm1(-elapsedMs / 38.0)).toFloat()
+}
 
-/**
- * 贴底跟随的**一帧**：向底部**逼近**，而不是一把跳过去。
- *
- * ### 为什么不能直接 `scrollToBottom()`
- *
- * 内容是**离散**地来的（数据层每 50ms 提交一批），而屏是 60Hz ——
- * "每帧 `scrollBy(1e9)`" 具体表现就是**每 50ms 挪一个台阶**。
- * 台阶的大小 = 那一批 token 长出来的高度，往往是一整行。
- *
- * 改成"每帧吃掉剩余距离的 [FollowFraction]"之后，运动是**连续**的：
- * 内容更新之间那几个静止帧也被填上了位移。
- *
- * ### 代价（明确接受）
- *
- * 稳态滞后 = 增长速率 / [FollowFraction]（按帧算）—— 也就是**最新那一行会
- * 被裁掉不到一行**。观感从"字是当场蹦出来的"变成"字正在被写出来"。
- * 这是拿"最后一行必须完整可见"换"运动连续"，是刻意的取舍。
- *
- * 最后一条还在视口外（`distanceToBottom` 返回无穷）时不算跟随，是**追平** ——
- * 那次直接跳，没有台阶可摊。
- */
-suspend fun LazyListState.followBottom() {
+suspend fun LazyListState.followBottom(frameNanos: Long) {
     val remaining = distanceToBottom()
     when {
         !remaining.isFinite() -> scrollToBottom()
-        remaining > 0f -> scrollBy(remaining * FollowFraction)
+        remaining > 0f -> scrollBy(followScrollStep(remaining, frameNanos))
         /*
          * 兜底。走到这里意味着 `canScrollForward` 为真（调用方保证）而距离算出来是 0 ——
          * 只可能是内边距那一段的边界算不准。此时退回已知正确的"直接跳"：

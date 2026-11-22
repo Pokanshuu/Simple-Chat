@@ -1,13 +1,8 @@
 package com.simplechat.app.ui.theme
 
-import android.content.BroadcastReceiver
 import androidx.compose.foundation.background
 import com.simplechat.app.data.ControlEffects
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.os.Build
-import android.os.PowerManager
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import com.simplechat.app.data.InterfaceControl
@@ -39,7 +34,6 @@ import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
@@ -77,27 +71,8 @@ private fun floatingBlurRadius(strength: Float): Dp {
     return lerp(4f, max, strength.coerceIn(0f, 1f)).dp
 }
 
-/**
- * 当前设备 / 状态下能不能做实时模糊：Android 12+ 且不在省电模式。
- * 省电模式切换时会实时更新（监听系统广播），不需要重启页面。
- */
-@Composable
-fun rememberLiveBlurAvailable(): Boolean {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return false
-    val context = LocalContext.current
-    val power = remember { context.getSystemService(Context.POWER_SERVICE) as? PowerManager }
-    var saving by remember { mutableStateOf(power?.isPowerSaveMode == true) }
-    DisposableEffect(power) {
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(c: Context?, intent: Intent?) {
-                saving = power?.isPowerSaveMode == true
-            }
-        }
-        context.registerReceiver(receiver, IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED))
-        onDispose { runCatching { context.unregisterReceiver(receiver) } }
-    }
-    return !saving
-}
+/** Live blur is supported from Android 12, including in Battery Saver. */
+fun rememberLiveBlurAvailable(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
 
 /**
  * 模糊源：消息区的内容图层 + 带底色的源图层 + 它在窗口里的位置。

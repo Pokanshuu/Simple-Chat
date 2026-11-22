@@ -654,6 +654,17 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
         }
     }
     var showThemeEditor by rememberSaveable { mutableStateOf(false) }
+    var showIconRestart by rememberSaveable { mutableStateOf(false) }
+    if (showIconRestart) {
+        AppConfirmDialog(
+            title = stringResource(R.string.settings_icon_restart_title),
+            message = stringResource(R.string.settings_icon_restart_message),
+            confirmText = stringResource(R.string.action_close),
+            onDismiss = { showIconRestart = false },
+            onConfirm = { showIconRestart = false },
+            showCancel = false,
+        )
+    }
     if (showThemeEditor) {
         CustomThemeEditor(stored, store, onDismiss = { showThemeEditor = false })
     }
@@ -755,6 +766,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                                 scope.launch {
                                     try {
                                         store.setUseSimpleCatIcon(enabled)
+                                        showIconRestart = true
                                     } catch (_: java.io.IOException) {
                                         android.widget.Toast.makeText(context, R.string.diagnostics_save_failed, android.widget.Toast.LENGTH_SHORT).show()
                                     }
@@ -1824,13 +1836,6 @@ private fun MemoryPage(
                     }
                 }
             }
-            RowDivider(inset = 16.dp)
-            SettingsActionRow(
-                label = stringResource(R.string.settings_enhanced_memory),
-                hint = stringResource(R.string.settings_enhanced_memory_unavailable),
-                enabled = false,
-                onClick = {},
-            )
         }
     }
 }
@@ -3461,6 +3466,17 @@ internal fun SettingsActionRow(
     }
 }
 
+@Composable
+private fun SettingsInfoRow(label: String, hint: String) {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+        verticalArrangement = Arrangement.spacedBy(Space.Gap),
+    ) {
+        Text(label, style = MaterialTheme.typography.titleSmall)
+        Text(hint, style = MaterialTheme.typography.bodySmall, color = LocalChatColors.current.placeholder)
+    }
+}
+
 /** 开关行。 */
 @Composable
 internal fun SettingsSwitchRow(
@@ -4569,17 +4585,20 @@ private fun VoiceApiPage(
 
     SettingsSectionLabel(stringResource(R.string.service_connection))
     SettingsCard {
-        SettingsActionRow(
-            label = stringResource(R.string.tts_third_party_preset_qwen),
-            hint = stringResource(R.string.tts_third_party_preset_qwen_hint),
-            onClick = {
-                val preset = com.simplechat.app.data.VoiceApiConfig.qwenDashScopePreset()
-                save(config.copy(baseUrl = preset.baseUrl, adapter = preset.adapter, model = preset.model,
-                    customVoices = (config.customVoices + preset.customVoices).distinct(),
-                    voiceLabels = preset.voiceLabels + config.voiceLabels))
-            },
-        )
-        RowDivider(inset = Space.Screen)
+        val preset = com.simplechat.app.data.VoiceApiConfig.qwenDashScopePreset()
+        val presetApplied = config.baseUrl == preset.baseUrl && config.adapter == preset.adapter && config.model == preset.model
+        if (!presetApplied) {
+            SettingsActionRow(
+                label = stringResource(R.string.tts_third_party_preset_qwen),
+                hint = stringResource(R.string.tts_third_party_preset_qwen_hint),
+                onClick = {
+                    save(config.copy(baseUrl = preset.baseUrl, adapter = preset.adapter, model = preset.model,
+                        customVoices = config.customVoices + preset.customVoices.filterNot { it in config.allVoices },
+                        voiceLabels = preset.voiceLabels + config.voiceLabels))
+                },
+            )
+            RowDivider(inset = Space.Screen)
+        }
         /*
          * 协议放最前面：它决定端点路径、请求体结构和内置音色表。
          * 以前只能靠「填入千问预设」间接切换，配别的服务商时根本改不了。
@@ -4636,17 +4655,15 @@ private fun VoiceApiPage(
          * 这是「不用记 id」的主路径 —— 大多数人不需要知道 Cherry 是谁，
          * 只需要有人把可选的东西摆出来。
          */
-        SettingsActionRow(
-            label = stringResource(
-                R.string.tts_third_party_built_in,
-                com.simplechat.app.data.VoiceCatalog.builtIn(config.adapter).size,
-            ),
-            hint = stringResource(R.string.tts_third_party_built_in_hint),
-            onClick = {
-                save(com.simplechat.app.data.VoiceApiConfig.withBuiltInVoices(config))
-            },
-        )
-        RowDivider(inset = Space.Screen)
+        val missing = com.simplechat.app.data.VoiceCatalog.builtIn(config.adapter).count { it.id !in config.allVoices }
+        if (missing > 0) {
+            SettingsActionRow(
+                label = stringResource(R.string.tts_third_party_built_in, missing),
+                hint = stringResource(R.string.tts_third_party_built_in_hint),
+                onClick = { save(com.simplechat.app.data.VoiceApiConfig.withBuiltInVoices(config)) },
+            )
+            RowDivider(inset = Space.Screen)
+        }
         SettingsActionRow(
             label = stringResource(R.string.tts_third_party_add_voice),
             hint = stringResource(R.string.tts_third_party_voice_custom_hint),

@@ -9,7 +9,7 @@
 
 See the [v1.2.4 release notes (Chinese)](release-notes/RELEASE_NOTES_v1.2.4.md) for image generation, per-conversation memory, and icon switching.
 
-Latest pre-release: [v1.2.5-beta.2 release notes (Chinese)](release-notes/RELEASE_NOTES_v1.2.5-beta.2.md).
+Latest pre-release: [v1.2.5 release notes (Chinese)](release-notes/RELEASE_NOTES_v1.2.5.md).
 
 ## Introduction
 

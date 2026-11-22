@@ -52,7 +52,7 @@ data class WallpaperState(
 val LocalWallpaper = staticCompositionLocalOf { WallpaperState() }
 
 // 滑块保持连续。每个采样点都先做平滑模糊，而且保留同样的像素网格。
-private val blurStops = floatArrayOf(0f, 3f, 10f, 20f, 40f, 72f, 120f, 180f, MaxWallpaperBlur)
+private val blurStops = floatArrayOf(0f, 3f, 10f, 20f, 40f, 72f, 120f, MaxWallpaperBlur)
 private val blurSpread = floatArrayOf(0f, 0.002f, 0.005f, 0.011f, 0.024f, 0.049f, 0.10f, 0.19f, 0.21f)
 private const val BlurWorkingSize = 480
 

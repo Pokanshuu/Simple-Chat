@@ -814,7 +814,7 @@
     <string name="tts_third_party_model">Model</string>
     <string name="tts_third_party_adapter">Protocol</string>
     <string name="tts_third_party_built_in">Add built-in voices (%1$d)</string>
-    <string name="tts_third_party_built_in_hint">Fills them all for the current protocol — no ids to remember</string>
+    <string name="tts_third_party_built_in_hint">Adds only the missing voices for the current protocol</string>
     <string name="tts_third_party_voice_id">Voice id</string>
     <string name="tts_third_party_voice_name">Display name (optional)</string>
     <string name="tts_third_party_voice_name_hint">Something memorable, e.g. “my voice”</string>
@@ -958,7 +958,7 @@
     <string name="settings_icon_style">Icon style</string>
     <string name="settings_icon_classic">Classic icon</string>
     <string name="settings_icon_restart_title">Reopen the app</string>
-    <string name="settings_icon_restart_message">The app will close after you confirm. Open it again to use the new icon.</string>
+    <string name="settings_icon_restart_message">Icon style saved. If the launcher has not refreshed the icon, close and reopen the app.</string>
     <string name="settings_icon_exit">Confirm and exit</string>
     <!-- 悬浮控件玻璃（docs/32 §32.3.3） -->
     <string name="floating_glass_section">Floating controls</string>
@@ -967,7 +967,7 @@
     <string name="theme_base_opacity">Base color opacity</string>
     <string name="floating_glass_off">Off</string>
     <string name="floating_glass_note">Acrylic adjusts background blur and color mixing. Base color opacity only changes the color laid over it.</string>
-    <string name="floating_glass_note_fallback">Live blur requires Android 12 or later with Battery Saver off. Floating controls still support color mixing and base color opacity.</string>
+    <string name="floating_glass_note_fallback">Live blur requires Android 12 or later. Floating controls still support color mixing and base color opacity.</string>
     <!-- 通用裁剪器（docs/32 §32.6.5） -->
     <string name="crop_title">Crop</string>
     <string name="crop_done">Done</string>

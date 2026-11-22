@@ -98,10 +98,10 @@ data class VoiceApiConfig(
 
         /** 把某个协议的内置音色一次性并进来（保留用户已有的自定义音色）。 */
         fun withBuiltInVoices(config: VoiceApiConfig): VoiceApiConfig {
-            val entries = VoiceCatalog.builtIn(config.adapter)
+            val entries = VoiceCatalog.builtIn(config.adapter).filterNot { it.id in config.allVoices }
             return config.copy(
                 customVoices = (config.customVoices + entries.map { it.id }).distinct(),
-                voiceLabels = config.voiceLabels + entries.associate { it.id to it.label },
+                voiceLabels = entries.associate { it.id to it.label } + config.voiceLabels,
             )
         }
     }

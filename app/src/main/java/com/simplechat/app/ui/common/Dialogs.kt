@@ -125,6 +125,7 @@ fun AppConfirmDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
     destructive: Boolean = false,
+    showCancel: Boolean = true,
 ) {
     val colors = LocalChatColors.current
     Dialog(onDismissRequest = onDismiss) {
@@ -170,21 +171,23 @@ fun AppConfirmDialog(
                 )
             }
 
-            Spacer(Modifier.size(6.dp))
+            if (showCancel) {
+                Spacer(Modifier.size(6.dp))
 
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(PillShape)
-                    .clickable(onClick = onDismiss)
-                    .padding(vertical = 14.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = stringResource(R.string.action_cancel),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(PillShape)
+                        .clickable(onClick = onDismiss)
+                        .padding(vertical = 14.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = stringResource(R.string.action_cancel),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
             }
         }
     }

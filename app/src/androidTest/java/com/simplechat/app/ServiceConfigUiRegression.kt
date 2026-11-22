@@ -127,6 +127,69 @@ internal object ServiceConfigUiRegression {
             error("Tool form did not scroll to the bottom")
         }
 
+        suspend fun verifyVoiceAndIcon() {
+            val apiTitle = activity.getString(R.string.settings_api)
+            val voiceApiTitle = activity.getString(R.string.tts_third_party_api)
+            val voiceSection = activity.getString(R.string.tts_third_party_section)
+            check(nodes().none { matchesText(it, voiceApiTitle) || matchesText(it, voiceSection) })
+            tapBack(toolbar = true)
+            waitForTransition()
+            tapText(apiTitle)
+            waitForTransition()
+            tapText(voiceApiTitle)
+            waitForTransition()
+            val voiceSwitch = activity.getString(R.string.tts_third_party_enable)
+            val presetLabel = activity.getString(R.string.tts_third_party_preset_qwen)
+            toolSwitch(voiceSwitch, checked = false)
+            check(nodes().none { matchesText(it, presetLabel) })
+            click(toolSwitch(voiceSwitch, checked = false))
+            revealText(presetLabel)
+            tapText(presetLabel)
+            withTimeout(5_000) { store.flow.first { it.voiceApi.adapter == "DASHSCOPE_TTS" } }
+            waitForTransition()
+            if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
+            val builtInLabel = activity.getString(R.string.tts_third_party_built_in, 5)
+            check(nodes().none { matchesText(it, presetLabel) || matchesText(it, builtInLabel) })
+            click(toolSwitch(voiceSwitch, checked = true))
+            withTimeout(5_000) { store.flow.first { !it.voiceApi.enabled } }
+            waitForTransition()
+            withTimeout(5_000) {
+                while (nodes().any { matchesText(it, presetLabel) }) {
+                    if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
+                    delay(100)
+                }
+            }
+            tapBack(toolbar = true)
+            waitForTransition()
+            awaitText(apiTitle)
+            store.setApiKey("fixture-key")
+            store.setVoiceApi(com.simplechat.app.data.VoiceApiConfig(
+                enabled = true, baseUrl = "https://speech-fixture.invalid", customVoices = listOf("Fixture voice"),
+            ))
+            tapBack(toolbar = true)
+            waitForTransition()
+            tapText(activity.getString(R.string.settings_read_aloud))
+            waitForTransition()
+            revealText("Fixture voice")
+            check(nodes().none { matchesText(it, voiceApiTitle) })
+            status("Voice configuration lives in Tool APIs; disabled fields are hidden and configured voices appear in Read Aloud")
+            tapBack(toolbar = true)
+            waitForTransition()
+            tapText(activity.getString(R.string.settings_appearance))
+            waitForTransition()
+            val iconStyle = activity.getString(R.string.settings_icon_style)
+            val classic = activity.getString(R.string.settings_icon_classic)
+            tapText(iconStyle)
+            tapText(classic)
+            withTimeout(5_000) { store.flow.first { !it.useSimpleCatIcon } }
+            awaitText(activity.getString(R.string.settings_icon_restart_title))
+            tapText(activity.getString(R.string.action_close))
+            waitForTransition()
+            revealText(iconStyle)
+            revealText(classic)
+            status("Icon style menu changes the selection without leaving Appearance")
+        }
+
         try {
             instrumentation.waitForIdleSync(); delay(1200)
             store.migrateApiProfiles()
@@ -315,57 +378,7 @@ internal object ServiceConfigUiRegression {
             withTimeout(5_000) { store.flow.first { it.readAloudEnabled } }
             revealText(voiceDefault)
             status("Read aloud switch hides and restores the voice list")
-            val voiceApiTitle = activity.getString(R.string.tts_third_party_api)
-            val voiceSection = activity.getString(R.string.tts_third_party_section)
-            check(nodes().none { matchesText(it, voiceApiTitle) || matchesText(it, voiceSection) })
-            tapBack(toolbar = true)
-            waitForTransition()
-            tapText(apiTitle)
-            waitForTransition()
-            tapText(voiceApiTitle)
-            waitForTransition()
-            val voiceSwitch = activity.getString(R.string.tts_third_party_enable)
-            val presetLabel = activity.getString(R.string.tts_third_party_preset_qwen)
-            toolSwitch(voiceSwitch, checked = false)
-            check(nodes().none { matchesText(it, presetLabel) })
-            click(toolSwitch(voiceSwitch, checked = false))
-            revealText(presetLabel)
-            click(toolSwitch(voiceSwitch, checked = true))
-            withTimeout(5_000) { store.flow.first { !it.voiceApi.enabled } }
-            waitForTransition()
-            withTimeout(5_000) {
-                while (nodes().any { matchesText(it, presetLabel) }) {
-                    if (android.os.Build.VERSION.SDK_INT >= 33) instrumentation.uiAutomation.clearCache()
-                    delay(100)
-                }
-            }
-            tapBack(toolbar = true)
-            waitForTransition()
-            awaitText(apiTitle)
-            store.setApiKey("fixture-key")
-            store.setVoiceApi(com.simplechat.app.data.VoiceApiConfig(
-                enabled = true, baseUrl = "https://speech-fixture.invalid", customVoices = listOf("Fixture voice"),
-            ))
-            tapBack(toolbar = true)
-            waitForTransition()
-            tapText(activity.getString(R.string.settings_read_aloud))
-            waitForTransition()
-            revealText("Fixture voice")
-            check(nodes().none { matchesText(it, voiceApiTitle) })
-            status("Voice configuration lives in Tool APIs; disabled fields are hidden and configured voices appear in Read Aloud")
-            tapBack(toolbar = true)
-            waitForTransition()
-            tapText(activity.getString(R.string.settings_appearance))
-            waitForTransition()
-            val iconStyle = activity.getString(R.string.settings_icon_style)
-            val classic = activity.getString(R.string.settings_icon_classic)
-            tapText(iconStyle)
-            tapText(classic)
-            withTimeout(5_000) { store.flow.first { !it.useSimpleCatIcon } }
-            waitForTransition()
-            revealText(iconStyle)
-            revealText(classic)
-            status("Icon style menu changes the selection without leaving Appearance")
+            verifyVoiceAndIcon()
             store.selectApiProfile(legacyId)
             val legacy = store.flow.first()
             check(legacy.searchApi.enabled && legacy.filesApi.enabled)
