@@ -31,7 +31,9 @@ import androidx.compose.ui.unit.dp
 import com.simplechat.app.R
 import com.simplechat.app.data.Res
 import com.simplechat.app.ui.common.AppIcons
+import com.simplechat.app.ui.common.LocalUseSimpleCatIcon
 import com.simplechat.app.ui.common.PillShape
+import com.simplechat.app.ui.common.SimpleCatLoadingIndicator
 import com.simplechat.app.ui.theme.LocalChatColors
 
 /**
@@ -120,12 +122,6 @@ internal fun WaitingIndicator(
         defaults[index]
     }).trimEnd('.', '…').trimEnd()
     val transition = rememberInfiniteTransition(label = "waitingFirstToken")
-    val rotation by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)),
-        label = "waitingRotation",
-    )
     val dots by transition.animateFloat(
         initialValue = 0f,
         targetValue = 4f,
@@ -141,17 +137,27 @@ internal fun WaitingIndicator(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Canvas(modifier = Modifier.size(15.dp)) {
-            val stroke = 2.dp.toPx()
-            drawArc(
-                color = color,
-                startAngle = rotation,
-                sweepAngle = 250f,
-                useCenter = false,
-                style = Stroke(width = stroke, cap = StrokeCap.Round),
-                topLeft = Offset(stroke / 2f, stroke / 2f),
-                size = Size(size.width - stroke, size.height - stroke),
+        if (LocalUseSimpleCatIcon.current) {
+            SimpleCatLoadingIndicator(Modifier.size(15.dp), color)
+        } else {
+            val rotation by transition.animateFloat(
+                initialValue = 0f,
+                targetValue = 360f,
+                animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)),
+                label = "waitingRotation",
             )
+            Canvas(modifier = Modifier.size(15.dp)) {
+                val stroke = 2.dp.toPx()
+                drawArc(
+                    color = color,
+                    startAngle = rotation,
+                    sweepAngle = 250f,
+                    useCenter = false,
+                    style = Stroke(width = stroke, cap = StrokeCap.Round),
+                    topLeft = Offset(stroke / 2f, stroke / 2f),
+                    size = Size(size.width - stroke, size.height - stroke),
+                )
+            }
         }
         Text(
             // 省略号按秒循环出现：三个点，一格一个

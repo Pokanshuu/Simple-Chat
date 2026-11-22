@@ -76,6 +76,9 @@ import androidx.compose.ui.window.PopupProperties
 import kotlin.math.roundToInt
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.ui.theme.LocalChatColors
+import com.simplechat.app.ui.theme.menuGlassBackground
+import com.simplechat.app.ui.theme.GlassForeground
+import com.simplechat.app.data.InterfaceControl
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.runtime.withFrameNanos
 
@@ -194,6 +197,7 @@ fun AppSlider(
     var pressed by remember { mutableStateOf(false) }
     var width by remember { mutableStateOf(0f) }
     // pointerInput 的 block 只在 key 变化时重建，直接闭包捕获会拿到旧 lambda
+    val changeCallback by rememberUpdatedState(onValueChange)
     val finishedCallback by rememberUpdatedState(onValueChangeFinished)
 
     val thumbIdle = with(density) { 9.dp.toPx() }
@@ -215,7 +219,7 @@ fun AppSlider(
         if (width <= 0f) return
         val usable = (width - edge * 2f).coerceAtLeast(1f)
         val f = ((x - edge) / usable).coerceIn(0f, 1f)
-        onValueChange(valueRange.start + f * span)
+        changeCallback(valueRange.start + f * span)
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
@@ -673,13 +677,17 @@ object AppShadow {
      * 数值是实机来回比对出来的：再低就"没有"，再高就"发脏"。
      */
     val PanelElevation = 8.dp
-    val PanelAmbient = Color.Black.copy(alpha = 0.08f)
-    val PanelSpot = Color.Black.copy(alpha = 0.14f)
+    val PanelAmbient = Color.Black.copy(alpha = 0.10f)
+    val PanelSpot = Color.Black.copy(alpha = 0.18f)
 
     /** 浮层（菜单）与抽屉：需要明确"浮起来"。 */
     val RaisedElevation = 16.dp
     val RaisedAmbient = Color.Black.copy(alpha = 0.18f)
     val RaisedSpot = Color.Black.copy(alpha = 0.26f)
+
+    /** 回到底部按钮和长按菜单：保持扩散范围，只加深投影。 */
+    val FloatingAmbient = Color.Black.copy(alpha = 0.22f)
+    val FloatingSpot = Color.Black.copy(alpha = 0.32f)
 
     /**
      * 贴边那一层的厚度。
@@ -693,7 +701,7 @@ object AppShadow {
 
     /** 输入栏的贴边层更薄：它比菜单大得多，同一厚度会显脏。 */
     val PanelContactElevation = 2.dp
-    val PanelContactColor = Color.Black.copy(alpha = 0.07f)
+    val PanelContactColor = Color.Black.copy(alpha = 0.09f)
 }
 
 /**
@@ -786,7 +794,7 @@ private class AppMenuPositionProvider(
             touchPoint != null -> anchorBounds.top + touchPoint.y + gapPx
             else -> anchorBounds.bottom + gapPx
         }
-        val cardY = if (belowY + cardHeight <= maxY + bleedPx) {
+        val cardY = if (belowY <= maxY) {
             belowY
         } else {
             // 翻到上方：长按模式下以落点为准，否则以锚点顶部为准
@@ -796,8 +804,8 @@ private class AppMenuPositionProvider(
             }
             aboveY
         }
-        // 告诉上层"最后落在落点的哪一侧"（长按跟手时缩放支点要靠它）
-        if (touchPoint != null) onSide(cardY != belowY)
+        // 根据菜单在锚点的上方还是下方选择缩放支点。
+        onSide(cardY != belowY)
         val clampedY = cardY.coerceIn(minY, maxY)
 
         return IntOffset(cardX - bleedPx, clampedY - bleedPx)
@@ -942,7 +950,6 @@ fun AppMenu(
     alignEnd: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val colors = LocalChatColors.current
     val density = LocalDensity.current
     val gapPx = with(density) { MenuGap.roundToPx() }
     val bleedPx = with(density) { MenuShadowBleed.roundToPx() }
@@ -990,52 +997,43 @@ fun AppMenu(
         onDismissRequest = onDismissRequest,
         properties = PopupProperties(focusable = true),
     ) {
-        Column(
-            modifier = modifier
-                // 先留出阴影的绘制空间：Popup 的窗口会裁掉超出内容的部分，
-                // 不预留的话阴影就在边缘被切掉一道
-                .padding(MenuShadowBleed)
-                .width(width)
-                .graphicsLayer {
-                    // 只到 1f 为止 —— Popup 的窗口就是内容尺寸，放大只会被裁掉。
-                    // 从更小的 0.6 起手：让"从手指处长大"看得见，而不是像纯淡入。
-                    val s = 0.6f + 0.4f * progress.value
-                    scaleX = s
-                    scaleY = s
-                    alpha = progress.value
-                    /*
-                     * 支点 = **贴着手指的那个角**。
-                     *
-                     * 纵向：看菜单位于落点的**哪一侧** —— 在下方取 0（顶），
-                     * 被翻到上方取 **1（底）**，只有底边才贴着手指。
-                     *
-                     * 横向：**取中点**，不跟手指。
-                     * 跟手时菜单左边缘虽起于落点，但它挺宽，长按又多在右半屏
-                     * （消息气泡右对齐），`desiredX` 会被 `coerceIn` 钳回窗口内 ——
-                     * 左边缘离手指可能差几百像素，拿它当支点必然"左右不对"。
-                     * 菜单宽度固定、位置被钳过，横向支点本来就没有可靠信息，
-                     * 索性从中间缩放。（点击触发的菜单贴着锚点右缘，仍取右上。）
-                     */
-                    transformOrigin = TransformOrigin(
-                        if (touchPoint != null) 0.5f else 1f,
-                        if (touchPoint != null && aboveAnchor[0]) 1f else 0f,
+        GlassForeground(InterfaceControl.MENU) {
+            val colors = LocalChatColors.current
+            Column(
+                modifier = modifier
+                    // 淡入时 graphicsLayer 会按自身尺寸合成，所以阴影留白也要包含在该图层内。
+                    .graphicsLayer {
+                        val scale = 0.6f + 0.4f * progress.value
+                        scaleX = scale
+                        scaleY = scale
+                        alpha = progress.value
+
+                        // 图层包含两侧留白，缩放支点仍以菜单卡片的边缘和中心为准。
+                        val insetX = bleedPx / size.width.coerceAtLeast(1f)
+                        val insetY = bleedPx / size.height.coerceAtLeast(1f)
+                        transformOrigin = TransformOrigin(
+                            if (touchPoint != null) 0.5f else 1f - insetX,
+                            if (aboveAnchor[0]) 1f - insetY else insetY,
+                        )
+                    }
+                    .padding(MenuShadowBleed)
+                    .width(width)
+                    .layeredShadow(
+                        shape = MenuShape,
+                        elevation = AppShadow.RaisedElevation,
+                        ambient = if (touchPoint != null) AppShadow.FloatingAmbient else AppShadow.RaisedAmbient,
+                        spot = if (touchPoint != null) AppShadow.FloatingSpot else AppShadow.RaisedSpot,
+                        contactElevation = AppShadow.ContactElevation,
+                        contactColor = AppShadow.ContactColor,
                     )
-                }
-                .layeredShadow(
-                    shape = MenuShape,
-                    elevation = AppShadow.RaisedElevation,
-                    ambient = AppShadow.RaisedAmbient,
-                    spot = AppShadow.RaisedSpot,
-                    contactElevation = AppShadow.ContactElevation,
-                    contactColor = AppShadow.ContactColor,
-                )
-                .clip(MenuShape)
-                .background(colors.menuBackground)
-                .border(1.dp, colors.outline, MenuShape)
-                // 总上下内边距只有 4dp，之前是 6 + Material 的 8
-                .padding(vertical = 4.dp),
-            content = content,
-        )
+                    .clip(MenuShape)
+                    .menuGlassBackground(colors.menuBackground)
+                    .border(1.dp, colors.outline, MenuShape)
+                    // 总上下内边距只有 4dp，之前是 6 + Material 的 8
+                    .padding(vertical = 4.dp),
+                content = content,
+            )
+        }
     }
 }
 

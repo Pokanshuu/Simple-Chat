@@ -40,6 +40,7 @@ class DeviceRegression : Instrumentation() {
     private var serviceTests = false
     private var mathTests = false
     private var composerTests = false
+    private var themeInteractionTests = false
     private var codeFoldTests = false
     private var historyScrollTests = false
     private var streamConcurrencyTests = false
@@ -60,6 +61,7 @@ class DeviceRegression : Instrumentation() {
         serviceTests = arguments?.getString("services") == "true"
         mathTests = arguments?.getString("math") == "true"
         composerTests = arguments?.getString("composer") == "true"
+        themeInteractionTests = arguments?.getString("themeInteractions") == "true"
         codeFoldTests = arguments?.getString("codeFold") == "true"
         historyScrollTests = arguments?.getString("historyScroll") == "true"
         streamConcurrencyTests = arguments?.getString("streamConcurrency") == "true"
@@ -76,6 +78,7 @@ class DeviceRegression : Instrumentation() {
                 else if (streamConcurrencyTests) StreamConcurrencyRegression.run(this@DeviceRegression, ::passed)
                 else if (historyScrollTests) HistoryScrollRegression.run(this@DeviceRegression, ::passed)
                 else if (composerTests) ComposerRegression.run(this@DeviceRegression, ::passed)
+                else if (themeInteractionTests) ThemeInteractionRegression.run(this@DeviceRegression, ::passed)
                 else if (codeFoldTests) CodeFoldRegression.run(this@DeviceRegression, ::passed)
                 else if (mathTests) MathLayoutRegression.run(this@DeviceRegression, ::passed)
                 else if (serviceTests) {

@@ -7,6 +7,9 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.simplechat.app.ui.settings.ConversationWallpaperEditor
+import com.simplechat.app.ui.settings.toWallpaperState
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.animation.AnimatedVisibility
@@ -33,6 +36,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -45,6 +49,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
+import com.simplechat.app.ui.theme.sharedSceneBackground
+import com.simplechat.app.ui.theme.GlassForeground
+import com.simplechat.app.ui.theme.needsLiveSurface
+import com.simplechat.app.data.InterfaceControl
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -109,11 +119,14 @@ import com.simplechat.app.ui.common.AppConfirmDialog
 import com.simplechat.app.ui.common.AppIcons
 import com.simplechat.app.ui.common.AppShadow
 import com.simplechat.app.ui.common.IconCircleButton
+import com.simplechat.app.ui.common.LoadingIndicator
 import com.simplechat.app.ui.common.MotionEasing
 import com.simplechat.app.ui.common.dismissKeyboardOnTouch
 import com.simplechat.app.ui.theme.LocalChatColors
 import com.simplechat.app.ui.theme.LocalWallpaper
 import com.simplechat.app.ui.theme.drawWallpaper
+import com.simplechat.app.ui.theme.floatingGlassBackground
+import com.simplechat.app.ui.theme.rememberWallpaperBitmap
 import com.simplechat.app.ui.theme.backdropSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filter
@@ -124,7 +137,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.material3.CircularProgressIndicator
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.fillMaxHeight
 
@@ -186,6 +198,7 @@ fun ChatScreen(
     modifier: Modifier = Modifier,
     onConfigureImageApi: () -> Unit = {},
     onConfigureApi: () -> Unit = {},
+    constrainContentWidth: Boolean = false,
 ) {
     val colors = LocalChatColors.current
     val focusManager = LocalFocusManager.current
@@ -1134,46 +1147,33 @@ fun ChatScreen(
      * 壁纸：只在聊天页画。解码放 IO，按最外层尺寸 cover 绘制（不拉伸变形）。
      * 设置里换图 / 删图时 file 变了会重新解码。
      */
-    val wallpaper = LocalWallpaper.current
-    val wallpaperBitmap by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(
-        initialValue = null,
-        wallpaper.file?.absolutePath,
-        wallpaper.blur,
-    ) {
-        val file = wallpaper.file
-        value = if (file == null) {
-            null
-        } else {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching {
-                    /*
-                     * 低版本没有真模糊可用（RenderEffect 要 31+，BlurMaskFilter 对
-                     * bitmap 无效）。这里用**降采样再放大**做近似：解码时按模糊档位
-                     * 丢细节，绘制时放大，得到接近高斯模糊的柔化效果，代价是零。
-                     */
-                    val sample = when {
-                        wallpaper.blur < 1f -> 1
-                        wallpaper.blur < 6f -> 2
-                        wallpaper.blur < 14f -> 4
-                        wallpaper.blur < 24f -> 8
-                        else -> 16
-                    }
-                    val options = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
-                    android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)?.asImageBitmap()
-                }.getOrNull()
-            }
+    val conversationId = vm.currentConversationId
+    val conversationWallpaper = conversationId?.let { id ->
+        androidx.compose.runtime.key(id) {
+            remember(vm, id) { vm.observeConversationWallpaper(id) }.collectAsStateWithLifecycle(initialValue = null).value
         }
     }
+    var showWallpaperEditor by remember(conversationId) { mutableStateOf(false) }
+    val wallpaper = conversationWallpaper?.toWallpaperState(context) ?: LocalWallpaper.current
+    val wallpaperBitmap = rememberWallpaperBitmap(wallpaper)
 
     /*
-     * 悬浮控件实时玻璃（docs/32 §32.3.3）：g = 0 / 不支持 / 省电时不创建源图层。
+     * 悬浮控件实时玻璃（docs/32 §32.3.3）：不支持 / 省电时不创建源图层。
      * 源里要垫「页面底色 + 壁纸」，壁纸按整个聊天页的尺寸和位置画，
      * 否则输入栏里透出来的壁纸会和屏幕上的错位。
      */
-    val floatingGlass = com.simplechat.app.ui.theme.LocalFloatingGlass.current
     val liveBlur = com.simplechat.app.ui.theme.rememberLiveBlurAvailable()
-    val glassSource = com.simplechat.app.ui.theme.rememberBackdropSource(floatingGlass > 0f && liveBlur)
+    val glassSource = com.simplechat.app.ui.theme.rememberBackdropSource(
+        liveBlur && needsLiveSurface(InterfaceControl.INPUT, InterfaceControl.INPUT_PANEL, InterfaceControl.SCROLL_BUTTON),
+    )
+    val wallpaperLayer = if (wallpaperBitmap != null) rememberGraphicsLayer() else null
+    val wallpaperFade = remember(wallpaper.file) { Animatable(0f) }
+    LaunchedEffect(wallpaper.file, wallpaperBitmap) {
+        if (wallpaperBitmap != null) wallpaperFade.animateTo(1f, tween(280, easing = MotionEasing))
+    }
     val pageFrame = remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
+    // Limit the reading column without shrinking the wallpaper or its acrylic sampling layer.
+    val contentWidth = if (constrainContentWidth) Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(horizontal = 10.dp) else Modifier
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -1188,11 +1188,12 @@ fun ChatScreen(
              * 适配方式与位置在绘制矩形里算 —— 用 nativeCanvas 是因为 Compose 的
              * `drawImage` 不接受 colorFilter，而重新编码一张位图来调色既慢又占内存。
              */
-            .drawBehind { wallpaperBitmap?.let { drawWallpaper(it, wallpaper) } }
+            .sharedSceneBackground(wallpaperLayer, alpha = { wallpaperFade.value }) { wallpaperBitmap?.let { drawWallpaper(it, wallpaper, colors.pageBackground) } }
             .dismissMessageSelectionOnTap(textSelection),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         if (shareSelection.active) {
-            MessageShareTopBar(shareSelection, shareGroups, onClose = { shareSelection.close() })
+            Box(contentWidth) { MessageShareTopBar(shareSelection, shareGroups, onClose = { shareSelection.close() }) }
         } else ChatTopBar(
             title = vm.conversationTitle(),
             autoReadAloud = vm.autoReadAloud,
@@ -1217,7 +1218,7 @@ fun ChatScreen(
                 scope.launch { listState.scrollToItem(0) }
             },
             // 点顶栏任意处也收键盘
-            modifier = Modifier.dismissKeyboardOnTouch(clearFocus = { !textSelection.isActive }),
+            modifier = contentWidth.dismissKeyboardOnTouch(clearFocus = { !textSelection.isActive }),
         )
 
         val backdrop: @Composable () -> Unit = {
@@ -1228,11 +1229,10 @@ fun ChatScreen(
                         Modifier.backdropSource(glassSource) {
                                 drawRect(colors.pageBackground)
                                 val frame = pageFrame.value
-                                val bitmap = wallpaperBitmap
-                                if (bitmap != null && glassSource != null) {
+                                if (wallpaperLayer != null && glassSource != null) {
                                     val dx = frame.left - glassSource.originInRoot.x
                                     val dy = frame.top - glassSource.originInRoot.y
-                                    translate(dx, dy) { drawWallpaper(bitmap, wallpaper, frame.size) }
+                                    translate(dx, dy) { drawLayer(wallpaperLayer) }
                                 }
                         },
                     ),
@@ -1395,7 +1395,7 @@ fun ChatScreen(
                  * 比让人看着列表自己往下滑要好。
                  */
                 if (showLoading) {
-                    CircularProgressIndicator(
+                    LoadingIndicator(
                         modifier = Modifier
                             .align(Alignment.Center)
                             .size(28.dp),
@@ -1414,37 +1414,6 @@ fun ChatScreen(
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         .fillMaxHeight(),
-                )
-
-                val atBottom by rememberIsAtBottom(listState)
-                BackToBottomButton(
-                    /*
-                     * ★ 显隐判据里必须有 `detached`（用户主动离开底部），**不能只有 `!atBottom`**。
-                     *
-                     * `!atBottom` 在**跟随过程中**会以内容到达的节奏来回翻：每来一批字
-                     * `canScrollForward` 变真 → 按钮冒出来；跟底把它吃掉 → 又变假 → 按钮消失。
-                     * 表现就是"一触发跟底，按钮就不停闪烁"。
-                     *
-                     * `detached` 是**意图**而不是**位置**：跟随期间它一直是假，
-                     * 所以跟底时这个按钮压根不存在 —— 正是要的。
-                     * 留 `!atBottom` 只是为了避免"明明已经在底部还挂着一个回到底部"。
-                     */
-                    visible = !shareSelection.active && vm.messages.isNotEmpty() && detached && !atBottom,
-                    // 生成中在按钮外圈转一圈进度环；生成完自动消失
-                    generating = vm.isStreaming,
-                    onClick = {
-                        // 用户显式要"看最新的" —— 这是少数几个该主动滚动的地方之一
-                        resumeFollowing()
-                        scope.launch {
-                            // Remove the search-only padding before computing the normal content bottom.
-                            withFrameNanos { }
-                            listState.scrollToBottom()
-                        }
-                    },
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 16.dp, bottom = 12.dp)
-                        .offset { IntOffset(0, -inputAreaHeight.value) },
                 )
 
                 /*
@@ -1530,7 +1499,7 @@ fun ChatScreen(
                 }
                 if (fileUploads > 0) Row(verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    LoadingIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                     Text(stringResource(R.string.service_uploading), modifier = Modifier.padding(start = 8.dp),
                         style = MaterialTheme.typography.labelMedium)
                 }
@@ -1884,6 +1853,11 @@ fun ChatScreen(
                         memoryEnabled = vm.conversationMemoryEnabled.takeIf { vm.showConversationMemorySetting },
                         memoryToggleEnabled = !vm.switching,
                         onMemoryChange = vm::setConversationMemoryEnabled,
+                        onWallpaperClick = if (conversationId == null || vm.switching) null else ({
+                            dismissInput()
+                            panel = InputPanelState.NONE
+                            showWallpaperEditor = true
+                        }),
                         onExportMarkdown = if (vm.currentConversationId != null) {
                             {
                                 exportHint = null
@@ -1910,40 +1884,73 @@ fun ChatScreen(
         }
 
         val overlay: @Composable () -> Unit = {
-            /*
-             * 消息索引（§34）—— **盖在最上面**：索引开着的时候输入栏、回到底部、
-             * 面板统统按不动，用户就是在找路。点遮罩即收。
-             */
-            MessageIndexOverlay(
-                state = messageIndex,
-                entries = messageIndexEntries,
-                listState = listState,
-                onJump = { entry ->
-                    messageIndex.collapse()
-                    scope.launch {
-                        /*
-                         * 跳转落点对齐**视口顶部**（§34.4）。
-                         *
-                         * 这里刻意**不走** §25.3 那套锚点：那套是给"列表被整份重建"
-                         * 用的（切版本 / 删除），而跳转时列表没动，`scrollToItem` 就是
-                         * 确定性的 —— 再套一层锚点反而是白绕。
-                         */
-                        listState.scrollToItem(entry.index, 0)
-                        /*
-                         * 跳走 = "我在读已经有的东西"，跟底要停（§34.4）。
-                         * 但只在**真的离开底部**时停；跳到底部那条不该把跟随断掉。
-                         */
-                        if (!listState.isAtBottom()) detached = true
-                    }
-                },
-                modifier = Modifier.fillMaxSize(),
-            )
+            Box(Modifier.fillMaxSize()) {
+                // Outside the recorded scene: this button samples that scene itself.
+                val atBottom by rememberIsAtBottom(listState)
+                BackToBottomButton(
+                    /*
+                     * ★ 显隐判据里必须有 `detached`（用户主动离开底部），**不能只有 `!atBottom`**。
+                     *
+                     * `!atBottom` 在**跟随过程中**会以内容到达的节奏来回翻：每来一批字
+                     * `canScrollForward` 变真 → 按钮冒出来；跟底把它吃掉 → 又变假 → 按钮消失。
+                     * 表现就是"一触发跟底，按钮就不停闪烁"。
+                     *
+                     * `detached` 是**意图**而不是**位置**：跟随期间它一直是假，
+                     * 所以跟底时这个按钮压根不存在 —— 正是要的。
+                     * 留 `!atBottom` 只是为了避免"明明已经在底部还挂着一个回到底部"。
+                     */
+                    visible = panel == InputPanelState.NONE && !shareSelection.active && vm.messages.isNotEmpty() && detached && !atBottom,
+                    // 生成中在按钮外圈转一圈进度环；生成完自动消失
+                    generating = vm.isStreaming,
+                    onClick = {
+                        // 用户显式要"看最新的" —— 这是少数几个该主动滚动的地方之一
+                        resumeFollowing()
+                        scope.launch {
+                            // Remove the search-only padding before computing the normal content bottom.
+                            withFrameNanos { }
+                            listState.scrollToBottom()
+                        }
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 16.dp, bottom = 12.dp)
+                        .offset { IntOffset(0, -inputAreaHeight.value) },
+                )
+                /*
+                 * 消息索引（§34）—— **盖在最上面**：索引开着的时候输入栏、回到底部、
+                 * 面板统统按不动，用户就是在找路。点遮罩即收。
+                 */
+                MessageIndexOverlay(
+                    state = messageIndex,
+                    entries = messageIndexEntries,
+                    listState = listState,
+                    onJump = { entry ->
+                        messageIndex.collapse()
+                        scope.launch {
+                            /*
+                             * 跳转落点对齐**视口顶部**（§34.4）。
+                             *
+                             * 这里刻意**不走** §25.3 那套锚点：那套是给"列表被整份重建"
+                             * 用的（切版本 / 删除），而跳转时列表没动，`scrollToItem` 就是
+                             * 确定性的 —— 再套一层锚点反而是白绕。
+                             */
+                            listState.scrollToItem(entry.index, 0)
+                            /*
+                             * 跳走 = "我在读已经有的东西"，跟底要停（§34.4）。
+                             * 但只在**真的离开底部**时停；跳到底部那条不该把跟随断掉。
+                             */
+                            if (!listState.isAtBottom()) detached = true
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
         androidx.compose.runtime.CompositionLocalProvider(
             com.simplechat.app.ui.theme.LocalBackdropSource provides glassSource,
         ) {
         Layout(
-            modifier = Modifier
+            modifier = contentWidth
                 .weight(1f)
                 .then(if (shareSelection.active) Modifier else Modifier.messageIndexDrag(messageIndex)),
             contents = listOf(backdrop, composer, overlay),
@@ -1975,6 +1982,13 @@ fun ChatScreen(
             }
         }
         }
+    }
+    if (showWallpaperEditor && conversationId != null) {
+        ConversationWallpaperEditor(
+            current = conversationWallpaper,
+            onCommit = { vm.saveConversationWallpaper(conversationId, it) },
+            onDismiss = { showWallpaperEditor = false },
+        )
     }
     // ── AI 回复编辑：只有这一处需要区分「保存」与「保存并发送」────
 
@@ -2064,58 +2078,60 @@ fun ChatScreen(
  * 而这里需要的是顶层版本（我们要的是"在 Box 里对齐"而不是"在 Column 里换行"）。
  */
 @Composable
-private fun BackToBottomButton(
+internal fun BackToBottomButton(
     visible: Boolean,
     generating: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val colors = LocalChatColors.current
+    GlassForeground(InterfaceControl.SCROLL_BUTTON) {
+        val colors = LocalChatColors.current
 
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(tween(120)) +
-            scaleIn(initialScale = 0.85f, animationSpec = tween(180, easing = MotionEasing)),
-        exit = fadeOut(tween(90)) +
-            scaleOut(targetScale = 0.85f, animationSpec = tween(120)),
-        modifier = modifier,
-    ) {
-        /*
-         * 外层只负责"尺寸恒定为 32dp"。环画在它里面、但**不裁剪**，
-         * 于是可以压到按钮边上；节点尺寸不变，环出现/消失时按钮落点一动不动。
-         */
-        Box(modifier = Modifier.size(32.dp)) {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .shadow(
-                        elevation = AppShadow.RaisedElevation,
-                        shape = CircleShape,
-                        clip = false,
-                        ambientColor = AppShadow.RaisedAmbient,
-                        spotColor = AppShadow.RaisedSpot,
-                    )
-                    .clip(CircleShape)
-                    .background(colors.card)
-                    .border(1.dp, colors.outline, CircleShape)
-                    .clickable(onClick = onClick),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = AppIcons.ArrowDown,
-                    contentDescription = stringResource(R.string.chat_scroll_bottom),
-                    tint = colors.processText,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(tween(120)) +
+                scaleIn(initialScale = 0.85f, animationSpec = tween(180, easing = MotionEasing)),
+            exit = fadeOut(tween(90)) +
+                scaleOut(targetScale = 0.85f, animationSpec = tween(120)),
+            modifier = modifier,
+        ) {
             /*
-             * 环是**后面那个兄弟** → 画在按钮上层。
-             * 这一条是"能压住按钮边缘"的前提，见 [GeneratingRing]。
-             * 它没有手势修饰符，不会挡住按钮的点击。
+             * 外层只负责"尺寸恒定为 32dp"。环画在它里面、但**不裁剪**，
+             * 于是可以压到按钮边上；节点尺寸不变，环出现/消失时按钮落点一动不动。
              */
-            if (generating) {
-                GeneratingRing(Modifier.matchParentSize())
+            Box(modifier = Modifier.size(32.dp)) {
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .shadow(
+                            elevation = AppShadow.RaisedElevation,
+                            shape = CircleShape,
+                            clip = false,
+                            ambientColor = AppShadow.FloatingAmbient,
+                            spotColor = AppShadow.FloatingSpot,
+                        )
+                        .clip(CircleShape)
+                        .floatingGlassBackground(colors.card, InterfaceControl.SCROLL_BUTTON)
+                        .border(1.dp, colors.outline, CircleShape)
+                        .clickable(onClick = onClick),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = AppIcons.ArrowDown,
+                        contentDescription = stringResource(R.string.chat_scroll_bottom),
+                        tint = colors.processText,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+
+                /*
+                 * 环是**后面那个兄弟** → 画在按钮上层。
+                 * 这一条是"能压住按钮边缘"的前提，见 [GeneratingRing]。
+                 * 它没有手势修饰符，不会挡住按钮的点击。
+                 */
+                if (generating) {
+                    GeneratingRing(Modifier.matchParentSize())
+                }
             }
         }
     }

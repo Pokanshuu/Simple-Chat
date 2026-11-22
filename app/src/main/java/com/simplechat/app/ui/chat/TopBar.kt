@@ -39,6 +39,7 @@ fun ChatTopBar(
     onNewChat: () -> Unit,
     onDoubleTap: () -> Unit = {},
     modifier: Modifier = Modifier,
+    applyStatusBarInset: Boolean = true,
     autoReadAloud: Boolean = false,
     readAloudAvailable: Boolean = true,
     onToggleAutoReadAloud: () -> Unit = {},
@@ -78,7 +79,7 @@ fun ChatTopBar(
                 }
             }
             .fillMaxWidth()
-            .statusBarsPadding()
+            .then(if (applyStatusBarInset) Modifier.statusBarsPadding() else Modifier)
             .height(56.dp)
             .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,

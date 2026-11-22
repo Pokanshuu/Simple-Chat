@@ -686,7 +686,7 @@ fun UserBubble(
                          * （下限 0.70）。气泡里是用户自己打的字，再透下去就会和背景
                          * 壁纸糊在一起 —— 玻璃感是次要的，能读才是主要的。
                          */
-                        com.simplechat.app.ui.theme.glassSurface(colors.userBubble, com.simplechat.app.ui.theme.GlassLayer.USER_BUBBLE),
+                        colors.userBubble,
                         BubbleShapeOut,
                     )
                     .then(pressListener)

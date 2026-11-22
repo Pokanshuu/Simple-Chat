@@ -25,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import com.simplechat.app.data.InterfaceControl
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -73,6 +74,8 @@ import com.simplechat.app.ui.common.PillShape
 import com.simplechat.app.ui.common.ProgressRing
 import com.simplechat.app.ui.theme.LocalChatColors
 import com.simplechat.app.ui.theme.floatingGlassBackground
+import com.simplechat.app.ui.theme.floatingPanelSurface
+import com.simplechat.app.ui.theme.GlassForeground
 import kotlin.math.ceil
 
 /**
@@ -140,7 +143,6 @@ internal fun InputBar(
     sendAllowed: Boolean = true,
     imageControls: @Composable (androidx.compose.foundation.layout.RowScope.() -> Unit)? = null,
 ) {
-    val colors = LocalChatColors.current
     val shape = ContainerShape
     val text = fieldState.text
     val density = LocalDensity.current
@@ -179,16 +181,7 @@ internal fun InputBar(
     val startVoice by rememberUpdatedState(onVoiceHoldStart)
     val finishVoice by rememberUpdatedState(onVoiceHoldFinish)
     val slideVoice by rememberUpdatedState(onVoiceSlide)
-    /*
-     * 悬浮玻璃（docs/32 §32.3.3）：一个值同时决定混色与模糊。
-     * 有实时模糊源时下限 0.58，没有（Android 12 以下 / 省电）时下限 0.86。
-     * g = 0 时就是原来的实色卡片。不掺主题色。
-     */
-    val floatingGlass = com.simplechat.app.ui.theme.LocalFloatingGlass.current
-    val liveBlur = com.simplechat.app.ui.theme.LocalBackdropSource.current != null
-    val composerBase = colors.card.copy(
-        alpha = colors.card.alpha * com.simplechat.app.ui.theme.floatingSurfaceAlpha(floatingGlass, liveBlur),
-    )
+    val composerBase = floatingPanelSurface(InterfaceControl.INPUT)
     val background by animateColorAsState(
         targetValue = when {
             voiceCancelling && voiceState.holding -> MaterialTheme.colorScheme.error
@@ -232,250 +225,253 @@ internal fun InputBar(
         }
     }
 
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-    ) {
-        Column(
-            modifier = Modifier
+    GlassForeground(InterfaceControl.INPUT, background) {
+        val colors = LocalChatColors.current
+        Box(
+            modifier = modifier
                 .fillMaxWidth()
-                // 与菜单同一个投影族：先 shadow 再 clip，投影才不会被自家圆角裁掉。
-                // 双层（宽 + 贴边）—— 单层只有一种扩散，大面板的边缘会发虚。
-                .layeredShadow(
-                    shape = ContainerShape,
-                    elevation = shadowElevation,
-                    ambient = AppShadow.PanelAmbient,
-                    spot = AppShadow.PanelSpot,
-                    contactElevation = shadowElevation / 4,
-                    contactColor = AppShadow.PanelContactColor,
-                )
-                .clip(shape)
-                // 语音态是实心主色 / 错误色，不参与玻璃
-                .then(
-                    if (voiceState.active) Modifier.background(background)
-                    else Modifier.floatingGlassBackground(background, floatingGlass),
-                )
-                .border(
-                    width = 1.dp,
-                    color = if (voiceState.active) Color.Transparent else colors.outline.copy(
-                        alpha = colors.outline.alpha * composerReveal,
-                    ),
-                    shape = shape,
-                )
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 16.dp),
         ) {
-            // ── 「修改输入」标题行 ─────────────────────────
-            if (editingLabel != null) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(editingLabel, modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.labelMedium, color = colors.placeholder)
-                    IconCircleButton(
-                        icon = AppIcons.Close,
-                        contentDescription = stringResource(if (imageMode) R.string.image_exit_mode else R.string.input_cancel_edit),
-                        onClick = onCancelEdit,
-                        size = 26.dp,
-                        iconSize = 14.dp,
-                        tint = colors.processText,
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    // 与菜单同一个投影族：先 shadow 再 clip，投影才不会被自家圆角裁掉。
+                    // 双层（宽 + 贴边）—— 单层只有一种扩散，大面板的边缘会发虚。
+                    .layeredShadow(
+                        shape = ContainerShape,
+                        elevation = shadowElevation,
+                        ambient = AppShadow.PanelAmbient,
+                        spot = AppShadow.PanelSpot,
+                        contactElevation = shadowElevation / 4,
+                        contactColor = AppShadow.PanelContactColor,
                     )
-                }
-            }
-
-            Box(Modifier.fillMaxWidth()) {
-                if (voiceState.active) {
-                    VoiceComposer(voiceState, voiceLevel, voiceCancelling, voiceTapMode, onVoiceTap)
-                } else {
-                    val startLabel = stringResource(R.string.voice_tap_to_start)
-                    BasicTextField(
-                        state = fieldState,
-                        onTextLayout = { textLayout = it() },
+                    .clip(shape)
+                    // 语音态是实心主色 / 错误色，不参与玻璃
+                    .then(
+                        if (voiceState.active) Modifier.background(background)
+                        else Modifier.floatingGlassBackground(colors.card, InterfaceControl.INPUT, background),
+                    )
+                    .border(
+                        width = 1.dp,
+                        color = if (voiceState.active) Color.Transparent else colors.outline.copy(
+                            alpha = colors.outline.alpha * composerReveal,
+                        ),
+                        shape = shape,
+                    )
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+            ) {
+                // ── 「修改输入」标题行 ─────────────────────────
+                if (editingLabel != null) {
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .layout { measurable, constraints ->
-                                // Measure the viewport without recomposing the editor or toolbar each frame.
-                                val available = (constraints.maxHeight - 44.dp.roundToPx()).coerceAtLeast(0)
-                                val collapsedMax = compactMax.roundToPx().coerceAtMost(available)
-                                val collapsedMin = 26.dp.roundToPx().coerceAtMost(collapsedMax)
-                                val expandedHeight = maxOf(compactHeight.roundToPx(), available - 20.dp.roundToPx())
-                                    .coerceAtMost(available)
-                                val fraction = expansion.value
-                                val placeable = measurable.measure(constraints.copy(
-                                    minHeight = lerp(collapsedMin, expandedHeight, fraction),
-                                    maxHeight = lerp(collapsedMax, expandedHeight, fraction),
-                                ))
-                                layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
-                            }
-                            .graphicsLayer { alpha = composerReveal }
-                            .focusRequester(focusRequester)
-                            .onFocusChanged {
-                                fieldFocused = it.isFocused
-                                if (it.isFocused) onTextFieldFocused()
-                            }
-                            .then(if (holdToTalkActive) Modifier.semantics {
-                                customActions = listOf(CustomAccessibilityAction("$startLabel · $voiceSourceLabel") {
-                                    onVoiceTap()
-                                    true
-                                })
-                            } else Modifier),
-                        textStyle = LocalTextStyle.current.merge(
-                            MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
-                        ),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        decorator = { inner ->
-                            Box(Modifier.fillMaxWidth(), propagateMinConstraints = true) {
-                                if (text.isEmpty()) Text(
-                                    text = stringResource(when {
-                                        imageMode -> R.string.image_prompt_label
-                                        holdToTalkActive -> R.string.input_hint_hold_to_talk
-                                        else -> R.string.input_hint
-                                    }),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = colors.placeholder,
-                                )
-                                inner()
-                            }
-                        },
-                    )
-                }
-
-                // Overlay above the text. This control never changes the wrapping width or
-                // takes keyboard focus away from the text field.
-                if (showExpand && onToggleExpanded != null) {
-                    IconCircleButton(
-                        icon = if (expanded) AppIcons.CollapseComposer else AppIcons.ExpandComposer,
-                        contentDescription = stringResource(if (expanded) R.string.composer_collapse else R.string.composer_expand),
-                        onClick = onToggleExpanded,
-                        modifier = Modifier.align(Alignment.TopEnd)
-                            .focusProperties { canFocus = false }
-                            .graphicsLayer { alpha = composerReveal },
-                        size = 28.dp,
-                        iconSize = 16.dp,
-                        background = colors.card.copy(alpha = 0.8f),
-                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
-                    )
-                }
-
-                // Keep this touch target above both states so an empty-field hold never
-                // reaches the text field's selection or paste gesture detector.
-                if (holdToTalkActive && !voiceTapMode) {
-                    Box(
-                        Modifier.matchParentSize().holdToSpeak(
-                            onTap = { focusOnTap() },
-                            start = { startVoice() },
-                            finish = { finishVoice(it) },
-                            onSlide = { slideVoice(it) },
-                        ),
-                    )
-                }
-            }
-
-            if (voiceState.active) return@Column
-
-            Spacer(Modifier.size(12.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth().graphicsLayer {
-                    alpha = composerReveal
-                    translationY = 4.dp.toPx() * (1f - composerReveal)
-                },
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (imageMode) {
-                    Row(
-                        Modifier.weight(1f),
+                            .padding(bottom = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) { imageControls?.invoke(this) }
-                } else {
-                    // 第二行全部按钮**同高**；纯图标一律正圆，只有「图标 + 箭头」用胶囊。
-                    // 之前 ⚙ 是 padding 撑出来的椭圆，和 ⊕ / ↑ 的圆并排就很毛糙。
-
-                    // ── 对话设置 ─────────────────────────────
-                    // 与右侧思考入口同一套样式：灰图标 + 描边；展开时换品牌色底
-                    IconCircleButton(
-                        icon = AppIcons.Settings,
-                        contentDescription = stringResource(R.string.input_settings),
-                        onClick = onOpenSettingsPanel,
-                        size = RowButtonSize,
-                        iconSize = 18.dp,
-                        background = if (settingsPanelOpen) colors.capsuleSelected else null,
-                        tint = if (settingsPanelOpen) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            // 未激活也画**黑**（原来是灰的）—— 与 ⊕ / 发送键统一，对齐官方
-                            MaterialTheme.colorScheme.onSurface
-                        },
-                        /*
-                         * 描边**常驻**，激活时换成品牌色。
-                         *
-                         * 官方那套激活样式是「淡底 + 同色描边 + 同色内容」；
-                         * 原来激活态把描边去掉只铺底，在并排的几个按钮里会显得"矮一层"。
-                         */
-                        outlined = true,
-                        outlineColor = if (settingsPanelOpen) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            null
-                        },
-                    )
-
-                    // ── 思考档位 + 模型 ───────────────────────
-                    ThinkingToggle(
-                        enabled = thinkingEnabled || webSearchEnabled,
-                        expanded = thinkingPanelOpen,
-                        onClick = onOpenThinkingPanel,
-                    )
-                    // ── 上下文占用 ────────────────────────────
-                    ContextMeterPill(
-                        stats = contextStats,
-                        expanded = statsPanelOpen,
-                        onClick = onOpenStatsPanel,
-                    )
-
+                    ) {
+                        Text(editingLabel, modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.labelMedium, color = colors.placeholder)
+                        IconCircleButton(
+                            icon = AppIcons.Close,
+                            contentDescription = stringResource(if (imageMode) R.string.image_exit_mode else R.string.input_cancel_edit),
+                            onClick = onCancelEdit,
+                            size = 26.dp,
+                            iconSize = 14.dp,
+                            tint = colors.processText,
+                        )
+                    }
                 }
 
-                if (!imageMode) Spacer(Modifier.weight(1f))
+                Box(Modifier.fillMaxWidth()) {
+                    if (voiceState.active) {
+                        VoiceComposer(voiceState, voiceLevel, voiceCancelling, voiceTapMode, onVoiceTap)
+                    } else {
+                        val startLabel = stringResource(R.string.voice_tap_to_start)
+                        BasicTextField(
+                            state = fieldState,
+                            onTextLayout = { textLayout = it() },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .layout { measurable, constraints ->
+                                    // Measure the viewport without recomposing the editor or toolbar each frame.
+                                    val available = (constraints.maxHeight - 44.dp.roundToPx()).coerceAtLeast(0)
+                                    val collapsedMax = compactMax.roundToPx().coerceAtMost(available)
+                                    val collapsedMin = 26.dp.roundToPx().coerceAtMost(collapsedMax)
+                                    val expandedHeight = maxOf(compactHeight.roundToPx(), available - 20.dp.roundToPx())
+                                        .coerceAtMost(available)
+                                    val fraction = expansion.value
+                                    val placeable = measurable.measure(constraints.copy(
+                                        minHeight = lerp(collapsedMin, expandedHeight, fraction),
+                                        maxHeight = lerp(collapsedMax, expandedHeight, fraction),
+                                    ))
+                                    layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
+                                }
+                                .graphicsLayer { alpha = composerReveal }
+                                .focusRequester(focusRequester)
+                                .onFocusChanged {
+                                    fieldFocused = it.isFocused
+                                    if (it.isFocused) onTextFieldFocused()
+                                }
+                                .then(if (holdToTalkActive) Modifier.semantics {
+                                    customActions = listOf(CustomAccessibilityAction("$startLabel · $voiceSourceLabel") {
+                                        onVoiceTap()
+                                        true
+                                    })
+                                } else Modifier),
+                            textStyle = LocalTextStyle.current.merge(
+                                MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                            ),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            decorator = { inner ->
+                                Box(Modifier.fillMaxWidth(), propagateMinConstraints = true) {
+                                    if (text.isEmpty()) Text(
+                                        text = stringResource(when {
+                                            imageMode -> R.string.image_prompt_label
+                                            holdToTalkActive -> R.string.input_hint_hold_to_talk
+                                            else -> R.string.input_hint
+                                        }),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = colors.placeholder,
+                                    )
+                                    inner()
+                                }
+                            },
+                        )
+                    }
 
-                /*
-                 * 附件入口。图标是**圆圈加号**（⊕），与顶栏的「新建对话」区分开 ——
-                 * 后者是气泡加号。同一个符号不要承担两种动作。
-                 *
-                 * 展开时整体转 45°：加号变成叉，"再点一下是收起"就不用另外说明。
-                 * 转的是**整个按钮** —— 圆形是对称的，看起来就是里头的加号在转，
-                 * 比"两帧之间换一个图标"顺得多。
-                 */
-                if (canAttach) {
-                    val spin by animateFloatAsState(
-                        targetValue = if (attachPanelOpen) 45f else 0f,
-                        animationSpec = tween(200, easing = MotionEasing),
-                        label = "attachSpin",
-                    )
-                    IconCircleButton(
-                        icon = AppIcons.PlusCircle,
-                        contentDescription = if (attachPanelOpen) {
-                            stringResource(R.string.input_attach_collapse)
-                        } else {
-                            stringResource(R.string.input_attach_add)
-                        },
-                        onClick = onAttachClick,
-                        size = RowButtonSize,
-                        iconSize = 24.dp,
-                        modifier = Modifier.graphicsLayer { rotationZ = spin },
-                    )
+                    // Overlay above the text. This control never changes the wrapping width or
+                    // takes keyboard focus away from the text field.
+                    if (showExpand && onToggleExpanded != null) {
+                        IconCircleButton(
+                            icon = if (expanded) AppIcons.CollapseComposer else AppIcons.ExpandComposer,
+                            contentDescription = stringResource(if (expanded) R.string.composer_collapse else R.string.composer_expand),
+                            onClick = onToggleExpanded,
+                            modifier = Modifier.align(Alignment.TopEnd)
+                                .focusProperties { canFocus = false }
+                                .graphicsLayer { alpha = composerReveal },
+                            size = 28.dp,
+                            iconSize = 16.dp,
+                            background = colors.card.copy(alpha = 0.8f),
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+                        )
+                    }
+
+                    // Keep this touch target above both states so an empty-field hold never
+                    // reaches the text field's selection or paste gesture detector.
+                    if (holdToTalkActive && !voiceTapMode) {
+                        Box(
+                            Modifier.matchParentSize().holdToSpeak(
+                                onTap = { focusOnTap() },
+                                start = { startVoice() },
+                                finish = { finishVoice(it) },
+                                onSlide = { slideVoice(it) },
+                            ),
+                        )
+                    }
                 }
 
-                SendButton(
-                    streaming = streaming,
-                    enabled = streaming || (sendAllowed && (text.isNotBlank() || pendingCount > 0)),
-                    imageMode = imageMode,
-                    onClick = { if (streaming) onStop() else onSend() },
-                )
+                if (voiceState.active) return@Column
+
+                Spacer(Modifier.size(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth().graphicsLayer {
+                        alpha = composerReveal
+                        translationY = 4.dp.toPx() * (1f - composerReveal)
+                    },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (imageMode) {
+                        Row(
+                            Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) { imageControls?.invoke(this) }
+                    } else {
+                        // 第二行全部按钮**同高**；纯图标一律正圆，只有「图标 + 箭头」用胶囊。
+                        // 之前 ⚙ 是 padding 撑出来的椭圆，和 ⊕ / ↑ 的圆并排就很毛糙。
+
+                        // ── 对话设置 ─────────────────────────────
+                        // 与右侧思考入口同一套样式：灰图标 + 描边；展开时换品牌色底
+                        IconCircleButton(
+                            icon = AppIcons.Settings,
+                            contentDescription = stringResource(R.string.input_settings),
+                            onClick = onOpenSettingsPanel,
+                            size = RowButtonSize,
+                            iconSize = 18.dp,
+                            background = if (settingsPanelOpen) colors.capsuleSelected else null,
+                            tint = if (settingsPanelOpen) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                // 未激活也画**黑**（原来是灰的）—— 与 ⊕ / 发送键统一，对齐官方
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                            /*
+                             * 描边**常驻**，激活时换成品牌色。
+                             *
+                             * 官方那套激活样式是「淡底 + 同色描边 + 同色内容」；
+                             * 原来激活态把描边去掉只铺底，在并排的几个按钮里会显得"矮一层"。
+                             */
+                            outlined = true,
+                            outlineColor = if (settingsPanelOpen) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                null
+                            },
+                        )
+
+                        // ── 思考档位 + 模型 ───────────────────────
+                        ThinkingToggle(
+                            enabled = thinkingEnabled || webSearchEnabled,
+                            expanded = thinkingPanelOpen,
+                            onClick = onOpenThinkingPanel,
+                        )
+                        // ── 上下文占用 ────────────────────────────
+                        ContextMeterPill(
+                            stats = contextStats,
+                            expanded = statsPanelOpen,
+                            onClick = onOpenStatsPanel,
+                        )
+
+                    }
+
+                    if (!imageMode) Spacer(Modifier.weight(1f))
+
+                    /*
+                     * 附件入口。图标是**圆圈加号**（⊕），与顶栏的「新建对话」区分开 ——
+                     * 后者是气泡加号。同一个符号不要承担两种动作。
+                     *
+                     * 展开时整体转 45°：加号变成叉，"再点一下是收起"就不用另外说明。
+                     * 转的是**整个按钮** —— 圆形是对称的，看起来就是里头的加号在转，
+                     * 比"两帧之间换一个图标"顺得多。
+                     */
+                    if (canAttach) {
+                        val spin by animateFloatAsState(
+                            targetValue = if (attachPanelOpen) 45f else 0f,
+                            animationSpec = tween(200, easing = MotionEasing),
+                            label = "attachSpin",
+                        )
+                        IconCircleButton(
+                            icon = AppIcons.PlusCircle,
+                            contentDescription = if (attachPanelOpen) {
+                                stringResource(R.string.input_attach_collapse)
+                            } else {
+                                stringResource(R.string.input_attach_add)
+                            },
+                            onClick = onAttachClick,
+                            size = RowButtonSize,
+                            iconSize = 24.dp,
+                            modifier = Modifier.graphicsLayer { rotationZ = spin },
+                        )
+                    }
+
+                    SendButton(
+                        streaming = streaming,
+                        enabled = streaming || (sendAllowed && (text.isNotBlank() || pendingCount > 0)),
+                        imageMode = imageMode,
+                        onClick = { if (streaming) onStop() else onSend() },
+                    )
+                }
             }
         }
     }

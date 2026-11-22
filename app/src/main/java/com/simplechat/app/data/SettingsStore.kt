@@ -16,6 +16,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -72,6 +73,61 @@ internal fun readStoredLanguageSync(context: Context): AppLanguage = runCatching
         AppLanguage.fromId(context.settingsDataStore.data.first()[LANGUAGE_KEY])
     }
 }.getOrDefault(AppLanguage.SYSTEM)
+
+internal const val MaxPanelAccentOpacity = 1f
+internal const val MaxWallpaperBlur = 192f
+
+@kotlinx.serialization.Serializable
+internal data class WallpaperAppearance(
+    val opacity: Float,
+    val blur: Float,
+    val brightness: Float,
+    val contrast: Float,
+    val saturation: Float,
+    val dim: Float,
+    val flipH: Boolean,
+)
+
+enum class InterfaceControl(val id: String) {
+    INPUT("input"), INPUT_PANEL("input_panel"), SIDEBAR("sidebar"), MENU("menu"), SCROLL_BUTTON("scroll_button"),
+}
+
+/** Store exclusions so older profiles and newly introduced controls inherit the global effects. */
+data class ControlEffects(
+    val acrylicExcluded: Set<String> = emptySet(),
+    val accentExcluded: Set<String> = emptySet(),
+) {
+    fun usesAcrylic(control: InterfaceControl) = control.id !in acrylicExcluded
+    fun usesAccent(control: InterfaceControl) = control.id !in accentExcluded
+
+    fun withAcrylic(control: InterfaceControl, apply: Boolean) = copy(
+        acrylicExcluded = if (apply) acrylicExcluded - control.id else acrylicExcluded + control.id,
+    )
+
+    fun withAccent(control: InterfaceControl, apply: Boolean) = copy(
+        accentExcluded = if (apply) accentExcluded - control.id else accentExcluded + control.id,
+    )
+}
+
+@kotlinx.serialization.Serializable
+internal data class ConversationWallpaper(val fileName: String, val appearance: WallpaperAppearance) {
+    fun encode(): String = kotlinx.serialization.json.Json.encodeToString(this)
+
+    companion object {
+        fun decode(raw: String?): ConversationWallpaper? = raw?.let {
+            runCatching { kotlinx.serialization.json.Json.decodeFromString<ConversationWallpaper>(it) }.getOrNull()
+        }
+    }
+}
+
+internal data class PanelAppearance(
+    val floatingGlass: Float,
+    val acrylicEnabled: Boolean,
+    val opacity: Float,
+    val accentEnabled: Boolean,
+    val accentOpacity: Float,
+    val controlEffects: ControlEffects,
+)
 
 /** 持久化的全局配置。 */
 data class StoredSettings(
@@ -146,6 +202,7 @@ data class StoredSettings(
      * 0 = 实色，与旧版完全一致，且不创建任何离屏图层（docs/32 §32.3.3）。
      */
     val floatingGlass: Float = 0f,
+    val acrylicEnabled: Boolean = false,
     /** 壁纸模糊半径（dp）；0 = 不模糊。 */
     val wallpaperBlur: Float = 0f,
     /** 亮度倍率（1 = 原样）。 */
@@ -171,8 +228,10 @@ data class StoredSettings(
     val wallpaperPanelRadius: Float = 18f,
     /** 壁纸设置页的毛玻璃面板不透明度（0..1，越大越实）。 */
     val wallpaperPanelAlpha: Float = 0.72f,
+    val controlEffects: ControlEffects = ControlEffects(),
+    val panelAccentEnabled: Boolean = false,
+    val panelAccentOpacity: Float = 0.12f,
     /** 壁纸设置页是否用透明玻璃面板；关掉回到普通卡片。 */
-    val wallpaperGlassPanel: Boolean = true,
     /**
      * 智能搜索（联网搜索）开关。
      *
@@ -297,8 +356,9 @@ class SettingsStore(
             assistantFontId = prefs[Keys.ASSISTANT_FONT],
             wallpaperPath = prefs[Keys.WALLPAPER],
             wallpaperOpacity = prefs[Keys.WALLPAPER_OPACITY] ?: StoredSettings().wallpaperOpacity,
+            acrylicEnabled = prefs[Keys.ACRYLIC_ENABLED] ?: false,
             floatingGlass = prefs[Keys.FLOATING_GLASS] ?: StoredSettings().floatingGlass,
-            wallpaperBlur = prefs[Keys.WALLPAPER_BLUR] ?: StoredSettings().wallpaperBlur,
+            wallpaperBlur = (prefs[Keys.WALLPAPER_BLUR] ?: StoredSettings().wallpaperBlur).coerceIn(0f, MaxWallpaperBlur),
             wallpaperBrightness = prefs[Keys.WALLPAPER_BRIGHTNESS] ?: StoredSettings().wallpaperBrightness,
             wallpaperContrast = prefs[Keys.WALLPAPER_CONTRAST] ?: StoredSettings().wallpaperContrast,
             wallpaperSaturation = prefs[Keys.WALLPAPER_SATURATION] ?: StoredSettings().wallpaperSaturation,
@@ -310,8 +370,12 @@ class SettingsStore(
             wallpaperFlipH = prefs[Keys.WALLPAPER_FLIP_H] ?: StoredSettings().wallpaperFlipH,
             wallpaperCustomCrop = prefs[Keys.WALLPAPER_CUSTOM_CROP] ?: StoredSettings().wallpaperCustomCrop,
             wallpaperPanelRadius = prefs[Keys.WALLPAPER_PANEL_RADIUS] ?: StoredSettings().wallpaperPanelRadius,
-            wallpaperPanelAlpha = prefs[Keys.WALLPAPER_PANEL_ALPHA] ?: StoredSettings().wallpaperPanelAlpha,
-            wallpaperGlassPanel = prefs[Keys.WALLPAPER_GLASS_PANEL] ?: StoredSettings().wallpaperGlassPanel,
+            // 旧开关关闭时实际使用实色。读取旧配置时折算成不透明度 100%。
+            wallpaperPanelAlpha = if (prefs[Keys.WALLPAPER_GLASS_PANEL] == false) 1f else
+                (prefs[Keys.WALLPAPER_PANEL_ALPHA] ?: StoredSettings().wallpaperPanelAlpha).coerceIn(0f, 1f),
+            controlEffects = ControlEffects(prefs[Keys.ACRYLIC_EXCLUDED].orEmpty(), prefs[Keys.ACCENT_EXCLUDED].orEmpty()),
+            panelAccentEnabled = prefs[Keys.PANEL_ACCENT_ENABLED] ?: false,
+            panelAccentOpacity = prefs[Keys.PANEL_ACCENT_OPACITY] ?: StoredSettings().panelAccentOpacity,
             webSearch = prefs[Keys.WEB_SEARCH] ?: StoredSettings().webSearch,
             locationRegion = prefs[Keys.LOCATION] ?: StoredSettings().locationRegion,
             searchReasoning = prefs[Keys.SEARCH_REASONING] ?: false,
@@ -563,65 +627,39 @@ class SettingsStore(
         preferences.edit { it[Keys.LOCATION] = normalizeRegion(region) }
     }
 
-    /** 壁纸：传 null 表示不使用；只存文件名，字节在 filesDir/wallpaper。 */
-    suspend fun setWallpaper(fileName: String?) {
-        preferences.edit {
-            if (fileName.isNullOrBlank()) it.remove(Keys.WALLPAPER) else it[Keys.WALLPAPER] = fileName
-        }
-    }
-
-    suspend fun setFloatingGlass(value: Float) {
-        preferences.edit { it[Keys.FLOATING_GLASS] = value.coerceIn(0f, 1f) }
-    }
-
-    /** 壁纸不透明度 0..1（叠在背景色上）。 */
-    suspend fun setWallpaperOpacity(opacity: Float) {
-        preferences.edit { it[Keys.WALLPAPER_OPACITY] = opacity.coerceIn(0f, 1f) }
-    }
-
-    /**
-     * 壁纸画面调节（模糊 / 亮度 / 对比度 / 饱和度 / 位置 / 缩放 / 暗化 / 适配 / 翻转）。
-     *
-     * 一次写全量而不是十个 setter：这些参数共用同一批 slider，
-     * 每次拖动都会带上其余字段的当前值，合并成一次 DataStore 编辑更省。
-     */
-    suspend fun setWallpaperTuning(
-        blur: Float,
-        brightness: Float,
-        contrast: Float,
-        saturation: Float,
-        offsetX: Float,
-        offsetY: Float,
-        scale: Float,
-        dim: Float,
-        fit: String,
-        flipH: Boolean,
+    /** 提交同一次主题编辑，避免聊天页看到新壁纸和旧面板参数的混合状态。 */
+    internal suspend fun saveCustomTheme(
+        wallpaperPath: String?,
+        wallpaper: WallpaperAppearance,
+        panels: PanelAppearance,
+        resetWallpaperPlacement: Boolean,
     ) {
         preferences.edit { prefs ->
-            prefs[Keys.WALLPAPER_BLUR] = blur.coerceIn(0f, 30f)
-            prefs[Keys.WALLPAPER_BRIGHTNESS] = brightness.coerceIn(0.2f, 2f)
-            prefs[Keys.WALLPAPER_CONTRAST] = contrast.coerceIn(0.2f, 2f)
-            prefs[Keys.WALLPAPER_SATURATION] = saturation.coerceIn(0f, 2f)
-            prefs[Keys.WALLPAPER_OFFSET_X] = offsetX.coerceIn(0f, 1f)
-            prefs[Keys.WALLPAPER_OFFSET_Y] = offsetY.coerceIn(0f, 1f)
-            prefs[Keys.WALLPAPER_SCALE] = scale.coerceIn(0.5f, 3f)
-            prefs[Keys.WALLPAPER_DIM] = dim.coerceIn(0f, 1f)
-            prefs[Keys.WALLPAPER_FIT] = fit.ifBlank { "COVER" }
-            prefs[Keys.WALLPAPER_FLIP_H] = flipH
+            if (wallpaperPath == null) prefs.remove(Keys.WALLPAPER) else prefs[Keys.WALLPAPER] = wallpaperPath
+            prefs[Keys.WALLPAPER_OPACITY] = wallpaper.opacity.coerceIn(0f, 1f)
+            prefs[Keys.WALLPAPER_BLUR] = wallpaper.blur.coerceIn(0f, MaxWallpaperBlur)
+            prefs[Keys.WALLPAPER_BRIGHTNESS] = wallpaper.brightness.coerceIn(0.2f, 2f)
+            prefs[Keys.WALLPAPER_CONTRAST] = wallpaper.contrast.coerceIn(0.2f, 2f)
+            prefs[Keys.WALLPAPER_SATURATION] = wallpaper.saturation.coerceIn(0f, 2f)
+            prefs[Keys.WALLPAPER_DIM] = wallpaper.dim.coerceIn(0f, 1f)
+            prefs[Keys.WALLPAPER_FLIP_H] = wallpaper.flipH
+            if (resetWallpaperPlacement) {
+                prefs[Keys.WALLPAPER_OFFSET_X] = 0.5f
+                prefs[Keys.WALLPAPER_OFFSET_Y] = 0.5f
+                prefs[Keys.WALLPAPER_SCALE] = 1f
+                prefs[Keys.WALLPAPER_FIT] = "COVER"
+            }
+            prefs[Keys.ACRYLIC_ENABLED] = panels.acrylicEnabled
+            prefs[Keys.FLOATING_GLASS] = panels.floatingGlass.coerceIn(0f, 1f)
+            prefs.remove(Keys.WALLPAPER_GLASS_PANEL)
+            prefs[Keys.WALLPAPER_PANEL_ALPHA] = panels.opacity.coerceIn(0f, 1f)
+            prefs[Keys.ACRYLIC_EXCLUDED] = panels.controlEffects.acrylicExcluded
+            prefs[Keys.ACCENT_EXCLUDED] = panels.controlEffects.accentExcluded
+            prefs[Keys.PANEL_ACCENT_ENABLED] = panels.accentEnabled
+            prefs[Keys.PANEL_ACCENT_OPACITY] = panels.accentOpacity.coerceIn(0f, MaxPanelAccentOpacity)
         }
     }
 
-    /** 壁纸设置页的毛玻璃面板：圆角与不透明度。 */
-    suspend fun setWallpaperPanel(radius: Float, alpha: Float) {
-        preferences.edit {
-            it[Keys.WALLPAPER_PANEL_RADIUS] = radius.coerceIn(4f, 32f)
-            it[Keys.WALLPAPER_PANEL_ALPHA] = alpha.coerceIn(0.3f, 0.95f)
-        }
-    }
-    /** 壁纸设置页是否用透明玻璃面板。 */
-    suspend fun setWallpaperGlassPanel(enabled: Boolean) {
-        preferences.edit { it[Keys.WALLPAPER_GLASS_PANEL] = enabled }
-    }
     /** 自定义截取位置开关。 */
     suspend fun setWallpaperCustomCrop(enabled: Boolean) {
         preferences.edit { it[Keys.WALLPAPER_CUSTOM_CROP] = enabled }
@@ -911,6 +949,7 @@ class SettingsStore(
         /** 壁纸文件名（filesDir/wallpaper 下）；空 = 不使用。 */
         val WALLPAPER = stringPreferencesKey("wallpaper")
         val WALLPAPER_OPACITY = floatPreferencesKey("wallpaper_opacity")
+        val ACRYLIC_ENABLED = booleanPreferencesKey("interface_acrylic_enabled")
         val FLOATING_GLASS = floatPreferencesKey("floating_glass")
         val WALLPAPER_BLUR = floatPreferencesKey("wallpaper_blur")
         val WALLPAPER_BRIGHTNESS = floatPreferencesKey("wallpaper_brightness")
@@ -922,6 +961,10 @@ class SettingsStore(
         val WALLPAPER_DIM = floatPreferencesKey("wallpaper_dim")
         val WALLPAPER_PANEL_RADIUS = floatPreferencesKey("wallpaper_panel_radius")
         val WALLPAPER_PANEL_ALPHA = floatPreferencesKey("wallpaper_panel_alpha")
+        val ACRYLIC_EXCLUDED = stringSetPreferencesKey("interface_acrylic_excluded")
+        val ACCENT_EXCLUDED = stringSetPreferencesKey("interface_accent_excluded")
+        val PANEL_ACCENT_ENABLED = booleanPreferencesKey("panel_accent_enabled")
+        val PANEL_ACCENT_OPACITY = floatPreferencesKey("panel_accent_opacity")
         val WALLPAPER_GLASS_PANEL = booleanPreferencesKey("wallpaper_glass_panel")
         val WALLPAPER_CUSTOM_CROP = booleanPreferencesKey("wallpaper_custom_crop")
         val WALLPAPER_FIT = stringPreferencesKey("wallpaper_fit")

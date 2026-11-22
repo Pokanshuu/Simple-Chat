@@ -61,8 +61,8 @@ object WallpaperFiles {
      */
     fun sourceOf(context: Context): File = File(dir(context), SourceName)
 
-    /** 解码选中的图片（摆正 EXIF 方向、限制尺寸），并存为裁剪原图。 */
-    fun importSource(context: Context, uri: Uri): Bitmap? = runCatching {
+    /** 解码选中的图片（摆正 EXIF 方向、限制尺寸）。保存主题前不写文件。 */
+    fun decodeSource(context: Context, uri: Uri): Bitmap? = runCatching {
         val bitmap = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
             val source = android.graphics.ImageDecoder.createSource(context.contentResolver, uri)
             android.graphics.ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
@@ -77,39 +77,53 @@ object WallpaperFiles {
             val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
         } ?: return null
-        dir(context).mkdirs()
-        sourceOf(context).outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 92, it) }
-        bitmap
+        scaleDown(bitmap, SourceMaxSide).also { if (it !== bitmap) bitmap.recycle() }
     }.getOrNull()
 
-    /** 读回裁剪原图；老版本没有原图时退回当前壁纸。 */
-    fun loadSource(context: Context, current: String?): Bitmap? = runCatching {
-        val file = sourceOf(context).takeIf { it.exists() } ?: fileOf(context, current)
-        BitmapFactory.decodeFile(file.absolutePath)
+    private fun sourceFor(context: Context, name: String): File = File(dir(context), "source_$name")
+
+    private fun existingSource(context: Context, name: String): File? =
+        sourceFor(context, name).takeIf { it.exists() } ?: sourceOf(context).takeIf { it.exists() }
+
+    /** 读回裁剪原图，兼容使用固定文件名的旧版壁纸。 */
+    fun loadSource(context: Context, current: String): Bitmap? = runCatching {
+        BitmapFactory.decodeFile((existingSource(context, current) ?: fileOf(context, current)).absolutePath)
     }.getOrNull()
 
-    /** 保存裁剪结果为壁纸（缩到 [MaxSide] 以内）。 */
-    fun saveCropped(context: Context, cropped: Bitmap): String? = runCatching {
+    /** 写入一对新文件，设置指向它们之后才清理旧图。 */
+    fun saveCropped(context: Context, cropped: Bitmap, source: Bitmap, previous: String?): String? {
+        val name = "wallpaper_${java.util.UUID.randomUUID()}.jpg"
+        val target = fileOf(context, name)
+        val sourceTarget = sourceFor(context, name)
         val scaled = scaleDown(cropped)
-        dir(context).mkdirs()
-        val name = "wallpaper_${System.currentTimeMillis()}.jpg"
-        File(dir(context), name).outputStream().use { scaled.compress(Bitmap.CompressFormat.JPEG, 88, it) }
-        if (scaled !== cropped) scaled.recycle()
-        // 清掉旧的裁剪结果，只留原图和这一张
-        dir(context).listFiles()?.forEach { if (it.name != name && it.name != SourceName) it.delete() }
-        name
-    }.getOrNull()
+        return try {
+            dir(context).mkdirs()
+            val previousSource = previous?.let { existingSource(context, it) }
+            if (previousSource != null) previousSource.copyTo(sourceTarget)
+            else sourceTarget.outputStream().use { check(source.compress(Bitmap.CompressFormat.JPEG, 92, it)) }
+            target.outputStream().use { check(scaled.compress(Bitmap.CompressFormat.JPEG, 88, it)) }
+            name
+        } catch (_: Exception) {
+            deleteWallpaper(context, name)
+            null
+        } finally {
+            if (scaled !== cropped) scaled.recycle()
+        }
+    }
 
-    fun delete(context: Context): Boolean = runCatching {
-        dir(context).listFiles()?.forEach { it.delete() }
-        true
-    }.getOrDefault(false)
+    /** 只清理本次替换的旧壁纸，避免碰到尚未提交的另一张图。 */
+    fun deleteWallpaper(context: Context, name: String) {
+        runCatching {
+            fileOf(context, name).delete()
+            sourceFor(context, name).delete()
+        }
+    }
 
     /** 按最长边等比缩小；已经够小就原样返回（调用方不要 recycle 返回值以外的对象两次）。 */
-    private fun scaleDown(source: Bitmap): Bitmap {
+    private fun scaleDown(source: Bitmap, maxSide: Int = MaxSide): Bitmap {
         val longest = maxOf(source.width, source.height)
-        if (longest <= MaxSide) return source
-        val ratio = MaxSide.toFloat() / longest
+        if (longest <= maxSide) return source
+        val ratio = maxSide.toFloat() / longest
         val width = (source.width * ratio).toInt().coerceAtLeast(1)
         val height = (source.height * ratio).toInt().coerceAtLeast(1)
         return Bitmap.createScaledBitmap(source, width, height, true)

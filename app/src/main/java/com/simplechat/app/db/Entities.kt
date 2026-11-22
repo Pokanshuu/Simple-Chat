@@ -49,6 +49,8 @@ data class ConversationEntity(
      * 超过 15 天由 [com.simplechat.app.data.ChatRepository.purgeExpiredTrash] 真删。
      */
     val deletedAt: Long? = null,
+    /** Local wallpaper override; null inherits the global wallpaper. */
+    val wallpaperOverride: String? = null,
 )
 
 /**

@@ -151,7 +151,6 @@
     <string name="wallpaper_panel_alpha">面板不透明度</string>
     <string name="wallpaper_preview_sample">预览</string>
     <string name="wallpaper_preview_sample_detail">圆角 %1$d dp · 面板 %2$d%%</string>
-    <string name="wallpaper_glass_panel">透明玻璃面板</string>
     <string name="settings_wallpaper">壁纸</string>
     <string name="fonts_none">未导入</string>
     <string name="fonts_count">%1$d 个</string>
@@ -184,7 +183,7 @@
     <string name="settings_group_account">账户</string>
     <string name="settings_group_personal">个性化</string>
     <string name="settings_chat_behavior">对话行为</string>
-    <string name="settings_theme_mode">主题模式</string>
+    <string name="settings_theme_mode">显示模式</string>
     <string name="settings_group_text">文字</string>
     <string name="settings_loading_words">加载词</string>
     <string name="loading_words_default">默认</string>
@@ -213,7 +212,21 @@
     <string name="settings_group_presets">提示词库</string>
     <string name="settings_data_summary">导入 / 导出 / 清空</string>
     <string name="settings_appearance">外观</string>
-    <string name="settings_accent">主题色</string>
+    <string name="settings_accent">主题</string>
+    <string name="settings_custom_theme">自定义主题与壁纸</string>
+    <string name="theme_advanced">高级选项</string>
+    <string name="theme_accent_column">主题色</string>
+    <string name="theme_input">输入框</string>
+    <string name="theme_input_panel">输入扩展面板</string>
+    <string name="theme_sidebar">侧边栏</string>
+    <string name="theme_popup">弹出菜单</string>
+    <string name="theme_scroll_bottom_button">回到底部按钮</string>
+    <string name="theme_acrylic_strength">亚克力强度</string>
+    <string name="theme_wallpaper_overlay">不透明度</string>
+    <string name="theme_glass_and_panels">界面</string>
+    <string name="theme_apply_accent">应用主题色</string>
+    <string name="theme_panel_accent_opacity">主题色浓度</string>
+    <string name="theme_wallpaper_options">壁纸选项</string>
     <string name="settings_auto_collapse">自动折叠思考内容</string>
     <string name="settings_hold_to_talk">长按输入框说话</string>
     <string name="settings_search_inactive_branches">搜索非当前分支</string>
@@ -606,6 +619,12 @@
     <string name="input_param_temperature">温度 temperature</string>
     <string name="input_param_temp_disabled">思考模式下由服务端接管，不生效</string>
     <string name="input_param_top_p_disabled">仅思考模式生效</string>
+    <string name="input_conversation_wallpaper">当前聊天壁纸</string>
+    <string name="input_conversation_wallpaper_hint">仅影响当前对话</string>
+    <string name="input_conversation_wallpaper_unsaved">发送第一条消息后可设置</string>
+    <string name="input_conversation_wallpaper_edit">设置壁纸</string>
+    <string name="conversation_wallpaper_title">编辑聊天壁纸</string>
+    <string name="conversation_wallpaper_use_global">使用全局壁纸</string>
     <string name="input_export_title">导出当前对话</string>
     <string name="input_export_hint">Markdown 文稿 · 或 JSON 备份</string>
     <string name="input_export">导出</string>
@@ -943,10 +962,12 @@
     <string name="settings_icon_exit">确认并退出</string>
     <!-- 悬浮控件玻璃（docs/32 §32.3.3） -->
     <string name="floating_glass_section">悬浮控件</string>
-    <string name="floating_glass_title">玻璃质感</string>
+    <string name="floating_glass_title">亚克力效果</string>
+    <string name="theme_slider_default">默认</string>
+    <string name="theme_base_opacity">底色不透明度</string>
     <string name="floating_glass_off">关闭</string>
-    <string name="floating_glass_note">输入栏和输入面板会实时模糊并透出背后的内容，越往右越通透。实时模糊每一帧都要重新计算：流式输出、快速滚动时会增加 GPU 负载与耗电，低端机可能掉帧。省电模式下自动只保留半透明。</string>
-    <string name="floating_glass_note_fallback">当前设备不支持实时模糊（需 Android 12 及以上），或正处于省电模式：只保留半透明效果，背后的内容不会被模糊。</string>
+    <string name="floating_glass_note">亚克力效果调整背景的模糊与混色，底色不透明度只调整覆盖在其上的底色。</string>
+    <string name="floating_glass_note_fallback">当前设备无法实时模糊（需 Android 12 及以上且未开启省电模式）。悬浮控件仍可调整混色和底色不透明度。</string>
     <!-- 通用裁剪器（docs/32 §32.6.5） -->
     <string name="crop_title">裁剪</string>
     <string name="crop_done">完成</string>
@@ -955,28 +976,20 @@
     <string name="crop_attachment">裁剪</string>
     <string name="wallpaper_crop_title">裁剪壁纸</string>
     <string name="wallpaper_crop_preview">聊天预览</string>
-    <string name="wallpaper_preview_user">帮我写一段开头</string>
-    <string name="wallpaper_preview_reply">夜色像一层薄纱，慢慢落在城市的屋顶上。远处的灯一盏一盏亮起来……</string>
+    <string name="wallpaper_preview_user">讲一个关于转弯的故事吧。</string>
+    <string name="wallpaper_preview_reply">小车正穿行在落基山脉蜿蜒曲折的盘山公路上。克利斯朵夫·李维静静地望着窗外，发现每当车子即将行驶到无路的当口，路边都会出现一块交通指示牌：“前方转弯！”或“注意！急转弯！”而拐过每一道弯之后，前方照例又是一片柳暗花明，豁然开朗。\n\n山路弯弯，峰回路转。“前方转弯”几个大字一次次地冲击着他的眼球，也渐渐扣开了他的心扉。原来不是路已到了尽头，而是该转弯了。\n\n路在脚下，更在心中；心随路转，心路常宽。学会转弯也是人生的智慧，因为挫折往往是转折，危机同时是转机。</string>
     <string name="wallpaper_preview_input">发消息</string>
     <string name="wallpaper_recrop">重新裁剪</string>
     <string name="wallpaper_recrop_hint">从原图重新选择显示区域</string>
     <!-- 壁纸编辑器（docs/32 §32.6） -->
-    <string name="wallpaper_editor_title">编辑壁纸</string>
+    <string name="wallpaper_editor_title">编辑主题</string>
     <string name="wallpaper_editor_reset_crop">复位</string>
     <string name="wallpaper_editor_tab_crop">裁切</string>
     <string name="wallpaper_editor_tab_adjust">调节</string>
-    <string name="wallpaper_editor_tab_panel">面板</string>
-    <string name="wallpaper_editor_opacity">显眼度</string>
     <string name="wallpaper_editor_compare">按住对比原图</string>
-    <string name="wallpaper_editor_glass_hint">点上方「透明玻璃面板」切换开关：输入栏、抽屉等会变得通透</string>
-    <string name="wallpaper_blur_none">无</string>
-    <string name="wallpaper_blur_light">轻</string>
-    <string name="wallpaper_blur_medium">中</string>
-    <string name="wallpaper_blur_strong">强</string>
     <string name="value_on">开</string>
     <string name="value_off">关</string>
     <string name="wallpaper_edit">编辑壁纸</string>
-    <string name="wallpaper_edit_hint">裁切、调色与面板效果，所见即所得</string>
     <string name="wallpaper_change">更换图片</string>
 </resources>
 

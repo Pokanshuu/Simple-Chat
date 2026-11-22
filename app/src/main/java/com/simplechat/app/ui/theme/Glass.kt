@@ -1,48 +1,72 @@
 package com.simplechat.app.ui.theme
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.ColorScheme
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.luminance
+import com.simplechat.app.data.InterfaceControl
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
-import com.simplechat.app.ui.theme.tokens.AppTheme
-import kotlin.math.max
 
-/**
- * 壁纸玻璃作用的表面层（docs/32 §32.3.2）。每层的最透下限由
- * [com.simplechat.app.ui.theme.tokens.SurfaceTokens] 提供，主题文件可调（但不低于安全线）。
- *
- * 悬浮控件（输入栏 / 输入面板）不在这里：它们走 FloatingGlass（实时模糊 + 独立滑块）。
- */
-enum class GlassLayer { DRAWER, USER_BUBBLE, ROW, SEGMENTED_TRACK, SEGMENTED_INDICATOR }
+/** 主题色在面板底色上的独立混色比例。 */
+val LocalPanelAccentOpacity = staticCompositionLocalOf { 0f }
 
-/**
- * 某一层在壁纸玻璃下的表面色。**组件只调这个**，不要自己 `copy(alpha)` / `coerceAtLeast`。
- *
- * - 没有壁纸或没开玻璃（`LocalChatGlassAlpha == 0`）→ 原样返回 [base]（R1：不透明、不染色）；
- * - 否则 alpha = max(用户的面板不透明度, 该层下限)，按 token 的 accentTint 掺主色（默认 0）。
- */
+/** 保留组件的底色不透明度，只改变主题色所占的比例。 */
 @Composable
-fun glassSurface(base: Color, layer: GlassLayer): Color {
-    val glass = LocalChatGlassAlpha.current
-    if (glass <= 0f) return base
-    val surface = AppTheme.tokens.surface
-    val floor = when (layer) {
-        GlassLayer.DRAWER -> surface.drawerFloor
-        GlassLayer.USER_BUBBLE -> surface.userBubbleFloor
-        GlassLayer.ROW -> surface.rowFloor
-        GlassLayer.SEGMENTED_TRACK -> surface.segmentedTrackFloor
-        GlassLayer.SEGMENTED_INDICATOR -> surface.segmentedIndicatorFloor
+internal fun panelTint(base: Color): Color = glassTintedSurface(
+    base, MaterialTheme.colorScheme.primary, base.alpha, LocalPanelAccentOpacity.current,
+)
+
+internal fun glassContrastForeground(surface: Color, backdrop: Color, preferred: Color): Color {
+    val luminance = surface.compositeOver(backdrop).luminance()
+    fun contrast(foreground: Color): Float {
+        val foregroundLuminance = foreground.luminance()
+        return (maxOf(luminance, foregroundLuminance) + 0.05f) / (minOf(luminance, foregroundLuminance) + 0.05f)
     }
-    val alpha = base.alpha * max(glass, floor)
-    return glassTintedSurface(base, MaterialTheme.colorScheme.primary, alpha, surface.accentTint)
+    if (contrast(preferred) >= 4.5f) return preferred
+    return if (contrast(Color.White) >= contrast(Color.Black)) Color.White else Color.Black
 }
 
-/**
- * 玻璃表面色：`base × alpha`，可选掺入 [strength] 的主题色。
- *
- * 默认不掺（docs/32 B7）：表面染色是 §7.2 已否定的做法；需要时由主题文件的
- * `surface.accentTint` 打开，上限 0.12。
- */
+private data class PanelBasePalette(val scheme: ColorScheme, val colors: ChatColors)
+private val LocalPanelBasePalette = staticCompositionLocalOf<PanelBasePalette?> { null }
+
+@Composable
+internal fun GlassForeground(
+    control: InterfaceControl,
+    surface: Color = floatingPanelSurface(control),
+    content: @Composable () -> Unit,
+) {
+    val inherited = LocalPanelBasePalette.current
+    val base = inherited ?: PanelBasePalette(MaterialTheme.colorScheme, LocalChatColors.current)
+    val scheme = base.scheme
+    val colors = base.colors
+    val tinted = LocalControlEffects.current.usesAccent(control) && LocalPanelAccentOpacity.current > 0f
+    val foreground = if (tinted) glassContrastForeground(surface, colors.pageBackground, scheme.onSurface) else scheme.onSurface
+    // Keep the content at the same composition slot when a surface crosses
+    // the contrast threshold; replacing it cancels in-flight gestures.
+    val adapted = foreground != scheme.onSurface
+    val secondary = foreground.copy(alpha = 0.78f)
+    val outline = foreground.copy(alpha = 0.4f)
+    MaterialTheme(colorScheme = if (!adapted) scheme else scheme.copy(
+        onSurface = foreground, onBackground = foreground, onSurfaceVariant = secondary,
+        outline = outline, outlineVariant = outline,
+    )) {
+        CompositionLocalProvider(
+            LocalPanelBasePalette provides base,
+            LocalContentColor provides foreground,
+            LocalChatColors provides if (!adapted) colors else colors.copy(
+                placeholder = secondary, processText = secondary, processBar = outline, outline = outline, divider = outline,
+            ),
+            content = content,
+        )
+    }
+}
+
+/** 玻璃表面色：按 [strength] 混入主题色，保留传入的 alpha。 */
 fun glassTintedSurface(
     base: Color,
     tint: Color,

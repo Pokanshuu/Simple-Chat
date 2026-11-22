@@ -1,12 +1,18 @@
 package com.simplechat.app.ui.theme
 
 import android.content.BroadcastReceiver
+import androidx.compose.foundation.background
+import com.simplechat.app.data.ControlEffects
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.os.PowerManager
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import com.simplechat.app.data.InterfaceControl
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.compositionLocalOf
@@ -16,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -24,9 +31,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
@@ -35,51 +45,37 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
+import kotlin.math.ceil
 
-/*
- * 悬浮控件的实时玻璃（docs/32 §32.3.3）。
- *
- * 只给**浮在正文之上**的控件用：输入栏、输入面板。一个用户值 g ∈ [0, 1]
- * 同时决定「混色」（表面不透明度）和「模糊半径」。
- *
- * ── 怎么做到"实时"又不贵 ─────────────────────────────────────
- * 1. 消息区把自己的内容录进 contentLayer（GraphicsLayer = 一个 RenderNode），
- *    屏幕上画的就是这一份 —— 内容**只录一次**。
- * 2. sourceLayer = 页面底色 + 壁纸 + drawLayer(contentLayer)。它只是**引用**
- *    contentLayer，不复制内容；正文流式更新、列表滚动时，子 RenderNode 自己更新，
- *    引用方自动看到新内容，**悬浮控件不需要重新录制**。
- * 3. 悬浮控件自己持有一个 blurLayer：按自身位置平移后引用 sourceLayer，
- *    挂 BlurEffect（RenderEffect，Android 12+）。模糊只在控件那一小块区域上算。
- * 4. g = 0、Android 12 以下、省电模式：**不创建源图层**，绘制路径与旧版一致；
- *    后两者只保留更实的半透明。
- */
-
-/** 用户设置的玻璃质感 0..1。0 = 实色（默认）。 */
+/** 亚克力强度 0..1；最小值仍有一层柔化及混色。 */
 val LocalFloatingGlass = staticCompositionLocalOf { 0f }
 
-/** 当前页面提供的模糊源；为空表示不做实时模糊（只混色或实色）。 */
+/** 悬浮控件的底色不透明度，不参与亚克力采样或混色。 */
+val LocalFloatingBaseOpacity = staticCompositionLocalOf { 0.72f }
+
+internal val LocalAcrylicEnabled = staticCompositionLocalOf { false }
+internal val LocalControlEffects = staticCompositionLocalOf { ControlEffects() }
+
+/** 当前页面提供的实时背景源。 */
 val LocalBackdropSource = compositionLocalOf<BackdropSource?> { null }
 
-/*
- * 下限与模糊上限来自 SurfaceTokens（docs/33）：
- * - floatingFloorBlurred：有模糊时的最透下限，背后已经被抹平，可以更透；
- * - floatingFloorPlain：无模糊时的最透下限，背后的字会直接透出来，必须更实；
- * - floatingMaxBlur：模糊半径上限，再往上视觉收益很小、GPU 开销明显增加。
- */
+internal fun acrylicMixColor(color: Color, strength: Float): Color =
+    color.copy(alpha = lerp(0.08f, 0.24f, strength.coerceIn(0f, 1f)))
 
-/** 悬浮控件表面的不透明度（混色）。 */
 @Composable
-@androidx.compose.runtime.ReadOnlyComposable
-fun floatingSurfaceAlpha(glass: Float, blurred: Boolean): Float {
-    val surface = com.simplechat.app.ui.theme.tokens.AppTheme.tokens.surface
-    return lerp(1f, if (blurred) surface.floatingFloorBlurred else surface.floatingFloorPlain, glass.coerceIn(0f, 1f))
+internal fun floatingPanelSurface(control: InterfaceControl): Color {
+    val colors = LocalChatColors.current
+    // Menus sit one surface level above cards in the dark palette.
+    val neutral = if (control == InterfaceControl.MENU) colors.menuBackground else colors.card
+    val plain = neutral.copy(alpha = LocalFloatingBaseOpacity.current)
+    return if (LocalControlEffects.current.usesAccent(control)) panelTint(plain) else plain
 }
 
-/** 模糊半径。 */
 @Composable
-@androidx.compose.runtime.ReadOnlyComposable
-fun floatingBlurRadius(glass: Float): Dp =
-    com.simplechat.app.ui.theme.tokens.AppTheme.tokens.surface.floatingMaxBlur * glass.coerceIn(0f, 1f)
+private fun floatingBlurRadius(strength: Float): Dp {
+    val max = com.simplechat.app.ui.theme.tokens.AppTheme.tokens.surface.floatingMaxBlur.value.coerceAtLeast(4f)
+    return lerp(4f, max, strength.coerceIn(0f, 1f)).dp
+}
 
 /**
  * 当前设备 / 状态下能不能做实时模糊：Android 12+ 且不在省电模式。
@@ -118,7 +114,13 @@ class BackdropSource internal constructor(
     val originInRoot: Offset get() = origin
 }
 
-/** g > 0 且可以实时模糊时返回一个模糊源，否则返回 null（不创建任何离屏图层）。 */
+@Composable
+internal fun needsLiveSurface(vararg controls: InterfaceControl): Boolean {
+    val effects = LocalControlEffects.current
+    return LocalAcrylicEnabled.current && LocalFloatingBaseOpacity.current < 1f && controls.any(effects::usesAcrylic)
+}
+
+/** 可以实时模糊时返回一个模糊源，否则返回 null（不创建任何离屏图层）。 */
 @Composable
 fun rememberBackdropSource(enabled: Boolean): BackdropSource? {
     if (!enabled) return null
@@ -151,34 +153,173 @@ fun Modifier.backdropSource(
         }
 }
 
-/**
- * 悬浮控件的玻璃底：模糊后的背景 + 半透明表面色。
- *
- * 放在 `.clip(shape)` **之后**、原来 `.background(...)` 的位置。
- * 没有模糊源时只画 [surface]（调用方已经按 [floatingSurfaceAlpha] 算好不透明度）。
- */
+/** Retain the wallpaper drawing commands until its size or visual parameters change. */
+internal fun Modifier.sharedSceneBackground(
+    layer: GraphicsLayer?,
+    alpha: () -> Float = { 1f },
+    draw: DrawScope.() -> Unit,
+): Modifier {
+    if (layer == null) return drawBehind(draw)
+    return drawWithCache {
+        layer.record { draw() }
+        onDrawBehind {
+            layer.alpha = alpha()
+            drawLayer(layer)
+        }
+    }
+}
+
+/** Capture only the scene behind the drawer, never the drawer or its scrim. */
+internal fun Modifier.recordBackdrop(source: BackdropSource?): Modifier {
+    if (source == null) return this
+    return onGloballyPositioned { source.origin = it.positionInRoot() }.drawWithContent {
+        val scene = this
+        source.source.record { scene.drawContent() }
+        drawLayer(source.source)
+    }
+}
+
+/** Popup 有独立窗口，菜单和背景源通过屏幕坐标对齐。 */
+private val LocalMenuBackdrop = compositionLocalOf<MenuBackdrop?> { null }
+
+private class MenuBackdrop(val layer: GraphicsLayer) {
+    var activeMenus by mutableStateOf(0)
+    var screenOrigin by mutableStateOf(Offset.Unspecified)
+    var ready by mutableStateOf(false)
+}
+
 @Composable
-fun Modifier.floatingGlassBackground(surface: Color, glass: Float): Modifier {
-    val source = LocalBackdropSource.current
-    if (source == null || glass <= 0f) return this.drawBehind { drawRect(surface) }
+internal fun MenuBackdropHost(content: @Composable () -> Unit) {
+    val liveBlur = rememberLiveBlurAvailable()
+    val backdrop = if (liveBlur && needsLiveSurface(InterfaceControl.MENU)) {
+        val layer = rememberGraphicsLayer()
+        remember(layer) { MenuBackdrop(layer) }
+    } else null
+
+    val capture = if (backdrop == null) Modifier else Modifier
+        .onGloballyPositioned { backdrop.screenOrigin = it.localToScreen(Offset.Zero) }
+        .drawWithContent {
+            if (backdrop.activeMenus == 0) {
+                drawContent()
+            } else {
+                val page = this
+                backdrop.layer.record { page.drawContent() }
+                drawLayer(backdrop.layer)
+                backdrop.ready = true
+            }
+        }
+    CompositionLocalProvider(LocalMenuBackdrop provides backdrop) {
+        Box(Modifier.fillMaxSize().then(capture)) { content() }
+    }
+}
+
+/** 菜单在独立窗口，只在打开时录制背景。 */
+@Composable
+internal fun Modifier.menuGlassBackground(base: Color): Modifier {
+    val strength = LocalFloatingGlass.current
+    val surface = floatingPanelSurface(InterfaceControl.MENU)
+    if (!LocalAcrylicEnabled.current || !LocalControlEffects.current.usesAcrylic(InterfaceControl.MENU) || surface.alpha == 1f) return background(surface)
+    val mix = acrylicMixColor(base, strength)
+    val backdrop = LocalMenuBackdrop.current
+    DisposableEffect(backdrop) {
+        if (backdrop != null) backdrop.activeMenus++
+        onDispose {
+            if (backdrop != null) {
+                backdrop.activeMenus--
+                if (backdrop.activeMenus == 0) backdrop.ready = false
+            }
+        }
+    }
+    if (backdrop == null) return acrylicFallback(mix, surface)
+    return blurBackdrop(
+        layer = backdrop.layer,
+        strength = strength,
+        mix = mix,
+        surface = surface,
+        sourceOrigin = { if (backdrop.ready) backdrop.screenOrigin else Offset.Unspecified },
+        findOrigin = { it.localToScreen(Offset.Zero) },
+    )
+}
+
+private fun Modifier.acrylicFallback(mix: Color, surface: Color): Modifier = drawBehind {
+    drawRect(mix)
+    drawRect(surface)
+}
+
+/** 底色绘制在亚克力层之上；调底色 alpha 不会降低模糊图层的 alpha。 */
+@Composable
+internal fun Modifier.floatingGlassBackground(
+    base: Color,
+    control: InterfaceControl,
+    surface: Color = floatingPanelSurface(control),
+    source: BackdropSource? = LocalBackdropSource.current,
+    extendIntoBottomInset: Int = 0,
+): Modifier {
+    if (!LocalAcrylicEnabled.current || !LocalControlEffects.current.usesAcrylic(control) || surface.alpha == 1f) return background(surface)
+    val strength = LocalFloatingGlass.current
+    val mix = acrylicMixColor(base, strength)
+    if (source == null) return acrylicFallback(mix, surface)
+    return blurBackdrop(source.source, strength, mix, surface, { source.origin }, { it.positionInRoot() }, extendIntoBottomInset)
+}
+
+@Composable
+private fun Modifier.blurBackdrop(
+    layer: GraphicsLayer,
+    strength: Float,
+    mix: Color,
+    surface: Color,
+    sourceOrigin: () -> Offset,
+    findOrigin: (LayoutCoordinates) -> Offset,
+    extendIntoBottomInset: Int = 0,
+): Modifier {
     val blurLayer = rememberGraphicsLayer()
-    val radiusPx = with(LocalDensity.current) { floatingBlurRadius(glass).toPx() }
+    val radiusPx = with(LocalDensity.current) { floatingBlurRadius(strength).toPx() }
+    val effect = remember(radiusPx) {
+        if (radiusPx > 0.5f) BlurEffect(radiusPx, radiusPx, TileMode.Clamp) else null
+    }
+    // 给模糊核留出控件边缘之外的取样范围，避免边缘过早夹取。
+    val padding = if (effect == null) 0 else ceil(radiusPx * 3f).toInt()
     val holder = remember { OriginHolder() }
     return this
-        .onGloballyPositioned { holder.origin = it.positionInRoot() }
+        .onGloballyPositioned { holder.origin = findOrigin(it) }
         .drawBehind {
-            val dx = source.origin.x - holder.origin.x
-            val dy = source.origin.y - holder.origin.y
-            blurLayer.renderEffect = if (radiusPx > 0.5f) BlurEffect(radiusPx, radiusPx, TileMode.Clamp) else null
-            blurLayer.record(IntSize(size.width.toInt().coerceAtLeast(1), size.height.toInt().coerceAtLeast(1))) {
-                translate(dx, dy) { drawLayer(source.source) }
+            val source = sourceOrigin()
+            val origin = holder.origin
+            if (source != Offset.Unspecified && origin != Offset.Unspecified) {
+                val delta = source - origin
+                val layerSize = IntSize(
+                    size.width.toInt().coerceAtLeast(1) + padding * 2,
+                    size.height.toInt().coerceAtLeast(1) + padding * 2,
+                )
+                // Re-record the live source on every draw. Reusing its display-list reference
+                // can form a cyclic RenderNode graph on HWUI during conversation scrolling.
+                blurLayer.renderEffect = effect
+                blurLayer.record(layerSize) {
+                    val sourceX = delta.x + padding
+                    val sourceY = delta.y + padding
+                    val edge = minOf(size.height - padding - extendIntoBottomInset, sourceY + layer.size.height)
+                    if (extendIntoBottomInset > 0 && edge >= sourceY + 1f && edge > padding) {
+                        // Extend a row of the same backdrop instead of exposing sharp chat text
+                        // or overlaying a different solid color in the system gesture area.
+                        clipRect(bottom = edge) { translate(sourceX, sourceY) { drawLayer(layer) } }
+                        clipRect(top = edge) {
+                            val row = edge - 1f
+                            scale(1f, size.height - row, pivot = Offset(0f, row)) {
+                                translate(sourceX, sourceY) { drawLayer(layer) }
+                            }
+                        }
+                    } else {
+                        translate(sourceX, sourceY) { drawLayer(layer) }
+                    }
+                }
+                translate(-padding.toFloat(), -padding.toFloat()) { drawLayer(blurLayer) }
             }
-            drawLayer(blurLayer)
+            drawRect(mix)
             drawRect(surface)
         }
 }
 
 @Stable
 private class OriginHolder {
-    var origin by mutableStateOf(Offset.Zero)
+    var origin by mutableStateOf(Offset.Unspecified)
 }

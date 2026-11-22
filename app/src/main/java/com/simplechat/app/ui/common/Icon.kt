@@ -14,6 +14,13 @@ import androidx.compose.ui.unit.dp
 
 internal val LocalUseSimpleCatIcon = compositionLocalOf { true }
 
+internal const val SimpleCatOutlinePath =
+    "M5.9,19.2l-2.8,2.3c-.3.3-.6.3-1,0,0,0-.2-.3-.2-.4V3.1" +
+        "c0-.2,0-.4.3-.6.4-.3,1-.3,1.4,0l2.7,2.2.5.3" +
+        "c.5.4,1.1.7,1.8.7h6.6c.6,0,1.3-.3,1.8-.7l.5-.3,2.7-2.2" +
+        "c.4-.3,1-.3,1.4,0,.2.2.3.3.3.6v14.6c0,.9-.9,1.7-1.9,1.7h-4.6"
+internal const val SimpleCatOpenEyesPath = "M8.3,11.1V13.7M15.7,11.1V13.7"
+
 /**
  * 图标集。
  *
@@ -433,6 +440,23 @@ object AppIcons {
                 lineToRelative(-3f, 3f)
                 arcToRelative(5f, 5f, 0f, false, false, 7.07f, 7.07f)
                 lineToRelative(1.71f, -1.71f)
+            }
+        }
+    }
+
+    val FlipHorizontal: ImageVector by lazy {
+        vector("FlipHorizontal") {
+            stroke {
+                moveTo(12f, 3f)
+                lineTo(12f, 21f)
+                moveTo(8f, 6f)
+                lineTo(8f, 18f)
+                lineTo(3f, 18f)
+                close()
+                moveTo(16f, 6f)
+                lineTo(16f, 18f)
+                lineTo(21f, 18f)
+                close()
             }
         }
     }
@@ -1253,13 +1277,7 @@ object AppIcons {
     val SimpleCat: ImageVector by lazy {
         vector("SimpleCat") {
             addPath(
-                pathData = addPathNodes(
-                    "M5.9,19.2l-2.8,2.3c-.3.3-.6.3-1,0,0,0-.2-.3-.2-.4V3.1" +
-                        "c0-.2,0-.4.3-.6.4-.3,1-.3,1.4,0l2.7,2.2.5.3" +
-                        "c.5.4,1.1.7,1.8.7h6.6c.6,0,1.3-.3,1.8-.7l.5-.3,2.7-2.2" +
-                        "c.4-.3,1-.3,1.4,0,.2.2.3.3.3.6v14.6c0,.9-.9,1.7-1.9,1.7h-4.6" +
-                        "M8.3,11.1V13.7M15.7,11.1V13.7",
-                ),
+                pathData = addPathNodes(SimpleCatOutlinePath + SimpleCatOpenEyesPath),
                 stroke = SolidColor(Color.Black),
                 strokeLineWidth = 2f,
                 strokeLineCap = StrokeCap.Round,

@@ -102,6 +102,11 @@ class ChatViewModel(
     private val openCodeSessionId: String,
 ) : ViewModel() {
 
+    internal fun observeConversationWallpaper(id: String) = repository.observeConversationWallpaper(id)
+
+    internal suspend fun saveConversationWallpaper(id: String, wallpaper: com.simplechat.app.data.ConversationWallpaper?) =
+        repository.saveConversationWallpaper(id, wallpaper)
+
     val messages = mutableStateListOf<UiMessage>()
     internal val imageDrafts = mutableMapOf<String, String>()
 

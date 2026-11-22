@@ -109,7 +109,6 @@ fun HistoryDrawerContent(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(com.simplechat.app.ui.theme.glassSurface(colors.card, com.simplechat.app.ui.theme.GlassLayer.DRAWER)),
     ) {
         Spacer(Modifier.statusBarsPadding())
 
@@ -453,12 +452,10 @@ internal fun ConversationRow(
                          * 普通行不画底，跟着抽屉走（否则半透明叠半透明，越叠越实）；
                          * 当前 / 选中靠选中色区分。选中色本身已是「主色 × alpha」，玻璃下不再额外处理。
                          */
-                        val glassOn = com.simplechat.app.ui.theme.LocalChatGlassAlpha.current > 0f
                         when {
                             current -> colors.capsuleSelected
                             selected -> colors.fieldBackground
-                            glassOn -> androidx.compose.ui.graphics.Color.Transparent
-                            else -> colors.card
+                            else -> androidx.compose.ui.graphics.Color.Transparent
                         }
                     },
                 )

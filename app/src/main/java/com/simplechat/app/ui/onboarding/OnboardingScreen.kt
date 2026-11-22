@@ -40,7 +40,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -85,6 +84,7 @@ import com.simplechat.app.ui.common.AppIcons
 import com.simplechat.app.ui.common.ContainerShape
 import com.simplechat.app.ui.common.FieldThickness
 import com.simplechat.app.ui.common.IconCircleButton
+import com.simplechat.app.ui.common.LoadingIndicator
 import com.simplechat.app.ui.common.MenuShape
 import com.simplechat.app.ui.common.PillShape
 import com.simplechat.app.ui.common.SoftShape
@@ -461,7 +461,7 @@ private fun PrimaryAction(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (loading) {
-            CircularProgressIndicator(Modifier.size(18.dp), color = content, strokeWidth = 2.dp)
+            LoadingIndicator(Modifier.size(18.dp), color = content, strokeWidth = 2.dp)
             Spacer(Modifier.width(Space.Gap))
         }
         Text(

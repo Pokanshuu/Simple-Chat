@@ -149,7 +149,6 @@
     <string name="wallpaper_panel_alpha">Panel opacity</string>
     <string name="wallpaper_preview_sample">Preview</string>
     <string name="wallpaper_preview_sample_detail">Radius %1$d dp · panel %2$d%%</string>
-    <string name="wallpaper_glass_panel">Translucent glass panel</string>
     <string name="settings_wallpaper">Wallpaper</string>
     <string name="fonts_none">Not imported</string>
     <string name="fonts_count">%1$d</string>
@@ -182,7 +181,7 @@
     <string name="settings_group_account">Account</string>
     <string name="settings_group_personal">Personal</string>
     <string name="settings_chat_behavior">Conversation</string>
-    <string name="settings_theme_mode">Theme</string>
+    <string name="settings_theme_mode">Display mode</string>
     <string name="settings_group_text">Text</string>
     <string name="settings_loading_words">Loading phrases</string>
     <string name="loading_words_default">Default</string>
@@ -211,7 +210,21 @@
     <string name="settings_group_presets">Prompt library</string>
     <string name="settings_data_summary">Import · Export · Clear</string>
     <string name="settings_appearance">Appearance</string>
-    <string name="settings_accent">Accent color</string>
+    <string name="settings_accent">Theme</string>
+    <string name="settings_custom_theme">Custom theme and wallpaper</string>
+    <string name="theme_advanced">Advanced options</string>
+    <string name="theme_accent_column">Theme color</string>
+    <string name="theme_input">Message input</string>
+    <string name="theme_input_panel">Input panels</string>
+    <string name="theme_sidebar">Sidebar</string>
+    <string name="theme_popup">Pop-up menus</string>
+    <string name="theme_scroll_bottom_button">Scroll-to-bottom button</string>
+    <string name="theme_acrylic_strength">Acrylic strength</string>
+    <string name="theme_wallpaper_overlay">Opacity</string>
+    <string name="theme_glass_and_panels">Interface</string>
+    <string name="theme_apply_accent">Apply theme color</string>
+    <string name="theme_panel_accent_opacity">Theme color intensity</string>
+    <string name="theme_wallpaper_options">Wallpaper options</string>
     <string name="settings_auto_collapse">Auto-collapse thinking</string>
     <string name="settings_hold_to_talk">Hold input to talk</string>
     <string name="settings_search_inactive_branches">Search inactive branches</string>
@@ -600,6 +613,12 @@
     <string name="input_param_temperature">Temperature</string>
     <string name="input_param_temp_disabled">Controlled by the server in thinking mode; has no effect</string>
     <string name="input_param_top_p_disabled">Only takes effect in thinking mode</string>
+    <string name="input_conversation_wallpaper">Conversation wallpaper</string>
+    <string name="input_conversation_wallpaper_hint">Only changes this conversation</string>
+    <string name="input_conversation_wallpaper_unsaved">Available after sending the first message</string>
+    <string name="input_conversation_wallpaper_edit">Set wallpaper</string>
+    <string name="conversation_wallpaper_title">Edit conversation wallpaper</string>
+    <string name="conversation_wallpaper_use_global">Use global wallpaper</string>
     <string name="input_export_title">Export this conversation</string>
     <string name="input_export_hint">Markdown document or JSON backup</string>
     <string name="input_export">Export</string>
@@ -932,10 +951,12 @@
     <string name="settings_icon_exit">Confirm and exit</string>
     <!-- 悬浮控件玻璃（docs/32 §32.3.3） -->
     <string name="floating_glass_section">Floating controls</string>
-    <string name="floating_glass_title">Glass effect</string>
+    <string name="floating_glass_title">Acrylic effect</string>
+    <string name="theme_slider_default">Default</string>
+    <string name="theme_base_opacity">Base color opacity</string>
     <string name="floating_glass_off">Off</string>
-    <string name="floating_glass_note">The input bar and input panels blur and show the content behind them in real time; further right is more see-through. Live blur is recomputed every frame: while replies stream or you scroll fast it adds GPU load and battery use, and low-end devices may drop frames. Battery Saver automatically falls back to translucency only.</string>
-    <string name="floating_glass_note_fallback">Live blur is unavailable (requires Android 12+) or Battery Saver is on: controls are only translucent and the content behind them is not blurred.</string>
+    <string name="floating_glass_note">Acrylic adjusts background blur and color mixing. Base color opacity only changes the color laid over it.</string>
+    <string name="floating_glass_note_fallback">Live blur requires Android 12 or later with Battery Saver off. Floating controls still support color mixing and base color opacity.</string>
     <!-- 通用裁剪器（docs/32 §32.6.5） -->
     <string name="crop_title">Crop</string>
     <string name="crop_done">Done</string>
@@ -944,28 +965,20 @@
     <string name="crop_attachment">Crop</string>
     <string name="wallpaper_crop_title">Crop wallpaper</string>
     <string name="wallpaper_crop_preview">Chat preview</string>
-    <string name="wallpaper_preview_user">Write me an opening</string>
-    <string name="wallpaper_preview_reply">Night settled over the rooftops like a thin veil. One by one, the distant lights came on…</string>
+    <string name="wallpaper_preview_user">Tell me a story about turning a corner.</string>
+    <string name="wallpaper_preview_reply">The car wound its way through the Rocky Mountains. Christopher Reeve quietly watched from the window. Every time the road seemed to end, a sign would come into view: “Curve ahead!” or “Caution! Sharp turn!” And after every bend, the view opened up again.\n\nTwist after twist, the words “Curve ahead” caught his eye and gradually sank in. The road had not come to an end. It was simply time to turn.\n\nThe road lies beneath our feet, but also in our minds. Learning to turn is a kind of wisdom: a setback can become a turning point, and a crisis can become an opportunity.</string>
     <string name="wallpaper_preview_input">Message</string>
     <string name="wallpaper_recrop">Re-crop</string>
     <string name="wallpaper_recrop_hint">Choose the visible area again from the original</string>
     <!-- 壁纸编辑器（docs/32 §32.6） -->
-    <string name="wallpaper_editor_title">Edit wallpaper</string>
+    <string name="wallpaper_editor_title">Edit theme</string>
     <string name="wallpaper_editor_reset_crop">Reset</string>
     <string name="wallpaper_editor_tab_crop">Crop</string>
     <string name="wallpaper_editor_tab_adjust">Adjust</string>
-    <string name="wallpaper_editor_tab_panel">Panels</string>
-    <string name="wallpaper_editor_opacity">Prominence</string>
     <string name="wallpaper_editor_compare">Hold to compare with original</string>
-    <string name="wallpaper_editor_glass_hint">Tap \"Translucent glass panel\" above to toggle: the input bar, drawer and more become see-through</string>
-    <string name="wallpaper_blur_none">None</string>
-    <string name="wallpaper_blur_light">Light</string>
-    <string name="wallpaper_blur_medium">Medium</string>
-    <string name="wallpaper_blur_strong">Strong</string>
     <string name="value_on">On</string>
     <string name="value_off">Off</string>
     <string name="wallpaper_edit">Edit wallpaper</string>
-    <string name="wallpaper_edit_hint">Crop, color and panel effects, previewed live</string>
     <string name="wallpaper_change">Change image</string>
 </resources>
 
