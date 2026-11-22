@@ -812,13 +812,22 @@
     <string name="tts_third_party_section">Third-party voice</string>
     <string name="tts_third_party_api">Third-party voice API</string>
     <string name="tts_third_party_model">Model</string>
+    <string name="tts_third_party_adapter">Protocol</string>
+    <string name="tts_third_party_built_in">Add built-in voices (%1$d)</string>
+    <string name="tts_third_party_built_in_hint">Fills them all for the current protocol — no ids to remember</string>
+    <string name="tts_third_party_voice_id">Voice id</string>
+    <string name="tts_third_party_voice_name">Display name (optional)</string>
+    <string name="tts_third_party_voice_name_hint">Something memorable, e.g. “my voice”</string>
+    <string name="tts_third_party_voice_custom_hint">Copy the id from the provider console (custom / cloned voices go here too)</string>
     <string name="tts_third_party_reuse_key">Reuse chat API key</string>
     <string name="tts_third_party_key">API Key</string>
     <string name="tts_third_party_enable">Enable third-party voice</string>
+    <string name="tts_third_party_preset_qwen">Fill Qwen MaaS preset</string>
+    <string name="tts_third_party_preset_qwen_hint">Endpoint, model, protocol and common voices; the key still needs to be reused or entered</string>
     <string name="tts_third_party_voices">Voices</string>
     <string name="tts_third_party_add_voice">Add custom voice</string>
     <string name="tts_third_party_add_voice_hint">Enter the provider voice id</string>
-    <string name="tts_third_party_note">Requires the provider to support /v1/audio/speech. This build only stores the configuration and voice ids; synthesis is not wired yet.</string>
+    <string name="tts_third_party_note">Selected voices show up on the Read Aloud page — tap the button at the end of a row to preview. Qwen MaaS uses the DashScope protocol; other providers use the OpenAI-compatible /v1/audio/speech.</string>
     <string name="tts_voice_default">System default</string>
     <string name="tts_voice_online">online</string>
     <string name="tts_voice_loading">Reading the voices installed on this device…</string>
@@ -826,6 +835,7 @@
     <string name="tts_voice_hint">Voices come from the system text-to-speech engine. Voices marked online may stay silent when offline.</string>
     <string name="tts_voice_preview">Preview</string>
     <string name="tts_voice_preview_running">Previewing… tap again to stop</string>
+    <string name="tts_voice_stop">Stop</string>
     <string name="tts_voice_preview_text">Hello, this is a short preview so you can pick a reading voice.</string>
     <!-- DeepSeek official TTS (/v1/tools/tts, voices stella / tide) -->
     <string name="tts_voice_stella">Stella (female · DeepSeek official)</string>

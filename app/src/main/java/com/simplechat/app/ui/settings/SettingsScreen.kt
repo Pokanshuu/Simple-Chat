@@ -409,7 +409,13 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
         }
     }
 
-    val speaker = rememberSpeechOutput(stored.ttsVoiceName, officialTtsConfig)
+    val speaker = rememberSpeechOutput(
+        stored.ttsVoiceName,
+        officialTtsConfig,
+        stored.voiceApi,
+        stored.apiKey,
+        stored.baseUrl,
+    )
     /** 朗读相关的报错（引擎缺失 / 合成失败），显示在音色页的说明位置。 */
     var speechError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(speaker.error) {
@@ -417,6 +423,16 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
             speechError = it
             speaker.consumeError()
         }
+    }
+    /*
+     * 只要有新的播放开始，就把上一次的报错收掉（保底）。
+     *
+     * 音色行的回调里已经清了，这条兜的是"别处发起的播放"：自动朗读、
+     * 从聊天页切回来、或点了「停止」之后再试听。失败路径会重新写一次 error，
+     * 所以这里清掉不会把真错误吞掉。
+     */
+    LaunchedEffect(speaker.speakingId) {
+        if (speaker.speakingId != null) speechError = null
     }
     LaunchedEffect(stored.readAloudEnabled) {
         if (!stored.readAloudEnabled) {
@@ -940,17 +956,49 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                             officialVoices = officialVoices,
                             officialAvailable = officialTtsConfig != null,
                             previewing = speaker.previewing,
+                            previewingVoice = speaker.previewingVoice,
                             error = speechError,
                             onOpenThirdPartyApi = { page = SettingsPage.VOICE_API },
-                            thirdPartyVoices = stored.voiceApi.allVoices,
+                            thirdPartyVoices = stored.voiceApi.allVoices.map { id ->
+                                // 界面上给「名字 · 说明」，落库和发给服务端的始终是 id
+                                SpeechVoice(
+                                    name = id,
+                                    label = stored.voiceApi.labelOf(id),
+                                    needsNetwork = true,
+                                )
+                            },
                             thirdPartyEnabled = stored.voiceApi.enabled,
                             onSelect = { voice ->
-                                scope.launch { store.setTtsVoice(voice?.name.orEmpty(), voice?.label.orEmpty()) }
+                                /*
+                                 * 落库的 label 只留「名字」那一段：设置主页那一行空间有限，
+                                 * `Cherry · 女声 · 温柔` 会被截断成半个词。
+                                 * 别名（用户自己起的）本来就没有 ` · `，原样保留。
+                                 */
+                                scope.launch {
+                                    store.setTtsVoice(
+                                        voice?.name.orEmpty(),
+                                        voice?.label.orEmpty().substringBefore(" · "),
+                                    )
+                                }
+                                /*
+                                 * 点任何音色都先把上一次的报错收掉。
+                                 *
+                                 * 之前 `speechError` 只在"关掉朗读"和"第一次进这一页"
+                                 * 时清除，于是点一个没授权的音色报错之后，换一个能用的
+                                 * 音色照样挂着那行红字 —— 界面说失败了，耳机里却在出声。
+                                 * 新的合成失败时会重新写一次，所以这里清掉不会吞掉真错误。
+                                 */
+                                speechError = null
                                 // 选完顺手念一句：省得用户"选了但不知道变了没有"
                                 speaker.preview(Res.get(R.string.tts_voice_preview_text), voice?.name.orEmpty())
                             },
                             onPreview = { voice ->
+                                speechError = null
                                 speaker.preview(Res.get(R.string.tts_voice_preview_text), voice?.name.orEmpty())
+                            },
+                            onStopPreview = {
+                                speechError = null
+                                speaker.stop()
                             },
                         )
 
@@ -1979,10 +2027,14 @@ private fun VoicePage(
     error: String?,
     onSelect: (SpeechVoice?) -> Unit,
     onPreview: (SpeechVoice?) -> Unit,
+    /** 正在试听的音色 id；界面据此把该行的「试听」换成「停止」。 */
+    previewingVoice: String? = null,
+    /** 停止当前试听。 */
+    onStopPreview: () -> Unit = {},
     /** 第三方声音模型 API 的配置入口。 */
     onOpenThirdPartyApi: () -> Unit = {},
-    /** 第三方服务提供的音色 id（服务端清单 + 手填）。 */
-    thirdPartyVoices: List<String> = emptyList(),
+    /** 第三方服务提供的音色（服务端清单 + 手填，已带上显示名）。 */
+    thirdPartyVoices: List<SpeechVoice> = emptyList(),
     thirdPartyEnabled: Boolean = false,
 ) {
     SettingsCard { SettingsSwitchRow(stringResource(R.string.tts_enabled), enabled, onToggle) }
@@ -2001,8 +2053,11 @@ private fun VoicePage(
             VoiceRow(
                 label = voice.label,
                 selected = voice.name == selectedName,
+                previewing = voice.name == previewingVoice,
                 onClick = { onSelect(voice) },
-                onPreview = { onPreview(voice) },
+                onPreview = {
+                    if (voice.name == previewingVoice) onStopPreview() else onPreview(voice)
+                },
             )
         }
     }
@@ -2021,8 +2076,11 @@ private fun VoicePage(
                 VoiceRow(
                     label = voice.label,
                     selected = voice.name == selectedName,
+                    previewing = voice.name == previewingVoice,
                     onClick = { onSelect(voice) },
-                    onPreview = { onPreview(voice) },
+                    onPreview = {
+                        if (voice.name == previewingVoice) onStopPreview() else onPreview(voice)
+                    },
                 )
             }
         }
@@ -2051,16 +2109,26 @@ private fun VoicePage(
             },
             onClick = onOpenThirdPartyApi,
         )
-        thirdPartyVoices.forEach { voiceId ->
+        thirdPartyVoices.forEach { voice ->
             RowDivider()
             VoiceRow(
-                label = voiceId,
-                selected = voiceId == selectedName,
-                onClick = {
-                    onSelect(SpeechVoice(name = voiceId, label = voiceId, needsNetwork = true))
-                    onPreview(SpeechVoice(name = voiceId, label = voiceId, needsNetwork = true))
+                label = voice.label,
+                selected = voice.name == selectedName,
+                /*
+                 * 只调 onSelect：它在 SettingsScreen 里已经"选中 + 试听"一次。
+                 * 之前这里还额外调了一次 onPreview，点一下会触发两遍 speak ——
+                 * 第一遍刚发出请求就被第二遍 cancel 掉，白白多花一次合成请求。
+                 */
+                onClick = { onSelect(voice) },
+                previewing = voice.name == previewingVoice,
+                onPreview = {
+                    if (voice.name == previewingVoice) {
+                        // 正在试听这一行：按钮是「停止」，再点就是停下来
+                        onStopPreview()
+                    } else {
+                        onPreview(voice)
+                    }
                 },
-                onPreview = { onPreview(SpeechVoice(name = voiceId, label = voiceId, needsNetwork = true)) },
             )
         }
     }
@@ -2099,6 +2167,8 @@ private fun VoiceRow(
     selected: Boolean,
     onClick: () -> Unit,
     onPreview: (() -> Unit)? = null,
+    /** 这一行正在试听：右侧按钮换成「停止」。 */
+    previewing: Boolean = false,
 ) {
     val colors = LocalChatColors.current
     Row(
@@ -2125,8 +2195,10 @@ private fun VoiceRow(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = AppIcons.Play,
-                    contentDescription = stringResource(R.string.tts_voice_preview),
+                    imageVector = if (previewing) AppIcons.Stop else AppIcons.Play,
+                    contentDescription = stringResource(
+                        if (previewing) R.string.tts_voice_stop else R.string.tts_voice_preview,
+                    ),
                     tint = colors.placeholder,
                     modifier = Modifier.size(16.dp),
                 )
@@ -3665,6 +3737,159 @@ internal fun <T> ChoiceDialog(
     }
 }
 
+/** [TextInputDialog] 里的那颗输入胶囊，单独抽出来给双字段对话框复用。 */
+@Composable
+private fun PillField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+) {
+    val colors = LocalChatColors.current
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(PillShape)
+            .background(colors.fieldBackground)
+            .padding(horizontal = 16.dp, vertical = 13.dp),
+    ) {
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = Modifier.fillMaxWidth(),
+            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                color = MaterialTheme.colorScheme.onSurface,
+            ),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            singleLine = true,
+            decorationBox = { inner ->
+                Box {
+                    if (value.isEmpty()) {
+                        Text(
+                            text = placeholder,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colors.placeholder,
+                        )
+                    }
+                    inner()
+                }
+            },
+        )
+    }
+}
+
+/**
+ * 加一个音色：id + 显示名。
+ *
+ * 为什么不复用 [TextInputDialog]：加音色本来就要填两样东西，拆成两次弹窗
+ * 会让人以为第一次没保存上。id 是给服务端看的，名字是给自己看的。
+ */
+@Composable
+private fun VoiceEntryDialog(
+    title: String,
+    onDismiss: () -> Unit,
+    onConfirm: (id: String, name: String) -> Unit,
+) {
+    val colors = LocalChatColors.current
+    var id by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf("") }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(ContainerShape)
+                .background(colors.card)
+                .padding(20.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.size(6.dp))
+            Text(
+                text = stringResource(R.string.tts_third_party_voice_custom_hint),
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.placeholder,
+            )
+            Spacer(Modifier.size(14.dp))
+            PillField(
+                value = id,
+                onValueChange = { id = it },
+                placeholder = stringResource(R.string.tts_third_party_voice_id),
+            )
+            Spacer(Modifier.size(10.dp))
+            PillField(
+                value = name,
+                onValueChange = { name = it },
+                placeholder = stringResource(R.string.tts_third_party_voice_name_hint),
+            )
+            Spacer(Modifier.size(18.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextAction(stringResource(R.string.action_cancel), onClick = onDismiss)
+                Spacer(Modifier.size(8.dp))
+                TextAction(
+                    stringResource(R.string.action_save),
+                    primary = true,
+                    enabled = id.isNotBlank(),
+                    onClick = { onConfirm(id, name) },
+                )
+            }
+        }
+    }
+}
+
+/** 单选对话框：给「协议」这种只有两三个选项的字段用。 */
+@Composable
+private fun ChoiceDialog(
+    title: String,
+    options: List<Pair<String, String>>,
+    onDismiss: () -> Unit,
+    onPick: (String) -> Unit,
+) {
+    val colors = LocalChatColors.current
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(ContainerShape)
+                .background(colors.card)
+                .padding(20.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.size(10.dp))
+            options.forEach { (value, label) ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(PillShape)
+                        .clickable { onPick(value) }
+                        .padding(horizontal = 12.dp, vertical = 13.dp),
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                TextAction(stringResource(R.string.action_cancel), onClick = onDismiss)
+            }
+        }
+    }
+}
+
 @Composable
 internal fun TextInputDialog(
     title: String,
@@ -4383,11 +4608,37 @@ private fun VoiceApiPage(
     SettingsSectionLabel(stringResource(R.string.tts_third_party_section))
 
     SettingsCard {
+        /*
+         * 快速预设：千问 MaaS 的端点、模型、协议和常用音色一次填好。
+         *
+         * 只填**非密钥**字段 —— key 要么走「复用聊天 API Key」（聊天配置切到千问
+         * 时最省事），要么在下面手填。预设不会把任何密钥写进代码或偏好。
+         */
+        SettingsActionRow(
+            label = stringResource(R.string.tts_third_party_preset_qwen),
+            hint = stringResource(R.string.tts_third_party_preset_qwen_hint),
+            icon = AppIcons.Mic,
+            onClick = { save(com.simplechat.app.data.VoiceApiConfig.qwenDashScopePreset()) },
+        )
+    }
+
+    SettingsCard {
         SettingsSwitchRow(
             icon = AppIcons.Mic,
             label = stringResource(R.string.tts_third_party_enable),
             checked = config.enabled,
             onCheckedChange = { save(config.copy(enabled = it)) },
+        )
+        RowDivider()
+        /*
+         * 协议放最前面：它决定端点路径、请求体结构和内置音色表。
+         * 以前只能靠「填入千问预设」间接切换，配别的服务商时根本改不了。
+         */
+        SettingsNavRow(
+            icon = null,
+            label = stringResource(R.string.tts_third_party_adapter),
+            value = com.simplechat.app.data.VoiceCatalog.adapterLabel(config.adapter),
+            onClick = { dialog = 5 },
         )
         RowDivider()
         SettingsNavRow(
@@ -4426,15 +4677,34 @@ private fun VoiceApiPage(
     SettingsSectionLabel(stringResource(R.string.tts_third_party_voices))
 
     SettingsCard {
+        /*
+         * 内置清单：点一下就按当前协议把音色全加进来。
+         *
+         * 这是「不用记 id」的主路径 —— 大多数人不需要知道 Cherry 是谁，
+         * 只需要有人把可选的东西摆出来。
+         */
+        SettingsActionRow(
+            label = stringResource(
+                R.string.tts_third_party_built_in,
+                com.simplechat.app.data.VoiceCatalog.builtIn(config.adapter).size,
+            ),
+            hint = stringResource(R.string.tts_third_party_built_in_hint),
+            onClick = {
+                save(com.simplechat.app.data.VoiceApiConfig.withBuiltInVoices(config))
+            },
+            icon = AppIcons.Mic,
+        )
+        RowDivider()
         SettingsActionRow(
             label = stringResource(R.string.tts_third_party_add_voice),
-            hint = stringResource(R.string.tts_third_party_add_voice_hint),
+            hint = stringResource(R.string.tts_third_party_voice_custom_hint),
             onClick = { dialog = 4 },
             icon = AppIcons.PlusCircle,
         )
         if (config.allVoices.isNotEmpty()) {
             config.allVoices.forEach { voiceId ->
                 RowDivider()
+                val label = config.labelOf(voiceId)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -4442,18 +4712,31 @@ private fun VoiceApiPage(
                         .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = voiceId,
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f),
-                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        /*
+                         * 别名和 id 不同时把 id 放在下面一行：排查时能对上服务端文档，
+                         * 平时又不占视觉。同一个串就不重复显示了。
+                         */
+                        if (label != voiceId) {
+                            Text(
+                                text = voiceId,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = LocalChatColors.current.placeholder,
+                            )
+                        }
+                    }
                     TextButton(
                         onClick = {
                             save(
                                 config.copy(
                                     customVoices = config.customVoices - voiceId,
                                     voices = config.voices - voiceId,
+                                    voiceLabels = config.voiceLabels - voiceId,
                                 ),
                             )
                         },
@@ -4510,17 +4793,46 @@ private fun VoiceApiPage(
                 }
             },
         )
-        4 -> TextInputDialog(
+        4 -> VoiceEntryDialog(
             title = stringResource(R.string.tts_third_party_add_voice),
-            initial = "",
-            placeholder = "alloy / zh-CN-XiaoxiaoNeural …",
             onDismiss = { dialog = 0 },
-            onConfirm = { value ->
+            onConfirm = { voiceId, displayName ->
                 dialog = 0
-                val voiceId = value.trim()
-                if (voiceId.isNotEmpty() && voiceId !in config.allVoices) {
-                    save(config.copy(customVoices = config.customVoices + voiceId))
+                val id = voiceId.trim()
+                val name = displayName.trim()
+                if (id.isNotEmpty()) {
+                    save(
+                        config.copy(
+                            customVoices = (config.customVoices + id).distinct(),
+                            // 手填的 id 一定是"用户自己加的"，从服务端缓存里摘掉，
+                            // 免得下次刷新清单时又被当成"服务端给的"删不掉
+                            voices = config.voices - id,
+                            voiceLabels = if (name.isEmpty()) {
+                                config.voiceLabels - id
+                            } else {
+                                config.voiceLabels + (id to name)
+                            },
+                        ),
+                    )
                 }
+            },
+        )
+        5 -> ChoiceDialog(
+            title = stringResource(R.string.tts_third_party_adapter),
+            options = listOf(
+                com.simplechat.app.data.VoiceApiConfig.AdapterDashScope to
+                    com.simplechat.app.data.VoiceCatalog.adapterLabel(
+                        com.simplechat.app.data.VoiceApiConfig.AdapterDashScope,
+                    ),
+                com.simplechat.app.data.VoiceApiConfig.AdapterOpenAi to
+                    com.simplechat.app.data.VoiceCatalog.adapterLabel(
+                        com.simplechat.app.data.VoiceApiConfig.AdapterOpenAi,
+                    ),
+            ),
+            onDismiss = { dialog = 0 },
+            onPick = { adapter ->
+                dialog = 0
+                save(config.copy(adapter = adapter))
             },
         )
     }
@@ -4666,5 +4978,12 @@ private fun formatTrashDate(millis: Long?): String {
     }.getOrDefault("—")
 }
 
-/** 第三方声音合成通道是否已接通。接通前不展示任何第三方入口（docs/32 §32.9）。 */
-private const val ThirdPartyVoiceReady = false
+/**
+ * 第三方声音合成通道是否已接通。接通前不展示任何第三方入口（docs/32 §32.9）。
+ *
+ * 上游留这个开关时的理由是："选中第三方音色会写进 ttsVoiceName，而系统 TTS
+ * 不认识这个名字，朗读会悄悄失效。" 现在 `SpeechOutput.speak()` 会先按
+ * `VoiceApiConfig.allVoices` 分流到 `speakThirdParty`（DashScope / 兼容 OpenAI
+ * 两种协议，见 `VoiceTtsClient`），这个前提已经不成立了 —— 所以打开。
+ */
+private const val ThirdPartyVoiceReady = true
