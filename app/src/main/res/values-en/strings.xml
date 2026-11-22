@@ -495,7 +495,7 @@
     <string name="compact_interrupted">The connection was interrupted or the service is temporarily unavailable. Compaction has stopped. Retry to resume saved progress. Your previous summary and local messages have not changed.</string>
     <string name="compact_incomplete">A complete summary could not be generated. Retry to resume saved progress. Your previous summary and local messages have not changed.</string>
     <string name="compact_no_progress">The summaries could not be reduced to a usable size. Retry or choose another model. Your previous summary and local messages have not changed.</string>
-    <string name="compact_attachment_unavailable">These attachments have no complete readable text for compaction: %1$s. A file ID is not its content. Provide the file text and retry. No compaction request was sent; your previous summary and local messages are unchanged.</string>
+    <string name="prompt_compact_attachment_skipped">(This message contains attachments omitted from compaction because their text could not be read. Do not infer their contents.)</string>
 
     <!-- Panel 4: chat settings -->
     <string name="input_conversation_name">Conversation name</string>
@@ -547,6 +547,11 @@
     <string name="attach_file">File</string>
     <string name="image_size_default">Default</string>
     <string name="image_model_unavailable">No image generation model is configured</string>
+    <string name="image_capability_available">This chat has an image generation tool configured and can generate images.</string>
+    <string name="image_capability_unavailable">This chat has no image generation model configured.</string>
+    <string name="image_tool_reference_missing">No reference image was found. Attach the original image and try again.</string>
+    <string name="image_tool_not_called">No valid image tool call was received. No image was generated.</string>
+    <string name="image_generate_direct">Generate directly</string>
     <string name="image_configure">Configure image API</string>
     <string name="image_adapter_gemini">Gemini</string>
     <string name="image_adapter_qwen">Qwen Image</string>

@@ -26,7 +26,7 @@ class CompactionResponseTest {
         var checkpoint = CompactionCheckpoint()
         try {
             compactInBatches(sequenceOf("source"),
-                CompactionPrompts("summarize", "old", "new", "user", "assistant", "image"),
+                CompactionPrompts("summarize", "old", "new", "user", "assistant", "image", "unreadable attachment"),
                 8192, onCheckpoint = { checkpoint = it }) { _, _, _ ->
                 calls++
                 collectCompactionSummary(flowOf(StreamEvent.Content("partial text"),

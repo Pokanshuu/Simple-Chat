@@ -79,6 +79,7 @@ class ChatApi(
         readLink: Boolean = false,
         requestTitle: Boolean = false,
         generateImageTool: Boolean = false,
+        requireImageTool: Boolean = false,
     ): Flow<StreamEvent> {
         val flash = isOfficialDeepSeekEndpoint(baseUrl) && model.id == DEEPSEEK_FLASH
         val tools = if (flash) buildList {
@@ -114,7 +115,18 @@ class ChatApi(
         val imageTool = if (generateImageTool) DeepSeekTool("function", imageToolDefinition) else null
         val allTools = (tools.orEmpty() + listOfNotNull(imageTool)).ifEmpty { null }
         val request = buildChatRequest(model, requestMessages, thinkingEnabled, reasoningEffort, maxTokens, temperature, topP, isOfficialDeepSeekEndpoint(baseUrl))
-            .let { if (allTools == null && title == null) it else it.copy(tools = allTools, toolChoice = if (imageTool != null) "auto" else null, title = title, temperature = null, topP = null) }
+            .let {
+                if (allTools == null && title == null) it else it.copy(
+                    tools = allTools,
+                    toolChoice = when {
+                        imageTool == null -> null
+                        requireImageTool && allTools?.size == 1 && isOfficialDeepSeekEndpoint(baseUrl) &&
+                            it.thinking == ThinkingDto.Disabled -> "required"
+                        else -> "auto"
+                    },
+                    title = title, temperature = null, topP = null,
+                )
+            }
 
         val automaticSearch = usesAutomaticOpenAiSearch(model.id, apiStyle)
         return sseClient.stream(
@@ -299,20 +311,25 @@ data class ImageInput(
     val detail: String = "high",
 )
 
-internal const val imageToolInstruction = "For requests to create, regenerate, or edit an image, call generate_image. The app displays the image after the tool succeeds. Never say an image was generated or edited in a text-only reply."
+internal const val imageToolInstruction = "SimpleChat can generate images through generate_image, even when the chat model cannot output images itself. Call the tool only if the latest user actually asks to create or edit an image. Use create for a new image, and edit when the user wants to change or reuse an existing image; the app binds the reference and will not proceed if it cannot find one. Use the user's requested visual details and preserve unchanged details when editing. Do not call for capability questions, image analysis, prompt writing, quoted requests, or requests not to generate. Do not claim that an image was generated or edited in text; the app displays the actual result."
 
 internal val imageToolDefinition = FunctionDefinitionDto(
     name = "generate_image",
-    description = "Generate an image for an explicit request to create, redraw, or edit one. Describe the intended visual result and relevant details from any references. Do not call for image analysis or discussion.",
+    description = "Create, redraw, or edit an image for the current user. Use for visual scene requests and contextual changes to an existing image. Return the intended visual result as the prompt, not a chat reply. Do not use for capability questions, image analysis, or prompt writing.",
     parameters = buildJsonObject {
         put("type", "object")
         putJsonObject("properties") {
+            putJsonObject("operation") {
+                put("type", "string")
+                put("enum", buildJsonArray { add(JsonPrimitive("create")); add(JsonPrimitive("edit")) })
+                put("description", "Create a new image, or edit using an existing image as reference")
+            }
             putJsonObject("prompt") {
                 put("type", "string")
                 put("description", "Visual description of the requested image")
             }
         }
-        put("required", buildJsonArray { add(JsonPrimitive("prompt")) })
+        put("required", buildJsonArray { add(JsonPrimitive("prompt")); add(JsonPrimitive("operation")) })
         put("additionalProperties", false)
     },
 )

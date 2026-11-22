@@ -13,6 +13,7 @@ data class ImageRequest(
     val aspectRatio: String? = null,
     val geminiImageSize: String? = null,
     val usesReferences: Boolean = false,
+    val referenceMessageId: String? = null,
 ) {
     internal fun previewAspectRatio(): Float? = ImageGenConfig(
         size = size.orEmpty(), aspectRatio = aspectRatio.orEmpty(),

@@ -70,7 +70,12 @@ class ServiceApiTest {
         val settings = StoredSettings(baseUrl = "https://chat.invalid", apiKey = "fixture-key",
             searchApi = ServiceApiConfig(enabled = true, baseUrl = "https://search.invalid"))
         val progress = mutableListOf<List<ReplyBlock>>()
-        val result = searchAugmentation(settings, "Read https://example.com/article and explain", ServiceApi(client)) {
+        val result = searchAugmentation(settings, "Read https://example.com/article and explain", ServiceApi(client),
+            plan = { input ->
+                if (Json.parseToJsonElement(input).jsonObject["round"]?.jsonPrimitive?.content == "1")
+                    """{"search":["example article background"],"fetch":[]}"""
+                else """{"search":["EXAMPLE ARTICLE BACKGROUND"],"fetch":[1,999]}"""
+            }) {
             progress += it
         }
         assertEquals(2, requests.size)
@@ -81,6 +86,72 @@ class ServiceApiTest {
         assertEquals(2, result.sources.size)
         assertTrue(progress.first().single() is ReplyBlock.ToolUse)
         assertTrue(progress.last().any { it is ReplyBlock.FetchResult && !it.failed })
+    }
+
+    @Test fun `planner resolves follow ups and reads only registered result urls`() = runBlocking {
+        val outbound = mutableListOf<Pair<String, JsonObject>>()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            val path = request.url.encodedPath
+            val body = Buffer(); request.body!!.writeTo(body)
+            outbound += path to Json.parseToJsonElement(body.readUtf8()).jsonObject
+            val payload = if (path.endsWith("fetch")) """{"title":"Android release","content":"Release notes"}"""
+                else """{"results":[{"url":"http://localhost/internal"},{"url":"https://example.org/android#notes","title":"Android release","snippet":"See release notes"}]}"""
+            Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(payload.toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val settings = StoredSettings(baseUrl = "https://chat.invalid", apiKey = "test-key",
+            searchApi = ServiceApiConfig(enabled = true, baseUrl = "https://search.invalid"))
+        var rounds = 0
+        val result = searchAugmentation(settings, "And on Android?", ServiceApi(client),
+            recentTurns = listOf("user" to "Check the SimpleChat Windows release"), plan = { input ->
+                rounds++
+                assertTrue(input.contains("SimpleChat Windows release"))
+                if (rounds == 1) """{"search":["SimpleChat Android official release"],"fetch":[]}"""
+                else {
+                    assertTrue(input.contains("See release notes"))
+                    assertFalse(input.contains("localhost"))
+                    """{"search":[],"fetch":[1,1]}"""
+                }
+            })
+        assertEquals(2, rounds)
+        assertEquals(2, outbound.size)
+        assertEquals("SimpleChat Android official release", outbound[0].second["query"]!!.jsonPrimitive.content)
+        assertEquals("https://example.org/android", outbound[1].second["url"]!!.jsonPrimitive.content)
+        assertTrue(result.context.contains("Release notes"))
+        assertFalse(result.incomplete)
+    }
+
+    @Test fun `skip or malformed plan does not send raw message to a search service`() = runBlocking {
+        val client = OkHttpClient.Builder().addInterceptor { throw AssertionError("Unexpected independent API request") }.build()
+        val settings = StoredSettings(baseUrl = "https://chat.invalid", apiKey = "test-key",
+            searchApi = ServiceApiConfig(enabled = true, baseUrl = "https://search.invalid"))
+        val skipped = searchAugmentation(settings, "Just say hello", ServiceApi(client), plan = { """{"search":[],"fetch":[]}""" })
+        assertTrue(skipped.blocks.isEmpty())
+        assertFalse(skipped.incomplete)
+        val malformed = searchAugmentation(settings, "A private draft", ServiceApi(client), plan = { "search the whole message" })
+        assertTrue(malformed.blocks.isEmpty())
+        assertTrue(malformed.incomplete)
+    }
+
+    @Test fun `failed fetch preserves successful search evidence`() = runBlocking {
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            val fetch = request.url.encodedPath.endsWith("fetch")
+            val payload = if (fetch) "{}" else
+                """{"results":[{"url":"https://example.org/page","snippet":"Useful search evidence"}]}"""
+            Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(if (fetch) 503 else 200).message("Test")
+                .body(payload.toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val settings = StoredSettings(baseUrl = "https://chat.invalid", apiKey = "test-key",
+            searchApi = ServiceApiConfig(enabled = true, baseUrl = "https://search.invalid"))
+        var round = 0
+        val result = searchAugmentation(settings, "Check the release details", ServiceApi(client), plan = {
+            if (++round == 1) """{"search":["release details"],"fetch":[]}""" else """{"search":[],"fetch":[1]}"""
+        })
+        assertTrue(result.incomplete)
+        assertTrue(result.context.contains("Useful search evidence"))
+        assertTrue(result.blocks.any { it is ReplyBlock.FetchResult && it.failed })
     }
 
     @Test fun `file references serialize for both protocols without embedding original`() {

@@ -35,6 +35,23 @@ class RequestContentTest {
         height = 50,
     )
 
+    @Test
+    fun `explicit references can find a recent generated image past a text exchange`() {
+        val original = UiMessage("generated", MessageRole.ASSISTANT, "", listOf(image()), imageGeneration = true)
+        val question = UiMessage("question", MessageRole.USER, "这张图是什么风格？")
+        val answer = UiMessage("answer", MessageRole.ASSISTANT, "写实风格")
+        val edit = UiMessage("edit", MessageRole.USER, "可以把那张照片变成印象派风格的吗？")
+        val path = listOf(original, question, answer, edit)
+
+        assertEquals(original, recentGeneratedImage(path, edit.id, explicitReference = true))
+        assertEquals(null, recentGeneratedImage(path, edit.id, explicitReference = false))
+        assertEquals(original, recentGeneratedImage(path, question.id, explicitReference = false))
+        assertEquals(null, recentGeneratedImage(path + original, "missing", explicitReference = true))
+        assertEquals(null, recentGeneratedImage(listOf(original.copy(status = MessageStatus.ERROR), edit), edit.id, true))
+        val turns = List(6) { answer.copy(id = "answer-$it") }
+        assertEquals(null, recentGeneratedImage(listOf(original) + turns + edit, edit.id, true))
+    }
+
     // ── 无附件：保持最省事的纯字符串 ──────────────────────
 
     @Test
@@ -84,6 +101,22 @@ class RequestContentTest {
         assertEquals("data:image/jpeg;base64,AAAA", url["url"]?.jsonPrimitive?.content)
         // 精度固定 high：low 会把图缩到 512×512，截图里的小字会糊掉
         assertEquals(ImageDetail, url["detail"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `generated image is a transient attachment of only the latest user turn`() {
+        val generated = image("generated.png")
+        val question = UiMessage("latest", MessageRole.USER, "Describe this picture")
+        val history = UiMessage("old", MessageRole.USER, "Draw a picture")
+        val answer = UiMessage("answer", MessageRole.ASSISTANT, "Generated")
+        val upload = question.copy(attachments = listOf(image("upload.png")))
+        val outgoing = question.withVisualFollowUp(question.id, generated)
+        assertEquals(listOf(generated), outgoing.attachments)
+        assertEquals(emptyList<Attachment>(), question.attachments)
+        assertEquals("image_url", userContent(outgoing.content, outgoing.attachments).jsonArray[1].jsonObject["type"]?.jsonPrimitive?.content)
+        assertEquals(history, history.withVisualFollowUp(question.id, generated))
+        assertEquals(answer, answer.withVisualFollowUp(answer.id, generated))
+        assertEquals(upload, upload.withVisualFollowUp(question.id, generated))
     }
 
     @Test

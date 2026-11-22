@@ -10,7 +10,7 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CompactionCostTest {
-    private val prompts = CompactionPrompts("summarize", "old", "new", "user", "assistant", "image")
+    private val prompts = CompactionPrompts("summarize", "old", "new", "user", "assistant", "image", "unreadable attachment")
     private val history = "abcd".repeat(228_000)
 
     @Test fun `228k tokens and 228k characters each fit a single large window request`() = runBlocking {

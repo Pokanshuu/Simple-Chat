@@ -138,7 +138,8 @@ class AnthropicRequestBuilderTest {
         assertEquals(listOf("generate_image"), request(false, true).tools.map { it.name })
         assertEquals(listOf("deepseek_web_search", "generate_image"), request(true, true).tools.map { it.name })
         assertEquals(listOf("generate_image"), request(true, false).tools.map { it.name })
-        assertTrue(request(true, true).system.contains("Never say an image was generated"))
+        assertTrue(request(true, true).system.contains("Do not claim that an image was generated"))
+        assertTrue(request(true, true).tools.last().inputSchema.toString().contains("operation"))
     }
 
     @Test
