@@ -19,6 +19,7 @@ import com.simplechat.app.db.MessageEntity
 import com.simplechat.app.db.MessageTree
 import com.simplechat.app.db.PresetEntity
 import com.simplechat.app.data.import.DeepSeekHistory
+import com.simplechat.app.data.import.DeepSeekShare
 import com.simplechat.app.data.import.ExternalBackup
 import com.simplechat.app.data.import.ImportSession
 import com.simplechat.app.data.import.ImportSessionSource
@@ -1457,6 +1458,27 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
      */
     suspend fun importParsed(file: BackupFile, mode: ImportMode): ImportReport =
         importStream(file.conversations.asSequence(), file.presets, mode, expected = file.conversations.size)
+
+    internal suspend fun previewDeepSeekShare(file: File, shareId: String, fallbackTitle: String): DeepSeekShare.Preview =
+        DeepSeekShare.preview(file, shareId, fallbackTitle)
+
+    internal suspend fun importDeepSeekShare(
+        stream: DeepSeekShare.ShareStream,
+        onProgress: (Float) -> Unit = {},
+    ): String = withContext(Dispatchers.IO) {
+        onProgress(0f)
+        stream.onProgress = onProgress
+        val report = importSessions(stream, ImportMode.MERGE, mutableListOf()).copy(droppedImages = stream.attachments)
+        val reportSaved = saveImportReport(report)
+        onProgress(1f)
+        importSummary(
+            sourceName = Res.get(R.string.deepseek_share_source),
+            report = report,
+            warnings = buildList {
+                if (!reportSaved) add(AppText.of(R.string.import_report_not_saved))
+            },
+        )
+    }
 
     /**
      * **流式**导入：逐批取会话、逐批写库。

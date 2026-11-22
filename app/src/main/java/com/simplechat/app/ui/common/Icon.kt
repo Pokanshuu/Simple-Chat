@@ -419,6 +419,24 @@ object AppIcons {
         }
     }
 
+    /** Link (Lucide: link). */
+    val Link: ImageVector by lazy {
+        vector("Link") {
+            stroke {
+                moveTo(10f, 13f)
+                arcToRelative(5f, 5f, 0f, false, false, 7.54f, 0.54f)
+                lineToRelative(3f, -3f)
+                arcToRelative(5f, 5f, 0f, false, false, -7.07f, -7.07f)
+                lineToRelative(-1.72f, 1.71f)
+                moveTo(14f, 11f)
+                arcToRelative(5f, 5f, 0f, false, false, -7.54f, -0.54f)
+                lineToRelative(-3f, 3f)
+                arcToRelative(5f, 5f, 0f, false, false, 7.07f, 7.07f)
+                lineToRelative(1.71f, -1.71f)
+            }
+        }
+    }
+
     val Refresh: ImageVector by lazy {
         vector("Refresh") {
             stroke {

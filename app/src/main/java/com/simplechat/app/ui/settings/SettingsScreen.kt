@@ -98,6 +98,7 @@ import com.simplechat.app.net.DeepSeekBalance
 import com.simplechat.app.net.isOfficialDeepSeekEndpoint
 import com.simplechat.app.data.AppLanguage
 import com.simplechat.app.data.ImportMode
+import com.simplechat.app.data.import.DeepSeekShare
 import com.simplechat.app.data.Res
 import com.simplechat.app.data.StoredSettings
 import com.simplechat.app.data.TokenEstimate
@@ -212,6 +213,8 @@ private sealed interface SettingsDialog {
     data class ApiProfileName(val profile: ApiProfile? = null, val copyCurrent: Boolean = false) : SettingsDialog
     data class DeleteApiProfile(val profile: ApiProfile) : SettingsDialog
     data object DeleteAll : SettingsDialog
+    data object DeepSeekShareLink : SettingsDialog
+    data class DeepSeekSharePreview(val file: File, val preview: DeepSeekShare.Preview) : SettingsDialog
     data object ImportMode : SettingsDialog
     /** 协议通道（自动 / OpenAI 兼容 / Anthropic 兼容）。 */
     data object ApiStyle : SettingsDialog
@@ -338,17 +341,34 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
     }
     var dataMessage by remember { mutableStateOf<String?>(null) }
     var pendingImport by remember { mutableStateOf<File?>(null) }
+    var pendingShare by remember { mutableStateOf<File?>(null) }
     // 导入进度：null = 没在导入；0..1 = 解析进度（拷贝阶段是 indeterminate）
     val importProgress = remember { MutableStateFlow<Float?>(null) }
     val importPercent by importProgress.collectAsState()
     // 读文件 / 开包阶段：没有可用进度，界面给循环进度条 + 「读取中」
     var importReading by remember { mutableStateOf(false) }
     val archiveProgress = remember { MutableStateFlow<Float?>(null) }
+    fun runShareImport(action: suspend () -> Unit) {
+        if (importReading || importProgress.value != null || archiveProgress.value != null) return
+        importReading = true
+        dataMessage = null
+        scope.launch {
+            try {
+                action()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                dataMessage = Res.get(R.string.error_import_failed, error.userMessage())
+            } finally {
+                importReading = false
+            }
+        }
+    }
     val archivePercent by archiveProgress.collectAsState()
     var archiveSaving by remember { mutableStateOf(false) }
     var pendingArchive by remember { mutableStateOf<File?>(null) }
     DisposableEffect(Unit) {
-        onDispose { pendingArchive?.delete(); pendingImport?.delete() }
+        onDispose { pendingArchive?.delete(); pendingImport?.delete(); pendingShare?.delete() }
     }
     var presets by remember { mutableStateOf<List<Preset>>(emptyList()) }
 
@@ -789,6 +809,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                                 // 真正的判定放在解析那一步，认不出来会给出明确原因。
                                 importLauncher.launch(arrayOf("*/*"))
                             },
+                            onImportDeepSeekShare = { dialog = SettingsDialog.DeepSeekShareLink },
                             onDeleteAll = { dialog = SettingsDialog.DeleteAll },
                             onOpenTrash = { page = SettingsPage.TRASH },
                         )
@@ -1190,6 +1211,78 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                 }
             },
         )
+
+        SettingsDialog.DeepSeekShareLink -> TextInputDialog(
+            title = stringResource(R.string.deepseek_share_import),
+            initial = "",
+            placeholder = "https://chat.deepseek.com/share/…",
+            onDismiss = { dialog = null },
+            validate = { link ->
+                if (DeepSeekShare.idFromLink(link) == null) Res.get(R.string.deepseek_share_invalid_link) else null
+            },
+            onConfirm = { link ->
+                DeepSeekShare.idFromLink(link)?.let { id ->
+                    dialog = null
+                    runShareImport {
+                        val staged = withContext(Dispatchers.IO) {
+                            File.createTempFile("deepseek-share-", ".json", context.cacheDir)
+                        }
+                        pendingShare = staged
+                        try {
+                            DeepSeekShare.download(id, staged) { fraction ->
+                                importProgress.value = fraction.coerceIn(0f, 1f)
+                            }
+                            val preview = withContext(Dispatchers.IO) {
+                                repository.previewDeepSeekShare(staged, id, Res.get(R.string.deepseek_share_default_title))
+                            }
+                            dialog = SettingsDialog.DeepSeekSharePreview(staged, preview)
+                        } catch (error: Throwable) {
+                            pendingShare = null
+                            staged.delete()
+                            throw error
+                        } finally {
+                            importProgress.value = null
+                        }
+                    }
+                }
+            },
+        )
+
+        is SettingsDialog.DeepSeekSharePreview -> {
+            AppConfirmDialog(
+                title = stringResource(R.string.deepseek_share_preview),
+                message = stringResource(
+                    R.string.deepseek_share_preview_body,
+                    activeDialog.preview.title,
+                    activeDialog.preview.messages,
+                    activeDialog.preview.attachments,
+                    activeDialog.preview.excerpt,
+                ),
+                confirmText = stringResource(R.string.deepseek_share_confirm),
+                onDismiss = {
+                    dialog = null
+                    if (pendingShare === activeDialog.file) pendingShare = null
+                    activeDialog.file.delete()
+                },
+                onConfirm = {
+                    dialog = null
+                    if (pendingShare === activeDialog.file) pendingShare = null
+                    runShareImport {
+                        importProgress.value = 0f
+                        try {
+                            dataMessage = withContext(Dispatchers.IO) {
+                                repository.importDeepSeekShare(
+                                    activeDialog.preview.stream,
+                                ) { fraction -> importProgress.value = fraction.coerceIn(0f, 1f) }
+                            }
+                        } finally {
+                            importProgress.value = null
+                            withContext(NonCancellable + Dispatchers.IO) { activeDialog.file.delete() }
+                        }
+                    }
+                },
+            )
+        }
 
         SettingsDialog.ImportMode -> ChoiceDialog(
             title = stringResource(R.string.import_mode_title),
@@ -2071,6 +2164,7 @@ private fun DataPage(
     onExportArchive: () -> Unit,
     onExportDeepSeek: () -> Unit,
     onImport: () -> Unit,
+    onImportDeepSeekShare: () -> Unit,
     onDeleteAll: () -> Unit,
     onOpenTrash: () -> Unit,
 ) {
@@ -2106,6 +2200,14 @@ private fun DataPage(
             hint = stringResource(R.string.settings_import_all_summary),
             onClick = onImport,
             icon = AppIcons.Import,
+            enabled = !reading && progress == null && exportProgress == null,
+        )
+        RowDivider()
+        SettingsActionRow(
+            label = stringResource(R.string.deepseek_share_import),
+            hint = stringResource(R.string.deepseek_share_hint),
+            onClick = onImportDeepSeekShare,
+            icon = AppIcons.Link,
             enabled = !reading && progress == null && exportProgress == null,
         )
     }

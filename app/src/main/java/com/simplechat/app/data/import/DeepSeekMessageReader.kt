@@ -1,6 +1,7 @@
 package com.simplechat.app.data.import
 
 import com.simplechat.app.net.ReplyBlock
+import com.simplechat.app.net.Citation
 import com.simplechat.app.net.WebSource
 import kotlin.math.roundToLong
 
@@ -11,6 +12,7 @@ internal fun readDeepSeekMessage(stream: JsonStream): DeepSeekHistory.ParsedMess
     var role: String? = null
     var status: String? = null
     var insertedAt: String? = null
+    var topContent: String? = null
     val request = TextParts()
     val response = TextParts()
     val template = TextParts()
@@ -18,14 +20,16 @@ internal fun readDeepSeekMessage(stream: JsonStream): DeepSeekHistory.ParsedMess
     val images = mutableListOf<DeepSeekHistory.ImageRef>()
     var timeline: MutableList<ReplyBlock>? = null
     var toolIndex = 0
+    val shareReferences = mutableListOf<List<ArchiveSource>>()
     stream.beginObject()
     while (stream.hasNextField()) {
         when (stream.fieldName()) {
-            "id" -> id = stream.textValue()?.toLongOrNull()
+            "id", "message_id" -> id = stream.textValue()?.toLongOrNull()
             "parent_id" -> parent = stream.textValue()?.toLongOrNull()
             "role" -> role = stream.textValue()
             "status" -> status = stream.textValue()
             "inserted_at" -> insertedAt = stream.textValue()
+            "content" -> topContent = stream.textValue()
             "fragments" -> {
                 if (stream.valueKind() == 'n') { stream.skipValue(); continue }
                 stream.beginArray()
@@ -53,6 +57,23 @@ internal fun readDeepSeekMessage(stream: JsonStream): DeepSeekHistory.ParsedMess
                                 ?.times(1000)?.roundToLong() ?: 0L
                             "queries" -> queries = stream.readQueryStrings()
                             "results" -> results = stream.readArchiveSources()
+                            "references" -> {
+                                shareReferences.clear()
+                                shareReferences += stream.readShareReferences()
+                            }
+                            "result" -> {
+                                if (stream.valueKind() != '{') stream.skipValue() else {
+                                    stream.beginObject()
+                                    while (stream.hasNextField()) when (stream.fieldName()) {
+                                        "url" -> url = stream.textValue().archiveWebUrl()
+                                        "title" -> title = stream.textValue()
+                                        "snippet" -> snippet = stream.textValue()
+                                        "site_name" -> siteName = stream.textValue()
+                                        "published_at" -> publishedAt = stream.textValue()
+                                        else -> stream.skipValue()
+                                    }
+                                }
+                            }
                             "status" -> toolStatus = stream.textValue()
                             "url" -> url = stream.textValue().archiveWebUrl()
                             "title" -> title = stream.textValue()
@@ -142,8 +163,20 @@ internal fun readDeepSeekMessage(stream: JsonStream): DeepSeekHistory.ParsedMess
     return DeepSeekHistory.ParsedMessage(
         number = requireNotNull(id) { "Message has no supported numeric id" },
         parentNumber = parent, role = role, status = status, insertedAt = insertedAt,
-        request = request.value(), response = response.value(), template = template.value(),
-        thinks = thinks, images = images, timeline = if (role == "USER") emptyList() else timeline.orEmpty(),
+        request = request.value().ifEmpty { topContent.orEmpty() }, response = response.value(), template = template.value(),
+        thinks = thinks, images = images, timeline = if (role == "USER") emptyList() else
+            timeline.orEmpty().map { block ->
+                if (block !is ReplyBlock.Text) block else {
+                    val citations = Regex("\\[reference:(\\d+)]").findAll(block.text)
+                        .mapNotNull { match ->
+                            val sources = shareReferences.getOrNull(match.groupValues[1].toIntOrNull() ?: -1).orEmpty()
+                            sources.firstOrNull()?.let { source ->
+                                source.url?.let { Citation(it, source.title, block.text.substring(0, match.range.first)) }
+                            }
+                        }.toList()
+                    ReplyBlock.Text(Regex("\\[reference:\\d+]").replace(block.text, ""), citations)
+                }
+            },
     )
 }
 
@@ -210,6 +243,32 @@ private fun JsonStream.readArchiveSources(): List<ArchiveSource> {
         results += ArchiveSource(url, title, snippet, siteName, siteIcon, publishedAt, signature)
     }
     return results
+}
+
+private fun JsonStream.readShareReferences(): List<List<ArchiveSource>> {
+    if (valueKind() != '[') { skipValue(); return emptyList() }
+    beginArray()
+    val references = ArrayList<List<ArchiveSource>>()
+    while (hasNextArrayElement()) {
+        var urls: List<String> = emptyList()
+        beginObject()
+        while (hasNextField()) when (fieldName()) {
+            "urls" -> {
+                if (valueKind() != '[') { skipValue(); continue }
+                beginArray()
+                val values = ArrayList<String>()
+                while (hasNextArrayElement()) streamUrl(textValue())?.let(values::add)
+                urls = values
+            }
+            else -> skipValue()
+        }
+        references += urls.map { ArchiveSource(it, null, null, null, null, null, null) }
+    }
+    return references
+}
+
+private fun streamUrl(url: String?): String? = url?.takeIf {
+    it.startsWith("https://", true) || it.startsWith("http://", true)
 }
 
 private fun String?.archiveWebUrl(): String? = this?.takeIf {

@@ -801,8 +801,11 @@ internal object DeepSeekHistory {
     }
 
     /** `2026-11-11T02:33:23.270Z` → 毫秒。解析不了返回 null（由调用方兜底）。 */
-    private fun parseIso(text: String?): Long? =
-        text?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
+    private fun parseIso(text: String?): Long? = text?.let { value ->
+        value.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 && it <= 253402300799.0 }
+            ?.let { (it * 1_000).toLong() }
+            ?: runCatching { Instant.parse(value).toEpochMilli() }.getOrNull()
+    }
 
     // ══════════════════════════════════════════════════════
     //  读取工具
