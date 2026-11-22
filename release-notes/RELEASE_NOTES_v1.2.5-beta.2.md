@@ -22,3 +22,8 @@
 - 来源：PR #9 与 DeepSeek 分享链接导入。
 - 单元测试：844 项通过、0 失败、10 项按条件跳过。
 - Release APK 构建成功；包版本 `1.2.5-beta.2`、构建号 51，APK v2 签名验证通过。
+
+## 贡献者
+
+- [@hongkai233](https://github.com/hongkai233)：自定义字体、壁纸、透明界面、第三方语音 API 配置和会话回收站（PR #9）。
+- [@Pokanshuu](https://github.com/Pokanshuu)：DeepSeek 分享链接导入与预发布整合。
