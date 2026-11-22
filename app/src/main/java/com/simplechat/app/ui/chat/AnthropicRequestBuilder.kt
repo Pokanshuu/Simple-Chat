@@ -6,6 +6,7 @@ import com.simplechat.app.net.DEEPSEEK_FLASH
 import com.simplechat.app.net.ReplyBlock
 import com.simplechat.app.net.imageToolDefinition
 import com.simplechat.app.net.imageToolInstruction
+import com.simplechat.app.net.serverSearchInstruction
 import com.simplechat.app.net.anthropic.AnthropicMessageParam
 import com.simplechat.app.net.anthropic.AnthropicRequestDefaults
 import com.simplechat.app.net.anthropic.AnthropicRequest
@@ -183,9 +184,15 @@ internal fun buildAnthropicRequest(
     }
     val title = if (flashExtensions && requestTitle && titleFitsInline(effectiveSystem, outgoingMessages)) AnthropicTitle() else null
     val serverSampling = tools.any { it.type != null } || title != null
+    val effectiveToolSystem = buildList {
+        if (tools.any { it.name == "deepseek_web_search" }) add(serverSearchInstruction)
+        if (generateImageTool) add(imageToolInstruction)
+    }.joinToString("\n\n").let { toolInstructions ->
+        listOf(effectiveSystem, toolInstructions).filter { it.isNotBlank() }.joinToString("\n\n")
+    }
     return AnthropicRequest(
         model = model,
-        system = if (generateImageTool) "$effectiveSystem\n\n$imageToolInstruction".trim() else effectiveSystem,
+        system = effectiveToolSystem,
         messages = outgoingMessages,
         thinking = when {
             deepSeekExtensions && thinkingEnabled -> AnthropicThinking.Enabled

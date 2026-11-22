@@ -40,7 +40,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.ui.theme.LocalChatColors
-import com.simplechat.app.ui.theme.LocalChatGlassAlpha
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -94,13 +93,10 @@ fun <T> SegmentedSwitch(
      * 不这么做的话，GlassCard 自己半透明，里面的分段条却是实心 —— 视觉上就是
      * "卡片是玻璃、控件是贴纸"，和 DSH 那种整体玻璃感差一截。
      */
-    val glass = LocalChatGlassAlpha.current
-    val trackFill = if (glass > 0f) colors.fieldBackground.copy(alpha = glass.coerceAtLeast(0.30f)) else colors.fieldBackground
-    val indicatorFill = if (glass > 0f) {
-        colors.capsuleSelected.copy(alpha = glass.coerceAtLeast(0.45f))
-    } else {
-        colors.capsuleSelected
-    }
+    // 轨道 / 指示器本身已是「正文色 / 主色 x alpha」（docs/32 §32.4.5），在任何底上都成立；
+    // 控件不参与玻璃（§32.3.2），这里不再二次处理。
+    val trackFill = colors.fieldBackground
+    val indicatorFill = colors.capsuleSelected
 
     Box(
         modifier = modifier
@@ -151,7 +147,9 @@ fun <T> SegmentedSwitch(
                     .width(with(density) { segmentWidthPx.toDp() })
                     .fillMaxHeight()
                     .offset { IntOffset(indicator.value.roundToInt(), 0) }
-                    .background(indicatorFill),
+                    // 指示器自己也要是胶囊：外层轨道的裁剪只能圆掉最外两端，
+                    // 选中中间项时指示器会是方角矩形。
+                    .background(indicatorFill, pill),
             )
         }
 

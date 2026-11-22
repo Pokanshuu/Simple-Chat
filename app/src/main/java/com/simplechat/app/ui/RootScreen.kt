@@ -20,9 +20,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -44,8 +44,28 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.runtime.mutableIntStateOf
+import com.simplechat.app.data.InterfaceControl
+import com.simplechat.app.ui.theme.floatingGlassBackground
+import com.simplechat.app.ui.theme.floatingPanelSurface
+import com.simplechat.app.ui.theme.needsLiveSurface
+import com.simplechat.app.ui.theme.rememberLiveBlurAvailable
+import com.simplechat.app.ui.theme.rememberBackdropSource
+import com.simplechat.app.ui.theme.recordBackdrop
+import com.simplechat.app.ui.theme.LocalWallpaper
+import com.simplechat.app.ui.theme.drawWallpaper
+import com.simplechat.app.ui.theme.rememberWallpaperBitmap
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.geometry.Offset
@@ -53,6 +73,7 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -76,6 +97,7 @@ import com.simplechat.app.ui.history.searchResultKey
 import com.simplechat.app.ui.settings.SettingsScreen
 import com.simplechat.app.ui.onboarding.OnboardingScreen
 import com.simplechat.app.ui.theme.LocalChatColors
+import com.simplechat.app.ui.theme.GlassForeground
 import kotlinx.coroutines.launch
 
 /**
@@ -95,10 +117,27 @@ private enum class Route(val depth: Int) {
 private const val DrawerWidthFraction = 0.78f
 private const val WideChatMinWidthDp = 720
 private val WideSidebarWidth = 256.dp
-private val WideChatMaxWidth = 800.dp
 
 /** 抽屉圆角。撑满时必须收成 0，否则全屏面板会在四角露出底下的内容。 */
 private val DrawerCorner = 16.dp
+
+/** Keep the system gesture area free of chat text even when the drawer is translucent. */
+private fun Modifier.drawerNavigationVeil(insets: WindowInsets, surface: Color, page: Color): Modifier {
+    if (surface.alpha == 1f) return this
+    val solid = surface.compositeOver(page.copy(alpha = 1f))
+    return drawWithCache {
+        val inset = insets.getBottom(this).toFloat().coerceAtMost(size.height)
+        val edge = size.height - inset
+        val start = (edge - 56.dp.toPx()).coerceAtLeast(0f)
+        val fade = if (inset > 0f && start < edge) {
+            Brush.verticalGradient(listOf(solid.copy(alpha = 0f), solid), startY = start, endY = edge)
+        } else null
+        onDrawBehind {
+            if (fade != null) drawRect(fade, topLeft = Offset(0f, start), size = Size(size.width, edge - start))
+            if (inset > 0f) drawRect(solid, topLeft = Offset(0f, edge), size = Size(size.width, inset))
+        }
+    }
+}
 
 /**
  * 顶层路由与侧拉抽屉。
@@ -147,7 +186,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val configuration = LocalConfiguration.current
     val wideChatLayout = configuration.screenWidthDp >= WideChatMinWidthDp &&
-        configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        (configuration.screenWidthDp > configuration.screenHeightDp || configuration.screenWidthDp >= 1000)
     var wideSidebarVisible by rememberSaveable { mutableStateOf(true) }
     var searchWasDocked by remember { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(wideChatLayout) {
@@ -307,6 +346,13 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
     )
     val sheetShape = RoundedCornerShape(topEnd = sheetCorner, bottomEnd = sheetCorner)
 
+    var sheetWidth by remember { mutableIntStateOf(0) }
+    val drawerVisible by remember(drawerState) { derivedStateOf {
+        drawerState.isOpen || drawerState.targetValue == DrawerValue.Open || drawerState.currentOffset > -sheetWidth.toFloat()
+    } }
+    val sidebarBlur = needsLiveSurface(InterfaceControl.SIDEBAR) && rememberLiveBlurAvailable()
+    val drawerSource = rememberBackdropSource(!wideChatLayout && drawerVisible && sidebarBlur)
+
     ModalNavigationDrawer(
         modifier = Modifier.onGloballyPositioned { drawerOrigin = it.boundsInRoot().topLeft }
             .pointerInput(Unit) {
@@ -327,6 +373,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
         drawerContent = {
             ModalDrawerSheet(
                 modifier = Modifier
+                    .onSizeChanged { sheetWidth = it.width }
                     .fillMaxWidth(if (wideChatLayout) 0f else sheetFraction)
                     .fillMaxHeight()
                     // 抽屉自己也要"浮起来"，否则右边缘是一道生硬的白灰交界
@@ -338,25 +385,8 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                         spotColor = AppShadow.RaisedSpot,
                     ),
                 drawerShape = sheetShape,
-                /*
-                 * 与抽屉内容同色，否则状态栏那一条会露出 Material 的默认容器色（淡紫）。
-                 *
-                 * 玻璃模式下必须同alpha：ModalDrawerSheet 自己会铺一层容器色，
-                 * 盖在 HistoryDrawerContent 的背景之上 —— 只改内容那一层的话，
-                 * 抽屉整体仍然是不透明白（用户看到的就是"侧栏没玻璃"）。
-                 */
-                drawerContainerColor = LocalChatColors.current.card.let { card ->
-                    val glass = com.simplechat.app.ui.theme.LocalChatGlassAlpha.current
-                    if (glass > 0f) {
-                        com.simplechat.app.ui.theme.glassTintedSurface(
-                            card,
-                            androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                            glass.coerceAtLeast(0.40f),
-                        )
-                    } else {
-                        card
-                    }
-                },
+                // 面板底色由容器统一绘制一次，抽屉内容沿用这层底色。
+                drawerContainerColor = Color.Transparent,
                 /*
                  * 系统栏内边距**由抽屉内容自己处理**（`HistoryDrawerContent` 里
                  * 有 `statusBarsPadding` / `navigationBarsPadding`）。
@@ -365,7 +395,22 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                  */
                 windowInsets = WindowInsets(0, 0, 0, 0),
             ) {
-                if (!wideChatLayout) sidebarContent(false)
+                if (!wideChatLayout) {
+                    val colors = LocalChatColors.current
+                    val surface = floatingPanelSurface(InterfaceControl.SIDEBAR)
+                    val navigationBars = WindowInsets.navigationBars
+                    val bottomInset = navigationBars.getBottom(LocalDensity.current)
+                    Box(
+                        Modifier.fillMaxSize()
+                            .floatingGlassBackground(
+                                colors.card, InterfaceControl.SIDEBAR, surface, drawerSource,
+                                extendIntoBottomInset = bottomInset,
+                            )
+                            .then(if (drawerSource == null) {
+                                Modifier.drawerNavigationVeil(navigationBars, surface, colors.pageBackground)
+                            } else Modifier),
+                    ) { GlassForeground(InterfaceControl.SIDEBAR) { sidebarContent(false) } }
+                }
             }
         },
     ) {
@@ -381,6 +426,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
             val pageStates = rememberSaveableStateHolder()
 
             AnimatedContent(
+                modifier = Modifier.recordBackdrop(drawerSource),
                 targetState = route,
                 transitionSpec = {
                     screenTransform(forward = targetState.depth > initialState.depth)
@@ -390,8 +436,8 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                 pageStates.SaveableStateProvider(target) {
                     when (target) {
                         Route.CHAT -> Row(
-                            modifier = Modifier.fillMaxSize().then(
-                                if (wideChatLayout) Modifier.windowInsetsPadding(
+                            modifier = Modifier.fillMaxSize().background(LocalChatColors.current.pageBackground).then(
+                                if (configuration.screenWidthDp >= 600) Modifier.windowInsetsPadding(
                                     WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
                                 ) else Modifier
                             ),
@@ -401,31 +447,30 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                                 enter = expandHorizontally(tween(MotionDurationMs, easing = MotionEasing), Alignment.Start) + fadeIn(),
                                 exit = shrinkHorizontally(tween(MotionDurationMs, easing = MotionEasing), Alignment.Start) + fadeOut(),
                             ) {
-                                Row(Modifier.width(WideSidebarWidth).fillMaxHeight()) {
+                                Box(Modifier.width(WideSidebarWidth).fillMaxHeight()) {
                                     /*
                                      * 宽屏常驻侧栏也要玻璃化：竖屏抽屉走的是
                                      * ModalDrawerSheet 的容器色，宽屏走的是这一个 Box ——
                                      * 两条路径不接同一个 alpha 的话，平板/横屏用户就会
                                      * 看到"聊天区透明、侧栏死白"。
                                      */
-                                    val sidebarColors = LocalChatColors.current
-                                    val sidebarGlass = com.simplechat.app.ui.theme.LocalChatGlassAlpha.current
-                                    Box(
-                                        Modifier
-                                            .weight(1f)
-                                            .fillMaxHeight()
-                                            .background(
-                                                if (sidebarGlass > 0f) {
-                                                    com.simplechat.app.ui.theme.glassTintedSurface(
-                                                        sidebarColors.card,
-                                                        androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                                                        sidebarGlass.coerceAtLeast(0.40f),
-                                                    )
-                                                } else {
-                                                    sidebarColors.card
-                                                },
-                                            ),
-                                    ) {
+                                    val colors = LocalChatColors.current
+                                    val wallpaper = LocalWallpaper.current
+                                    val bitmap = rememberWallpaperBitmap(wallpaper)
+                                    val source = rememberBackdropSource(sidebarBlur && bitmap != null)
+                                    // Draw over the filled sidebar, not as a translucent strip above the window.
+                                    Box(Modifier.fillMaxSize().clip(androidx.compose.ui.graphics.RectangleShape).drawWithContent {
+                                        drawContent()
+                                        val thickness = 1f
+                                        val edge = if (layoutDirection == LayoutDirection.Ltr) size.width - thickness else 0f
+                                        drawRect(colors.divider, topLeft = Offset(edge, 0f), size = Size(thickness, size.height))
+                                    }) {
+                                        Box(Modifier.matchParentSize().recordBackdrop(source).drawBehind {
+                                            drawRect(colors.pageBackground)
+                                            bitmap?.let { drawWallpaper(it, wallpaper, colors.pageBackground) }
+                                        })
+                                        Box(Modifier.fillMaxSize().floatingGlassBackground(colors.card, InterfaceControl.SIDEBAR, source = source)) {
+                                        GlassForeground(InterfaceControl.SIDEBAR) {
                                         if (searchMode) {
                                             SearchContent(
                                                 searchPage = searchPage,
@@ -452,8 +497,9 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                                                 onDelete = { deleteTarget = it },
                                             )
                                         } else sidebarContent(true)
+                                        }
+                                        }
                                     }
-                                    Box(Modifier.width(1.dp).fillMaxHeight().background(LocalChatColors.current.outline))
                                 }
                             }
                             Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
@@ -471,7 +517,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                                         exitSearch()
                                         chatViewModel.newConversation()
                                     },
-                                    modifier = if (wideChatLayout) Modifier.widthIn(max = WideChatMaxWidth).fillMaxWidth() else Modifier,
+                                    constrainContentWidth = configuration.screenWidthDp >= 600,
                                 )
                             }
                         }
@@ -531,7 +577,8 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
             title = stringResource(R.string.hist_delete_title),
             message = stringResource(R.string.hist_delete_body),
             confirmText = stringResource(R.string.hist_delete_confirm),
-            destructive = true,
+            // 移到回收站可撤销，不用危险红（§7.1：红色只给不可逆操作）
+            destructive = false,
             onDismiss = { deleteTarget = null },
             onConfirm = {
                 // 删的正是当前正在看的会话 → 立刻回到空态，
@@ -551,7 +598,8 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
             title = stringResource(R.string.hist_delete_selected_title, count),
             message = stringResource(R.string.hist_delete_selected_body),
             confirmText = stringResource(R.string.action_delete),
-            destructive = true,
+            // 移到回收站可撤销，不用危险红（§7.1：红色只给不可逆操作）
+            destructive = false,
             onDismiss = { confirmBatchDelete = false },
             onConfirm = {
                 // 当前会话也在被删之列 → 同样立刻回空态

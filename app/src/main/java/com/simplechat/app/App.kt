@@ -2,6 +2,8 @@ package com.simplechat.app
 
 import android.app.Application
 import android.content.Context
+import android.content.ComponentCallbacks2
+import com.simplechat.app.ui.theme.WallpaperImageCache
 import com.simplechat.app.data.ChatRepository
 import com.simplechat.app.data.LocaleHelper
 import com.simplechat.app.data.Res
@@ -25,6 +27,11 @@ class App : Application() {
         // 先按语言设置包一层：数据层 / ViewModel 取词（Res）都走这条路。
         // wrapAppBase 会把**未包装**的 base 记给 LocaleHelper —— 换语言后 Res 要从它现算。
         super.attachBaseContext(LocaleHelper.wrapAppBase(newBase))
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) WallpaperImageCache.clear()
     }
 
     override fun onCreate() {

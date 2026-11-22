@@ -1,6 +1,8 @@
 package com.simplechat.app.data
 
 import android.content.Context
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import android.util.Base64
 import android.database.sqlite.SQLiteBlobTooBigException
 import androidx.room.withTransaction
@@ -46,7 +48,6 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -182,6 +183,15 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         )
     }
 
+    internal fun observeConversationWallpaper(id: String): Flow<ConversationWallpaper?> =
+        conversations.observeWallpaper(id).distinctUntilChanged().map(ConversationWallpaper::decode)
+
+    internal suspend fun saveConversationWallpaper(id: String, wallpaper: ConversationWallpaper?) {
+        if (conversations.setWallpaper(id, wallpaper?.encode()) != 1) {
+            throw java.io.IOException("Conversation is no longer available")
+        }
+    }
+
     suspend fun findConversation(id: String): ConversationEntity? = conversations.findById(id)
 
     internal suspend fun setConversationMemoryEnabled(id: String, enabled: Boolean) =
@@ -248,12 +258,15 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
          * `Row too big to fit into CursorWindow requiredPos=954`）。
          */
         val files = ids.flatMap { attachmentRefs.pathsOf(it) }
-        db.withTransaction {
+        val wallpapers = db.withTransaction {
+            val removed = ids.chunked(500).flatMap { conversations.wallpaperOverrides(it) }.mapNotNull(ConversationWallpaper::decode)
             conversations.deleteAll(ids)
             // 会话没了草稿就没人读 —— 同步清掉，别留死数据
             drafts.clearAll(ids)
             attachmentRefs.clearAll(ids)
+            removed
         }
+        withContext(Dispatchers.IO) { wallpapers.forEach { WallpaperFiles.deleteWallpaper(context, it.fileName) } }
         files.distinct().forEach { path ->
             if (!attachmentRefs.containsPath(path) && !messages.referencesAttachment(path)) AttachmentFiles.delete(context, path)
         }
@@ -947,11 +960,14 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     suspend fun deleteAllConversations() {
         // 全清也要把落盘图片一起删干净：路径同样只查引用表，不碰 messages 的大列
         val files = attachmentRefs.allPaths()
-        db.withTransaction {
+        val wallpapers = db.withTransaction {
+            val removed = conversations.allWallpaperOverrides().mapNotNull(ConversationWallpaper::decode)
             conversations.deleteEverything()
             drafts.clearEverything()
             attachmentRefs.clearEverything()
+            removed
         }
+        withContext(Dispatchers.IO) { wallpapers.forEach { WallpaperFiles.deleteWallpaper(context, it.fileName) } }
         files.forEach { AttachmentFiles.delete(context, it) }
         withContext(Dispatchers.IO) { compactionCheckpoints.clear() }
         withContext(Dispatchers.IO) { File(context.filesDir, "file-api-cache").deleteRecursively() }

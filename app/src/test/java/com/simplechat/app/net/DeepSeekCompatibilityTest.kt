@@ -31,7 +31,17 @@ class DeepSeekCompatibilityTest {
         val pro = StoredSettings(modelId = DEEPSEEK_PRO, webSearch = true, filesApi = ServiceApiConfig(enabled = true))
         assertFalse(pro.supportsWebSearch)
         assertFalse(pro.useRemoteFiles)
-        assertTrue(pro.copy(searchApi = ServiceApiConfig(enabled = true)).supportsWebSearch)
+        assertFalse(pro.copy(searchApi = ServiceApiConfig(enabled = true)).supportsWebSearch)
+        assertTrue(pro.copy(apiKey = "chat-key", searchApi = ServiceApiConfig(enabled = true)).supportsWebSearch)
+        assertTrue(pro.copy(searchApi = ServiceApiConfig(enabled = true, reuseChatKey = false,
+            apiKeyEncrypted = "encrypted-key")).supportsWebSearch)
+        assertTrue(pro.copy(searchApi = ServiceApiConfig(enabled = true, baseUrl = "not a URL")).supportsWebSearch.not())
+        assertTrue(StoredSettings(providerId = "CUSTOM", baseUrl = "https://api.openai.com/v1/responses",
+            modelId = "gpt-5.4", apiStyleId = "OPENAI_RESPONSES").supportsWebSearch)
+        assertTrue(StoredSettings(providerId = "CUSTOM", baseUrl = "https://api.openai.com/v1/chat/completions",
+            modelId = "gpt-5-search-api", apiStyleId = "OPENAI").supportsWebSearch)
+        assertFalse(StoredSettings(providerId = "CUSTOM", baseUrl = "https://api.openai.com/v1/responses",
+            modelId = "unknown-model", apiStyleId = "OPENAI_RESPONSES").supportsWebSearch)
         assertFalse(pro.copy(baseUrl = "https://gw.example/api.deepseek.com", modelId = DEEPSEEK_FLASH, apiStyleId = "ANTHROPIC").supportsWebSearch)
     }
 
@@ -79,6 +89,9 @@ class DeepSeekCompatibilityTest {
             assertEquals(id, wire["model"]?.jsonPrimitive?.content)
             assertEquals(id == DEEPSEEK_FLASH, "title" in wire)
             assertEquals(if (id == DEEPSEEK_FLASH) 2 else null, wire["tools"]?.jsonArray?.size)
+            if (id == DEEPSEEK_FLASH) {
+                assertTrue(wire.toString().contains("Never claim that this chat has no search"))
+            }
             assertTrue(StreamEvent.Title("Example") in events)
         }
     }

@@ -42,6 +42,7 @@ import com.simplechat.app.ui.common.FoldAnimMs
 import com.simplechat.app.ui.common.MotionEasing
 import com.simplechat.app.ui.common.PillShape
 import com.simplechat.app.ui.theme.LocalChatColors
+import com.simplechat.app.ui.theme.LocalFloatingBaseOpacity
 import com.simplechat.app.ui.theme.ProcessTextStyle
 
 /**
@@ -456,12 +457,13 @@ fun SourcesStrip(
 ) {
     if (sources.isEmpty()) return
     val colors = LocalChatColors.current
+    val fill = colors.card.copy(alpha = LocalFloatingBaseOpacity.current)
     // 同一站点只露一次图标：搜索结果常有同站多页
     val faces = remember(sources) { sources.distinctBy { it.siteName.ifBlank { it.url } }.take(MaxStackedIcons) }
     Row(
         modifier = modifier
             .clip(CircleShape)
-            .background(colors.card)
+            .background(fill)
             .clickable { onOpenSources(sources) }
             .padding(start = 5.dp, end = 11.dp, top = 5.dp, bottom = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -471,7 +473,7 @@ fun SourcesStrip(
                 SiteIcon(
                     source = source,
                     size = StackedIconSize,
-                    ring = colors.card,
+                    ring = fill,
                     modifier = Modifier
                         .padding(start = StackedIconStep * i)
                         // 先出现的压在上面：从左往右读，第一个最完整

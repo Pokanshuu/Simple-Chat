@@ -102,6 +102,11 @@ class ChatViewModel(
     private val openCodeSessionId: String,
 ) : ViewModel() {
 
+    internal fun observeConversationWallpaper(id: String) = repository.observeConversationWallpaper(id)
+
+    internal suspend fun saveConversationWallpaper(id: String, wallpaper: com.simplechat.app.data.ConversationWallpaper?) =
+        repository.saveConversationWallpaper(id, wallpaper)
+
     val messages = mutableStateListOf<UiMessage>()
     internal val imageDrafts = mutableMapOf<String, String>()
 
@@ -1788,17 +1793,26 @@ class ChatViewModel(
 
         val routeProvider = providerKind
         val automaticSearch = com.simplechat.app.net.usesAutomaticOpenAiSearch(options.model.id, selectedApiStyle)
-        val searchRequested = webSearch && !automaticSearch
+        val nativeSearchAvailable = route.officialFlash || com.simplechat.app.net.supportsOpenAiSearchTool(
+            route.baseUrl.ifBlank { routeProvider.defaultBaseUrl }, options.model.id, selectedApiStyle,
+        )
+        val independentSearchAvailable = !nativeSearchAvailable && route.hasConfiguredSearchApi
+        val searchRequested = webSearch && !automaticSearch && (independentSearchAvailable || nativeSearchAvailable)
         // Preserve Flash's built-in link reader/search where the backend cannot combine them with client tools.
         val prefersBuiltInTool = route.officialFlash && !wantsImage && (HttpLink.containsMatchIn(latestQuestion) ||
-            searchRequested && !route.searchApi.enabled && !options.thinkingEnabled)
+            searchRequested && !independentSearchAvailable && !options.thinkingEnabled)
         val imageToolEnabled = imageRouteAvailable && !nativeGeminiTurn && !automaticSearch && !prefersBuiltInTool &&
             prefix == null && !omitAttachmentsAndTools && imageIntent != ImageGenerationIntent.CAPABILITY
         val contextualEdit = requestsContextualImageEdit(latestQuestion)
         Diagnostics.log(
             "CHAT",
             "start model=${options.model.id} style=$selectedApiStyle " +
-                "base=${route.baseUrl} search=$searchRequested " +
+                "base=${route.baseUrl} search=$searchRequested searchRoute=${when {
+                    automaticSearch -> "automatic"
+                    !searchRequested -> "unavailable_or_off"
+                    independentSearchAvailable -> "independent"
+                    else -> "server"
+                }} " +
                 "messages=${messages.size}",
         )
         if (imageIntent != ImageGenerationIntent.NONE || discussingImage) {
@@ -1972,7 +1986,7 @@ class ChatViewModel(
                     .also { memorySnapshot = it }
                 if (accumulator != null) {
                     val request = buildAnthropicRequestNow(
-                        prefix, systemContext, route, options, searchRequested, textOnly, memoryText,
+                        prefix, systemContext, route, options, searchRequested && nativeSearchAvailable, textOnly, memoryText,
                         generateImageTool = imageToolEnabled && !textOnly,
                         visualFollowUp = visualFollowUp,
                     )
@@ -2045,8 +2059,8 @@ class ChatViewModel(
                     val builtInFlash = route.officialFlash && !textOnly
                     val readLink = builtInFlash && HttpLink.containsMatchIn(latestQuestion)
                     val title = builtInFlash && shouldRequestTitle()
-                    val search = builtInFlash && searchRequested && !route.searchApi.enabled
-                    val openAiSearch = !textOnly && searchRequested && !route.searchApi.enabled &&
+                    val search = builtInFlash && searchRequested && !independentSearchAvailable
+                    val openAiSearch = !textOnly && searchRequested && !independentSearchAvailable &&
                         com.simplechat.app.net.supportsOpenAiSearchTool(route.baseUrl, options.model.id, selectedApiStyle)
                     optionalFieldsSent = !textOnly && (imageToolEnabled || openAiSearch || outgoing.any { it.content is kotlinx.serialization.json.JsonArray } ||
                         search || readLink || research.context.isNotBlank() || title && outgoing.sumOf {
@@ -2169,7 +2183,7 @@ class ChatViewModel(
 
             try {
                 if (!nativeGeminiTurn && imageIntent != ImageGenerationIntent.CAPABILITY &&
-                    prefix == null && !omitAttachmentsAndTools && searchRequested && route.searchApi.enabled) {
+                    prefix == null && !omitAttachmentsAndTools && searchRequested && independentSearchAvailable) {
                     val question = messages.lastOrNull { it.role == MessageRole.USER }?.content.orEmpty()
                     val previousBlocks = prefix?.timeline.orEmpty()
                     val baseUrl = route.baseUrl.ifBlank { routeProvider.defaultBaseUrl }
@@ -2287,6 +2301,13 @@ class ChatViewModel(
                 cancelled || generation != streamGeneration -> MessageStatus.STOPPED
                 failure != null -> MessageStatus.ERROR
                 else -> MessageStatus.DONE
+            }
+            if (status == MessageStatus.DONE && com.simplechat.app.net.hasSuccessfulWebSearch(timeline) &&
+                com.simplechat.app.net.deniesSearchCapability(contentText)
+            ) {
+                Diagnostics.log("CHAT", "suppressed answer contradicting successful web search")
+                contentText = Res.get(R.string.search_answer_contradicts_tool)
+                timeline = timeline.filterNot { it is ReplyBlock.Text } + ReplyBlock.Text(contentText)
             }
             val ttft = firstTokenAt?.minus(startedAt)
             val seconds = (finishedAt - startedAt).coerceAtLeast(1) / 1000f
@@ -2504,7 +2525,7 @@ class ChatViewModel(
             model = options.model.id,
             systemPrompt = system,
             path = path,
-            searchEnabled = searchRequested && !route.searchApi.enabled,
+            searchEnabled = searchRequested,
             reasoningEffort = options.model.resolveReasoningEffort(options.reasoningEffort),
             thinkingEnabled = options.thinkingEnabled,
             requestTitle = requestTitle,

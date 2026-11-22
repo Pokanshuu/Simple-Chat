@@ -9,7 +9,6 @@ import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,6 +17,11 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -62,9 +66,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.draw.blur
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -88,7 +89,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.simplechat.app.ui.common.MenuShape
 import com.simplechat.app.ui.common.SegmentedSwitch
-import com.simplechat.app.ui.theme.drawWallpaper
 import com.simplechat.app.ui.common.BubbleShapeOut
 import com.simplechat.app.App
 import com.simplechat.app.R
@@ -172,7 +172,6 @@ private enum class SettingsPage(private val parentName: String?) {
     /** 自定义字体：导入、管理、三层分别选择（外观 → 二级）。 */
     FONTS("APPEARANCE"),
     /** 壁纸：从本地选图作为聊天背景（外观 → 二级）。 */
-    WALLPAPER("APPEARANCE"),
     /** 对话行为：思考折叠、搜索范围等开关。 */
     CHAT("ROOT"),
     SEARCH_SETTINGS("CHAT"),
@@ -640,15 +639,23 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
             check(zip.getEntry("chat_session_index.json") != null && zip.getEntry("user.json") == null)
         }
     }
+    var showThemeEditor by rememberSaveable { mutableStateOf(false) }
+    if (showThemeEditor) {
+        CustomThemeEditor(stored, store, onDismiss = { showThemeEditor = false })
+    }
+
     // ── 页面 ──────────────────────────────────────────────
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(colors.settingsBackground)
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
             .imePadding(),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         SettingsTopBar(
+            modifier = Modifier.widthIn(max = 640.dp),
             title = when (page) {
                 SettingsPage.ROOT -> stringResource(R.string.settings_title)
                 SettingsPage.DATA -> stringResource(R.string.settings_data)
@@ -663,7 +670,6 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                 SettingsPage.APPEARANCE -> stringResource(R.string.settings_appearance)
                 SettingsPage.FONT -> stringResource(R.string.settings_font_size)
                 SettingsPage.FONTS -> stringResource(R.string.settings_custom_fonts)
-                SettingsPage.WALLPAPER -> stringResource(R.string.settings_wallpaper)
                 SettingsPage.CHAT -> stringResource(R.string.settings_chat_behavior)
                 SettingsPage.SEARCH_SETTINGS -> stringResource(R.string.settings_search_options)
                 SettingsPage.LOADING_WORDS -> stringResource(R.string.settings_loading_words)
@@ -689,7 +695,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
          * 二级页面从右侧滑入、返回原路退回（见 ui/common/Motion.kt）。
          *
          * 滚动容器放在 AnimatedContent **里面**，有两个原因：
-         *   1. 转场要在**整屏宽**上滑，放在外层 16dp 内边距里会从内容边缘"挤"出来；
+         *   1. 转场要在整个内容栏内滑动，放在外层 16dp 内边距里会从内容边缘"挤"出来；
          *   2. 顺带修掉一个真问题 —— 六个页面原先共用同一个 scroll state，
          *      从「设置」滚到底再进「数据管理」，进去就是滚到底的。
          *      现在每页各有一份，且用 SaveableStateHolder 存档，来回切不丢位置。
@@ -702,6 +708,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                 screenTransform(forward = targetState.depth > initialState.depth)
             },
             modifier = Modifier
+                .widthIn(max = 640.dp)
                 .fillMaxWidth()
                 .weight(1f),
             label = "settingsPage",
@@ -742,15 +749,10 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                             },
                             onOpenFont = { page = SettingsPage.FONT },
                             onOpenFonts = { page = SettingsPage.FONTS },
-                            onOpenWallpaper = { page = SettingsPage.WALLPAPER },
+                            onOpenCustomTheme = { showThemeEditor = true },
                         )
 
                         SettingsPage.FONTS -> FontsPage(
-                            stored = stored,
-                            store = store,
-                        )
-
-                        SettingsPage.WALLPAPER -> WallpaperPage(
                             stored = stored,
                             store = store,
                         )
@@ -1558,7 +1560,7 @@ private fun AppearancePage(
     onIconChange: (MainActivity, Boolean) -> Unit,
     onOpenFont: () -> Unit,
     onOpenFonts: () -> Unit,
-    onOpenWallpaper: () -> Unit,
+    onOpenCustomTheme: () -> Unit,
 ) {
     val activity = LocalActivity.current as? MainActivity
     var pendingIcon by rememberSaveable { mutableStateOf<Boolean?>(null) }
@@ -1630,6 +1632,13 @@ private fun AppearancePage(
                 )
             }
         }
+        RowDivider()
+        SettingsNavRow(
+            icon = AppIcons.Image,
+            label = stringResource(R.string.settings_custom_theme),
+            value = null,
+            onClick = onOpenCustomTheme,
+        )
     }
 
     SettingsSectionLabel(stringResource(R.string.settings_group_text))
@@ -1661,24 +1670,6 @@ private fun AppearancePage(
         )
     }
 
-    /*
-     * 壁纸单独一个分组：它不属于「文字」。混在字体那一组里，
-     * 用户找壁纸时会在字体设置里翻 —— 语义上就不对。
-     */
-    SettingsSectionLabel(stringResource(R.string.settings_group_background))
-
-    SettingsCard {
-        SettingsNavRow(
-            icon = AppIcons.Image,
-            label = stringResource(R.string.settings_wallpaper),
-            value = if (stored.wallpaperPath.isNullOrBlank()) {
-                stringResource(R.string.value_none)
-            } else {
-                stringResource(R.string.value_enabled_generic)
-            },
-            onClick = onOpenWallpaper,
-        )
-    }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -2043,7 +2034,11 @@ private fun VoicePage(
      * 音色 id 由服务端清单和用户手填组成（见 VoiceApiConfig.allVoices）；
      * 选中的 id 走和系统音色同一条 name 通道，播放侧按是否配了第三方来分流。
      */
-    Spacer(Modifier.size(24.dp))
+    /*
+     * 合成通道接通前整组隐藏（docs/32 §32.9）：选中第三方音色会写进 ttsVoiceName，
+     * 系统 TTS 不认识这个名字，朗读会悄悄失效。
+     */
+    if (ThirdPartyVoiceReady) {
     SettingsSectionLabel(stringResource(R.string.tts_third_party_section))
     SettingsCard {
         SettingsNavRow(
@@ -2068,6 +2063,7 @@ private fun VoicePage(
                 onPreview = { onPreview(SpeechVoice(name = voiceId, label = voiceId, needsNetwork = true)) },
             )
         }
+    }
     }
 
     val colors = LocalChatColors.current
@@ -3125,10 +3121,10 @@ private fun LicenseDetailDialog(entry: LicenseEntry, onDismiss: () -> Unit) {
 // ══════════════════════════════════════════════════════════
 
 @Composable
-fun SettingsTopBar(title: String, onBack: () -> Unit) {
+fun SettingsTopBar(title: String, onBack: () -> Unit, modifier: Modifier = Modifier) {
     val colors = LocalChatColors.current
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .statusBarsPadding()
             .height(56.dp),
@@ -3169,7 +3165,8 @@ fun SettingsSectionLabel(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.labelMedium,
-        color = colors.placeholder,
+        // §7.1 分组小标签是次级文字色，不是占位符色（docs/32 §32.4.5）
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.settingsSectionGrid(),
     )
 }
@@ -4240,7 +4237,7 @@ private fun FontsPage(
                         Text(
                             text = stringResource(R.string.fonts_preview_line),
                             style = MaterialTheme.typography.labelSmall,
-                            color = colors.placeholder,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -4269,6 +4266,8 @@ private fun FontsPage(
         }
     }
 
+    Spacer(Modifier.height(Space.Inline))
+
     SettingsCard {
         SettingsActionRow(
             label = stringResource(R.string.fonts_import),
@@ -4281,47 +4280,41 @@ private fun FontsPage(
     SettingsSectionLabel(stringResource(R.string.fonts_group_apply))
 
     SettingsCard {
-        FontSlotRow(
-            title = stringResource(R.string.fonts_slot_ui),
-            hint = stringResource(R.string.fonts_slot_ui_hint),
-            value = fontLabelOf(stored, com.simplechat.app.data.FontSlot.UI),
-            onClick = { slotMenu = com.simplechat.app.data.FontSlot.UI },
+        val slots = listOf(
+            Triple(com.simplechat.app.data.FontSlot.UI, R.string.fonts_slot_ui, R.string.fonts_slot_ui_hint),
+            Triple(com.simplechat.app.data.FontSlot.USER, R.string.fonts_slot_user, R.string.fonts_slot_user_hint),
+            Triple(com.simplechat.app.data.FontSlot.ASSISTANT, R.string.fonts_slot_assistant, R.string.fonts_slot_assistant_hint),
         )
-        RowDivider()
-        FontSlotRow(
-            title = stringResource(R.string.fonts_slot_user),
-            hint = stringResource(R.string.fonts_slot_user_hint),
-            value = fontLabelOf(stored, com.simplechat.app.data.FontSlot.USER),
-            onClick = { slotMenu = com.simplechat.app.data.FontSlot.USER },
-        )
-        RowDivider()
-        FontSlotRow(
-            title = stringResource(R.string.fonts_slot_assistant),
-            hint = stringResource(R.string.fonts_slot_assistant_hint),
-            value = fontLabelOf(stored, com.simplechat.app.data.FontSlot.ASSISTANT),
-            onClick = { slotMenu = com.simplechat.app.data.FontSlot.ASSISTANT },
-        )
-    }
-
-    slotMenu?.let { slot ->
-        AppMenu(expanded = true, onDismissRequest = { slotMenu = null }) {
-            AppMenuItem(
-                label = stringResource(R.string.fonts_system_default),
-                selected = fontIdOfSlot(stored, slot) == null,
-                onClick = {
-                    slotMenu = null
-                    scope.launch { store.setFontSlot(slot, null) }
-                },
-            )
-            stored.fonts.forEach { font ->
-                AppMenuItem(
-                    label = font.displayName,
-                    selected = fontIdOfSlot(stored, slot) == font.id,
-                    onClick = {
-                        slotMenu = null
-                        scope.launch { store.setFontSlot(slot, font.id) }
-                    },
+        slots.forEachIndexed { index, (slot, title, hint) ->
+            if (index > 0) RowDivider()
+            Box(Modifier.fillMaxWidth()) {
+                FontSlotRow(
+                    title = stringResource(title),
+                    hint = stringResource(hint),
+                    value = fontLabelOf(stored, slot),
+                    onClick = { slotMenu = slot },
                 )
+                AppMenu(expanded = slotMenu == slot, onDismissRequest = { slotMenu = null }) {
+                    Column(Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState())) {
+                        val selectedFontId = fontIdOfSlot(stored, slot)
+                        fun chooseFont(id: String?) {
+                            slotMenu = null
+                            scope.launch { store.setFontSlot(slot, id) }
+                        }
+                        AppMenuItem(
+                            label = stringResource(R.string.fonts_system_default),
+                            selected = selectedFontId == null,
+                            onClick = { chooseFont(null) },
+                        )
+                        stored.fonts.forEach { font ->
+                            AppMenuItem(
+                                label = font.displayName,
+                                selected = selectedFontId == font.id,
+                                onClick = { chooseFont(font.id) },
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -4335,7 +4328,6 @@ private fun FontSlotRow(
     value: String?,
     onClick: () -> Unit,
 ) {
-    val colors = LocalChatColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -4347,12 +4339,12 @@ private fun FontSlotRow(
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(text = title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
-            Text(text = hint, style = MaterialTheme.typography.labelSmall, color = colors.placeholder)
+            Text(text = hint, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Text(
             text = value ?: stringResource(R.string.fonts_system_default),
             style = MaterialTheme.typography.labelMedium,
-            color = if (value == null) colors.placeholder else MaterialTheme.colorScheme.onSurface,
+            color = if (value == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
         )
     }
 }
@@ -4361,482 +4353,6 @@ private fun FontSlotRow(
 //  壁纸
 // ══════════════════════════════════════════════════════════
 
-/**
- * 壁纸页：选图 + 画面调节。
- *
- * 只改**聊天页**背景 —— 设置页保持纯色，否则一张照片铺上去，
- * 开关和分组标签的对比度会一起崩掉。
- *
- * 参数分组参照壁纸引擎那套：画面（模糊/亮度/对比度/饱和度/位置/缩放）、
- * 适配（覆盖/填充/居中/拉伸 + 翻转）、细节（透明度/暗化）。
- */
-/**
- * 毛玻璃卡片：半透明底 + 背后壁纸的模糊副本 + 可调圆角。
- *
- * 壁纸设置页专用 —— 别的设置页保持原来的实心卡片，那里没有背景图可"透"。
- * `backdrop` 为空（还没选壁纸）时退回普通半透明卡片。
- */
-@Composable
-private fun GlassCard(
-    backdrop: androidx.compose.ui.graphics.ImageBitmap?,
-    radius: Float,
-    alpha: Float,
-    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
-) {
-    val colors = LocalChatColors.current
-    val shape = RoundedCornerShape(radius.dp)
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = Space.Screen, vertical = 4.dp)
-            .clip(shape),
-    ) {
-        if (backdrop != null) {
-            Image(
-                bitmap = backdrop,
-                contentDescription = null,
-                modifier = Modifier
-                    .matchParentSize()
-                    .blur(20.dp),
-                contentScale = ContentScale.Crop,
-            )
-        }
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .background(colors.card.copy(alpha = alpha)),
-        )
-        Column(modifier = Modifier.fillMaxWidth(), content = content)
-    }
-}
-
-/**
- * 壁纸页的卡片：按「透明玻璃面板」开关选 GlassCard 或普通实心卡片。
- *
- * 玻璃面板好看但可读性依赖壁纸；用户关掉它就回到标准设置页的样子。
- */
-@Composable
-private fun WallpaperCard(
-    stored: StoredSettings,
-    backdrop: androidx.compose.ui.graphics.ImageBitmap?,
-    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
-) {
-    if (stored.wallpaperGlassPanel) {
-        GlassCard(backdrop, stored.wallpaperPanelRadius, stored.wallpaperPanelAlpha, content)
-    } else {
-        // SettingsCard 的 content 不带 ColumnScope，这里补一层 Column 保持同样的排版
-        SettingsCard {
-            Column(modifier = Modifier.fillMaxWidth()) { content() }
-        }
-    }
-}
-
-@Composable
-private fun WallpaperPage(
-    stored: StoredSettings,
-    store: SettingsStore,
-) {
-    val colors = LocalChatColors.current
-    val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-
-    fun saveTuning(
-        blur: Float = stored.wallpaperBlur,
-        brightness: Float = stored.wallpaperBrightness,
-        contrast: Float = stored.wallpaperContrast,
-        saturation: Float = stored.wallpaperSaturation,
-        offsetX: Float = stored.wallpaperOffsetX,
-        offsetY: Float = stored.wallpaperOffsetY,
-        scale: Float = stored.wallpaperScale,
-        dim: Float = stored.wallpaperDim,
-        fit: String = stored.wallpaperFit,
-        flipH: Boolean = stored.wallpaperFlipH,
-    ) {
-        scope.launch {
-            store.setWallpaperTuning(blur, brightness, contrast, saturation, offsetX, offsetY, scale, dim, fit, flipH)
-        }
-    }
-
-    /*
-     * 裁剪是**独立入口**，不在选图后强制弹出：多数用户换壁纸只是想换张图，
-     * 每次都要过一遍裁剪器是打扰。cropRequest 由「裁剪壁纸」按钮触发，
-     * 结果写回 scale/offsetX/offsetY（fit = COVER），与画面里的滑块同源。
-     */
-    var cropRequest by remember {
-        mutableStateOf<Pair<androidx.compose.ui.graphics.ImageBitmap, android.net.Uri?>?>(null)
-    }
-
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            val name = com.simplechat.app.data.WallpaperFiles.import(context, uri)
-            if (name == null) {
-                android.widget.Toast.makeText(context, R.string.wallpaper_import_failed, android.widget.Toast.LENGTH_SHORT).show()
-            } else {
-                store.setWallpaper(name)
-            }
-        }
-    }
-
-    cropRequest?.let { (bitmap, uri) ->
-        WallpaperCropDialog(
-            image = bitmap,
-            initialScale = stored.wallpaperScale,
-            initialOffsetX = stored.wallpaperOffsetX,
-            initialOffsetY = stored.wallpaperOffsetY,
-            onDismiss = { cropRequest = null },
-            onConfirm = { scale, offsetX, offsetY ->
-                cropRequest = null
-                scope.launch {
-                    // uri 非空 = 刚选的新图（要落盘）；为空 = 对现有壁纸重裁
-                    val name = if (uri != null) {
-                        com.simplechat.app.data.WallpaperFiles.import(context, uri)
-                    } else {
-                        stored.wallpaperPath
-                    }
-                    if (name == null) {
-                        android.widget.Toast.makeText(context, R.string.wallpaper_import_failed, android.widget.Toast.LENGTH_SHORT).show()
-                    } else {
-                        if (uri != null) store.setWallpaper(name)
-                        store.setWallpaperTuning(
-                            blur = stored.wallpaperBlur,
-                            brightness = stored.wallpaperBrightness,
-                            contrast = stored.wallpaperContrast,
-                            saturation = stored.wallpaperSaturation,
-                            offsetX = offsetX,
-                            offsetY = offsetY,
-                            scale = scale,
-                            dim = stored.wallpaperDim,
-                            fit = "COVER",
-                            flipH = stored.wallpaperFlipH,
-                        )
-                    }
-                }
-            },
-        )
-    }
-
-
-    val preview by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(
-        initialValue = null,
-        stored.wallpaperPath,
-        stored.wallpaperBlur,
-    ) {
-        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching {
-                // 与聊天页同一套降采样近似模糊，预览才和实际一致
-                val sample = when {
-                    stored.wallpaperBlur < 1f -> 1
-                    stored.wallpaperBlur < 6f -> 2
-                    stored.wallpaperBlur < 14f -> 4
-                    stored.wallpaperBlur < 24f -> 8
-                    else -> 16
-                }
-                val options = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
-                android.graphics.BitmapFactory
-                    .decodeFile(com.simplechat.app.data.WallpaperFiles.fileOf(context).absolutePath, options)
-                    ?.asImageBitmap()
-            }.getOrNull()
-        }
-    }
-    SettingsSectionLabel(stringResource(R.string.wallpaper_group_source))
-    WallpaperCard(stored, preview) {
-        SettingsActionRow(
-            label = stringResource(R.string.wallpaper_pick),
-            hint = stringResource(R.string.wallpaper_pick_hint),
-            onClick = {
-                picker.launch(
-                    androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                )
-            },
-            icon = AppIcons.Image,
-        )
-        if (!stored.wallpaperPath.isNullOrBlank()) {
-            RowDivider()
-            /* 独立入口：对当前壁纸重裁。选图时不弹，避免换张图也要过一遍裁剪器。 */
-            SettingsActionRow(
-                label = stringResource(R.string.wallpaper_crop),
-                hint = stringResource(R.string.wallpaper_crop_hint),
-                onClick = {
-                    scope.launch {
-                        val bitmap = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                            runCatching {
-                                android.graphics.BitmapFactory
-                                    .decodeFile(com.simplechat.app.data.WallpaperFiles.fileOf(context).absolutePath)
-                                    ?.asImageBitmap()
-                            }.getOrNull()
-                        }
-                        if (bitmap != null) cropRequest = bitmap to null
-                    }
-                },
-                icon = AppIcons.Image,
-            )
-            RowDivider()
-            SettingsActionRow(
-                label = stringResource(R.string.wallpaper_remove),
-                hint = null,
-                onClick = {
-                    scope.launch {
-                        com.simplechat.app.data.WallpaperFiles.delete(context)
-                        store.setWallpaper(null)
-                    }
-                },
-                destructive = true,
-            )
-        }
-    }
-
-    if (stored.wallpaperPath.isNullOrBlank()) return
-    preview?.let { image ->
-        /*
-         * 预览用**和聊天页相同的绘制函数**：只画原图的话，用户拖模糊/对比度
-         * 看不到变化，会以为滑块没生效。
-         */
-        val previewState = com.simplechat.app.ui.theme.WallpaperState(
-            file = null,
-            opacity = stored.wallpaperOpacity,
-            blur = stored.wallpaperBlur,
-            brightness = stored.wallpaperBrightness,
-            contrast = stored.wallpaperContrast,
-            saturation = stored.wallpaperSaturation,
-            offsetX = stored.wallpaperOffsetX,
-            offsetY = stored.wallpaperOffsetY,
-            scale = stored.wallpaperScale,
-            dim = stored.wallpaperDim,
-            fit = stored.wallpaperFit,
-            flipH = stored.wallpaperFlipH,
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(180.dp)
-                .padding(horizontal = Space.Screen, vertical = Space.RowPadY)
-                .clip(RoundedCornerShape(16.dp))
-                /*
-                 * 自定义截取：开启后在这个预览上拖动 = 选择画面里显示哪一块。
-                 * 拖动方向与"拖图片"一致（往右拖露出左侧），写回的还是画面分组里
-                 * 那两个位置值，所以滑块会同步动。
-                 */
-                .pointerInput(stored.wallpaperCustomCrop) {
-                    if (!stored.wallpaperCustomCrop) return@pointerInput
-                    var startX = stored.wallpaperOffsetX
-                    var startY = stored.wallpaperOffsetY
-                    detectDragGestures(
-                        onDragStart = {
-                            startX = stored.wallpaperOffsetX
-                            startY = stored.wallpaperOffsetY
-                        },
-                        onDrag = { change, drag ->
-                            change.consume()
-                            startX = (startX - drag.x / size.width).coerceIn(0f, 1f)
-                            startY = (startY - drag.y / size.height).coerceIn(0f, 1f)
-                            scope.launch { store.setWallpaperOffset(startX, startY) }
-                        },
-                    )
-                }
-                .background(androidx.compose.ui.graphics.Color.Black)
-                .drawBehind { drawWallpaper(image, previewState) },
-        ) {
-            /*
-             * 预览里放一块**示例面板**（就是 GlassCard 的样子）。
-             * 只画壁纸的话，调「面板圆角 / 面板不透明度」时预览毫无变化，
-             * 用户得退出设置进聊天才能看到 —— 那等于没有预览。
-             */
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 40.dp, vertical = 26.dp)
-                    .clip(RoundedCornerShape(stored.wallpaperPanelRadius.dp))
-                    .background(colors.card.copy(alpha = stored.wallpaperPanelAlpha))
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-            ) {
-                Text(
-                    text = stringResource(R.string.wallpaper_preview_sample),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    text = stringResource(
-                        R.string.wallpaper_preview_sample_detail,
-                        stored.wallpaperPanelRadius.toInt(),
-                        (stored.wallpaperPanelAlpha * 100).toInt(),
-                    ),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = colors.placeholder,
-                )
-            }
-        }
-    }
-
-    SettingsSectionLabel(stringResource(R.string.wallpaper_group_scene))
-    WallpaperCard(stored, preview) {
-        WallpaperSlider(
-            label = stringResource(R.string.wallpaper_blur),
-            value = stored.wallpaperBlur,
-            range = 0f..20f,
-            display = "${stored.wallpaperBlur.toInt()}px",
-            onChange = { saveTuning(blur = it) },
-        )
-        RowDivider()
-        WallpaperSlider(
-            label = stringResource(R.string.wallpaper_brightness),
-            value = stored.wallpaperBrightness,
-            range = 0.3f..1.7f,
-            display = "${(stored.wallpaperBrightness * 100).toInt()}%",
-            onChange = { saveTuning(brightness = it) },
-        )
-        RowDivider()
-        WallpaperSlider(
-            label = stringResource(R.string.wallpaper_contrast),
-            value = stored.wallpaperContrast,
-            range = 0.5f..1.8f,
-            display = "${(stored.wallpaperContrast * 100).toInt()}%",
-            onChange = { saveTuning(contrast = it) },
-        )
-        RowDivider()
-        WallpaperSlider(
-            label = stringResource(R.string.wallpaper_saturation),
-            value = stored.wallpaperSaturation,
-            range = 0f..2f,
-            display = "${(stored.wallpaperSaturation * 100).toInt()}%",
-            onChange = { saveTuning(saturation = it) },
-        )
-        RowDivider()
-        WallpaperSlider(
-            label = stringResource(R.string.wallpaper_offset_x),
-            value = stored.wallpaperOffsetX,
-            range = 0f..1f,
-            display = "${(stored.wallpaperOffsetX * 100).toInt()}%",
-            onChange = { saveTuning(offsetX = it) },
-        )
-        RowDivider()
-        WallpaperSlider(
-            label = stringResource(R.string.wallpaper_offset_y),
-            value = stored.wallpaperOffsetY,
-            range = 0f..1f,
-            display = "${(stored.wallpaperOffsetY * 100).toInt()}%",
-            onChange = { saveTuning(offsetY = it) },
-        )
-        RowDivider()
-        WallpaperSlider(
-            label = stringResource(R.string.wallpaper_scale),
-            value = stored.wallpaperScale,
-            range = 0.5f..2.5f,
-            display = "${(stored.wallpaperScale * 100).toInt()}%",
-            onChange = { saveTuning(scale = it) },
-        )
-    }
-
-    SettingsSectionLabel(stringResource(R.string.wallpaper_group_fit))
-    WallpaperCard(stored, preview) {
-        val fitLabels = mapOf(
-            "COVER" to stringResource(R.string.wallpaper_fit_cover),
-            "FILL" to stringResource(R.string.wallpaper_fit_fill),
-            "CENTER" to stringResource(R.string.wallpaper_fit_center),
-            "STRETCH" to stringResource(R.string.wallpaper_fit_stretch),
-        )
-        SegmentedSwitch(
-            options = fitLabels.keys.toList(),
-            selected = stored.wallpaperFit.takeIf { it in fitLabels } ?: "COVER",
-            onSelect = { saveTuning(fit = it) },
-            label = { fitLabels[it] ?: it },
-            modifier = Modifier.padding(horizontal = Space.Screen, vertical = Space.RowPadY),
-        )
-        RowDivider()
-        SettingsSwitchRow(
-            label = stringResource(R.string.wallpaper_flip_h),
-            checked = stored.wallpaperFlipH,
-            onCheckedChange = { saveTuning(flipH = it) },
-        )
-        /*
-         * 裁剪入口不在这里：选图后会自动弹裁剪器；想重裁就回「图片」分组点
-         * 「重新裁剪」。这个开关（拖动预览）已由裁剪器取代，不再保留。
-         */
-    }
-
-    SettingsSectionLabel(stringResource(R.string.wallpaper_group_detail))
-    WallpaperCard(stored, preview) {
-        WallpaperSlider(
-            label = stringResource(R.string.wallpaper_opacity),
-            value = stored.wallpaperOpacity,
-            range = 0.05f..1f,
-            display = "${(stored.wallpaperOpacity * 100).toInt()}%",
-            onChange = { scope.launch { store.setWallpaperOpacity(it) } },
-        )
-        RowDivider()
-        WallpaperSlider(
-            label = stringResource(R.string.wallpaper_dim),
-            value = stored.wallpaperDim,
-            range = 0f..0.8f,
-            display = "${(stored.wallpaperDim * 100).toInt()}%",
-            onChange = { saveTuning(dim = it) },
-        )
-    }
-
-    SettingsSectionLabel(stringResource(R.string.wallpaper_group_panel))
-    WallpaperCard(stored, preview) {
-        SettingsSwitchRow(
-            label = stringResource(R.string.wallpaper_glass_panel),
-            checked = stored.wallpaperGlassPanel,
-            onCheckedChange = { scope.launch { store.setWallpaperGlassPanel(it) } },
-        )
-        RowDivider()
-        WallpaperSlider(
-            label = stringResource(R.string.wallpaper_panel_radius),
-            value = stored.wallpaperPanelRadius,
-            range = 4f..32f,
-            display = "${stored.wallpaperPanelRadius.toInt()}dp",
-            onChange = { scope.launch { store.setWallpaperPanel(it, stored.wallpaperPanelAlpha) } },
-        )
-        RowDivider()
-        WallpaperSlider(
-            label = stringResource(R.string.wallpaper_panel_alpha),
-            value = stored.wallpaperPanelAlpha,
-            range = 0.3f..0.95f,
-            display = "${(stored.wallpaperPanelAlpha * 100).toInt()}%",
-            onChange = { scope.launch { store.setWallpaperPanel(stored.wallpaperPanelRadius, it) } },
-        )
-    }
-}
-
-/** 壁纸页的滑块行：标题 + 当前值 + 滑条。 */
-@Composable
-private fun WallpaperSlider(
-    label: String,
-    value: Float,
-    range: ClosedFloatingPointRange<Float>,
-    display: String,
-    onChange: (Float) -> Unit,
-) {
-    val colors = LocalChatColors.current
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = display,
-                style = MaterialTheme.typography.labelMedium,
-                color = colors.placeholder,
-            )
-        }
-        Slider(
-            value = value,
-            onValueChange = onChange,
-            valueRange = range,
-        )
-    }
-}
 // ══════════════════════════════════════════════════════════
 //  第三方声音模型 API
 // ══════════════════════════════════════════════════════════
@@ -4953,7 +4469,7 @@ private fun VoiceApiPage(
     Text(
         text = stringResource(R.string.tts_third_party_note),
         style = MaterialTheme.typography.labelSmall,
-        color = colors.placeholder,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
@@ -5071,7 +4587,7 @@ private fun TrashPage(
                             formatTrashDate(conversation.deletedAt),
                         ),
                         style = MaterialTheme.typography.labelSmall,
-                        color = colors.placeholder,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 TextButton(onClick = { onRestore(listOf(conversation.id)) }) {
@@ -5149,3 +4665,6 @@ private fun formatTrashDate(millis: Long?): String {
         )
     }.getOrDefault("—")
 }
+
+/** 第三方声音合成通道是否已接通。接通前不展示任何第三方入口（docs/32 §32.9）。 */
+private const val ThirdPartyVoiceReady = false

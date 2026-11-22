@@ -170,7 +170,10 @@ private fun chatColors(dark: Boolean, accent: AccentColor): ChatColors {
     val tint = tintOf(accent.primary(dark), dark)
     return (if (dark) DarkChatColors else LightChatColors).copy(
         userBubble = tint,
-        capsuleSelected = tint,
+        // 选中态浅底用「主色 × alpha」而不是与页面底色混出的实色：
+        // 压在壁纸 / 玻璃上时不会变成一块不透明的色块（docs/32 §32.4.5）。
+        // 比例与 tintOf 相同，纯色底上观感不变。
+        capsuleSelected = accent.primary(dark).copy(alpha = if (dark) 0.22f else 0.16f),
     )
 }
 
@@ -256,6 +259,11 @@ fun SimpleChatTheme(
     fontScale: Float = 1f,
     /** 软件 UI 字体层；null = 系统字体。不影响用户发言与模型回复（那两层各自覆盖）。 */
     uiFontFamily: FontFamily? = null,
+    /**
+     * 主题文件（docs/33）。null = 内置主题。解析顺序：内置默认值 ← 主题文件 ← 用户设置（accent 等），
+     * 最后由 [com.simplechat.app.ui.theme.tokens.ThemeResolver] 做可读性兜底。
+     */
+    themeSpec: com.simplechat.app.ui.theme.tokens.ThemeSpec? = null,
     content: @Composable () -> Unit,
 ) {
     val dark = when (themeMode) {
@@ -264,12 +272,23 @@ fun SimpleChatTheme(
         ThemeMode.DARK -> true
     }
 
-    val scheme = staticScheme(dark, accent)
+    val tokens = androidx.compose.runtime.remember(dark, accent, themeSpec) {
+        val base = com.simplechat.app.ui.theme.tokens.ThemeTokens(
+            dark = dark,
+            colors = chatColors(dark, accent),
+            scheme = staticScheme(dark, accent),
+        )
+        com.simplechat.app.ui.theme.tokens.ThemeResolver.resolve(base, themeSpec).tokens
+    }
+    val scheme = tokens.scheme
 
     val baseDensity = LocalDensity.current
 
     CompositionLocalProvider(
-        LocalChatColors provides chatColors(dark, accent),
+        com.simplechat.app.ui.theme.tokens.LocalThemeTokens provides tokens,
+        // 旧入口保留：LocalChatColors 与 MaterialTheme.colorScheme 都来自同一份 tokens，
+        // 存量组件不用改就能吃到主题文件（迁移计划见 docs/33 §33.7）。
+        LocalChatColors provides tokens.colors,
         LocalIsDarkTheme provides dark,
         LocalAccentColor provides accent,
         LocalDensity provides Density(

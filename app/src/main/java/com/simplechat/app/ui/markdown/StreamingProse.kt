@@ -9,11 +9,13 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
-import com.simplechat.app.ui.theme.LocalChatColors
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
@@ -50,17 +52,18 @@ private class ProseFade(initial: String) {
 internal fun StreamingProse(text: String, style: TextStyle, color: Color, modifier: Modifier = Modifier) {
     val fade = remember { ProseFade(text) }
     val scope = rememberCoroutineScope()
-    val surface = LocalChatColors.current.pageBackground
     Text(
         text = text,
         style = style,
         color = color,
-        modifier = modifier.drawWithContent {
+        modifier = modifier.graphicsLayer {
+            compositingStrategy = CompositingStrategy.Offscreen
+        }.drawWithContent {
             drawContent()
             val frame = fade.redraw.longValue
             for (range in fade.ranges) {
                 val progress = ((frame - range.born).toFloat() / FadeNanos).coerceIn(0f, 1f)
-                range.path?.let { drawPath(it, surface, alpha = 0.8f * (1f - progress)) }
+                range.path?.let { drawPath(it, Color.Black, alpha = 0.8f * (1f - progress), blendMode = BlendMode.DstOut) }
             }
         },
         onTextLayout = { layout ->

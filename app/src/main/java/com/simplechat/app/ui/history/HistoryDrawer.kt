@@ -109,17 +109,6 @@ fun HistoryDrawerContent(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(
-                if (com.simplechat.app.ui.theme.LocalChatGlassAlpha.current > 0f) {
-                    com.simplechat.app.ui.theme.glassTintedSurface(
-                        colors.card,
-                        androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                        com.simplechat.app.ui.theme.LocalChatGlassAlpha.current.coerceAtLeast(0.4f),
-                    )
-                } else {
-                    colors.card
-                },
-            ),
     ) {
         Spacer(Modifier.statusBarsPadding())
 
@@ -460,30 +449,13 @@ internal fun ConversationRow(
                 .background(
                     run {
                         /*
-                         * 玻璃模式下列表项也要透 —— 侧栏背景半透明、条目却是
-                         * 实心白卡片，看起来像一摞贴纸浮在玻璃上。
-                         *
-                         * 当前会话（capsuleSelected）保留更高的下限（0.55）：
-                         * 它是选中态，需要比其它条目更明确。
+                         * 普通行不画底，跟着抽屉走（否则半透明叠半透明，越叠越实）；
+                         * 当前 / 选中靠选中色区分。选中色本身已是「主色 × alpha」，玻璃下不再额外处理。
                          */
-                        val glass = com.simplechat.app.ui.theme.LocalChatGlassAlpha.current
-                        if (glass > 0f) {
-                            val base = when {
-                                current -> colors.capsuleSelected
-                                selected -> colors.fieldBackground
-                                else -> colors.card
-                            }
-                            com.simplechat.app.ui.theme.glassTintedSurface(
-                                base,
-                                androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                                glass.coerceAtLeast(0.45f),
-                            )
-                        } else {
-                            when {
-                                current -> colors.capsuleSelected
-                                selected -> colors.fieldBackground
-                                else -> colors.card
-                            }
+                        when {
+                            current -> colors.capsuleSelected
+                            selected -> colors.fieldBackground
+                            else -> androidx.compose.ui.graphics.Color.Transparent
                         }
                     },
                 )

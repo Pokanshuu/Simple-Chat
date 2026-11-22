@@ -22,14 +22,21 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.simplechat.app.data.AppLanguage
 import com.simplechat.app.data.LocaleHelper
+import com.simplechat.app.data.StoredSettings
 import com.simplechat.app.ui.RootScreen
 import com.simplechat.app.ui.common.LocalUseSimpleCatIcon
 import com.simplechat.app.ui.theme.AccentColor
 import com.simplechat.app.ui.theme.ApplySystemBarAppearance
 import com.simplechat.app.ui.theme.LocalAssistantFontFamily
 import com.simplechat.app.ui.theme.LocalUserFontFamily
-import com.simplechat.app.ui.theme.LocalChatGlassAlpha
+import com.simplechat.app.ui.theme.LocalFloatingBaseOpacity
+import com.simplechat.app.data.ControlEffects
+import com.simplechat.app.ui.theme.LocalAcrylicEnabled
+import com.simplechat.app.ui.theme.LocalControlEffects
+import com.simplechat.app.ui.theme.LocalPanelAccentOpacity
+import com.simplechat.app.data.MaxPanelAccentOpacity
 import com.simplechat.app.ui.theme.LocalWallpaper
+import com.simplechat.app.ui.theme.MenuBackdropHost
 import com.simplechat.app.ui.theme.WallpaperState
 import com.simplechat.app.ui.theme.SimpleChatTheme
 import com.simplechat.app.ui.theme.fontFamilyOf
@@ -138,7 +145,7 @@ class MainActivity : ComponentActivity() {
             ) {
                 WallpaperState(
                     file = current?.wallpaperPath?.takeIf { it.isNotBlank() }
-                        ?.let { com.simplechat.app.data.WallpaperFiles.fileOf(this@MainActivity) },
+                        ?.let { com.simplechat.app.data.WallpaperFiles.fileOf(this@MainActivity, it) },
                     opacity = current?.wallpaperOpacity ?: 0.35f,
                     blur = current?.wallpaperBlur ?: 0f,
                     brightness = current?.wallpaperBrightness ?: 1f,
@@ -165,9 +172,16 @@ class MainActivity : ComponentActivity() {
                     LocalUserFontFamily provides userFont,
                     LocalAssistantFontFamily provides assistantFont,
                     LocalWallpaper provides wallpaper,
-                    LocalChatGlassAlpha provides if (current?.wallpaperGlassPanel == true) (current.wallpaperPanelAlpha.coerceIn(0.3f, 0.95f)) else 0f,
+                    LocalAcrylicEnabled provides (current?.acrylicEnabled == true),
+                    LocalControlEffects provides (current?.controlEffects ?: ControlEffects()),
+                    com.simplechat.app.ui.theme.LocalFloatingGlass provides (current?.floatingGlass ?: 0f),
+                    LocalPanelAccentOpacity provides (
+                        if (current?.panelAccentEnabled == true) current.panelAccentOpacity.coerceIn(0f, MaxPanelAccentOpacity)
+                        else 0f
+                    ),
+                    LocalFloatingBaseOpacity provides (current?.wallpaperPanelAlpha ?: StoredSettings().wallpaperPanelAlpha),
                 ) {
-                    RootScreen()
+                    MenuBackdropHost { RootScreen() }
                 }
             }
         }

@@ -627,6 +627,8 @@ fun AttachmentViewerDialog(
     initial: Attachment,
     onDismiss: () -> Unit,
     initialIndex: Int? = null,
+    /** 非空 = 还没发出去的附件，顶栏显示「裁剪」（docs/32 §32.6.5）。 */
+    onCrop: ((Attachment) -> Unit)? = null,
 ) {
     val density = LocalDensity.current
     val context = LocalContext.current
@@ -831,6 +833,21 @@ fun AttachmentViewerDialog(
                     )
                     Spacer(Modifier.size(12.dp))
                 }
+                if (onCrop != null) {
+                    Box(
+                        modifier = Modifier
+                            .clip(com.simplechat.app.ui.common.PillShape)
+                            .background(ViewerText.copy(alpha = 0.14f))
+                            .clickable { onCrop(current) }
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.crop_attachment),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = ViewerText,
+                        )
+                    }
+                }
             }
 
             // ── 底栏：文件名 · 尺寸 · 大小 ─────────────────
@@ -861,4 +878,4 @@ private val ViewerBackground = Color(0xF2000000)
 private val ViewerText = Color(0xFFEDEDED)
 
 /** 次要文字（尺寸、大小）。 */
-private val ViewerTextDim = Color(0xFF9E9E9E)
+private val ViewerTextDim = ViewerText.copy(alpha = 0.62f)

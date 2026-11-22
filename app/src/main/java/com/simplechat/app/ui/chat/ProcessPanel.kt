@@ -33,6 +33,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
@@ -156,44 +160,42 @@ internal fun TailContent(reasoning: String, gutter: Boolean = false) {
             .heightIn(max = TailHeight)
             .clipToBounds(),
     ) {
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .wrapContentHeight(align = Alignment.Bottom, unbounded = true)
-                .fillMaxWidth()
-                .onSizeChanged { contentPx = it.height }
-                // 左侧竖线用绘制实现：内容高度是动态的，用 fillMaxHeight 会拿不到约束
-                .drawBehind {
-                    if (gutter) return@drawBehind
-                    val barWidth = 3.dp.toPx()
-                    drawRoundRect(
-                        color = colors.processBar,
-                        size = Size(barWidth, size.height),
-                        cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f),
-                    )
-                }
-                .padding(start = if (gutter) ThinkingContentInset else 15.dp),
+        // Keep the fade inside the bounded viewport, below the timeline markers.
+        Box(
+            modifier = if (!overflowing) Modifier else Modifier
+                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                .drawWithCache {
+                    val fade = Brush.verticalGradient(listOf(Color.Transparent, Color.Black), endY = 22.dp.toPx())
+                    onDrawWithContent {
+                        drawContent()
+                        drawRect(fade, blendMode = BlendMode.DstIn)
+                    }
+                },
         ) {
-            Text(
-                text = tail,
-                style = ProcessTextStyle,
-                color = colors.processText,
-            )
-        }
-
-        // 顶部渐隐：仅在内容溢出被裁切时出现，暗示上方还有内容
-        if (overflowing) {
-            Box(
+            Column(
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
+                    .align(Alignment.BottomStart)
+                    .wrapContentHeight(align = Alignment.Bottom, unbounded = true)
                     .fillMaxWidth()
-                    .height(22.dp)
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(colors.pageBackground, Color.Transparent),
-                        ),
-                    ),
-            )
+                    .onSizeChanged { contentPx = it.height }
+                    // 左侧竖线用绘制实现：内容高度是动态的，用 fillMaxHeight 会拿不到约束
+                    .drawBehind {
+                        if (gutter) return@drawBehind
+                        val barWidth = 3.dp.toPx()
+                        drawRoundRect(
+                            color = colors.processBar,
+                            size = Size(barWidth, size.height),
+                            cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f),
+                        )
+                    }
+                    .padding(start = if (gutter) ThinkingContentInset else 15.dp),
+            ) {
+                Text(
+                    text = tail,
+                    style = ProcessTextStyle,
+                    color = colors.processText,
+                )
+            }
         }
 
         /*

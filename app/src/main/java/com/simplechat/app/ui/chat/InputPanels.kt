@@ -1,5 +1,7 @@
 package com.simplechat.app.ui.chat
 
+import com.simplechat.app.ui.theme.floatingGlassBackground
+import com.simplechat.app.ui.theme.GlassForeground
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -31,6 +33,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import com.simplechat.app.data.InterfaceControl
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -63,6 +66,7 @@ import com.simplechat.app.data.Pricing
 import com.simplechat.app.ui.common.AppSlider
 import com.simplechat.app.ui.common.AppSwitch
 import com.simplechat.app.ui.common.CapsuleButton
+import com.simplechat.app.ui.common.LoadingIndicator
 import com.simplechat.app.ui.common.PillShape
 import com.simplechat.app.ui.common.SegmentedSwitch
 import com.simplechat.app.ui.common.SoftShape
@@ -76,7 +80,6 @@ fun InputPanel(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val colors = LocalChatColors.current
     val shape = ContainerShape
 
     // 面板自己的投影也做淡入，和输入栏投影的淡出对得上
@@ -92,40 +95,30 @@ fun InputPanel(
         exit = shrinkVertically() + fadeOut(),
         modifier = modifier,
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .layeredShadow(
-                    shape = shape,
-                    elevation = elevation,
-                    ambient = AppShadow.PanelAmbient,
-                    spot = AppShadow.PanelSpot,
-                    contactElevation = elevation / 4,
-                    contactColor = AppShadow.PanelContactColor,
-                )
-                .clip(shape)
-                .background(
-                    // 玻璃模式：面板半透明，透出壁纸；下限 0.55 —— 面板里有列表和按钮，
-                    // 再透下去文字就不够清楚了
-                    com.simplechat.app.ui.theme.LocalChatGlassAlpha.current.let { glass ->
-                        if (glass > 0f) {
-                            com.simplechat.app.ui.theme.glassTintedSurface(
-                                colors.card,
-                                androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                                glass.coerceAtLeast(0.55f),
-                            )
-                        } else {
-                            colors.card
-                        }
-                    },
-                )
-                .border(1.dp, colors.outline, shape)
-                .heightIn(max = 360.dp)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            content = content,
-        )
+        GlassForeground(InterfaceControl.INPUT_PANEL) {
+            val colors = LocalChatColors.current
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .layeredShadow(
+                        shape = shape,
+                        elevation = elevation,
+                        ambient = AppShadow.PanelAmbient,
+                        spot = AppShadow.PanelSpot,
+                        contactElevation = elevation / 4,
+                        contactColor = AppShadow.PanelContactColor,
+                    )
+                    .clip(shape)
+                    // 悬浮玻璃（docs/32 §32.3.3），与输入栏同一个值、同一套下限
+                    .floatingGlassBackground(colors.card, InterfaceControl.INPUT_PANEL)
+                    .border(1.dp, colors.outline, shape)
+                    .heightIn(max = 360.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+                content = content,
+            )
+        }
     }
 }
 
@@ -649,7 +642,7 @@ internal fun CompactionSection(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                androidx.compose.material3.CircularProgressIndicator(
+                LoadingIndicator(
                     modifier = Modifier.size(18.dp),
                     strokeWidth = 2.dp,
                 )
@@ -895,6 +888,7 @@ fun ConversationSettingsPanelContent(
     onTitleChange: ((String) -> Unit)?,
     modifier: Modifier = Modifier,
     /** 有会话可导出时为非空；未落库的新对话传 null。 */
+    onWallpaperClick: (() -> Unit)? = null,
     onExportMarkdown: (() -> Unit)? = null,
     onExportJson: (() -> Unit)? = null,
     exportHint: String? = null,
@@ -1126,6 +1120,24 @@ fun ConversationSettingsPanelContent(
             disabledHint = stringResource(if (officialPro) R.string.pro_top_p_hint else R.string.input_param_top_p_disabled),
             onValueChange = { onSettingsChange(settings.copy(topP = it)) },
         )
+
+        Spacer(Modifier.size(16.dp))
+        PanelDivider()
+        Spacer(Modifier.size(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text(stringResource(R.string.input_conversation_wallpaper), style = MaterialTheme.typography.titleSmall)
+                Text(
+                    stringResource(if (onWallpaperClick == null) R.string.input_conversation_wallpaper_unsaved else R.string.input_conversation_wallpaper_hint),
+                    style = MaterialTheme.typography.labelSmall, color = colors.placeholder,
+                )
+            }
+            if (onWallpaperClick != null) CapsuleButton(
+                text = stringResource(R.string.input_conversation_wallpaper_edit),
+                leadingIcon = AppIcons.Image,
+                onClick = onWallpaperClick,
+            )
+        }
 
         // ── 导出当前对话 ──────────────────────────────────
         Spacer(Modifier.size(16.dp))

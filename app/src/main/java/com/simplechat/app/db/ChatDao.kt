@@ -107,6 +107,18 @@ interface ConversationDao {
     @Query("UPDATE conversations SET title = :title, updatedAt = :now WHERE id = :id")
     suspend fun rename(id: String, title: String, now: Long)
 
+    @Query("SELECT wallpaperOverride FROM conversations WHERE id = :id")
+    fun observeWallpaper(id: String): Flow<String?>
+
+    @Query("UPDATE conversations SET wallpaperOverride = :value WHERE id = :id AND deletedAt IS NULL")
+    suspend fun setWallpaper(id: String, value: String?): Int
+
+    @Query("SELECT wallpaperOverride FROM conversations WHERE id IN (:ids) AND wallpaperOverride IS NOT NULL")
+    suspend fun wallpaperOverrides(ids: List<String>): List<String>
+
+    @Query("SELECT wallpaperOverride FROM conversations WHERE wallpaperOverride IS NOT NULL")
+    suspend fun allWallpaperOverrides(): List<String>
+
     @Query("UPDATE conversations SET pinned = :pinned, pinnedAt = :pinnedAt WHERE id = :id")
     suspend fun setPinned(id: String, pinned: Boolean, pinnedAt: Long?)
 

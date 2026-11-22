@@ -26,7 +26,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     // v8：新增 attachment_refs（落盘图片的引用，删会话时据此清理文件）
     // v9：附件可被多个会话引用（分叉后删除原会话不能丢图）
     // v10：消息记录 prompt 缓存命中量（用量与余额页按命中/未命中分别计价）
-    version = 14,
+    version = 15,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -173,6 +173,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE conversations ADD COLUMN wallpaperOverride TEXT")
+            }
+        }
+
         private val MIGRATION_13_14 = object : Migration(13, 14) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 // 回收站：只加列，老数据为 NULL（= 不在回收站）
@@ -206,6 +212,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_11_12,
                     MIGRATION_12_13,
                     MIGRATION_13_14,
+                    MIGRATION_14_15,
                 )
                 .build()
     }
