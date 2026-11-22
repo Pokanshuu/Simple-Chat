@@ -39,7 +39,7 @@ object Diagnostics {
             if (lines.size >= CAPACITY) lines.removeFirst()
             lines.addLast(line)
         }
-        if (MIRROR_TO_LOGCAT) Log.i("SimpleChat/$tag", redact(message))
+        if (MIRROR_TO_LOGCAT) runCatching { Log.i("SimpleChat/$tag", redact(message)) }
     }
 
     fun e(tag: String, message: String, error: Throwable? = null) {

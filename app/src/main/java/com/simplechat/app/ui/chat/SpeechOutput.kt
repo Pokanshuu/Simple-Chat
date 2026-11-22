@@ -99,6 +99,7 @@ class SpeechOutputController(private val context: Context) {
 
     /** 第三方通道的播放器（wav/mp3 都交给 MediaPlayer 解）。 */
     private var mediaPlayer: android.media.MediaPlayer? = null
+    private var thirdPartyAudioFile: java.io.File? = null
     private var thirdPartyJob: Job? = null
 
     fun updateThirdParty(
@@ -506,43 +507,47 @@ class SpeechOutputController(private val context: Context) {
                 }
                 is com.simplechat.app.data.VoiceTtsClient.Result.Ok -> {
                     val file = runCatching {
-                        java.io.File(context.cacheDir, "tts-${java.util.UUID.randomUUID()}.wav").apply {
-                            writeBytes(result.bytes)
-                        }
+                        java.io.File(context.cacheDir, "tts-${java.util.UUID.randomUUID()}.wav")
                     }.getOrNull()
                     if (file == null) {
                         speakingId = null
                         error = Res.get(R.string.tts_failed)
                         return@launch
                     }
+                    thirdPartyAudioFile = file
                     runCatching {
+                        file.writeBytes(result.bytes)
                         val player = android.media.MediaPlayer()
+                        mediaPlayer = player
                         player.setDataSource(file.absolutePath)
                         player.setOnCompletionListener {
-                            if (generation == playbackGeneration) speakingId = null
-                            runCatching { player.release() }
-                            runCatching { file.delete() }
+                            if (generation == playbackGeneration) {
+                                speakingId = null
+                                releaseThirdPartyAudio()
+                            }
                         }
                         player.setOnErrorListener { _, _, _ ->
                             if (generation == playbackGeneration) {
                                 speakingId = null
                                 error = Res.get(R.string.tts_failed)
+                                releaseThirdPartyAudio()
                             }
-                            runCatching { player.release() }
-                            runCatching { file.delete() }
                             true
                         }
-                        player.prepare()
-                        player.start()
-                        mediaPlayer = player
-                        com.simplechat.app.data.Diagnostics.log(
-                            "TTS",
-                            "playback start bytes=${result.bytes.size}",
-                        )
+                        player.setOnPreparedListener {
+                            if (generation == playbackGeneration && mediaPlayer === player) {
+                                runCatching { player.start() }.onFailure {
+                                    speakingId = null
+                                    error = Res.get(R.string.tts_failed)
+                                    releaseThirdPartyAudio()
+                                }
+                            }
+                        }
+                        player.prepareAsync()
                     }.onFailure {
                         speakingId = null
                         error = Res.get(R.string.tts_failed)
-                        runCatching { file.delete() }
+                        releaseThirdPartyAudio()
                     }
                 }
             }
@@ -699,13 +704,18 @@ class SpeechOutputController(private val context: Context) {
         officialJob = null
         thirdPartyJob?.cancel()
         thirdPartyJob = null
-        runCatching { mediaPlayer?.stop() }
-        runCatching { mediaPlayer?.release() }
-        mediaPlayer = null
+        releaseThirdPartyAudio()
         runCatching { audioTrack?.pause() }
         runCatching { audioTrack?.flush() }
         runCatching { engine?.stop() }
         if (clearSpeaking) speakingId = null
+    }
+
+    private fun releaseThirdPartyAudio() {
+        runCatching { mediaPlayer?.release() }
+        mediaPlayer = null
+        runCatching { thirdPartyAudioFile?.delete() }
+        thirdPartyAudioFile = null
     }
 
     fun consumeError() {

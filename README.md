@@ -9,7 +9,7 @@
 
 查看 [v1.2.4 发布说明](release-notes/RELEASE_NOTES_v1.2.4.md)，了解会话内生图、对话记忆和图标切换。
 
-最新预发布：[v1.2.5-beta.3](release-notes/RELEASE_NOTES_v1.2.5-beta.3.md)。
+最新预发布：[v1.2.5-beta.4](release-notes/RELEASE_NOTES_v1.2.5-beta.4.md)。
 
 ## 简介
 

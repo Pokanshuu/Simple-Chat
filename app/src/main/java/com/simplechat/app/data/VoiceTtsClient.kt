@@ -1,13 +1,21 @@
 package com.simplechat.app.data
 
 import java.util.concurrent.TimeUnit
+import java.io.IOException
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Request
+import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
@@ -82,14 +90,16 @@ object VoiceTtsClient {
                 "DASHSCOPE_TTS" -> dashScope(config, endpoint, key, text, voiceName)
                 else -> openAiAudio(config, endpoint, key, text, voiceName)
             }
-        } catch (t: Throwable) {
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (t: Exception) {
             Diagnostics.log("TTS", "exception ${t::class.simpleName}: ${t.message}")
             Result.Failed(t.message ?: t::class.simpleName ?: "合成失败")
         }
     }
 
     /** 千问 MaaS：先拿签名 URL，再下载 wav。 */
-    private fun dashScope(
+    private suspend fun dashScope(
         config: VoiceApiConfig,
         endpoint: String,
         key: String,
@@ -115,29 +125,28 @@ object VoiceTtsClient {
             .header("Content-Type", "application/json")
             .post(payload.toRequestBody("application/json".toMediaType()))
             .build()
-        client.newCall(request).execute().use { response ->
+        val audioUrl = request.readResponse { response ->
             val body = response.body.string()
             if (!response.isSuccessful) {
                 val parsed = runCatching { json.decodeFromString<DashScopeResponse>(body) }.getOrNull()
                 val reason = humanize(parsed?.message ?: parsed?.code ?: "http ${response.code}")
                 Diagnostics.log("TTS", "dashscope failed http=${response.code} reason=$reason")
-                return Result.Failed(reason)
+                throw IOException(reason)
             }
             val parsed = runCatching { json.decodeFromString<DashScopeResponse>(body) }.getOrNull()
             /*
              * 服务端给的音频地址是 **http**（阿里云 OSS）；Android 9+ 默认禁明文，
              * 直接下载会抛 UnknownServiceException 而不是"没声音"。见 [secureUrl]。
              */
-            val audioUrl = parsed?.output?.audio?.url
-                ?: return Result.Failed("响应里没有音频地址")
-            val bytes = download(audioUrl) ?: return Result.Failed("音频下载失败")
-            Diagnostics.log("TTS", "dashscope ok bytes=${bytes.size} model=${config.model}")
-            return Result.Ok(bytes)
+            parsed?.output?.audio?.url ?: throw IOException("响应里没有音频地址")
         }
+        val bytes = download(audioUrl) ?: return Result.Failed("音频下载失败")
+        Diagnostics.log("TTS", "dashscope ok bytes=${bytes.size} model=${config.model}")
+        return Result.Ok(bytes)
     }
 
     /** OpenAI 兼容：响应体直接是音频二进制。 */
-    private fun openAiAudio(
+    private suspend fun openAiAudio(
         config: VoiceApiConfig,
         endpoint: String,
         key: String,
@@ -159,15 +168,15 @@ object VoiceTtsClient {
             .header("Content-Type", "application/json")
             .post(payload.toRequestBody("application/json".toMediaType()))
             .build()
-        client.newCall(request).execute().use { response ->
+        return request.readResponse { response ->
             if (!response.isSuccessful) {
                 val text = response.body.string().take(200)
-                return Result.Failed(humanize(text.ifBlank { "http ${response.code}" }))
+                return@readResponse Result.Failed(humanize(text.ifBlank { "http ${response.code}" }))
             }
             val bytes = response.body.bytes()
-            if (bytes.isEmpty()) return Result.Failed("服务端返回了空音频")
+            if (bytes.isEmpty()) return@readResponse Result.Failed("服务端返回了空音频")
             Diagnostics.log("TTS", "openai ok bytes=${bytes.size}")
-            return Result.Ok(bytes)
+            Result.Ok(bytes)
         }
     }
 
@@ -183,15 +192,36 @@ object VoiceTtsClient {
     private fun secureUrl(url: String): String =
         if (url.startsWith("http://")) "https://" + url.removePrefix("http://") else url
 
-    private fun download(url: String): ByteArray? = try {
-        client.newCall(Request.Builder().url(secureUrl(url)).get().build()).execute().use { response ->
+    private suspend fun download(url: String): ByteArray? = try {
+        Request.Builder().url(secureUrl(url)).get().build().readResponse { response ->
             Diagnostics.log("TTS", "download http=${response.code}")
-            if (response.isSuccessful) response.body.bytes() else null
+            if (response.isSuccessful) response.body.bytes().takeIf { it.isNotEmpty() } else null
         }
-    } catch (t: Throwable) {
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (t: Exception) {
         Diagnostics.log("TTS", "download failed ${t::class.simpleName}: ${t.message}")
         null
     }
+
+    private suspend fun <T> Request.readResponse(read: (Response) -> T): T =
+        suspendCancellableCoroutine { continuation ->
+            val call = client.newCall(this)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) = continuation.resumeWithException(e)
+
+                override fun onResponse(call: Call, response: Response) {
+                    val value = try {
+                        response.use(read)
+                    } catch (error: Exception) {
+                        continuation.resumeWithException(error)
+                        return
+                    }
+                    continuation.resume(value)
+                }
+            })
+        }
 
     /**
      * 服务端错误里有两句特别难懂，转成人话：
