@@ -9,6 +9,8 @@
 
 See the [v1.2.4 release notes (Chinese)](release-notes/RELEASE_NOTES_v1.2.4.md) for image generation, per-conversation memory, and icon switching.
 
+Latest pre-release: [v1.2.5-beta.2 release notes (Chinese)](release-notes/RELEASE_NOTES_v1.2.5-beta.2.md).
+
 ## Introduction
 
 An Android AI chat client aimed at long-form, continuous creative writing. It talks to any OpenAI-compatible endpoint, stores everything locally, and has no accounts and no cloud sync.

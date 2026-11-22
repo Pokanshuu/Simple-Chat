@@ -7,7 +7,7 @@
 
 ## 文件地图
 
-正式版的功能、升级和验收记录见 [v1.2.4 发布说明](../release-notes/RELEASE_NOTES_v1.2.4.md)。
+最新预发布功能见 [v1.2.5-beta.2 发布说明](../release-notes/RELEASE_NOTES_v1.2.5-beta.2.md)；正式版说明见 [v1.2.4](../release-notes/RELEASE_NOTES_v1.2.4.md)。
 
 欢迎引导及思考强度见[使用说明](25-首次启动引导与思考强度.md)。
 
@@ -61,6 +61,7 @@ v1.2.2 正式版的变更、验证与发布记录见 [v1.2.2 正式版发布记�
 
 ## 发布与验收记录
 
+- [v1.2.5-beta.2 预发布说明](../release-notes/RELEASE_NOTES_v1.2.5-beta.2.md)
 - [DeepSeek 双端点长上下文与工具联网回归](30-DeepSeek端口切换长上下文实测.md)
 
 - beta.1 预发布：[v1.2.4-beta.1 发布说明](../release-notes/RELEASE_NOTES_v1.2.4-beta.1.md)

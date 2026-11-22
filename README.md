@@ -9,6 +9,8 @@
 
 查看 [v1.2.4 发布说明](release-notes/RELEASE_NOTES_v1.2.4.md)，了解会话内生图、对话记忆和图标切换。
 
+最新预发布：[v1.2.5-beta.2](release-notes/RELEASE_NOTES_v1.2.5-beta.2.md)。
+
 ## 简介
 
 面向长文本连续创作的 Android 端 AI 对话客户端。接入任意 OpenAI 兼容端点，历史记录本地存储，无账号体系与云同步。启用文件 API 后，上传文件同时保存在所配置的服务端。
