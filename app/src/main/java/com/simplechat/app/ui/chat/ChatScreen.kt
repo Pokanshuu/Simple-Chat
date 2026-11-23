@@ -27,6 +27,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -142,6 +143,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 
 /** 输入栏下方最多同时展开一个面板。 */
 private enum class InputPanelState { NONE, THINKING, STATS, SETTINGS, ATTACH, IMAGE_MODELS, IMAGE_RATIOS }
+
+private data class MessagePathAnchor(val messageId: String, val endY: Int)
 
 /** 切换会话的淡入时长。**快** —— 慢一点就从"过渡"变成"等待"了。 */
 private const val SwitchFadeInMs = 160
@@ -720,22 +723,19 @@ fun ChatScreen(
 
     val density = LocalDensity.current
     val inputAreaHeight = remember { mutableStateOf(0) }
-    val messagePadding = remember(density, inputAreaHeight) {
+    val anchorTopSpace = remember(listState) { mutableStateOf(0) }
+    val anchorBottomSpace = remember(listState) { mutableStateOf(0) }
+    val messagePadding = remember(density, inputAreaHeight, anchorTopSpace, anchorBottomSpace) {
         object : PaddingValues by PaddingValues(horizontal = 16.dp, vertical = 12.dp) {
-            override fun calculateBottomPadding() = with(density) { inputAreaHeight.value.toDp() } + 12.dp
+            override fun calculateTopPadding() = with(density) { anchorTopSpace.value.toDp() } + 12.dp
+            override fun calculateBottomPadding() = with(density) { (inputAreaHeight.value + anchorBottomSpace.value).toDp() } + 12.dp
         }
     }
 
     /** 正在切换会话。此时列表被整份替换，禁止切换逻辑之外的打扰（见下方切换 LaunchedEffect）。 */
     var switchingConversation by remember { mutableStateOf(false) }
 
-    /**
-     * 路径重建后要保住的位置：`(目标下标, 目标的末尾在屏上的 y, 目标的旧高度)`。
-     *
-     * "末尾"= 操作栏（`‹ n/m › 📋 🔄 ✏️ 🗑`）所在处 —— 用户对"在底部"的定义。
-     * 摆回去见下方那个 `SideEffect` 与紧随其后的修正 effect。
-     */
-    var pathAnchor by remember { mutableStateOf<Triple<Int, Int, Int>?>(null) }
+    var pathAnchor by remember(listState) { mutableStateOf<MessagePathAnchor?>(null) }
 
     /** 换会话期间列表还没就位 —— 用来决定要不要显示转圈。 */
     var loadingConversation by remember { mutableStateOf(false) }
@@ -793,6 +793,8 @@ fun ChatScreen(
     fun resumeFollowing() {
         vm.dismissSearch()
         searchPlacementReset++
+        anchorTopSpace.value = 0
+        anchorBottomSpace.value = 0
         detached = false
     }
     SideEffect { if (vm.searchTarget != null) detached = true }
@@ -892,88 +894,42 @@ fun ChatScreen(
         listState.scrollToBottom()
     }
 
-    /*
-     * 路径重建后**停在原处**。
-     *
-     * 锚是**正序下标**（位置，不是身份）：重建后那条消息（或顶替它的那条）仍在
-     * 同一个位置上 —— 切版本换的是同父的兄弟、重新生成加的是兄弟、编辑重发同理、
-     * 删除则由下面那条顶上，深度都不变，它前面的那些一条没动。
-     * 所以只需用**新的** size 折算成倒序下标。
-     *
-     * ⚠️ **必须和重建落在同一帧。** 用 `SideEffect`（组合之后、布局之前跑）
-     * + `requestScrollToItem`（同一次测量里生效），而不是
-     * `LaunchedEffect` + `scrollToItem`（要等下一帧）。这与键盘补偿是同一个坑，
-     * 解法也一样（见上方那段 SideEffect 的说明）。
-     *
-     * 晚一帧为什么会"乱飞"：重建后条数往往变小（切版本会把旧分支的下游整段丢掉），
-     * 而 LazyList 记的是**旧的倒序下标** —— 条数一变，那个下标已经不是这条消息了
-     * （被切的那条会整体前移）。于是先按错的下标画出一帧、下一帧才被拉回来，
-     * 看起来就是"窜一下 / 乱飞"。同一帧摆回去，这一帧压根不会被画出来。
-     */
+    // Resolve the replacement by key after publishing the path. A deleted tail can leave no row to anchor.
     val pathRev = vm.pathRevision
-    val appliedPathRev = remember { intArrayOf(vm.pathRevision) }
+    val appliedPathRev = remember(listState) { intArrayOf(pathRev) }
     SideEffect {
         if (pathRev == appliedPathRev[0]) return@SideEffect
         appliedPathRev[0] = pathRev
-        val anchor = pathAnchor
-        if (anchor == null || vm.messages.isEmpty()) return@SideEffect
-        val (target, endY, oldHeight) = anchor
-        /*
-         * **同一帧**先摆一次：用**旧高度**算偏移，让目标的末尾回到它原来的 y。
-         *
-         * ⚠️ 只在**目标顶边本来就在视口之上**时才能这么算：
-         * `oldHeight - endY` 正是"顶边在视口上方多少"。目标比视口**短**时
-         * （顶边本来就在屏上）这个值是**负**的 —— 而 `requestScrollToItem`
-         * 只能表达"顶边在视口上方"，表达不了"在视口下方"。硬夹成 0 会退化成
-         * "把顶边贴到视口顶边" = 往上跳。那种情况交给下面的相对修正。
-         */
-        val safe = target.coerceIn(0, vm.messages.size - 1)
-        /*
-         * ★ 第一帧只求**不越界**：把目标的顶边贴到视口顶边。
-         *
-         * 不能用"旧高度"去估偏移 —— 新版本比旧的短很多时，那个偏移会让目标
-         * **整个跑到视口之上**，LazyList 只能钳到后面的条目上
-         * （实测：请求 (7, 23658) 之后视口落到 item 8；`n` 还从 8 变 10 ——
-         * 切到的兄弟版本自带下游）。
-         *
-         * 精确位置交给下面的修正 —— 那时才能读到目标的**新高度**。
-         */
-        listState.requestScrollToItem(safe, 0)
+        val anchor = pathAnchor ?: return@SideEffect
+        val index = vm.messages.indexOfFirst { it.id == anchor.messageId }
+        if (index >= 0) listState.requestScrollToItem(index)
     }
-
-    /*
-     * `pathRebuilding` 的复位单独留在这里，而**不是**放进上面的 SideEffect。
-     *
-     * 上面那个"条数变化就跟到底部"的 effect 声明在前、同一帧先跑，
-     * 它要靠 `pathRebuilding == true` 来跳过跟底。`SideEffect` 在应用阶段、
-     * `LaunchedEffect` 在下一帧 —— 若在 SideEffect 里就把标记清掉，
-     * 等 size effect 醒来时它已经是 false，于是又跟了一次底。
-     */
-    LaunchedEffect(vm.pathRevision) {
-        pathRebuilding = false
-        /*
-         * ★ 路径重建的**精确修正**：新高度要等重建后那一帧的布局才知道，
-         * 而 `SideEffect` 在布局**之前**跑 —— 同一帧只能用旧高度估。
-         * 这里拿到新高度后把目标的末尾摆回它原来的 y。跑两帧，第二帧兜底。
-         */
-        val anchor = pathAnchor ?: return@LaunchedEffect
-        val (target, endY, _) = anchor
-        repeat(3) {
-            withFrameNanos { }
-            val info = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == target }
-            if (info == null) {
-                /*
-                 * ★ 目标**完全不在视口里** —— 上一版就卡在这：第一帧的偏移越界，
-                 * 视口落到了后面的条目上，修正从"可见条目"里找不到目标，
-                 * 直接放弃，于是永远停在错的位置。
-                 *
-                 * 先把它拉进视口（顶边贴视口顶边），下一轮就能读到它的新高度。
-                 */
-                listState.scrollToItem(target, 0)
-                return@repeat
+    LaunchedEffect(listState, pathRev) {
+        val anchor = pathAnchor
+        try {
+            if (anchor != null) repeat(5) {
+                withFrameNanos { }
+                if (pathAnchor !== anchor) return@LaunchedEffect
+                val index = vm.messages.indexOfFirst { it.id == anchor.messageId }
+                if (index < 0) return@LaunchedEffect
+                val item = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == anchor.messageId }
+                if (item == null) {
+                    listState.scrollToItem(index)
+                } else {
+                    // Use a signed delta so short replacements can sit below the viewport top.
+                    val delta = item.offset + item.size + listState.layoutInfo.beforeContentPadding - anchor.endY
+                    if (kotlin.math.abs(delta) <= 1) return@LaunchedEffect
+                    val remaining = delta - listState.scrollBy(delta.toFloat()).toInt()
+                    // With a shorter branch there may be too little content to reach the old screen position.
+                    if (remaining > 1) anchorBottomSpace.value += remaining
+                    if (remaining < -1) anchorTopSpace.value -= remaining
+                }
             }
-            val offset = (info.size - endY).coerceAtLeast(0)
-            listState.scrollToItem(target, offset)
+        } finally {
+            if (pathAnchor === anchor) {
+                pathAnchor = null
+                pathRebuilding = false
+            }
         }
     }
 
@@ -1080,53 +1036,19 @@ fun ChatScreen(
         keyboard?.hide()
     }
 
-    /**
-     * 记下**路径重建后要回到的位置**。只给「切版本 / 删除」用。
-     *
-     * 锚的是"**目标的下一条**"，目的是让目标的**操作栏（条目末尾）留在屏上** ——
-     * 见函数体里的说明。
-     *
-     * 其余三个动作（重新生成 / 重试 / 编辑并重发）**一律不锚**：
-     * 它们把这条换成一条**空的**流式回复，高度会先塌到十几像素
-     * （实测 18355px → 12px），"原来的阅读位置"在新内容里根本不存在 ——
-     * 硬锚只会把视口钳到内容末尾（往上跳）。而且用户按它们就是想看新回复，
-     * 跟到底部才对。见各自调用点的说明。
-     */
-    fun anchorOnPathChange(message: UiMessage) {
-        /*
-         * ★ **锚点 = 发生操作那个操作栏在屏上的位置。**
-         *
-         * 用户对"在底部"的定义就是**操作栏可见**，而操作栏
-         * （`‹ n/m › 📋 🔄 ✏️ 🗑`）就在条目**末尾**。所以这里记下
-         * "目标末尾现在在屏上的 y"，重建后摆回原处。
-         *
-         * ⚠️ **不能锚"列表末尾"**：树模型下切到的兄弟版本**可能自己带着下游**
-         * （在那个分支里继续聊过），目标就不一定是最后一条 —— 锚列表末尾会跳到
-         * **对话末尾**，又是"乱跑"。
-         *
-         * ⚠️ **不能锚"目标的下一条"**：下游被丢掉时那条不存在，`coerceIn` 会把
-         * 锚点夹回目标自己 → 视口被摆到目标的**顶边** → 超长消息"乱跑到很上面"。
-         *
-         * 只有"目标的末尾在屏上的 y"这一件事，对上面两种情况都成立。
-         */
-        val target = vm.messages.indexOfFirst { m -> m.id == message.id }
-        val entry = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == target }
-        pathAnchor = if (target >= 0 && entry != null) {
-            Triple(target, entry.offset + entry.size, entry.size)
-        } else {
-            null
+    fun anchorOnPathChange(message: UiMessage, replacementId: String?) {
+        val visibleItems = listState.layoutInfo.visibleItemsInfo
+        val target = visibleItems.firstOrNull { it.key == message.id }
+        val stableNeighbor = visibleItems.lastOrNull { it.index < (target?.index ?: -1) }
+        val topPadding = listState.layoutInfo.beforeContentPadding
+        pathAnchor = when {
+            target != null && replacementId != null -> MessagePathAnchor(replacementId, target.offset + target.size + topPadding)
+            stableNeighbor != null -> MessagePathAnchor(stableNeighbor.key as String, stableNeighbor.offset + stableNeighbor.size + topPadding)
+            else -> null
         }
+        anchorTopSpace.value = 0
+        anchorBottomSpace.value = 0
         pathRebuilding = true
-        /*
-         * ★ **必须摘掉自动跟随**（`detached`）。
-         *
-         * 跟底循环的目标是**列表末尾**。目标不是最后一条时（树模型下切到的
-         * 兄弟版本可能自带下游），两者方向不一致 —— 跟底会把刚钉好的操作栏
-         * 又拽到**对话末尾**。实测现象就是"切中间那条 → 跳到很下面"。
-         *
-         * 最后一条永远暴露不了这个问题（它的末尾就是列表末尾），所以只拿
-         * 最后一条验证会漏掉。回到「回到底部」按钮再点一下即恢复跟随。
-         */
         detached = true
     }
 
@@ -1396,8 +1318,7 @@ fun ChatScreen(
                             onVariantChange = { message, index ->
                                 // 切版本也重建路径（旧分支下游让位）—— 锚住操作栏那一行，
                                 // 换完视口不动，连点 `‹ ›` 才点得准。详见 anchorOnPathChange。
-                                anchorOnPathChange(message)
-                                vm.switchVariant(message, index)
+                                vm.switchVariant(message, index) { anchorOnPathChange(message, it) }
                             },
                             onOpenImage = { message, attachment ->
                                 val imageEntries = vm.messages.flatMap { item ->
@@ -2108,13 +2029,11 @@ fun ChatScreen(
             onDismiss = { deleteTarget = null },
             onConfirm = {
                 deleteTarget = null
-                anchorOnPathChange(target)
-                vm.deleteMessage(target, allVersions = false)
+                vm.deleteMessage(target, allVersions = false) { anchorOnPathChange(target, it) }
             },
             onSecondary = {
                 deleteTarget = null
-                anchorOnPathChange(target)
-                vm.deleteMessage(target, allVersions = true)
+                vm.deleteMessage(target, allVersions = true) { anchorOnPathChange(target, it) }
             },
         )
     }

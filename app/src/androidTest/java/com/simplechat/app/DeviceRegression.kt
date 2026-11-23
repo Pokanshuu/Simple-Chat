@@ -76,7 +76,10 @@ class DeviceRegression : Instrumentation() {
         try {
             runBlocking {
                 val source = realArchive
-                if (deletionTests) deletionReopen()
+                if (deletionTests) {
+                    deletionReopen()
+                    MessageShareRegression.run(this@DeviceRegression, ::passed, deletionOnly = true)
+                }
                 else if (memoryTests) CrossChatMemoryRegression.run(this@DeviceRegression, ::passed)
                 else if (streamConcurrencyTests) StreamConcurrencyRegression.run(this@DeviceRegression, ::passed)
                 else if (historyScrollTests) HistoryScrollRegression.run(this@DeviceRegression, ::passed)
@@ -138,8 +141,11 @@ class DeviceRegression : Instrumentation() {
             db.close()
             db = AppDatabase.build(targetContext, name)
             repo = ChatRepository(db, targetContext)
-            check(repo.loadActivePath(c).map { it.id } == listOf(q, child, tail))
+            check(repo.loadActivePath(c).map { it.id } == listOf(q, alt, child, tail))
             check(db.messageDao().getLightFor(c).single { it.id == child }.versionGroup == current)
+            check(repo.activateVariantAt(c, alt, 0) == altChild)
+            check(repo.loadActivePath(c).map { it.id } == listOf(q, alt, altChild))
+            check(repo.activateVariantAt(c, alt, 1) == child)
             repo.deleteMessageVersions(c, setOf(alt))
             check(db.messageDao().getLightFor(c).map { it.id }.toSet() == setOf(q, altChild, child, tail))
             repo.deleteMessageVersions(c, setOf(q, child))
@@ -301,12 +307,12 @@ class DeviceRegression : Instrumentation() {
                     val child = repository.addActiveVariant(branchId, branch.id, childRole, "child $number")
                     branch.id to child.id
                 }
-                suspend fun awaitBranch(index: Int, position: Int, count: Int) {
+                suspend fun awaitBranch(index: Int, position: Int, count: Int, child: Int = index) {
                     withTimeout(4_000) {
                         while (!withContext(Dispatchers.Main) {
                             val active = vm.messages.firstOrNull { it.id == branches[index].first }
                             active?.variantIndex == position && active.variantCount == count &&
-                                vm.messages.lastOrNull()?.id == branches[index].second
+                                vm.messages.lastOrNull()?.id == branches[child].second
                         }) delay(20)
                     }
                 }
@@ -318,24 +324,23 @@ class DeviceRegression : Instrumentation() {
                 switchTo(2)
                 awaitBranch(2, 2, 4)
                 withContext(Dispatchers.Main) { vm.deleteMessage(vm.messages.single { it.parentId == parent }, allVersions = false) }
-                suspend fun awaitPromoted(index: Int) = withTimeout(4_000) {
-                    while (!withContext(Dispatchers.Main) { vm.messages.lastOrNull()?.id == branches[index].second && vm.messages.last().parentId == parent }) delay(20)
-                }
-                awaitPromoted(2)
-                switchTo(1)
-                awaitBranch(1, 1, 4)
+                awaitBranch(1, 1, 3, child = 2)
+                switchTo(2)
+                awaitBranch(3, 2, 3)
                 switchTo(0)
-                awaitBranch(0, 0, 4)
+                awaitBranch(0, 0, 3)
                 withContext(Dispatchers.Main) { vm.deleteMessage(vm.messages.single { it.parentId == parent }, allVersions = false) }
-                awaitPromoted(0)
-                switchTo(0)
-                awaitBranch(1, 0, 4)
+                awaitBranch(1, 0, 2, child = 0)
                 switchTo(1)
-                awaitBranch(3, 1, 4)
+                awaitBranch(3, 1, 2)
+                switchTo(0)
+                awaitBranch(1, 0, 2, child = 0)
+                switchTo(1)
+                awaitBranch(3, 1, 2)
                 val hits = db.conversationDao().search("branch-test", includeInactiveBranches = true).first().filter { it.conversation.id == branchId }
                 check(hits.map { it.variantIndex }.sortedBy { it } == listOf(0, 1))
                 val newBranch = repository.addActiveVariant(branchId, parent, role, "new after deletion")
-                check(newBranch.variantIndex == 4 && newBranch.variantCount == 5)
+                check(newBranch.variantIndex == 2 && newBranch.variantCount == 3)
             }
             passed("delete middle and first versions, switch both ways, and retain surviving subtrees and search positions")
             withContext(Dispatchers.Main) { vm.newConversation() }

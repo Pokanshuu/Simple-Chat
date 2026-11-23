@@ -13,6 +13,8 @@ object MessageTree {
         val deletedIds: Set<String>,
         val promoted: List<MessageLight>,
         val activateExisting: Set<String>,
+        val clearActiveChildren: Set<String>,
+        val replacementId: String?,
     )
 
     /** Root-to-target ancestry, including inactive branches. Invalid chains cannot be activated. */
@@ -98,19 +100,29 @@ object MessageTree {
         } else selectedNodes.mapTo(LinkedHashSet()) { it.id }
         val childrenByParent = all.sortedBy { it.variantIndex }.groupBy { it.parentId }
 
+        // Replacing the visible version must keep both its siblings and the current continuation visible.
+        val deletedVersion = selectedNodes.singleOrNull()?.takeIf { !allVersions && it.active }
+        val replacement = deletedVersion?.let { target ->
+            val versions = childrenByParent[target.parentId].orEmpty().filter {
+                it.id !in deletedIds && (it.versionGroup ?: it.parentId) == (target.versionGroup ?: target.parentId)
+            }
+            versions.lastOrNull { it.variantIndex < target.variantIndex } ?: versions.firstOrNull()
+        }
+
         val boundaryByParent = LinkedHashMap<String, MutableList<Pair<MessageLight, Boolean>>>()
         val activeParents = LinkedHashSet<String>()
         val visited = HashSet<String>()
         val roots = all.filter { it.id in deletedIds && it.parentId !in deletedIds }.sortedBy { it.variantIndex }
         roots.forEach { root ->
             if (root.active) activeParents += root.parentId
+            val destination = replacement?.id ?: root.parentId
             val pending = ArrayDeque<Pair<MessageLight, Boolean>>()
             pending.addLast(root to root.active)
             while (pending.isNotEmpty()) {
                 val (node, onPath) = pending.removeLast()
                 if (!visited.add(node.id)) continue
                 if (node.id !in deletedIds) {
-                    boundaryByParent.getOrPut(root.parentId) { mutableListOf() } += node to onPath
+                    boundaryByParent.getOrPut(destination) { mutableListOf() } += node to onPath
                     continue
                 }
                 childrenByParent[node.id].orEmpty().asReversed().forEach { child ->
@@ -121,15 +133,18 @@ object MessageTree {
 
         val promoted = mutableListOf<MessageLight>()
         val activateExisting = mutableSetOf<String>()
-        roots.map { it.parentId }.distinct().forEach { parentId ->
+        val clearActiveChildren = mutableSetOf<String>()
+        replacement?.let { activateExisting += it.id }
+        (roots.map { it.parentId } + boundaryByParent.keys).distinct().forEach { parentId ->
             val candidates = boundaryByParent[parentId].orEmpty()
             val survivingSibling = childrenByParent[parentId].orEmpty().lastOrNull { it.id !in deletedIds }
             val firstIndex = (survivingSibling?.variantIndex ?: -1) + 1
             var activeCandidate = candidates.firstOrNull { it.second }?.first
-            if (parentId in activeParents && activeCandidate == null) {
+            if (parentId in activeParents && activeCandidate == null && replacement == null) {
                 if (survivingSibling != null) activateExisting += survivingSibling.id
                 else activeCandidate = (candidates.firstOrNull { it.first.active } ?: candidates.firstOrNull())?.first
             }
+            if (parentId == replacement?.id && activeCandidate != null) clearActiveChildren += parentId
             candidates.forEachIndexed { index, (message, _) ->
                 promoted += message.copy(
                     parentId = parentId,
@@ -139,7 +154,7 @@ object MessageTree {
                 )
             }
         }
-        return DeletionPlan(deletedIds, promoted, activateExisting)
+        return DeletionPlan(deletedIds, promoted, activateExisting, clearActiveChildren, replacement?.id)
     }
 
     /** 某个父节点下，`variantIndex` 最大的那个兄弟（删除后用来接管 active）。 */

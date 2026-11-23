@@ -193,15 +193,14 @@ class MessageTreeTest {
         )
 
         val plan = MessageTree.deletionPlan(tree, setOf("a1"), allVersions = false)
-        val afterDelete = tree.filterNot { it.id in plan.deletedIds }.map { node ->
-            plan.promoted.firstOrNull { it.id == node.id } ?: node
-        }
+        val afterDelete = applyDeletion(tree, plan)
 
         assertEquals(setOf("a1"), plan.deletedIds)
         assertEquals(listOf("u2"), plan.promoted.map { it.id })
         assertEquals("a1", plan.promoted.single().versionGroup)
-        assertEquals(listOf("u1", "u2", "a2"), MessageTree.activePathIds(afterDelete))
-        assertTrue(afterDelete.any { it.id == "u2b" && it.active && it.parentId == "a1b" })
+        assertEquals("a1b", plan.replacementId)
+        assertEquals(listOf("u1", "a1b", "u2", "a2"), MessageTree.activePathIds(afterDelete))
+        assertTrue(afterDelete.any { it.id == "u2b" && !it.active && it.parentId == "a1b" })
         assertTrue(afterDelete.any { it.id == "a2b" })
     }
 
@@ -215,13 +214,11 @@ class MessageTreeTest {
             light("u2b", parentId = "a1b", active = true),
         )
         val first = MessageTree.deletionPlan(tree, setOf("a1"), allVersions = false)
-        val afterFirst = tree.filterNot { it.id in first.deletedIds }.map { node ->
-            first.promoted.firstOrNull { it.id == node.id } ?: node
-        }
+        val afterFirst = applyDeletion(tree, first)
         val second = MessageTree.deletionPlan(afterFirst, setOf("a1b"), allVersions = true)
 
         assertEquals(setOf("a1b"), second.deletedIds)
-        assertEquals(setOf("u2b"), second.promoted.map { it.id }.toSet())
+        assertEquals(setOf("u2", "u2b"), second.promoted.map { it.id }.toSet())
         assertTrue(afterFirst.any { it.id == "u2" && it.versionGroup == "a1" })
     }
 
@@ -274,20 +271,31 @@ class MessageTreeTest {
                 val plan = MessageTree.deletionPlan(tree, selected.mapTo(HashSet()) { it.id }, allVersions)
                 assertEquals("seed $seed", expected.mapTo(HashSet()) { it.id }, plan.deletedIds)
                 val oldPath = MessageTree.activePathIds(tree).filterNot { it in plan.deletedIds }
-                val moves = plan.promoted.associateBy { it.id }
-                tree = tree.filterNot { it in expected }.map { node -> moves[node.id] ?: node.copy(active = node.active || node.id in plan.activateExisting) }
+                tree = applyDeletion(tree, plan)
                 tree.forEach { node ->
                     var original = before.getValue(node.id)
                     assertEquals(original.versionGroup ?: original.parentId, node.versionGroup ?: node.parentId)
+                    val wasChildOfDeletedVersion = original.parentId in plan.deletedIds
                     while (original.parentId in plan.deletedIds) original = before.getValue(original.parentId)
-                    assertEquals(original.parentId, node.parentId)
+                    val expectedParent = if (wasChildOfDeletedVersion) plan.replacementId ?: original.parentId else original.parentId
+                    assertEquals(expectedParent, node.parentId)
                 }
                 tree.groupBy { it.parentId }.values.forEach { siblings ->
                     assertEquals(1, siblings.count { it.active })
                     assertEquals(siblings.size, siblings.distinctBy { it.variantIndex }.size)
                 }
-                assertEquals(oldPath, MessageTree.activePathIds(tree).take(oldPath.size))
+                val newPath = MessageTree.activePathIds(tree).filterNot { it == plan.replacementId }
+                assertEquals(oldPath, newPath.take(oldPath.size))
             }
+        }
+    }
+
+    private fun applyDeletion(tree: List<MessageLight>, plan: MessageTree.DeletionPlan): List<MessageLight> {
+        val moves = plan.promoted.associateBy { it.id }
+        return tree.filterNot { it.id in plan.deletedIds }.map { node ->
+            moves[node.id] ?: node.copy(
+                active = node.id in plan.activateExisting || node.active && node.parentId !in plan.clearActiveChildren,
+            )
         }
     }
 
