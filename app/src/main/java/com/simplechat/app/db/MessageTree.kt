@@ -87,6 +87,23 @@ object MessageTree {
     fun siblingCountsOf(parentIds: List<String>): Map<String, Int> =
         parentIds.groupingBy { it }.eachCount()
 
+    /** Include hidden ancestors only while they still lead to a visible message. */
+    fun reachable(all: List<MessageLight>, includeTrash: Boolean = false): Set<String> {
+        val byId = all.associateBy { it.id }
+        val reachable = HashSet<String>()
+        for (row in all) {
+            if (!row.visible && !(includeTrash && row.trashedAt != null)) continue
+            var node: MessageLight? = row
+            while (node != null && reachable.add(node.id)) node = byId[node.parentId]
+        }
+        return reachable
+    }
+
+    fun navigable(all: List<MessageLight>): List<MessageLight> {
+        val reachable = reachable(all)
+        return all.filter { it.id in reachable }
+    }
+
     /** Remove selected message versions and splice their direct surviving continuations into place. */
     fun deletionPlan(
         all: List<MessageLight>,

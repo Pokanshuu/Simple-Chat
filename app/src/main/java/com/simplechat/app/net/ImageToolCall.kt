@@ -33,16 +33,21 @@ internal class ImageToolCall {
 
     fun invocation(): ImageToolInvocation? {
         if (stopReason !in setOf("tool_calls", "tool_use") || index == null) return null
-        val fields = if (invalid) null else runCatching { Json.parseToJsonElement(arguments.toString()) as? JsonObject }.getOrNull()
-        val prompt = (fields?.get("prompt") as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim()
-        val operation = when ((fields?.get("operation") as? JsonPrimitive)?.takeIf { it.isString }?.content) {
-            "create" -> ImageToolOperation.CREATE
-            "edit" -> ImageToolOperation.EDIT
-            else -> null
-        }
-        require(!prompt.isNullOrEmpty() && operation != null && fields.keys == setOf("prompt", "operation")) {
+        return requireNotNull(if (invalid) null else parseImageToolInvocation(arguments.toString())) {
             "Invalid image generation tool arguments"
         }
-        return ImageToolInvocation(prompt, operation)
     }
+}
+
+internal fun parseImageToolInvocation(arguments: String): ImageToolInvocation? {
+    val fields = runCatching { Json.parseToJsonElement(arguments) as? JsonObject }.getOrNull() ?: return null
+    if (fields.keys != setOf("prompt", "operation")) return null
+    val prompt = (fields["prompt"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim()
+        ?.takeIf { it.isNotEmpty() } ?: return null
+    val operation = when ((fields["operation"] as? JsonPrimitive)?.takeIf { it.isString }?.content) {
+        "create" -> ImageToolOperation.CREATE
+        "edit" -> ImageToolOperation.EDIT
+        else -> return null
+    }
+    return ImageToolInvocation(prompt, operation)
 }

@@ -24,7 +24,7 @@ internal data class SearchAugmentation(
 
 private val explicitWebLink = Regex("https?://[^\\s<>\"）)]+", RegexOption.IGNORE_CASE)
 
-private fun publicPage(raw: String): String? {
+internal fun publicPage(raw: String): String? {
     val url = raw.takeIf { it.length <= 2048 }?.toHttpUrlOrNull() ?: return null
     val host = url.host.trimEnd('.')
     if (url.username.isNotEmpty() || url.password.isNotEmpty() || '.' !in host || ':' in host ||
@@ -115,9 +115,7 @@ internal class WebResearchSession(
     }
     suspend fun execute(name: String, arguments: String): String {
         val param = if (name == IndependentSearchName) "query" else "url"
-        val fields = runCatching { Json.parseToJsonElement(arguments) as? JsonObject }.getOrNull()
-        val value = (fields?.get(param) as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim()
-        if (fields?.keys != setOf(param) || value.isNullOrBlank()) return "Invalid tool arguments: supply $param."
+        val value = webToolArgument(arguments, param) ?: return "Invalid tool arguments: supply $param."
         val start = blocks.size
         val urls = when (name) {
             IndependentSearchName -> {

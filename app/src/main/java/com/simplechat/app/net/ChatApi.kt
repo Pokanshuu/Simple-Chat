@@ -83,6 +83,11 @@ class ChatApi(
         independentWeb: Boolean = false,
         responseHistory: List<JsonElement> = emptyList(),
         onResponseOutput: ((Int, kotlinx.serialization.json.JsonObject) -> Unit)? = null,
+        imageToolCompleted: Boolean = false,
+        webToolCompleted: Boolean = false,
+        independentFetch: Boolean = true,
+        independentSearch: Boolean = true,
+        agentStateInstruction: String = "",
     ): Flow<StreamEvent> {
         val flash = isOfficialDeepSeekEndpoint(baseUrl) && model.id == DEEPSEEK_FLASH
         val tools = if (flash) buildList {
@@ -95,7 +100,9 @@ class ChatApi(
         val serverSearchEnabled = tools?.any { it.type == "deepseek_web_search" } == true || openAiSearchEnabled
         val appInstructions = buildList {
             if (independentWeb) add(webToolInstruction)
-            else if (responseHistory.isNotEmpty() || messages.lastOrNull()?.toolCallId != null) add(webAnswerInstruction)
+            else if (webToolCompleted) add(webAnswerInstruction)
+            if (imageToolCompleted) add(imageAnswerInstruction)
+            if (agentStateInstruction.isNotBlank()) add(agentStateInstruction)
             if (generateImageTool) add(imageToolInstruction)
             if (serverSearchEnabled || usesAutomaticOpenAiSearch(model.id, apiStyle) && isOfficialOpenAiEndpoint(baseUrl)) {
                 add(serverSearchInstruction)
@@ -121,8 +128,8 @@ class ChatApi(
                     }
                     request.copy(
                         input = request.input + responseHistory,
-                        include = listOf("reasoning.encrypted_content").takeIf { independentWeb && model.supportsThinking },
-                        tools = (tools.orEmpty() + listOfNotNull(imageTool, searchTool) + webTools(independentWeb).map {
+                        include = listOf("reasoning.encrypted_content").takeIf { onResponseOutput != null && model.supportsThinking },
+                        tools = (tools.orEmpty() + listOfNotNull(imageTool, searchTool) + webTools(independentWeb, independentFetch, independentSearch).map {
                             DeepSeekTool("function", name = it.name, description = it.description, parameters = it.parameters)
                         }).ifEmpty { null },
                         title = title,
@@ -134,7 +141,7 @@ class ChatApi(
             )
         }
         val imageTool = if (generateImageTool) DeepSeekTool("function", imageToolDefinition) else null
-        val allTools = (tools.orEmpty() + listOfNotNull(imageTool) + webTools(independentWeb).map { DeepSeekTool("function", it) }).ifEmpty { null }
+        val allTools = (tools.orEmpty() + listOfNotNull(imageTool) + webTools(independentWeb, independentFetch, independentSearch).map { DeepSeekTool("function", it) }).ifEmpty { null }
         val request = buildChatRequest(model, requestMessages, thinkingEnabled, reasoningEffort, maxTokens, temperature, topP, isOfficialDeepSeekEndpoint(baseUrl))
             .let {
                 if (allTools == null && title == null) it else it.copy(
@@ -332,7 +339,7 @@ data class ImageInput(
     val detail: String = "high",
 )
 
-internal const val imageToolInstruction = "SimpleChat can generate images through generate_image, even when the chat model cannot output images itself. Call the tool only if the latest user actually asks to create or edit an image. Use create for a new image, and edit when the user wants to change or reuse an existing image; the app binds the reference and will not proceed if it cannot find one. Use the user's requested visual details and preserve unchanged details when editing. Do not call for capability questions, image analysis, prompt writing, quoted requests, or requests not to generate. Do not claim that an image was generated or edited in text; the app displays the actual result."
+internal const val imageToolInstruction = "SimpleChat provides generate_image in this conversation, regardless of the chat model's native capabilities or earlier replies about tools. For actual image requests, including follow-ups such as 'can you draw that?', resolve the subject from the conversation and call the tool with a self-contained visual prompt. Use create for a new image and edit for a change to an existing image. For questions about this chat's abilities, report this configuration without searching the web or generating an image. Do not generate for image analysis, prompt writing, quoted requests, or explicit requests not to generate. Do not claim that an image was generated until the tool confirms success."
 
 internal const val serverSearchInstruction = "This turn has access to the app's server-side web search tool. For current or time-sensitive questions, use the tool and base your answer on its returned results. When search tool results are present in this turn, you have searched: synthesize them and cite the supplied sources. Never claim that this chat has no search or web tool, or that you cannot search, unless the tool actually failed or was unavailable. Do not invent search results."
 

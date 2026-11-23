@@ -53,7 +53,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
-internal fun ToolApisPage(stored: StoredSettings, onOpenSearch: () -> Unit, onOpenFiles: () -> Unit, onOpenImage: () -> Unit, onOpenVoice: () -> Unit) {
+internal fun ToolApisPage(stored: StoredSettings, onOpenSearch: () -> Unit, onOpenFiles: () -> Unit, onOpenImage: () -> Unit) {
     SettingsSectionLabel(stringResource(R.string.service_group))
     SettingsCard {
         SettingsNavRow(null, stringResource(R.string.service_search_title),
@@ -76,10 +76,6 @@ internal fun ToolApisPage(stored: StoredSettings, onOpenSearch: () -> Unit, onOp
                 stored.nativeImageAdapter() != null -> stringResource(R.string.image_api_native_enabled)
                 else -> stringResource(R.string.service_disabled)
             }, onOpenImage)
-        RowDivider(inset = Space.Screen)
-        SettingsNavRow(null, stringResource(R.string.tts_third_party_api),
-            stringResource(if (stored.voiceApi.enabled) R.string.service_enabled else R.string.service_disabled),
-            onOpenVoice)
     }
     ServiceNote(stringResource(R.string.service_shared_settings))
 }

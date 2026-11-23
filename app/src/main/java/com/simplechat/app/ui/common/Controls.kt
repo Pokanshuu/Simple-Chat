@@ -195,6 +195,10 @@ fun AppSlider(
     selectedTick: Int = -1,
     /** Optional magnetic stop on an otherwise continuous slider. */
     detent: Float? = null,
+    /** Multiple magnetic stops, expressed in the same value range. */
+    detents: List<Float> = emptyList(),
+    /** Positions for [tickLabels]; defaults to evenly spaced positions. */
+    tickPositions: List<Float>? = null,
 ) {
     val colors = LocalChatColors.current
     val density = LocalDensity.current
@@ -220,7 +224,8 @@ fun AppSlider(
     val span = (valueRange.endInclusive - valueRange.start).takeIf { it > 0f } ?: 1f
     val fraction = ((value - valueRange.start) / span).coerceIn(0f, 1f)
 
-    val detentFraction = detent?.takeIf { it in valueRange }?.let { (it - valueRange.start) / span }
+    val detentValues = (detents + listOfNotNull(detent)).filter { it in valueRange }.distinct().sorted()
+    val detentFractions = detentValues.map { (it - valueRange.start) / span }
     val haptics = LocalHapticFeedback.current
 
     Column(modifier = modifier.fillMaxWidth()) {
@@ -229,19 +234,19 @@ fun AppSlider(
                 .fillMaxWidth()
                 .height(44.dp)
                 .onSizeChanged { width = it.width.toFloat() }
-                .pointerInput(enabled, valueRange, width, edge, detentFraction, haptics) {
+                .pointerInput(enabled, valueRange, width, edge, detentFractions, haptics) {
                     if (!enabled || width <= 0f) return@pointerInput
                     val usable = (width - edge * 2f).coerceAtLeast(1f)
                     awaitEachGesture {
-                        var snapped = false
+                        var snappedTo: Float? = null
                         fun emitAt(x: Float) {
                             val f = ((x - edge) / usable).coerceIn(0f, 1f)
-                            val snapRadius = if (snapped) 11.dp.toPx() else 7.dp.toPx()
-                            val nextSnapped = detentFraction != null && f > 0f && f < 1f &&
-                                abs(f - detentFraction) * usable <= snapRadius
-                            if (nextSnapped && !snapped) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            snapped = nextSnapped
-                            changeCallback(if (snapped) checkNotNull(detent) else valueRange.start + f * span)
+                            val snapRadius = if (snappedTo != null) 11.dp.toPx() else 7.dp.toPx()
+                            val nearest = detentFractions.minByOrNull { abs(f - it) }
+                            val nextSnapped = nearest != null && f > 0f && f < 1f && abs(f - nearest) * usable <= snapRadius
+                            if (nextSnapped && snappedTo == null) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            snappedTo = nearest?.takeIf { nextSnapped }
+                            changeCallback(if (snappedTo != null) valueRange.start + checkNotNull(snappedTo) * span else valueRange.start + f * span)
                         }
                         val down = awaitFirstDown()
                         pressed = true
@@ -296,8 +301,8 @@ fun AppSlider(
                 cap = StrokeCap.Round,
             )
 
-            detentFraction?.let {
-                val x = startX + (endX - startX) * it
+            detentFractions.forEach { fraction ->
+                val x = startX + (endX - startX) * fraction
                 drawCircle(tickColor, radius = 2.dp.toPx(), center = Offset(x, cy + 7.dp.toPx()))
             }
             drawCircle(color = thumbFill, radius = radius, center = Offset(thumbX, cy))
@@ -314,6 +319,7 @@ fun AppSlider(
             Spacer(Modifier.height(6.dp))
             SliderTickLabels(
                 labels = tickLabels,
+                positions = tickPositions,
                 selectedIndex = selectedTick,
                 edgePx = edge,
                 selectedColor = activeColor,
@@ -332,6 +338,7 @@ fun AppSlider(
 @Composable
 private fun SliderTickLabels(
     labels: List<String>,
+    positions: List<Float>? = null,
     selectedIndex: Int,
     edgePx: Float,
     selectedColor: Color,
@@ -349,8 +356,8 @@ private fun SliderTickLabels(
     ) {
         labels.forEachIndexed { index, text ->
             val labelWidth = labelWidths[index] ?: 0
-            val tickX = edgePx +
-                (totalWidth - edgePx * 2f) * (index.toFloat() / lastIndex)
+            val position = positions?.getOrNull(index)?.coerceIn(0f, 1f) ?: index.toFloat() / lastIndex
+            val tickX = edgePx + (totalWidth - edgePx * 2f) * position
 
             Text(
                 text = text,

@@ -35,6 +35,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import com.simplechat.app.data.ChatRepository
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -118,6 +121,7 @@ import com.simplechat.app.ui.common.AppIcons
 import com.simplechat.app.ui.common.AppConfirmDialog
 import com.simplechat.app.ui.common.AppMenu
 import com.simplechat.app.ui.common.AppMenuCheck
+import com.simplechat.app.ui.common.AppMenuDivider
 import com.simplechat.app.ui.common.AppMenuItem
 import com.simplechat.app.ui.chat.Preset
 import com.simplechat.app.ui.chat.SpeechVoice
@@ -264,13 +268,14 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
     startAtImageApi: Boolean = false,
     startAtApiProfiles: Boolean = false,
+    onMessagesRestored: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
-    SettingsScreen(onBack, modifier, (context.applicationContext as App).container.settingsStore, startAtImageApi, startAtApiProfiles)
+    SettingsScreen(onBack, modifier, (context.applicationContext as App).container.settingsStore, startAtImageApi, startAtApiProfiles, onMessagesRestored)
 }
 
 @Composable
-internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: SettingsStore, startAtImageApi: Boolean = false, startAtApiProfiles: Boolean = false) {
+internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: SettingsStore, startAtImageApi: Boolean = false, startAtApiProfiles: Boolean = false, onMessagesRestored: (String) -> Unit = {}) {
     val colors = LocalChatColors.current
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
@@ -742,7 +747,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
+                        .then(if (target == SettingsPage.TRASH) Modifier.fillMaxSize() else Modifier.verticalScroll(rememberScrollState()))
                         .padding(horizontal = Space.Screen),
                 ) {
                     when (target) {
@@ -899,7 +904,6 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                                 onOpenSearch = { openService(SettingsPage.SEARCH_API) },
                                 onOpenFiles = { openService(SettingsPage.FILES_API) },
                                 onOpenImage = { openService(SettingsPage.IMAGE_API) },
-                                onOpenVoice = { page = SettingsPage.VOICE_API },
                             )
                         }
 
@@ -961,6 +965,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                                 if (!enabled) speaker.stop()
                                 scope.launch { store.setReadAloudEnabled(enabled) }
                             },
+                            onOpenVoice = { page = SettingsPage.VOICE_API },
                             selectedName = stored.ttsVoiceName,
                             voices = speechVoices,
                             officialVoices = officialVoices,
@@ -1017,7 +1022,9 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                             store = store,
                         )
 
-                        SettingsPage.TRASH -> TrashPage(
+                        SettingsPage.TRASH -> RecycleBinPages(
+                            repository = repository,
+                            onMessagesRestored = onMessagesRestored,
                             loadTrash = { repository.observeTrash() },
                             onRestore = { ids -> scope.launch { repository.restoreConversations(ids) } },
                             onPurge = { ids -> scope.launch { repository.deleteConversations(ids) } },
@@ -2009,6 +2016,7 @@ internal fun SettingsChoiceRow(
 private fun VoicePage(
     enabled: Boolean,
     onToggle: (Boolean) -> Unit,
+    onOpenVoice: () -> Unit,
     selectedName: String,
     voices: List<SpeechVoice>?,
     /** DeepSeek 官方音色；空 = 当前服务商不支持官方朗读（整块不显示）。 */
@@ -2025,7 +2033,16 @@ private fun VoicePage(
     /** 第三方服务提供的音色（服务端清单 + 手填，已带上显示名）。 */
     thirdPartyVoices: List<SpeechVoice> = emptyList(),
 ) {
-    SettingsCard { SettingsSwitchRow(stringResource(R.string.tts_enabled), enabled, onToggle) }
+    SettingsCard {
+        SettingsSwitchRow(stringResource(R.string.tts_enabled), enabled, onToggle)
+        RowDivider(inset = Space.Screen)
+        SettingsNavRow(
+            icon = null,
+            label = stringResource(R.string.tts_third_party_api),
+            value = stringResource(if (thirdPartyVoices.isNotEmpty()) R.string.service_enabled else R.string.service_disabled),
+            onClick = onOpenVoice,
+        )
+    }
     if (!enabled) return
 
     SettingsSectionLabel(stringResource(R.string.tts_voice))
@@ -4814,72 +4831,145 @@ private fun VoiceApiPage(
  * 自动清理真删（见 `ChatRepository.purgeExpiredTrash`）。
  */
 @Composable
+private fun RecycleBinPages(
+    repository: ChatRepository,
+    onMessagesRestored: (String) -> Unit,
+    loadTrash: () -> kotlinx.coroutines.flow.Flow<List<com.simplechat.app.db.ConversationEntity>>,
+    onRestore: (List<String>) -> Unit,
+    onPurge: (List<String>) -> Unit,
+) {
+    val pager = rememberPagerState { 2 }
+    val scrollStates = listOf(rememberScrollState(), rememberScrollState())
+    val scope = rememberCoroutineScope()
+    Column(Modifier.fillMaxSize()) {
+        val labels = listOf(stringResource(R.string.trash_conversations_tab), stringResource(R.string.trash_messages_tab))
+        SegmentedSwitch(
+            options = labels.indices.toList(),
+            selected = pager.currentPage,
+            onSelect = { index -> scope.launch { pager.animateScrollToPage(index) } },
+            label = { labels[it] },
+            modifier = Modifier.fillMaxWidth().padding(top = Space.Gap, bottom = Space.Gap),
+        )
+        HorizontalPager(state = pager, modifier = Modifier.fillMaxWidth().weight(1f)) { page ->
+            Column(Modifier.fillMaxSize().verticalScroll(scrollStates[page]).navigationBarsPadding()) {
+                if (page == 0) TrashPage(loadTrash, onRestore, onPurge)
+                else MessageTrashPage(repository, onMessagesRestored)
+                Spacer(Modifier.size(Space.Section))
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageTrashPage(repository: ChatRepository, onMessagesRestored: (String) -> Unit) {
+    val entries by remember(repository) { repository.observeMessageTrash() }.collectAsState(initial = null)
+    val scope = rememberCoroutineScope()
+    val colors = LocalChatColors.current
+    var pending by remember { mutableStateOf<List<com.simplechat.app.db.TrashedMessage>?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf(false) }
+    val rows = entries ?: return
+    fun change(selection: List<com.simplechat.app.db.TrashedMessage>, restore: Boolean) {
+        if (busy) return
+        busy = true
+        failed = false
+        scope.launch {
+            try {
+                repository.changeMessageTrash(selection, restore)
+                if (restore) selection.map { it.conversationId }.distinct().forEach(onMessagesRestored)
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                failed = true
+            } finally {
+                busy = false
+            }
+        }
+    }
+    if (failed) Text(stringResource(R.string.trash_message_failed), color = colors.danger)
+    if (rows.isEmpty()) {
+        RecycleBinEmptyState(stringResource(R.string.trash_messages_empty))
+    } else {
+        SettingsSectionLabel(stringResource(R.string.trash_messages_tab))
+        SettingsCard {
+            rows.forEachIndexed { index, row ->
+                if (index > 0) RowDivider(inset = Space.Screen)
+                androidx.compose.runtime.key(row.conversationId, row.operationId, row.groupKey) {
+                    RecycleBinRow(
+                        title = row.title.ifBlank { stringResource(R.string.history_untitled) },
+                        detail = stringResource(R.string.trash_message_versions, row.versions) + " · " + formatTrashDate(row.deletedAt),
+                        preview = row.preview.ifBlank { stringResource(R.string.trash_message_preview_empty) },
+                        restoreLabel = stringResource(R.string.trash_restore_versions),
+                        enabled = !busy,
+                        onRestore = { change(listOf(row), true) },
+                        onPurge = { pending = listOf(row) },
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.size(Space.Section))
+        SettingsCard {
+            SettingsActionRow(label = stringResource(R.string.trash_messages_clear), hint = null, icon = AppIcons.Trash, destructive = true,
+                enabled = !busy, onClick = { pending = rows })
+        }
+    }
+    pending?.let { selection ->
+        AppConfirmDialog(
+            title = stringResource(R.string.trash_purge),
+            message = stringResource(if (selection.size == 1) R.string.trash_message_purge_confirm else R.string.trash_messages_clear_confirm),
+            confirmText = stringResource(R.string.trash_purge),
+            destructive = true,
+            onDismiss = { pending = null },
+            onConfirm = { pending = null; change(selection, false) },
+        )
+    }
+}
+
+@Composable
 private fun TrashPage(
     loadTrash: () -> kotlinx.coroutines.flow.Flow<List<com.simplechat.app.db.ConversationEntity>>,
     onRestore: (List<String>) -> Unit,
     onPurge: (List<String>) -> Unit,
 ) {
-    val colors = LocalChatColors.current
     val trash by remember(loadTrash) { loadTrash() }.collectAsState(initial = null)
     var confirmPurge by remember { mutableStateOf<com.simplechat.app.db.ConversationEntity?>(null) }
     var confirmEmptyAll by remember { mutableStateOf(false) }
-
-    val list = trash.orEmpty()
+    val list = trash ?: return
 
     if (list.isEmpty()) {
-        SettingsCard {
-            SettingsActionRow(
-                label = stringResource(R.string.trash_empty),
-                hint = stringResource(R.string.trash_empty_hint),
-                onClick = {},
-                enabled = false,
-            )
-        }
+        RecycleBinEmptyState(stringResource(R.string.trash_empty_hint))
         return
     }
 
     SettingsSectionLabel(stringResource(R.string.trash_group_items))
-
     SettingsCard {
         list.forEachIndexed { index, conversation ->
-            if (index > 0) RowDivider()
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = Space.Row)
-                    .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(
-                        text = conversation.title.ifBlank { stringResource(R.string.history_untitled) },
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = stringResource(
-                            R.string.trash_deleted_at,
-                            formatTrashDate(conversation.deletedAt),
-                        ),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+            if (index > 0) RowDivider(inset = Space.Screen)
+            androidx.compose.runtime.key(conversation.id) {
+                val dayMs = 86_400_000L
+                val days = conversation.deletedAt?.let { deletedAt ->
+                    val remaining = deletedAt + com.simplechat.app.data.TRASH_RETENTION_DAYS * dayMs - System.currentTimeMillis()
+                    ((remaining.coerceAtLeast(0) + dayMs - 1) / dayMs).toInt()
                 }
-                TextButton(onClick = { onRestore(listOf(conversation.id)) }) {
-                    Text(stringResource(R.string.trash_restore), color = MaterialTheme.colorScheme.primary)
-                }
-                TextButton(onClick = { confirmPurge = conversation }) {
-                    Text(stringResource(R.string.trash_purge), color = colors.danger)
-                }
+                val deleted = stringResource(R.string.trash_deleted_at, formatTrashDate(conversation.deletedAt))
+                RecycleBinRow(
+                    title = conversation.title.ifBlank { stringResource(R.string.history_untitled) },
+                    detail = if (days == null) deleted else deleted + " · " +
+                        androidx.compose.ui.res.pluralStringResource(R.plurals.trash_days_remaining, days, days),
+                    warning = days != null && days <= 2,
+                    restoreLabel = stringResource(R.string.trash_restore),
+                    onRestore = { onRestore(listOf(conversation.id)) },
+                    onPurge = { confirmPurge = conversation },
+                )
             }
         }
     }
+    Spacer(Modifier.size(Space.Section))
 
     SettingsCard {
         SettingsActionRow(
             label = stringResource(R.string.trash_empty_all),
+            icon = AppIcons.Trash,
             hint = stringResource(R.string.trash_empty_all_hint),
             destructive = true,
             onClick = { confirmEmptyAll = true },
@@ -4889,7 +4979,7 @@ private fun TrashPage(
     confirmPurge?.let { target ->
         AppConfirmDialog(
             title = stringResource(R.string.trash_purge),
-            message = stringResource(R.string.trash_purge_confirm, target.title),
+            message = stringResource(R.string.trash_purge_confirm, target.title) + "\n" + stringResource(R.string.trash_conversation_cascade),
             confirmText = stringResource(R.string.trash_purge),
             onDismiss = { confirmPurge = null },
             onConfirm = {
@@ -4901,7 +4991,7 @@ private fun TrashPage(
     if (confirmEmptyAll) {
         AppConfirmDialog(
             title = stringResource(R.string.trash_empty_all),
-            message = stringResource(R.string.trash_empty_all_confirm),
+            message = stringResource(R.string.trash_empty_all_confirm) + "\n" + stringResource(R.string.trash_conversation_cascade),
             confirmText = stringResource(R.string.trash_empty_all),
             onDismiss = { confirmEmptyAll = false },
             onConfirm = {
@@ -4909,6 +4999,66 @@ private fun TrashPage(
                 onPurge(list.map { it.id })
             },
         )
+    }
+}
+
+@Composable
+private fun RecycleBinRow(
+    title: String,
+    detail: String,
+    restoreLabel: String,
+    onRestore: () -> Unit,
+    onPurge: () -> Unit,
+    preview: String? = null,
+    enabled: Boolean = true,
+    warning: Boolean = false,
+) {
+    val colors = LocalChatColors.current
+    var menuOpen by remember { mutableStateOf(false) }
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = Space.Row)
+            .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.IconGap),
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (preview != null) {
+                Text(preview, style = MaterialTheme.typography.bodySmall, color = colors.processText,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            Text(detail, style = MaterialTheme.typography.labelSmall,
+                color = if (warning) colors.warning else colors.processText)
+        }
+        Box {
+            IconCircleButton(AppIcons.More, stringResource(R.string.trash_row_actions, title),
+                onClick = { menuOpen = true }, size = Space.Row, iconSize = Space.Icon, enabled = enabled)
+            AppMenu(expanded = menuOpen && enabled, onDismissRequest = { menuOpen = false }) {
+                AppMenuItem(restoreLabel, AppIcons.Check) {
+                    menuOpen = false
+                    onRestore()
+                }
+                AppMenuDivider()
+                AppMenuItem(stringResource(R.string.trash_purge), AppIcons.Trash, destructive = true) {
+                    menuOpen = false
+                    onPurge()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecycleBinEmptyState(label: String) {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = Space.Screen, vertical = Space.Section),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Space.Gap),
+    ) {
+        val secondary = LocalChatColors.current.processText
+        Icon(AppIcons.Trash, contentDescription = null, modifier = Modifier.size(Space.Row), tint = secondary)
+        Text(label, style = MaterialTheme.typography.bodySmall, color = secondary,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
     }
 }
 

@@ -32,13 +32,14 @@ internal fun historyPrewarmBodies(messages: List<UiMessage>, before: Int): List<
 }
 
 @Composable
-internal fun HistoryPrewarmEffect(listState: LazyListState, messages: List<UiMessage>) {
+internal fun HistoryPrewarmEffect(listState: LazyListState, messages: List<UiMessage>, messageIndex: (Int) -> Int) {
+    val currentIndex by rememberUpdatedState(messageIndex)
     val currentMessages by rememberUpdatedState(messages)
     LaunchedEffect(listState) {
         // Scroll direction stays latched after a drag/fling settles, allowing its window to finish.
         // Observe the index, never the per-pixel offset or the streaming tail content.
         snapshotFlow {
-            if (listState.lastScrolledBackward) historyPrewarmBodies(currentMessages, listState.firstVisibleItemIndex)
+            if (listState.lastScrolledBackward) historyPrewarmBodies(currentMessages, currentIndex(listState.firstVisibleItemIndex))
             else emptyList()
         }.collectLatest { bodies ->
             if (bodies.isNotEmpty()) withContext(Dispatchers.Default) {

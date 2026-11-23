@@ -198,8 +198,8 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         conversations.setMemoryEnabled(id, enabled)
 
     suspend fun revealSearchMessage(conversationId: String, messageId: String) = db.withTransaction {
-        val path = MessageTree.ancestry(messages.getLightFor(conversationId), messageId)
-        check(path.isNotEmpty()) { "Search message is no longer available" }
+        val path = MessageTree.ancestry(MessageTree.navigable(messages.getLightFor(conversationId)), messageId)
+        check(path.lastOrNull()?.let { it.id == messageId && it.visible } == true) { "Search message is no longer available" }
         path.forEach { messages.activate(it.id, conversationId, it.parentId) }
     }
 
@@ -319,6 +319,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         val origin = conversations.findById(source.conversationId) ?: return@withTransaction null
 
         val path = MessageTree.pathTo(loadMessagesSafely(source.conversationId), fromMessageId)
+            .filter { it.trashedAt == null && !it.isDeletedNode }
         if (path.isEmpty()) return@withTransaction null
 
         val now = System.currentTimeMillis()
@@ -401,9 +402,18 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
                 throw error
             }
         if (light.isEmpty()) return emptyList()
-        val pathIds = MessageTree.activePathIds(light)
+        return projectActivePath(light, ::loadMessagesByIds)
+    }
+
+    private suspend fun projectActivePath(
+        light: List<com.simplechat.app.db.MessageLight>,
+        load: suspend (List<String>) -> List<MessageEntity>,
+    ): List<UiMessage> {
+        val navigable = MessageTree.navigable(light)
+        val pathIds = MessageTree.activePathIds(navigable)
         if (pathIds.isEmpty()) return emptyList()
-        val siblings = light.groupBy { it.parentId }.mapValues { (_, group) -> group.sortedBy { it.variantIndex }.map { it.id } }
+        val skeleton = navigable.associateBy { it.id }
+        val siblings = navigable.groupBy { it.parentId }.mapValues { (_, group) -> group.sortedBy { it.variantIndex }.map { it.id } }
         /*
          * 映射放到后台线程。
          *
@@ -412,10 +422,18 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
          * 那段动画里，看起来就是动画一卡、然后内容才出现。
          */
         return withContext(Dispatchers.Default) {
-            val byId = loadMessagesByIds(pathIds).associateBy { it.id }
+            val byId = load(pathIds.filter { skeleton.getValue(it).visible }).associateBy { it.id }
             pathIds.mapNotNull { id ->
-                val entity = byId[id] ?: return@mapNotNull null
-                entity.toUiWithPosition(siblings.getValue(entity.parentId))
+                val row = skeleton.getValue(id)
+                val options = siblings.getValue(row.parentId)
+                val entity = byId[id]
+                if (entity != null) entity.toUiWithPosition(options)
+                else if (!row.visible) UiMessage(
+                    id = row.id, parentId = row.parentId,
+                    role = if (row.role == "user") MessageRole.USER else MessageRole.ASSISTANT,
+                    content = "", variantIndex = options.indexOf(id), variantCount = options.size,
+                    deletedNavigation = true,
+                ) else null
             }
         }
     }
@@ -428,15 +446,14 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         ids.map { id -> readMessageForExport(id) }
     }
 
-    /** 老路径：一次读全部消息再走树（骨架读取失败时的兜底）。 */
     private suspend fun loadActivePathFull(conversationId: String): List<UiMessage> {
         val all = loadMessagesSafely(conversationId)
-        return withContext(Dispatchers.Default) {
-            val siblings = all.groupBy { it.parentId }.mapValues { (_, group) -> group.sortedBy { it.variantIndex }.map { it.id } }
-            MessageTree.activePath(all).map { entity ->
-                entity.toUiWithPosition(siblings.getValue(entity.parentId))
-            }
+        val byId = all.associateBy { it.id }
+        val light = all.map { row ->
+            com.simplechat.app.db.MessageLight(row.id, row.parentId, row.variantIndex, row.active,
+                row.role, row.status, row.createdAt, row.versionGroup, row.trashedAt, row.trashOperationId, row.isDeletedNode)
         }
+        return projectActivePath(light) { ids -> ids.mapNotNull(byId::get) }
     }
 
     /**
@@ -461,7 +478,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
      * 只读骨架：每次追加消息都会调用它，而它要的只是"最后一条是谁"。
      */
     suspend fun tailId(conversationId: String): String =
-        MessageTree.activePathIds(messages.getLightFor(conversationId)).lastOrNull()
+        MessageTree.activePathIds(MessageTree.navigable(messages.getLightFor(conversationId))).lastOrNull()
             ?: MessageEntity.ROOT_PARENT
 
     /**
@@ -516,7 +533,8 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         toUi().copy(variantIndex = siblingIds.indexOf(id).coerceAtLeast(0), variantCount = siblingIds.size.coerceAtLeast(1))
 
     private suspend fun toUiWithCounts(conversationId: String, entity: MessageEntity): UiMessage =
-        entity.toUiWithPosition(messages.siblingIds(conversationId, entity.parentId))
+        entity.toUiWithPosition(MessageTree.navigable(messages.getLightFor(conversationId))
+            .filter { it.parentId == entity.parentId }.sortedBy { it.variantIndex }.map { it.id })
 
     /**
      * 追加一条用户消息，返回它本身。
@@ -700,40 +718,83 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         messages.resolveDanglingStreams(conversationId, MessageStatus.STOPPED.toStorage())
 
     /** Remove every selected message version while preserving all downstream branches. */
-    suspend fun deleteMessageVersions(conversationId: String, messageIds: Set<String>) = db.withTransaction {
-        val tree = messages.getLightFor(conversationId)
-        val plan = MessageTree.deletionPlan(tree, messageIds, allVersions = true)
-        applyMessageDeletionPlan(conversationId, tree, plan)
-    }
+    fun observeMessageTrash() = messages.observeMessageTrash()
 
-    suspend fun deleteMessage(messageId: String, allVersions: Boolean): String? = db.withTransaction {
-        val node = messages.exportHeader(messageId) ?: return@withTransaction null
-        val tree = messages.getLightFor(node.conversationId)
-        val plan = MessageTree.deletionPlan(tree, setOf(messageId), allVersions)
-        applyMessageDeletionPlan(node.conversationId, tree, plan)
-        plan.replacementId ?: plan.promoted.firstOrNull { it.active && it.parentId == node.parentId }?.id
-            ?: plan.activateExisting.singleOrNull()
-    }
-
-    private suspend fun applyMessageDeletionPlan(
-        conversationId: String,
-        tree: List<com.simplechat.app.db.MessageLight>,
-        plan: MessageTree.DeletionPlan,
-    ) {
-        compactionDao.getFor(conversationId).filter { summary ->
-            MessageTree.ancestry(tree, summary.throughMessageId).any { it.id in plan.deletedIds }
-        }.forEach { compactionDao.delete(it.id) }
-        plan.deletedIds.chunked(MessageQueryChunk).forEach { messages.deleteByIds(it) }
-        plan.clearActiveChildren.forEach { messages.clearActiveSiblings(conversationId, it) }
-        plan.promoted.forEach { child ->
-            messages.moveAfterDeletedMessage(child.id, child.parentId, child.variantIndex, child.active)
+    suspend fun deleteMessageVersions(conversationId: String, messageIds: Set<String>) {
+        if (messageIds.isEmpty()) return
+        db.withTransaction {
+            check(conversations.findById(conversationId)?.let { it.deletedAt == null } == true)
+            val tree = messages.getLightFor(conversationId)
+            val groups = messageIds.map { id ->
+                checkNotNull(tree.firstOrNull { it.id == id && it.visible }).groupKey
+            }.toSet()
+            val targets = tree.filter { it.visible && it.groupKey in groups }
+            val ids = targets.mapTo(HashSet()) { it.id }
+            val now = System.currentTimeMillis()
+            val operation = java.util.UUID.randomUUID().toString()
+            compactionDao.getFor(conversationId).filter { summary ->
+                MessageTree.ancestry(tree, summary.throughMessageId).any { it.id in ids }
+            }.forEach { compactionDao.delete(it.id) }
+            ids.toList().chunked(MessageQueryChunk).forEach { messages.setMessageTrash(it, now, operation) }
+            repairMessageNavigation(conversationId, tree.map { if (it.id in ids) it.copy(trashedAt = now) else it })
         }
-        plan.activateExisting.forEach { messages.markActive(it) }
+        deleteCompactionCheckpoint(conversationId)
     }
 
-    /** Resolve the position and activate it in the same transaction. */
+    suspend fun changeMessageTrash(entries: List<com.simplechat.app.db.TrashedMessage>, restore: Boolean) {
+        val releasedPaths = db.withTransaction {
+            val released = HashSet<String>()
+            entries.groupBy { it.conversationId }.forEach { (conversationId, selected) ->
+                if (conversations.findById(conversationId)?.let { it.deletedAt == null } != true) return@forEach
+                val keys = selected.map { it.operationId to it.groupKey }.toSet()
+                val tree = messages.getLightFor(conversationId)
+                val ids = tree.filter { it.trashedAt != null && (it.trashOperationId to it.groupKey) in keys }
+                    .mapTo(HashSet()) { it.id }
+                if (ids.isEmpty()) return@forEach
+                if (restore) {
+                    ids.toList().chunked(MessageQueryChunk).forEach { messages.setMessageTrash(it, null, null) }
+                } else {
+                    ids.toList().chunked(MessageQueryChunk).forEach { messages.scrubMessageNodes(it) }
+                    attachmentRefs.pathsOf(conversationId).forEach { path ->
+                        attachmentRefs.removeIfUnused(conversationId, path)
+                        released += path
+                    }
+                }
+                val updated = tree.map { row ->
+                    if (row.id in ids) row.copy(trashedAt = null, trashOperationId = null, isDeletedNode = !restore) else row
+                }
+                val keep = MessageTree.reachable(updated, includeTrash = true)
+                updated.filter { it.isDeletedNode && it.id !in keep }.map { it.id }
+                    .chunked(MessageQueryChunk).forEach { messages.deleteByIds(it) }
+                repairMessageNavigation(conversationId, updated.filter { !it.isDeletedNode || it.id in keep })
+            }
+            released
+        }
+        withContext(Dispatchers.IO) {
+            for (path in releasedPaths) {
+                if (!attachmentRefs.containsPath(path) && !messages.referencesAttachment(path)) AttachmentFiles.delete(context, path)
+            }
+        }
+    }
+
+    private suspend fun repairMessageNavigation(conversationId: String, tree: List<com.simplechat.app.db.MessageLight>) {
+        val reachable = MessageTree.reachable(tree)
+        for ((parent, children) in tree.groupBy { it.parentId }) {
+            val active = children.filter { it.active }
+            if (active.size == 1 && active.single().id in reachable) continue
+            val options = children.filter { it.id in reachable }.sortedBy { it.variantIndex }
+            if (options.isEmpty()) continue
+            val oldIndex = active.firstOrNull()?.variantIndex
+            val replacement = if (oldIndex == null) options.first()
+                else options.firstOrNull { it.variantIndex >= oldIndex } ?: options.last()
+            messages.activate(replacement.id, conversationId, parent)
+        }
+    }
+
     suspend fun activateVariantAt(conversationId: String, parentId: String, position: Int): String? = db.withTransaction {
-        val id = messages.siblingIds(conversationId, parentId).getOrNull(position) ?: return@withTransaction null
+        val tree = MessageTree.navigable(messages.getLightFor(conversationId))
+        val id = tree.filter { it.parentId == parentId }.sortedBy { it.variantIndex }
+            .getOrNull(position)?.id ?: return@withTransaction null
         messages.activate(id, conversationId, parentId)
         id
     }
@@ -1001,7 +1062,8 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             val rows = if (onlyConversation == null) conversations.getAllRaw()
                 else listOfNotNull(conversations.findById(onlyConversation))
             check(onlyConversation == null || rows.isNotEmpty()) { "Conversation no longer exists" }
-            val total = rows.sumOf { messages.countFor(it.id) }
+            val exportIds = rows.associate { it.id to exportableIds(it.id) }
+            val total = exportIds.values.sumOf { it.size }
             val headers = rows.map { it.toBackup(emptyList(), getEnabledPresetIds(it.id)) }
             val linkedPresetIds = headers.flatMap { it.enabledPresetIds }.toSet()
             val presetRows = presets.getAll().filter { onlyConversation == null || it.id in linkedPresetIds }.map { it.toBackup() }
@@ -1009,7 +1071,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             file.outputStream().buffered().writer(Charsets.UTF_8).use { writer ->
                 writeBackupStream(writer, System.currentTimeMillis(), headers, presetRows,
                     attachmentSource = { AttachmentFiles.open(context, it) }) { id, sink ->
-                    for (messageId in messages.idsFor(id)) {
+                    for (messageId in exportIds.getValue(id)) {
                         currentCoroutineContext().ensureActive()
                         val message = readMessageForExport(messageId).toBackup()
                         sink(message)
@@ -1026,7 +1088,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     suspend fun exportMarkdown(file: File, conversationId: String) = withContext(Dispatchers.IO) {
         db.withTransaction {
             val row = checkNotNull(conversations.findById(conversationId)) { "Conversation no longer exists" }
-            val ids = MessageTree.activePathIds(messages.getLightFor(conversationId))
+            val ids = visiblePathIds(conversationId)
             file.writer(Charsets.UTF_8).buffered().use { writeConversationMarkdown(row, ids, it) }
         }
     }
@@ -1068,12 +1130,13 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             val exportedAt = System.currentTimeMillis()
             val presetRows = presets.getAll().map { it.toBackup() }
             val headers = rows.map { row -> row.toBackup(emptyList(), getEnabledPresetIds(row.id)) }
-            val totalMessages = rows.sumOf { messages.countFor(it.id) }
+            val exportIds = rows.associate { it.id to exportableIds(it.id) }
+            val totalMessages = exportIds.values.sumOf { it.size }
             var written = 0
             var documentsWritten = 0
             val documents = rows.mapIndexed { index, row ->
                 ChatArchive.StreamDocument(ChatArchive.documentName(index + 1, row.title)) { output ->
-                    val ids = MessageTree.activePathIds(messages.getLightFor(row.id))
+                    val ids = visiblePathIds(row.id)
                     writeConversationMarkdown(row, ids, output.writer(Charsets.UTF_8).buffered())
                     documentsWritten++
                     onProgress(0.8f + 0.2f * documentsWritten / rows.size.coerceAtLeast(1))
@@ -1090,7 +1153,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
                 ) { backupOutput ->
                     writeBackupStream(backupOutput.writer(Charsets.UTF_8).buffered(), exportedAt, headers, presetRows,
                         attachmentSource = { AttachmentFiles.open(context, it) }) { id, sink ->
-                        for (messageId in messages.idsFor(id)) {
+                        for (messageId in exportIds.getValue(id)) {
                             currentCoroutineContext().ensureActive()
                             val message = readMessageForExport(messageId).toBackup()
                             // Materialize only this message's images; never retain all images in the archive.
@@ -1108,22 +1171,38 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
 
     private suspend fun readMessageForExport(id: String): MessageEntity {
         val header = checkNotNull(messages.exportHeader(id)) { "Missing export message: $id" }
+        if (header.trashedAt != null || header.isDeletedNode) return header.asExportStructure()
         return restoreExportMessage(header, ExportTextChunkBytes) { start ->
             checkNotNull(messages.exportTextChunk(id, start, ExportTextChunkBytes)) { "Missing export message: $id" }
         }
     }
 
+    private fun MessageEntity.asExportStructure(): MessageEntity = MessageEntity(
+        id = id, conversationId = conversationId, parentId = parentId, variantIndex = variantIndex,
+        active = active, role = role, content = "", createdAt = createdAt, versionGroup = versionGroup,
+        isDeletedNode = true,
+    )
+
+    private suspend fun exportableIds(conversationId: String): List<String> =
+        MessageTree.navigable(messages.getLightFor(conversationId)).map { it.id }
+
+    private suspend fun visiblePathIds(conversationId: String): List<String> {
+        val tree = MessageTree.navigable(messages.getLightFor(conversationId))
+        val visible = tree.filter { it.visible }.mapTo(HashSet()) { it.id }
+        return MessageTree.activePathIds(tree).filter { it in visible }
+    }
+
     /** 完整的备份模型（JSON 导出与 ZIP 归档共用）。 */
     private suspend fun fullBackup(): BackupFile {
-        val messageByConversation = messages.getAllRaw().groupBy { it.conversationId }
+        val rows = conversations.getAllRaw()
         val presetByConversation = conversationPresets.getAllRaw()
             .groupBy { it.conversationId }
 
         return BackupFile(
             exportedAt = System.currentTimeMillis(),
-            conversations = conversations.getAllRaw().map { row ->
+            conversations = rows.map { row ->
                 row.toBackup(
-                    messages = messageByConversation[row.id].orEmpty().withInlineAttachments(),
+                    messages = exportableIds(row.id).map { readMessageForExport(it) }.withInlineAttachments(),
                     presetIds = presetByConversation[row.id]
                         .orEmpty()
                         .sortedBy { it.sortOrder }
@@ -1146,7 +1225,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             exportedAt = System.currentTimeMillis(),
             conversations = listOf(
                 row.toBackup(
-                    messages = loadMessagesSafely(conversationId).withInlineAttachments(),
+                    messages = exportableIds(conversationId).map { readMessageForExport(it) }.withInlineAttachments(),
                     presetIds = conversationPresets.getFor(conversationId)
                         .sortedBy { it.sortOrder }
                         .map { it.presetId },
@@ -1175,7 +1254,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
      */
     suspend fun exportConversationMarkdown(conversationId: String): String? {
         val conversation = conversations.findById(conversationId) ?: return null
-        val ids = MessageTree.activePathIds(messages.getLightFor(conversationId))
+        val ids = visiblePathIds(conversationId)
         if (ids.isEmpty()) return null
         val writer = StringWriter()
         writeConversationMarkdown(conversation, ids, writer)

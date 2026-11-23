@@ -437,8 +437,8 @@ private fun PanelControls(panels: PanelAppearance, liveBlur: Boolean, onChange: 
     ThemeEffectSlider(R.string.theme_base_opacity, panels.opacity, 0f..1f, defaultPercent = 85) {
         onChange(panels.copy(opacity = it))
     }
-    SettingsSwitchRow(stringResource(R.string.floating_glass_title), panels.acrylicEnabled, { onChange(panels.copy(acrylicEnabled = it)) })
-    ThemeEffectSlider(R.string.theme_acrylic_strength, panels.floatingGlass, 0f..1f, panels.acrylicEnabled, defaultPercent = 25) {
+    SettingsSwitchRow(stringResource(R.string.floating_glass_title) + " " + stringResource(R.string.theme_recommended), panels.acrylicEnabled, { onChange(panels.copy(acrylicEnabled = it)) })
+    ThemeEffectSlider(R.string.theme_acrylic_strength, panels.floatingGlass, 0f..1f, panels.acrylicEnabled, defaultPercent = 25, detentPercents = listOf(25, 75), detentLabels = listOf(stringResource(R.string.theme_acrylic_clear), stringResource(R.string.theme_acrylic_heavy))) {
         onChange(panels.copy(floatingGlass = it))
     }
     if (panels.acrylicEnabled && !liveBlur) {
@@ -502,7 +502,7 @@ private fun AdvancedControlOptions(panels: PanelAppearance, onChange: (PanelAppe
 }
 
 @Composable
-private fun ThemeEffectSlider(label: Int, value: Float, range: ClosedFloatingPointRange<Float>, enabled: Boolean = true, defaultPercent: Int? = null, onChange: (Float) -> Unit) {
+private fun ThemeEffectSlider(label: Int, value: Float, range: ClosedFloatingPointRange<Float>, enabled: Boolean = true, defaultPercent: Int? = null, detentPercents: List<Int> = emptyList(), detentLabels: List<String> = emptyList(), onChange: (Float) -> Unit) {
     val defaultValue = defaultPercent?.div(100f)
     Column(Modifier.fillMaxWidth().padding(horizontal = Space.Screen, vertical = Space.Gap)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -515,7 +515,12 @@ private fun ThemeEffectSlider(label: Int, value: Float, range: ClosedFloatingPoi
             val percent = (value * 100).roundToInt()
             Text(if (value == defaultValue) stringResource(R.string.theme_slider_default) else "$percent%", style = MaterialTheme.typography.labelMedium)
         }
-        AppSlider(value, onChange, valueRange = range, enabled = enabled, detent = defaultValue)
+        AppSlider(
+            value, onChange, valueRange = range, enabled = enabled, detent = defaultValue,
+            detents = detentPercents.map { it / 100f },
+            tickLabels = detentLabels.takeIf { it.isNotEmpty() },
+            tickPositions = detentPercents.map { it / 100f },
+        )
     }
 }
 

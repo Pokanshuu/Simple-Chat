@@ -26,7 +26,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     // v8：新增 attachment_refs（落盘图片的引用，删会话时据此清理文件）
     // v9：附件可被多个会话引用（分叉后删除原会话不能丢图）
     // v10：消息记录 prompt 缓存命中量（用量与余额页按命中/未命中分别计价）
-    version = 16,
+    version = 17,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -186,9 +186,30 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Early development databases could report v15 without wallpaperOverride.
+                val hasWallpaper = db.query("PRAGMA table_info(conversations)").use { columns ->
+                    val name = columns.getColumnIndexOrThrow("name")
+                    generateSequence { if (columns.moveToNext()) columns.getString(name) else null }
+                        .any { it == "wallpaperOverride" }
+                }
+                if (!hasWallpaper) db.execSQL("ALTER TABLE conversations ADD COLUMN wallpaperOverride TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN trashedAt INTEGER")
+                db.execSQL("ALTER TABLE messages ADD COLUMN trashOperationId TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN isDeletedNode INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         private val MIGRATION_15_16 = object : Migration(15, 16) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE messages ADD COLUMN versionGroup TEXT")
+                // Some development builds added the column before bumping user_version.
+                val exists = db.query("PRAGMA table_info(messages)").use { columns ->
+                    val nameIndex = columns.getColumnIndexOrThrow("name")
+                    generateSequence { if (columns.moveToNext()) columns.getString(nameIndex) else null }
+                        .any { it == "versionGroup" }
+                }
+                if (!exists) db.execSQL("ALTER TABLE messages ADD COLUMN versionGroup TEXT")
             }
         }
 
@@ -220,6 +241,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_13_14,
                     MIGRATION_14_15,
                     MIGRATION_15_16,
+                    MIGRATION_16_17,
                 )
                 .build()
     }

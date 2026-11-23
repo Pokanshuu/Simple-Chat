@@ -27,7 +27,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -144,7 +143,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 /** 输入栏下方最多同时展开一个面板。 */
 private enum class InputPanelState { NONE, THINKING, STATS, SETTINGS, ATTACH, IMAGE_MODELS, IMAGE_RATIOS }
 
-private data class MessagePathAnchor(val messageId: String, val endY: Int)
+private data class MessagePathAnchor(val messageId: String, val offset: Int, val headRoom: Int, val tailRoom: Int)
 
 /** 切换会话的淡入时长。**快** —— 慢一点就从"过渡"变成"等待"了。 */
 private const val SwitchFadeInMs = 160
@@ -735,6 +734,11 @@ fun ChatScreen(
     /** 正在切换会话。此时列表被整份替换，禁止切换逻辑之外的打扰（见下方切换 LaunchedEffect）。 */
     var switchingConversation by remember { mutableStateOf(false) }
 
+    val textSelection = remember(vm) { MessageTextSelection() }
+    val shareSelection = remember(vm) { MessageShareSelection() }
+    var deleteSelectionMode by remember(vm) { mutableStateOf(false) }
+    val canDeleteMessages = !vm.isStreaming && !vm.switching
+    val messageRows = messageListEntries(vm.messages, shareSelection.active)
     var pathAnchor by remember(listState) { mutableStateOf<MessagePathAnchor?>(null) }
 
     /** 换会话期间列表还没就位 —— 用来决定要不要显示转圈。 */
@@ -894,43 +898,23 @@ fun ChatScreen(
         listState.scrollToBottom()
     }
 
-    // Resolve the replacement by key after publishing the path. A deleted tail can leave no row to anchor.
+    // The branch control is at a fixed offset from the row top. Apply the placement
+    // with the new item provider in its first measure, without a second visible scroll.
     val pathRev = vm.pathRevision
     val appliedPathRev = remember(listState) { intArrayOf(pathRev) }
     SideEffect {
         if (pathRev == appliedPathRev[0]) return@SideEffect
         appliedPathRev[0] = pathRev
-        val anchor = pathAnchor ?: return@SideEffect
-        val index = vm.messages.indexOfFirst { it.id == anchor.messageId }
-        if (index >= 0) listState.requestScrollToItem(index)
-    }
-    LaunchedEffect(listState, pathRev) {
-        val anchor = pathAnchor
-        try {
-            if (anchor != null) repeat(5) {
-                withFrameNanos { }
-                if (pathAnchor !== anchor) return@LaunchedEffect
-                val index = vm.messages.indexOfFirst { it.id == anchor.messageId }
-                if (index < 0) return@LaunchedEffect
-                val item = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == anchor.messageId }
-                if (item == null) {
-                    listState.scrollToItem(index)
-                } else {
-                    // Use a signed delta so short replacements can sit below the viewport top.
-                    val delta = item.offset + item.size + listState.layoutInfo.beforeContentPadding - anchor.endY
-                    if (kotlin.math.abs(delta) <= 1) return@LaunchedEffect
-                    val remaining = delta - listState.scrollBy(delta.toFloat()).toInt()
-                    // With a shorter branch there may be too little content to reach the old screen position.
-                    if (remaining > 1) anchorBottomSpace.value += remaining
-                    if (remaining < -1) anchorTopSpace.value -= remaining
-                }
-            }
-        } finally {
-            if (pathAnchor === anchor) {
-                pathAnchor = null
-                pathRebuilding = false
+        pathAnchor?.let { anchor ->
+            val index = messageRows.indexOfFirst { it.key == anchor.messageId }
+            if (index >= 0) {
+                anchorTopSpace.value = anchor.headRoom
+                anchorBottomSpace.value = anchor.tailRoom
+                listState.requestScrollToItem(index, anchor.headRoom - anchor.offset)
             }
         }
+        pathAnchor = null
+        pathRebuilding = false
     }
 
     /*
@@ -1022,7 +1006,7 @@ fun ChatScreen(
         detached = true
         focusManager.clearFocus()
         keyboard?.hide()
-        val index = vm.messages.indexOfFirst { it.id == target.messageId }
+        val index = messageRows.indexOfFirst { it.key == target.messageId }
         if (index >= 0) {
             listState.scrollToItem(index)
             withFrameNanos { }
@@ -1036,18 +1020,28 @@ fun ChatScreen(
         keyboard?.hide()
     }
 
-    fun anchorOnPathChange(message: UiMessage, replacementId: String?) {
-        val visibleItems = listState.layoutInfo.visibleItemsInfo
-        val target = visibleItems.firstOrNull { it.key == message.id }
-        val stableNeighbor = visibleItems.lastOrNull { it.index < (target?.index ?: -1) }
-        val topPadding = listState.layoutInfo.beforeContentPadding
-        pathAnchor = when {
-            target != null && replacementId != null -> MessagePathAnchor(replacementId, target.offset + target.size + topPadding)
-            stableNeighbor != null -> MessagePathAnchor(stableNeighbor.key as String, stableNeighbor.offset + stableNeighbor.size + topPadding)
-            else -> null
+    fun anchorOnPathChange(message: UiMessage, replacementId: String?, deleting: Set<String> = emptySet(),
+                           visibleItems: List<androidx.compose.foundation.lazy.LazyListItemInfo> = listState.layoutInfo.visibleItemsInfo) {
+        val targetKey = if (replacementId != null) messageBranchKey(message) else message.id
+        val target = visibleItems.firstOrNull { it.key == targetKey }
+        fun atOffset(id: String, offset: Int): MessagePathAnchor {
+            // A short replacement may leave too little content below the anchor.
+            // Reserve one bounded viewport remainder in the same remeasure as placement.
+            val layout = listState.layoutInfo
+            val baseOffset = offset + anchorTopSpace.value
+            val available = layout.viewportEndOffset - layout.afterContentPadding + anchorBottomSpace.value - offset
+            return MessagePathAnchor(id, baseOffset, baseOffset.coerceIn(0, layout.viewportSize.height),
+                available.coerceIn(0, layout.viewportSize.height))
         }
-        anchorTopSpace.value = 0
-        anchorBottomSpace.value = 0
+        val anchor = if (target != null && replacementId != null) {
+            atOffset(targetKey, target.offset)
+        } else {
+            val candidates = visibleItems.filter { it.key is String && it.key !in deleting &&
+                vm.messages.any { row -> row.id == it.key && !row.deletedNavigation } }
+            val neighbor = candidates.firstOrNull { it.index > (target?.index ?: -1) } ?: candidates.lastOrNull()
+            neighbor?.let { atOffset(it.key as String, it.offset) }
+        }
+        pathAnchor = anchor
         pathRebuilding = true
         detached = true
     }
@@ -1071,17 +1065,27 @@ fun ChatScreen(
         panel = if (panel == target) InputPanelState.NONE else target
     }
 
-    val textSelection = remember(vm) { MessageTextSelection() }
-    val shareSelection = remember(vm) { MessageShareSelection() }
-    var deleteSelectionMode by remember(vm) { mutableStateOf(false) }
     var excerpt by remember(vm.currentConversationId) { mutableStateOf<MessageShareDocument?>(null) }
     val shareMessages = vm.messages.toList()
-    val shareGroups = remember(shareMessages) { messageShareGroups(shareMessages) }
+    val visibleShareMessages = shareMessages.filterNot { it.deletedNavigation }
+    val sharingGroups = remember(visibleShareMessages) { messageShareGroups(visibleShareMessages) }
+    val deletionGroups = remember(visibleShareMessages) { visibleShareMessages.map { MessageShareGroup(it.id, listOf(it)) } }
+    val shareGroups = if (deleteSelectionMode) deletionGroups else sharingGroups
     LaunchedEffect(vm.currentConversationId) {
         textSelection.dismiss()
         shareSelection.close()
         deleteSelectionMode = false
         pendingDeleteGroups = null
+    }
+    LaunchedEffect(canDeleteMessages) {
+        if (!canDeleteMessages) {
+            deleteTarget = null
+            pendingDeleteGroups = null
+            if (deleteSelectionMode) {
+                shareSelection.close()
+                deleteSelectionMode = false
+            }
+        }
     }
     LaunchedEffect(shareGroups) { if (shareSelection.active) shareSelection.reconcile(shareGroups) }
     BackHandler(enabled = shareSelection.active) {
@@ -1097,7 +1101,7 @@ fun ChatScreen(
         detached = true
         vm.dismissSearch()
         deleteSelectionMode = forDeletion
-        shareSelection.begin(message.id, shareGroups)
+        shareSelection.begin(message.id, if (forDeletion) deletionGroups else sharingGroups)
     }
 
     /*
@@ -1220,6 +1224,7 @@ fun ChatScreen(
                     } else {
                         MessageList(
                             messages = vm.messages,
+                            rows = messageRows,
                             loadingLabelFor = vm::loadingLabelFor,
                             onStopImage = vm::stop,
                             loadingWordsUseThemeColor = vm.loadingWordsUseThemeColor,
@@ -1240,7 +1245,7 @@ fun ChatScreen(
                                 )
                             },
                             onShare = { beginSelection(it, forDeletion = false) },
-                            onDeleteSelectionStart = if (vm.isStreaming || vm.switching) null else
+                            onDeleteSelectionStart = if (!canDeleteMessages) null else
                                 { message -> beginSelection(message, forDeletion = true) },
                             searchTarget = vm.searchTarget,
                             searchBottomObstructionPx = { inputAreaHeight.value },
@@ -1313,12 +1318,13 @@ fun ChatScreen(
                                     }
                                 }
                             },
-                            onDelete = { message -> deleteTarget = message },
+                            onDelete = if (canDeleteMessages) ({ message -> deleteTarget = message }) else null,
                             onFork = { message -> vm.forkFrom(message) },
                             onVariantChange = { message, index ->
                                 // 切版本也重建路径（旧分支下游让位）—— 锚住操作栏那一行，
                                 // 换完视口不动，连点 `‹ ›` 才点得准。详见 anchorOnPathChange。
-                                vm.switchVariant(message, index) { anchorOnPathChange(message, it) }
+                                val visibleItems = listState.layoutInfo.visibleItemsInfo
+                                vm.switchVariant(message, index) { anchorOnPathChange(message, it, visibleItems = visibleItems) }
                             },
                             onOpenImage = { message, attachment ->
                                 val imageEntries = vm.messages.flatMap { item ->
@@ -1900,7 +1906,8 @@ fun ChatScreen(
                              * 用的（切版本 / 删除），而跳转时列表没动，`scrollToItem` 就是
                              * 确定性的 —— 再套一层锚点反而是白绕。
                              */
-                            listState.scrollToItem(entry.index, 0)
+                            val rowIndex = messageRows.indexOfFirst { it.key == vm.messages.getOrNull(entry.index)?.id }
+                            if (rowIndex >= 0) listState.scrollToItem(rowIndex, 0)
                             /*
                              * 跳走 = "我在读已经有的东西"，跟底要停（§34.4）。
                              * 但只在**真的离开底部**时停；跳到底部那条不该把跟随断掉。
@@ -2019,26 +2026,25 @@ fun ChatScreen(
 
     // ── 删除单条确认 ──────────────────────────────────────
 
-    deleteTarget?.let { target ->
+    deleteTarget?.takeIf { canDeleteMessages }?.let { target ->
         AppConfirmDialog(
             title = stringResource(R.string.msg_delete_title),
-            message = stringResource(R.string.msg_delete_body),
-            confirmText = stringResource(R.string.msg_delete_current_version),
-            secondaryText = stringResource(R.string.msg_delete_all_versions),
+            message = if (target.role == MessageRole.ASSISTANT) {
+                stringResource(R.string.msg_delete_reply_body, stringResource(R.string.msg_delete_body))
+            } else {
+                stringResource(R.string.msg_delete_body)
+            },
+            confirmText = stringResource(R.string.msg_delete_all_versions),
             destructive = true,
             onDismiss = { deleteTarget = null },
             onConfirm = {
                 deleteTarget = null
-                vm.deleteMessage(target, allVersions = false) { anchorOnPathChange(target, it) }
-            },
-            onSecondary = {
-                deleteTarget = null
-                vm.deleteMessage(target, allVersions = true) { anchorOnPathChange(target, it) }
+                vm.deleteMessage(target) { anchorOnPathChange(target, it, setOf(target.id)) }
             },
         )
     }
 
-    pendingDeleteGroups?.let { selectedGroups ->
+    pendingDeleteGroups?.takeIf { canDeleteMessages }?.let { selectedGroups ->
         AppConfirmDialog(
             title = stringResource(R.string.share_delete_title),
             message = stringResource(R.string.share_delete_warning, selectedGroups.size),
@@ -2050,7 +2056,9 @@ fun ChatScreen(
                 pendingDeleteGroups = null
                 shareSelection.close()
                 deleteSelectionMode = false
-                vm.deleteSelectedVersions(messageIds, selectedGroups.size)
+                vm.deleteSelectedVersions(messageIds, selectedGroups.size) {
+                    selectedGroups.firstOrNull()?.messages?.firstOrNull()?.let { anchorOnPathChange(it, null, messageIds.toSet()) }
+                }
             },
         )
     }

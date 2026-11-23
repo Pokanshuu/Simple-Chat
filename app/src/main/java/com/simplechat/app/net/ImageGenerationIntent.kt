@@ -2,6 +2,12 @@ package com.simplechat.app.net
 
 internal enum class ImageGenerationIntent { NONE, CAPABILITY, CREATE, EDIT }
 
+/** Tool exposure is stricter than provider availability: unrelated turns must not see image generation. */
+internal fun shouldOfferImageTool(
+    imageRouteAvailable: Boolean,
+    intent: ImageGenerationIntent,
+): Boolean = imageRouteAvailable && intent in setOf(ImageGenerationIntent.CREATE, ImageGenerationIntent.EDIT)
+
 private val informational = Regex(
     "^(?:(?:请|帮我|能不能|可以)\\s*)*(?:不要|别|不必|不需要|不用|没让你|没有让你|谁让你|为什么要|怎么才能|如何|怎么(?:画|生成)|" +
         "解释|分析|点评|描述|教我|告诉我|给我.{0,12}(?:提示词|教程)|写.{0,12}提示词)|" +
@@ -11,6 +17,7 @@ private val informational = Regex(
 private val capability = Regex(
     "^(?:请问[，, ]*)?(?:你\\s*)?(?:现在|还|真的)*(?:可以|能不能|能|会不会|会)\\s*(?:直接)?(?:生图|(?:生成|画|绘制|编辑|修改)\\s*(?:图片|图像|照片|图))\\s*(?:吗|么|嘛|不)?[？?。！! ]*$|" +
         "^(?:你)?(?:为什么|怎么)(?:现在)?(?:不|没).*?(?:生图|生成图片|画图)|" +
+        "^(?:你)?(?:刚才)?(?:不(?:是(?:说)?)?|没)(?:有|能|会|可以)\\s*(?:生图(?:工具)?|生成图片|画图)\\s*(?:吗|么|嘛)?[？?。！! ]*$|" +
         "^(?:can|could|do) you (?:still )?(?:generate|create|draw|edit) (?:an? )?(?:images?|pictures?|photos?)[?.! ]*$",
     RegexOption.IGNORE_CASE,
 )

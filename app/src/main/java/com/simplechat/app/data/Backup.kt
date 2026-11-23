@@ -108,6 +108,7 @@ data class BackupMessage(
     val imageGeneration: Boolean = false,
     val createdAt: Long,
     val versionGroup: String? = null,
+    val isDeletedNode: Boolean = false,
 )
 
 @Serializable
@@ -153,6 +154,7 @@ internal fun PresetEntity.toBackup(): BackupPreset = BackupPreset(
 internal fun MessageEntity.toBackup(): BackupMessage = BackupMessage(
     id = id,
     versionGroup = versionGroup,
+    isDeletedNode = isDeletedNode,
     parentId = parentId,
     variantIndex = variantIndex,
     active = active,
@@ -175,6 +177,7 @@ internal fun MessageEntity.toBackup(): BackupMessage = BackupMessage(
 internal fun BackupMessage.toEntity(conversationId: String): MessageEntity = MessageEntity(
     id = id,
     versionGroup = versionGroup,
+    isDeletedNode = isDeletedNode,
     conversationId = conversationId,
     parentId = parentId,
     variantIndex = variantIndex,

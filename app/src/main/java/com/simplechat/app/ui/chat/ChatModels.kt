@@ -247,6 +247,7 @@ data class UiMessage(
     val variantIndex: Int = 0,
     /** 同父兄弟总数，用于渲染 `‹ n/m ›`。 */
     val variantCount: Int = 1,
+    val deletedNavigation: Boolean = false,
     /** 首字延迟，用于性能仪表（设计文档 §9.1 P1）。 */
     val ttftMs: Long? = null,
     /** 每秒输出 token 数估算。 */

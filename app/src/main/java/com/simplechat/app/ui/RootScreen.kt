@@ -525,6 +525,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                         Route.SETTINGS, Route.IMAGE_SETTINGS, Route.API_SETTINGS -> SettingsScreen(
                             onBack = { route = Route.CHAT }, startAtImageApi = target == Route.IMAGE_SETTINGS,
                             startAtApiProfiles = target == Route.API_SETTINGS,
+                            onMessagesRestored = chatViewModel::refreshRestoredMessages,
                         )
                     }
                 }

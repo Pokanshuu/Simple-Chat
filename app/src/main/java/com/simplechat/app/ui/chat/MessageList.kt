@@ -123,6 +123,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 fun MessageList(
     messages: List<UiMessage>,
     modifier: Modifier = Modifier,
+    rows: List<MessageListEntry> = messageListEntries(messages, false),
     listState: LazyListState = rememberLazyListState(),
     /**
      * 列表内边距。
@@ -149,7 +150,7 @@ fun MessageList(
     speakingId: String? = null,
     onEdit: (UiMessage) -> Unit = {},
     onFork: (UiMessage) -> Unit = {},
-    onDelete: (UiMessage) -> Unit = {},
+    onDelete: ((UiMessage) -> Unit)? = null,
     onVariantChange: (UiMessage, Int) -> Unit = { _, _ -> },
     onOpenImage: (UiMessage, Attachment) -> Unit = { _, _ -> },
     onRetry: (UiMessage) -> Unit = {},
@@ -241,7 +242,7 @@ fun MessageList(
             override fun calculateBottomPadding() = contentPadding.calculateBottomPadding() + searchSpace * 0.62f
         }
     }
-    HistoryPrewarmEffect(listState, messages)
+    HistoryPrewarmEffect(listState, messages) { rows.getOrNull(it)?.messageIndex ?: 0 }
     CompositionLocalProvider(LocalSearchViewport provides searchViewport) {
     LazyColumn(
         state = listState,
@@ -250,7 +251,7 @@ fun MessageList(
             .onGloballyPositioned { viewport = it.boundsInWindow() }
             .dismissMessageSelectionOnTap(textSelection),
         contentPadding = searchContentPadding,
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+
         /*
          * ⚠️ **顶部为原点（对齐官方）。这一行是流式不滑动的根。**
          *
@@ -273,10 +274,37 @@ fun MessageList(
              * 正序喂进去：最旧一条在下标 0（= 视觉顶部），最新的在最后。
              * 与列表方向一致，不再需要 `asReversed()`。
              */
-            items = messages,
-            key = { _, m -> m.id },
-            contentType = { _, m -> m.role },
-        ) { index, message ->
+            items = rows,
+            key = { _, row -> row.key },
+            contentType = { _, row -> if (row.footer) "actions" else messages[row.messageIndex].role },
+        ) { _, entry ->
+            val message = messages[entry.messageIndex]
+            val topGap = if (entry.footer) MessageGap else if (entry.messageIndex > 0) 18.dp else 0.dp
+            Column(Modifier.padding(top = topGap)) {
+            if (entry.footer || message.deletedNavigation) {
+                if (!message.deletedNavigation && message.role == MessageRole.ASSISTANT) {
+                    MessageActions(
+                        message, peekedId == message.id,
+                        supportsContinuation && canContinueReply(message, entry.messageIndex == messages.lastIndex),
+                        speakingId == message.id, readAloudAvailable,
+                        { onCopy(message) }, { onRegenerate(message) }, { onContinue(message) },
+                        { onSpeak(message) }, { onEdit(message) }, onDelete?.let { delete -> { delete(message) } },
+                        onVariantChange = { onVariantChange(message, it) },
+                    )
+                } else if (message.variantCount > 1 && shareSelection?.active != true) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = if (message.role == MessageRole.USER) Arrangement.End else Arrangement.Start,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (message.deletedNavigation) {
+                            Text(stringResource(R.string.msg_deleted_navigation), color = LocalChatColors.current.processText)
+                        }
+                        VariantSwitcher(message.variantIndex, message.variantCount, { onVariantChange(message, it) })
+                    }
+                }
+            } else {
+            val index = entry.messageIndex
             val sharedGroup = shareGroupByMessage[message.id]
             val row: @Composable () -> Unit = {
             CompositionLocalProvider(LocalShareExcerpt provides onShareExcerpt?.let { share -> { text -> share(message, text) } }) {
@@ -290,6 +318,7 @@ fun MessageList(
                 selecting = textSelection.messageId == message.id,
                 selectionActive = textSelection.isActive || shareSelection?.active == true,
                 sharing = shareSelection?.active == true,
+                showActions = !entry.separateActions,
                 onShare = if (onShare != null && sharedGroup?.available == true) ({ onShare(message) }) else null,
                 onDeleteSelectionStart = if (onDeleteSelectionStart != null && sharedGroup?.available == true) {
                     { onDeleteSelectionStart(message) }
@@ -327,8 +356,7 @@ fun MessageList(
                 onSpeak = { onSpeak(message) },
                 onEdit = { onEdit(message) },
                 onFork = { onFork(message) },
-                onDelete = { onDelete(message) },
-                onVariantChange = { onVariantChange(message, it) },
+                onDelete = onDelete?.let { delete -> { delete(message) } },
                 onOpenImage = { onOpenImage(message, it) },
                 onRetry = { onRetry(message) },
                 onStopImage = onStopImage,
@@ -341,6 +369,8 @@ fun MessageList(
                 ShareSelectableRow(sharedGroup, sharedGroup.id in shareSelection.selectedIds,
                     onToggle = { shareSelection.toggle(sharedGroup) }, content = row)
             } else row()
+            }
+            }
         }
     }
     }
@@ -365,6 +395,7 @@ private fun MessageRow(
     selecting: Boolean,
     selectionActive: Boolean,
     sharing: Boolean,
+    showActions: Boolean,
     onShare: (() -> Unit)?,
     onDeleteSelectionStart: (() -> Unit)?,
     onSelectingChange: (SelectionState?) -> Unit,
@@ -379,8 +410,7 @@ private fun MessageRow(
     onSpeak: () -> Unit,
     onEdit: () -> Unit,
     onFork: () -> Unit,
-    onDelete: () -> Unit,
-    onVariantChange: (Int) -> Unit,
+    onDelete: (() -> Unit)?,
     onOpenImage: (Attachment) -> Unit,
     onRetry: () -> Unit,
     onStopImage: () -> Unit,
@@ -489,11 +519,12 @@ private fun MessageRow(
                 menuOpen = false
                 onFork()
             }
-            // 危险操作固定分隔 —— 不随「有几个版本」这类数据变化
-            AppMenuDivider()
-            AppMenuItem(stringResource(R.string.action_delete), AppIcons.Trash, destructive = true) {
-                menuOpen = false
-                onDelete()
+            if (onDelete != null || onDeleteSelectionStart != null) AppMenuDivider()
+            if (onDelete != null) {
+                AppMenuItem(stringResource(R.string.action_delete), AppIcons.Trash, destructive = true) {
+                    menuOpen = false
+                    onDelete()
+                }
             }
             if (onDeleteSelectionStart != null) {
                 AppMenuItem(stringResource(R.string.share_select_delete), AppIcons.ListChecks) {
@@ -578,26 +609,7 @@ private fun MessageRow(
             )
         }
 
-        /*
-         * 用户消息**不放操作栏** —— 一个气泡下面挂一排图标太吵。
-         * 点气泡即可编辑、长按有菜单。只有存在多个版本时，才补一个
-         * 极简的 `‹ 2/3 ›`，否则旧版本在界面上就彻底够不着了。
-         */
-        if (actionable && !sharing && isUser && message.variantCount > 1) {
-            Spacer(Modifier.size(MessageGap))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                VariantSwitcher(
-                    index = message.variantIndex,
-                    count = message.variantCount,
-                    onChange = onVariantChange,
-                )
-            }
-        }
-
-        if (actionable && !sharing && !isUser) {
+        if (showActions && actionable && !sharing && !isUser) {
             Spacer(Modifier.size(MessageGap))
             MessageActions(
                 message = message,
@@ -611,7 +623,6 @@ private fun MessageRow(
                 onSpeak = onSpeak,
                 onEdit = onEdit,
                 onDelete = onDelete,
-                onVariantChange = onVariantChange,
             )
         }
     }
@@ -1169,8 +1180,8 @@ private fun MessageActions(
     onContinue: () -> Unit,
     onSpeak: () -> Unit,
     onEdit: () -> Unit,
-    onDelete: () -> Unit,
-    onVariantChange: (Int) -> Unit,
+    onDelete: (() -> Unit)?,
+    onVariantChange: ((Int) -> Unit)? = null,
 ) {
     val colors = LocalChatColors.current
 
@@ -1188,16 +1199,10 @@ private fun MessageActions(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Start,
     ) {
-        // 版本切换器放在最前，紧贴内容一侧，和 ‹ n/m › 的语义一致
-        if (message.variantCount > 1) {
-            VariantSwitcher(
-                index = message.variantIndex,
-                count = message.variantCount,
-                onChange = onVariantChange,
-            )
+        if (onVariantChange != null) {
+            VariantSwitcher(message.variantIndex, message.variantCount, onVariantChange)
             Spacer(Modifier.size(ActionGap))
         }
-
         CopyIconButton(ActionButtonSize, ActionIconSize, colors.processText, stringResource(R.string.action_copy), onCopy)
         if (message.role == MessageRole.ASSISTANT) {
             // 续写紧挨着「重新生成」原本的位置，两者是同一件事的两个方向（重来 / 接着写）
@@ -1217,7 +1222,7 @@ private fun MessageActions(
             }
         }
         ActionIcon(AppIcons.Edit, stringResource(R.string.action_edit), onEdit, colors)
-        ActionIcon(AppIcons.Trash, stringResource(R.string.action_delete), onDelete, colors)
+        if (onDelete != null) ActionIcon(AppIcons.Trash, stringResource(R.string.action_delete), onDelete, colors)
 
         /*
          * 中间这块是**弹性空白**：碰一下消息时模型名 · token 数出现在这，

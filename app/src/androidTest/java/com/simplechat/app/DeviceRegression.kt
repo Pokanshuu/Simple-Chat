@@ -130,28 +130,38 @@ class DeviceRegression : Instrumentation() {
         var db = AppDatabase.build(targetContext, name)
         try {
             var repo = ChatRepository(db, targetContext)
-            val c = repo.createConversation(ConversationMode.CREATIVE, "DEEPSEEK", "model")
-            val q = repo.appendUserMessage(c, "root").id
-            val alt = repo.addActiveVariant(c, q, MessageRole.ASSISTANT, "alt").id
-            val altChild = repo.appendUserMessage(c, "alt child").id
-            val current = repo.addActiveVariant(c, q, MessageRole.ASSISTANT, "current").id
-            val child = repo.appendUserMessage(c, "current child").id
-            val tail = repo.addActiveVariant(c, child, MessageRole.ASSISTANT, "tail").id
-            repo.deleteMessage(current, false)
+            val fork = repo.createConversation(ConversationMode.CREATIVE, "DEEPSEEK", "model", title = "Three continuations")
+            val branches = ('A'..'C').map { label ->
+                val question = repo.addActiveVariant(fork, MessageEntity.ROOT_PARENT, MessageRole.USER, "Question $label")
+                val reply = repo.addActiveVariant(fork, question.id, MessageRole.ASSISTANT, "Reply $label")
+                val followup = repo.appendUserMessage(fork, "Follow-up $label")
+                Triple(question.id, reply.id, followup.id)
+            }
+            check(repo.activateVariantAt(fork, MessageEntity.ROOT_PARENT, 1) == branches[1].first)
+            repo.deleteMessageVersions(fork, setOf(branches[1].first))
             db.close()
             db = AppDatabase.build(targetContext, name)
             repo = ChatRepository(db, targetContext)
-            check(repo.loadActivePath(c).map { it.id } == listOf(q, alt, child, tail))
-            check(db.messageDao().getLightFor(c).single { it.id == child }.versionGroup == current)
-            check(repo.activateVariantAt(c, alt, 0) == altChild)
-            check(repo.loadActivePath(c).map { it.id } == listOf(q, alt, altChild))
-            check(repo.activateVariantAt(c, alt, 1) == child)
-            repo.deleteMessageVersions(c, setOf(alt))
-            check(db.messageDao().getLightFor(c).map { it.id }.toSet() == setOf(q, altChild, child, tail))
-            repo.deleteMessageVersions(c, setOf(q, child))
-            check(repo.loadActivePath(c).map { it.id } == listOf(tail))
-            check(db.messageDao().getLightFor(c).map { it.id }.toSet() == setOf(altChild, tail))
-            passed("persisted active and inactive branches survive reopen and repeated batch deletion")
+            check(repo.loadActivePath(fork).filterNot { it.deletedNavigation }.map { it.id } == listOf(branches[1].second, branches[1].third))
+            val tree = db.messageDao().getLightFor(fork).associateBy { it.id }
+            branches.forEachIndexed { index, (question, reply, followup) ->
+                check(tree.getValue(question).trashedAt != null)
+                check(tree.getValue(reply).parentId == question)
+                check(repo.activateVariantAt(fork, MessageEntity.ROOT_PARENT, index) == question)
+                check(repo.loadActivePath(fork).filterNot { it.deletedNavigation }.map { it.id } == listOf(reply, followup))
+            }
+            check(!repo.exportConversation(fork).orEmpty().contains("Question A"))
+            val entry = repo.observeMessageTrash().first().single { it.conversationId == fork }
+            check(entry.versions == 3)
+            repo.changeMessageTrash(listOf(entry), restore = true)
+            check(repo.loadActivePath(fork).map { it.id } == branches.last().toList())
+            repo.deleteMessageVersions(fork, setOf(branches.last().first))
+            repo.changeMessageTrash(repo.observeMessageTrash().first().filter { it.conversationId == fork }, restore = false)
+            branches.forEach { (question, reply, _) ->
+                check(db.messageDao().findById(question)?.let { it.isDeletedNode && it.content.isEmpty() } == true)
+                check(db.messageDao().findById(reply)?.parentId == question)
+            }
+            passed("all-version deletion, restore and purge preserve original branches across reopening")
         } finally {
             db.close()
             targetContext.deleteDatabase(name)
@@ -323,26 +333,19 @@ class DeviceRegression : Instrumentation() {
                 awaitBranch(3, 3, 4)
                 switchTo(2)
                 awaitBranch(2, 2, 4)
-                withContext(Dispatchers.Main) { vm.deleteMessage(vm.messages.single { it.parentId == parent }, allVersions = false) }
-                awaitBranch(1, 1, 3, child = 2)
-                switchTo(2)
-                awaitBranch(3, 2, 3)
+                withContext(Dispatchers.Main) { vm.deleteMessage(vm.messages.single { it.parentId == parent }) }
+                withTimeout(4_000) {
+                    while (!withContext(Dispatchers.Main) { vm.messages.any { it.deletedNavigation } }) delay(20)
+                }
+                awaitBranch(2, 2, 4)
                 switchTo(0)
-                awaitBranch(0, 0, 3)
-                withContext(Dispatchers.Main) { vm.deleteMessage(vm.messages.single { it.parentId == parent }, allVersions = false) }
-                awaitBranch(1, 0, 2, child = 0)
-                switchTo(1)
-                awaitBranch(3, 1, 2)
-                switchTo(0)
-                awaitBranch(1, 0, 2, child = 0)
-                switchTo(1)
-                awaitBranch(3, 1, 2)
-                val hits = db.conversationDao().search("branch-test", includeInactiveBranches = true).first().filter { it.conversation.id == branchId }
-                check(hits.map { it.variantIndex }.sortedBy { it } == listOf(0, 1))
-                val newBranch = repository.addActiveVariant(branchId, parent, role, "new after deletion")
-                check(newBranch.variantIndex == 2 && newBranch.variantCount == 3)
+                awaitBranch(0, 0, 4)
+                switchTo(3)
+                awaitBranch(3, 3, 4)
+                val hits = db.conversationDao().search("branch-test", includeInactiveBranches = true).first()
+                check(hits.none { it.conversation.id == branchId && it.messageId != null })
             }
-            passed("delete middle and first versions, switch both ways, and retain surviving subtrees and search positions")
+            passed("hide all versions, retain each continuation and exclude recycled content from search")
             withContext(Dispatchers.Main) { vm.newConversation() }
             DataIntegrityRegression.run(ctx, context.assets, repository, db)
             passed("same-title imports, global ID collision rollback, preset links, shared fork images, huge edits and schema 8-to-9 migration")

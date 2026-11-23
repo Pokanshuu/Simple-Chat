@@ -409,9 +409,10 @@
     <string name="chat_vision_unsupported">“%1$s” cannot read images. Switch to a vision-capable model in the thinking menu first (e.g. DeepSeek V4.1 Flash).</string>
     <string name="msg_edit_input">Edit input</string>
     <string name="msg_delete_title">Delete this message?</string>
-    <string name="msg_delete_body">Delete only the current version or all versions of this message. Later messages and branches will be kept. This cannot be undone.</string>
+    <string name="msg_delete_body">Move all versions of this message to the Recycle Bin? Later messages and branches will stay in the conversation.</string>
+    <string name="msg_delete_reply_body">If you’re unhappy with this reply, use Edit or Regenerate.\n\n%1$s</string>
     <string name="msg_delete_current_version">Delete current version</string>
-    <string name="msg_delete_all_versions">Delete all versions</string>
+    <string name="msg_delete_all_versions">Move to Recycle Bin</string>
 
     <!-- ── Attachments ──────────────────────────────────── -->
     <string name="attach_read_failed">Could not read the attachment</string>
@@ -869,10 +870,10 @@
     <string name="search_load_more">Load more results</string>
     <string name="action_share">Share</string>
     <string name="share_select_delete">Select multiple to delete</string>
-    <string name="share_delete_title">Permanently delete selected messages?</string>
-    <string name="share_delete_warning">Permanently delete all versions of the messages in %1$d selected exchanges? Other messages and later branches will be kept. This cannot be undone.</string>
-    <string name="share_delete_confirm">Delete permanently</string>
-    <string name="share_delete_done">Deleted all message versions in %1$d selected exchanges</string>
+    <string name="share_delete_title">Move selected messages to the Recycle Bin?</string>
+    <string name="share_delete_warning">Move all versions of the %1$d selected messages to the Recycle Bin? Other messages and branches will stay in the conversation.</string>
+    <string name="share_delete_confirm">Move to Recycle Bin</string>
+    <string name="share_delete_done">Moved %1$d messages to the Recycle Bin</string>
     <string name="share_group_select">Select this exchange</string>
     <string name="share_select_all">Select all</string>
     <string name="share_exit">Exit selection</string>
@@ -1000,6 +1001,26 @@
     <string name="value_off">Off</string>
     <string name="wallpaper_edit">Edit wallpaper</string>
     <string name="wallpaper_change">Change image</string>
+    <string name="msg_deleted_navigation">Message deleted</string>
+    <string name="trash_messages_tab">Messages</string>
+    <string name="trash_conversations_tab">Conversations</string>
+    <string name="trash_messages_empty">No deleted messages</string>
+    <string name="trash_restore_versions">Restore all versions</string>
+    <string name="trash_message_versions">%1$d versions</string>
+    <string name="trash_message_preview_empty">No text preview</string>
+    <string name="trash_message_purge_confirm">Permanently delete all versions of this message? Later messages and branches will stay in the conversation. This cannot be undone.</string>
+    <string name="trash_messages_clear">Empty deleted messages</string>
+    <string name="trash_messages_clear_confirm">Permanently delete the listed messages from the Recycle Bin? This cannot be undone.</string>
+    <string name="trash_conversation_cascade">Deleted messages belonging to these conversations will also be removed.</string>
+    <string name="trash_message_failed">Could not update the Recycle Bin</string>
+    <string name="trash_row_actions">Actions for %1$s</string>
+    <plurals name="trash_days_remaining">
+        <item quantity="one">%d day left</item>
+        <item quantity="other">%d days left</item>
+    </plurals>
+    <string name="theme_recommended">(Recommended)</string>
+    <string name="theme_acrylic_clear">Clear</string>
+    <string name="theme_acrylic_heavy">Heavy</string>
 </resources>
 
 

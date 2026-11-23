@@ -77,11 +77,11 @@ interface ConversationDao {
                  AND sibling.parentId = m.parentId)
             END AS variantCount
         FROM conversations c
-        LEFT JOIN messages m ON m.conversationId = c.id
+        LEFT JOIN messages m ON m.conversationId = c.id AND m.trashedAt IS NULL AND m.isDeletedNode = 0
             AND (instr(lower(m.content), lower(:query)) > 0
                  OR (:includeReasoning AND instr(lower(m.reasoning), lower(:query)) > 0))
             AND (:includeInactiveBranches OR m.active = 1)
-        WHERE length(:query) > 0 AND (m.id IS NOT NULL OR instr(lower(c.title), lower(:query)) > 0)
+        WHERE c.deletedAt IS NULL AND length(:query) > 0 AND (m.id IS NOT NULL OR instr(lower(c.title), lower(:query)) > 0)
         ORDER BY c.pinned DESC,
                  CASE WHEN c.pinned THEN c.pinnedAt ELSE c.updatedAt END DESC,
                  c.id ASC, m.createdAt DESC, m.id ASC
@@ -177,6 +177,23 @@ data class MessageLight(
     val status: String,
     val createdAt: Long,
     val versionGroup: String? = null,
+    val trashedAt: Long? = null,
+    val trashOperationId: String? = null,
+    val isDeletedNode: Boolean = false,
+) {
+    val visible: Boolean get() = trashedAt == null && !isDeletedNode
+    val groupKey: String get() = versionGroup ?: parentId
+}
+
+data class TrashedMessage(
+    val conversationId: String,
+    val title: String,
+    val operationId: String,
+    val groupKey: String,
+    val deletedAt: Long,
+    val role: String,
+    val preview: String,
+    val versions: Int,
 )
 
 data class MemorySession(val id: String, val title: String, val updatedAt: Long)
@@ -249,7 +266,7 @@ interface MessageDao {
                substr(attachments, 1, :cap) AS attachments,
                reasoning, status, errorMessage, model, excluded,
                thinkingMs, ttftMs, tps, tokens_in, tokens_out, tokens_cache_hit,
-               timeline, stopReason, imageGeneration, imageRequest, createdAt, versionGroup
+               timeline, stopReason, imageGeneration, imageRequest, createdAt, versionGroup, trashedAt, trashOperationId, isDeletedNode
         FROM messages WHERE conversationId = :conversationId
         """,
     )
@@ -273,7 +290,7 @@ interface MessageDao {
                '' AS content, NULL AS attachments, NULL AS reasoning,
                status, NULL AS errorMessage,
                model, excluded, thinkingMs, ttftMs, tps, tokens_in, tokens_out, tokens_cache_hit,
-               NULL AS timeline, stopReason, imageGeneration, imageRequest, createdAt, versionGroup
+               NULL AS timeline, stopReason, imageGeneration, imageRequest, createdAt, versionGroup, trashedAt, trashOperationId, isDeletedNode
         FROM messages WHERE id = :id
         """,
     )
@@ -311,7 +328,7 @@ interface MessageDao {
      */
     @Query(
         """
-        SELECT id, parentId, variantIndex, active, role, status, createdAt, versionGroup
+        SELECT id, parentId, variantIndex, active, role, status, createdAt, versionGroup, trashedAt, trashOperationId, isDeletedNode
         FROM messages WHERE conversationId = :conversationId
         """,
     )
@@ -334,7 +351,8 @@ interface MessageDao {
             )
             WHERE path.depth < :maxDepth
         ), tail AS (
-            SELECT id, depth FROM path WHERE depth > 0 ORDER BY depth DESC LIMIT :maxMessages
+            SELECT path.id, depth FROM path JOIN messages visible ON visible.id = path.id
+            WHERE depth > 0 AND visible.trashedAt IS NULL AND visible.isDeletedNode = 0 ORDER BY depth DESC LIMIT :maxMessages
         )
         SELECT m.role, substr(m.content, 1, :maxChars) AS content
         FROM tail JOIN messages m ON m.id = tail.id
@@ -362,7 +380,7 @@ interface MessageDao {
                substr(attachments, 1, :cap) AS attachments,
                reasoning, status, errorMessage, model, excluded,
                thinkingMs, ttftMs, tps, tokens_in, tokens_out, tokens_cache_hit,
-               timeline, stopReason, imageGeneration, imageRequest, createdAt, versionGroup
+               timeline, stopReason, imageGeneration, imageRequest, createdAt, versionGroup, trashedAt, trashOperationId, isDeletedNode
         FROM messages WHERE id IN (:ids)
         """,
     )
@@ -541,6 +559,30 @@ interface MessageDao {
     )
     suspend fun resumeStreaming(id: String, status: String)
 
+    @Query("""
+        SELECT m.conversationId, c.title, m.trashOperationId AS operationId,
+               COALESCE(m.versionGroup, m.parentId) AS groupKey, max(m.trashedAt) AS deletedAt,
+               m.role, substr(m.content, 1, 160) AS preview, count(*) AS versions
+        FROM messages m JOIN conversations c ON c.id = m.conversationId
+        WHERE m.trashedAt IS NOT NULL AND c.deletedAt IS NULL
+        GROUP BY m.conversationId, m.trashOperationId, COALESCE(m.versionGroup, m.parentId)
+        ORDER BY deletedAt DESC, m.conversationId, groupKey
+    """)
+    fun observeMessageTrash(): Flow<List<TrashedMessage>>
+
+    @Query("UPDATE messages SET trashedAt = :time, trashOperationId = :operation WHERE id IN (:ids)")
+    suspend fun setMessageTrash(ids: List<String>, time: Long?, operation: String?)
+
+    @Query("""
+        UPDATE messages SET trashedAt = NULL, trashOperationId = NULL, isDeletedNode = 1,
+            content = '', attachments = NULL, reasoning = NULL, status = 'DONE', errorMessage = NULL,
+            model = NULL, excluded = 0, thinkingMs = NULL, ttftMs = NULL, tps = NULL,
+            tokens_in = NULL, tokens_out = NULL, tokens_cache_hit = NULL, timeline = NULL,
+            stopReason = NULL, imageGeneration = 0, imageRequest = NULL
+        WHERE id IN (:ids)
+    """)
+    suspend fun scrubMessageNodes(ids: List<String>)
+
     @Query("DELETE FROM messages WHERE id IN (:ids)")
     suspend fun deleteByIds(ids: List<String>)
 
@@ -672,6 +714,13 @@ interface AttachmentRefDao {
 
     @Query("SELECT EXISTS(SELECT 1 FROM attachment_refs WHERE path = :path)")
     suspend fun containsPath(path: String): Boolean
+
+    @Query("""
+        DELETE FROM attachment_refs WHERE conversationId = :conversationId AND path = :path
+        AND NOT EXISTS(SELECT 1 FROM messages WHERE conversationId = :conversationId
+            AND instr(attachments, '"' || :path || '"') > 0)
+    """)
+    suspend fun removeIfUnused(conversationId: String, path: String)
 
     @Query("DELETE FROM attachment_refs WHERE conversationId = :conversationId")
     suspend fun clear(conversationId: String)

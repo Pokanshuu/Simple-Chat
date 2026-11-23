@@ -41,7 +41,7 @@ internal fun orderedOutgoingMessages(
 
     val filtered = path
         .filterIndexed { index, _ -> coveredIndex < 0 || index > coveredIndex }
-        .filter { it.status != MessageStatus.STREAMING }
+        .filter { !it.deletedNavigation && it.status != MessageStatus.STREAMING }
         /*
          * ⚠️ 判据是"有没有东西可发"，不是"正文是否非空"。
          *

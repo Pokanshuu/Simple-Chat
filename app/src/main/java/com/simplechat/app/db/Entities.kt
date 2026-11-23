@@ -185,6 +185,9 @@ data class MessageEntity(
     val createdAt: Long,
     /** Original sibling group after a deletion moves this message to another parent. */
     val versionGroup: String? = null,
+    val trashedAt: Long? = null,
+    val trashOperationId: String? = null,
+    @ColumnInfo(defaultValue = "0") val isDeletedNode: Boolean = false,
 ) {
     companion object {
         /** 根消息的 parentId 哨兵。 */

@@ -414,9 +414,10 @@
     <string name="chat_vision_unsupported">「%1$s」不支持识图，请先用「思考档位」换成支持识图的模型（如 DeepSeek V4.1 Flash）。</string>
     <string name="msg_edit_input">修改输入</string>
     <string name="msg_delete_title">删除这条消息？</string>
-    <string name="msg_delete_body">只删除当前版本或该消息的所有版本；后续消息和分支都会保留。删除后不可恢复。</string>
+    <string name="msg_delete_body">将这条消息的所有版本移入回收站。后续消息和分支会留在原会话。你可以在回收站恢复这些版本。</string>
+    <string name="msg_delete_reply_body">如果不满意这条回复，请使用「编辑」或「重新生成」功能。\n\n%1$s</string>
     <string name="msg_delete_current_version">删除当前版本</string>
-    <string name="msg_delete_all_versions">删除所有版本</string>
+    <string name="msg_delete_all_versions">移入回收站</string>
 
     <!-- ── 附件 ─────────────────────────────────────────── -->
     <string name="attach_read_failed">附件读取失败</string>
@@ -879,10 +880,10 @@
     <string name="search_load_more">加载更多结果</string>
     <string name="action_share">分享</string>
     <string name="share_select_delete">多选并删除</string>
-    <string name="share_delete_title">永久删除所选消息？</string>
-    <string name="share_delete_warning">将永久删除所选 %1$d 组问答中各条消息的所有版本。其余消息及后续分支会保留。此操作不可撤销。</string>
-    <string name="share_delete_confirm">永久删除</string>
-    <string name="share_delete_done">已删除所选 %1$d 组问答的所有版本</string>
+    <string name="share_delete_title">将所选消息移入回收站？</string>
+    <string name="share_delete_warning">将所选 %1$d 条消息的所有版本移入回收站。其他消息和分支会留在原会话。</string>
+    <string name="share_delete_confirm">移入回收站</string>
+    <string name="share_delete_done">已将 %1$d 条消息移入回收站</string>
     <string name="share_group_select">选择这一组问答</string>
     <string name="share_select_all">全选</string>
     <string name="share_exit">退出选择</string>
@@ -1011,6 +1012,26 @@
     <string name="value_off">关</string>
     <string name="wallpaper_edit">编辑壁纸</string>
     <string name="wallpaper_change">更换图片</string>
+    <string name="msg_deleted_navigation">消息已删除</string>
+    <string name="trash_messages_tab">消息</string>
+    <string name="trash_conversations_tab">会话</string>
+    <string name="trash_messages_empty">没有已删除的消息</string>
+    <string name="trash_restore_versions">恢复所有版本</string>
+    <string name="trash_message_versions">%1$d 个版本</string>
+    <string name="trash_message_preview_empty">无正文预览</string>
+    <string name="trash_message_purge_confirm">将彻底删除这条消息的所有版本。后续消息和分支会留在原会话。此操作不可撤销。</string>
+    <string name="trash_messages_clear">清空已删除消息</string>
+    <string name="trash_messages_clear_confirm">彻底删除回收站中列出的消息？此操作不可撤销。</string>
+    <string name="trash_conversation_cascade">这些会话下已移入回收站的消息也会一并清除。</string>
+    <string name="trash_message_failed">无法更新回收站</string>
+    <string name="trash_row_actions">%1$s的操作</string>
+    <plurals name="trash_days_remaining">
+        <item quantity="one">还剩 %d 天</item>
+        <item quantity="other">还剩 %d 天</item>
+    </plurals>
+    <string name="theme_recommended">（推荐）</string>
+    <string name="theme_acrylic_clear">清透</string>
+    <string name="theme_acrylic_heavy">厚重</string>
 </resources>
 
 

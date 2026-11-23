@@ -122,8 +122,7 @@ internal object MessageShareRegression {
             File(context.cacheDir, name).outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
             image.recycle()
         }
-        try {
-            if (deletionOnly) {
+        suspend fun runDeletion() {
                 val cid = repo.createConversation(ConversationMode.CREATIVE, "DEEPSEEK", "model", title = "Version deletion regression")
                 val question = repo.appendUserMessage(cid, (1..28).joinToString("\n") { "Earlier context $it" })
                 val oldest = repo.addActiveVariant(cid, question.id, MessageRole.ASSISTANT, "Oldest version")
@@ -137,8 +136,23 @@ internal object MessageShareRegression {
                 instrumentation.runOnMainSync {
                     activity.setContent { SimpleChatTheme(themeMode = ThemeMode.DARK) { ChatScreen(vm, {}, {}, Modifier.fillMaxSize()) } }
                 }
+                delay(650)
+                val width = activity.resources.displayMetrics.widthPixels
+                val height = activity.resources.displayMetrics.heightPixels
+                repeat(3) {
+                    if (nodes().none { it.isVisibleToUser && it.text?.toString() == "3/3" }) {
+                        val start = SystemClock.uptimeMillis()
+                        val x = width * 0.5f
+                        send(MotionEvent.ACTION_DOWN, x, height * 0.29f, start)
+                        for (step in 1..16) {
+                            delay(20)
+                            send(MotionEvent.ACTION_MOVE, x, height * (0.29f + 0.021f * step), start)
+                        }
+                        send(MotionEvent.ACTION_UP, x, height * 0.626f, start)
+                        delay(360)
+                    }
+                }
                 find("3/3")
-                delay(600)
                 suspend fun versionControlY(count: String): Int {
                     val control = find(count)
                     return Rect().also(control::getBoundsInScreen).centerY()
@@ -158,15 +172,23 @@ internal object MessageShareRegression {
                 checkAnchor("3/3")
                 touch("Long version paragraph 22", long = true)
                 tapResource(R.string.action_delete)
-                tapResource(R.string.msg_delete_current_version)
-                find("Short version")
-                checkAnchor("2/2")
+                find(context.getString(R.string.msg_delete_reply_body, context.getString(R.string.msg_delete_body)))
+                tapResource(R.string.action_cancel)
+                check(db.messageDao().getLightFor(cid).single { it.id == longer.id }.visible)
+                touch("Long version paragraph 22", long = true)
+                tapResource(R.string.action_delete)
+                tapResource(R.string.msg_delete_all_versions)
+                tapResource(R.string.msg_variant_prev)
+                find("Alternate continuation 1")
+                tapResource(R.string.msg_variant_next)
                 find("Current continuation 1")
-                check(db.messageDao().getLightFor(cid).map { it.id }.toSet() ==
-                    setOf(question.id, oldest.id, shorter.id, alternateTail.id, activeTail.id))
-                check(repo.loadActivePath(cid).map { it.id } == listOf(question.id, shorter.id, activeTail.id))
-                check(db.messageDao().getLightFor(cid).none { it.id == longer.id })
-                status("long and short versions keep their controls aligned; deleting the visible version keeps the other versions and continuation")
+                check(repo.loadActivePath(cid).filterNot { it.deletedNavigation }.map { it.id } == listOf(question.id, activeTail.id))
+                check(db.messageDao().getLightFor(cid).filter { it.id in setOf(oldest.id, shorter.id, longer.id) }.all { it.trashedAt != null })
+                status("long and short versions keep their controls aligned; all versions move to the Recycle Bin with continuations intact")
+        }
+        try {
+            if (deletionOnly) {
+                runDeletion()
                 return
             }
             val cid = repo.createConversation(ConversationMode.CREATIVE, "DEEPSEEK", "model", title = "多选分享 · 回归测试")

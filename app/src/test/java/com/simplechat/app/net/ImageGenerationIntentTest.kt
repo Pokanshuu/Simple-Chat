@@ -60,6 +60,14 @@ class ImageGenerationIntentTest {
             .forEach { assertEquals(it, CAPABILITY, imageGenerationIntent(it, hasReference = true)) }
     }
 
+    @Test fun unrelatedTurnsNeverExposeTheImageTool() {
+        assertFalse(shouldOfferImageTool(true, NONE))
+        assertFalse(shouldOfferImageTool(true, CAPABILITY))
+        assertTrue(shouldOfferImageTool(true, CREATE))
+        assertTrue(shouldOfferImageTool(true, EDIT))
+        assertFalse(shouldOfferImageTool(false, CREATE))
+    }
+
     @Test fun discussionAndNonImageOutputsStayInChat() {
         listOf(
             "具体劳动反映人与自然的关系，抽象劳动反映商品生产者的社会关系",
