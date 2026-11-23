@@ -213,6 +213,7 @@ fun ChatScreen(
         inputState.setTextAndPlaceCursorAtEnd(text)
     }
     var deleteTarget by remember { mutableStateOf<UiMessage?>(null) }
+    var pendingDeleteGroups by remember(vm.currentConversationId) { mutableStateOf<List<MessageShareGroup>?>(null) }
 
     /**
      * 两条编辑路径，对应两种真实需求：
@@ -1150,12 +1151,32 @@ fun ChatScreen(
 
     val textSelection = remember(vm) { MessageTextSelection() }
     val shareSelection = remember(vm) { MessageShareSelection() }
+    var deleteSelectionMode by remember(vm) { mutableStateOf(false) }
     var excerpt by remember(vm.currentConversationId) { mutableStateOf<MessageShareDocument?>(null) }
     val shareMessages = vm.messages.toList()
     val shareGroups = remember(shareMessages) { messageShareGroups(shareMessages) }
-    LaunchedEffect(vm.currentConversationId) { textSelection.dismiss(); shareSelection.close() }
+    LaunchedEffect(vm.currentConversationId) {
+        textSelection.dismiss()
+        shareSelection.close()
+        deleteSelectionMode = false
+        pendingDeleteGroups = null
+    }
     LaunchedEffect(shareGroups) { if (shareSelection.active) shareSelection.reconcile(shareGroups) }
-    BackHandler(enabled = shareSelection.active) { shareSelection.close() }
+    BackHandler(enabled = shareSelection.active) {
+        shareSelection.close()
+        deleteSelectionMode = false
+    }
+
+    fun beginSelection(message: UiMessage, forDeletion: Boolean) {
+        textSelection.dismiss()
+        dismissInput()
+        panel = InputPanelState.NONE
+        messageIndex.collapse()
+        detached = true
+        vm.dismissSearch()
+        deleteSelectionMode = forDeletion
+        shareSelection.begin(message.id, shareGroups)
+    }
 
     /*
      * 壁纸：只在聊天页画。解码放 IO，按最外层尺寸 cover 绘制（不拉伸变形）。
@@ -1207,7 +1228,17 @@ fun ChatScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         if (shareSelection.active) {
-            Box(contentWidth) { MessageShareTopBar(shareSelection, shareGroups, onClose = { shareSelection.close() }) }
+            Box(contentWidth) {
+                MessageShareTopBar(
+                    shareSelection,
+                    shareGroups,
+                    onClose = {
+                        shareSelection.close()
+                        deleteSelectionMode = false
+                    },
+                    showClose = !deleteSelectionMode,
+                )
+            }
         } else ChatTopBar(
             title = vm.conversationTitle(),
             autoReadAloud = vm.autoReadAloud,
@@ -1286,15 +1317,9 @@ fun ChatScreen(
                                     footnote,
                                 )
                             },
-                            onShare = { message ->
-                                textSelection.dismiss()
-                                dismissInput()
-                                panel = InputPanelState.NONE
-                                messageIndex.collapse()
-                                detached = true
-                                vm.dismissSearch()
-                                shareSelection.begin(message.id, shareGroups)
-                            },
+                            onShare = { beginSelection(it, forDeletion = false) },
+                            onDeleteSelectionStart = if (vm.isStreaming || vm.switching) null else
+                                { message -> beginSelection(message, forDeletion = true) },
                             searchTarget = vm.searchTarget,
                             searchBottomObstructionPx = { inputAreaHeight.value },
                             searchPlacementReset = searchPlacementReset,
@@ -1488,7 +1513,13 @@ fun ChatScreen(
                 onCloseExcerpt = { excerpt = null })
         }
         val composer: @Composable () -> Unit = {
-            if (shareSelection.active) {
+            if (shareSelection.active && deleteSelectionMode) {
+                MessageDeleteBottomBar(shareSelection.selectedIds.size, onCancel = {
+                    shareSelection.close()
+                    deleteSelectionMode = false
+                },
+                    onDelete = { pendingDeleteGroups = shareSelection.selected(shareGroups) })
+            } else if (shareSelection.active) {
                 MessageShareTools(shareSelection, shareGroups, vm.conversationTitle(),
                     modifier = Modifier.fillMaxWidth())
             } else Column(
@@ -2071,14 +2102,36 @@ fun ChatScreen(
         AppConfirmDialog(
             title = stringResource(R.string.msg_delete_title),
             message = stringResource(R.string.msg_delete_body),
-            confirmText = stringResource(R.string.action_delete),
+            confirmText = stringResource(R.string.msg_delete_current_version),
+            secondaryText = stringResource(R.string.msg_delete_all_versions),
             destructive = true,
             onDismiss = { deleteTarget = null },
             onConfirm = {
                 deleteTarget = null
-                // 删除同样重建路径：顶替它的那条会落在同一个位置上，锚住它
                 anchorOnPathChange(target)
-                vm.deleteMessage(target)
+                vm.deleteMessage(target, allVersions = false)
+            },
+            onSecondary = {
+                deleteTarget = null
+                anchorOnPathChange(target)
+                vm.deleteMessage(target, allVersions = true)
+            },
+        )
+    }
+
+    pendingDeleteGroups?.let { selectedGroups ->
+        AppConfirmDialog(
+            title = stringResource(R.string.share_delete_title),
+            message = stringResource(R.string.share_delete_warning, selectedGroups.size),
+            confirmText = stringResource(R.string.share_delete_confirm),
+            destructive = true,
+            onDismiss = { pendingDeleteGroups = null },
+            onConfirm = {
+                val messageIds = selectedGroups.flatMap { it.messages }.map { it.id }.distinct()
+                pendingDeleteGroups = null
+                shareSelection.close()
+                deleteSelectionMode = false
+                vm.deleteSelectedVersions(messageIds, selectedGroups.size)
             },
         )
     }

@@ -484,6 +484,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         model: String? = null,
         imageGeneration: Boolean = false,
         imageRequest: ImageRequest? = null,
+        versionGroup: String? = null,
     ): MessageEntity {
         val id = UUID.randomUUID().toString()
         val entity = newMessageEntity(
@@ -499,7 +500,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             model = model,
             imageGeneration = imageGeneration,
             imageRequest = imageRequest,
-        ).withOffloadedImages()
+        ).copy(versionGroup = versionGroup).withOffloadedImages()
         messages.upsert(entity)
         messages.activate(id, conversationId, parentId)
         val refs = Attachments.decode(entity.attachments).mapNotNull { it.path }.distinct()
@@ -698,25 +699,33 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     suspend fun resolveDanglingStreams(conversationId: String) =
         messages.resolveDanglingStreams(conversationId, MessageStatus.STOPPED.toStorage())
 
-    /**
-     * 删除一条消息 —— **连同它的整棵子树**。
-     *
-     * 下游都是基于它生成的，留着一个"没有前文的下文"没有意义。
-     * 删完若父节点下再没有 active 的兄弟，让最后一个兄弟接管，
-     * 免得路径断在半途、后面全部不显示。
-     */
-    suspend fun deleteMessage(messageId: String) = db.withTransaction {
+    /** Remove every selected message version while preserving all downstream branches. */
+    suspend fun deleteMessageVersions(conversationId: String, messageIds: Set<String>) = db.withTransaction {
+        val tree = messages.getLightFor(conversationId)
+        val plan = MessageTree.deletionPlan(tree, messageIds, allVersions = true)
+        applyMessageDeletionPlan(conversationId, tree, plan)
+    }
+
+    suspend fun deleteMessage(messageId: String, allVersions: Boolean) = db.withTransaction {
         val node = messages.exportHeader(messageId) ?: return@withTransaction
         val tree = messages.getLightFor(node.conversationId)
-        MessageTree.subtreeLightIds(tree, messageId).chunked(MessageQueryChunk).forEach { ids ->
-            messages.deleteByIds(ids)
+        val plan = MessageTree.deletionPlan(tree, setOf(messageId), allVersions)
+        applyMessageDeletionPlan(node.conversationId, tree, plan)
+    }
+
+    private suspend fun applyMessageDeletionPlan(
+        conversationId: String,
+        tree: List<com.simplechat.app.db.MessageLight>,
+        plan: MessageTree.DeletionPlan,
+    ) {
+        compactionDao.getFor(conversationId).filter { summary ->
+            MessageTree.ancestry(tree, summary.throughMessageId).any { it.id in plan.deletedIds }
+        }.forEach { compactionDao.delete(it.id) }
+        plan.deletedIds.chunked(MessageQueryChunk).forEach { messages.deleteByIds(it) }
+        plan.promoted.forEach { child ->
+            messages.moveAfterDeletedMessage(child.id, child.parentId, child.variantIndex, child.active)
         }
-        val siblings = tree.filter { it.parentId == node.parentId && it.id != messageId }
-        if (siblings.none { it.active }) {
-            siblings.maxByOrNull { it.variantIndex }?.let {
-                messages.activate(it.id, node.conversationId, node.parentId)
-            }
-        }
+        plan.activateExisting.forEach { messages.markActive(it) }
     }
 
     /** Resolve the position and activate it in the same transaction. */
@@ -746,6 +755,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         ttftMs: Long? = null,
         tps: Float? = null,
         thinkingMs: Long? = null,
+        versionOf: String? = null,
     ): UiMessage = db.withTransaction {
         val entity = addSibling(
             conversationId = conversationId,
@@ -755,6 +765,9 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             attachments = attachments,
             reasoning = reasoning,
             status = status,
+            versionGroup = versionOf?.let { id ->
+                messages.exportHeader(id)?.let { it.versionGroup ?: it.parentId }
+            },
         )
         messages.finish(
             id = entity.id,
@@ -1765,6 +1778,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
                 raw.copy(
                     id = remapId(raw.id),
                     parentId = if (raw.parentId.isBlank()) "" else remapId(raw.parentId),
+                    versionGroup = raw.versionGroup?.let { if (it.isBlank()) "" else remapId(it) },
                 )
             }
             check(existing.add(message.id)) { "Duplicate imported message: ${message.id}" }
@@ -1906,6 +1920,11 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
                 id = "poem",
                 name = Res.get(R.string.preset_poem_name),
                 content = Res.get(R.string.preset_poem_body),
+            ),
+            Preset(
+                id = "deepseek-client-prompt",
+                name = Res.get(R.string.preset_deepseek_client_name),
+                content = Res.get(R.string.preset_deepseek_client_body),
             ),
         )
 

@@ -112,7 +112,7 @@ class ChatViewModel(
 
     private var loadingLabel by mutableStateOf<Pair<String, String>?>(null)
 
-    internal var loadingWordsUseThemeColor by mutableStateOf(false)
+    internal var loadingWordsUseThemeColor by mutableStateOf(true)
         private set
 
     internal fun loadingLabelFor(messageId: String): String? =
@@ -1347,6 +1347,7 @@ class ChatViewModel(
                 // 挂在**被重新生成那条的父亲**下 → 成为它的兄弟，旧回答留着
                 val fresh = repository.addActiveVariant(
                     conversationId = conversationId,
+                    versionOf = target.id,
                     parentId = target.parentId,
                     role = MessageRole.ASSISTANT,
                     content = "",
@@ -1471,6 +1472,7 @@ class ChatViewModel(
             }
             val fresh = repository.addActiveVariant(
                 conversationId = conversationId,
+                versionOf = target.id,
                 parentId = target.parentId,
                 role = target.role,
                 content = text,
@@ -1528,14 +1530,46 @@ class ChatViewModel(
 
     suspend fun clearDraft(key: String) = repository.clearDraft(key)
 
-    /** 删除一条消息 —— 连同它的整棵子树。 */
-    fun deleteMessage(target: UiMessage) {
-        if (isStreaming) return
+    /** Delete the selected message version, optionally including its sibling versions. */
+    fun deleteMessage(target: UiMessage, allVersions: Boolean) {
+        mutateMessageHistory(setOf(target.id)) {
+            repository.deleteMessage(target.id, allVersions)
+        }
+    }
+
+    fun deleteSelectedVersions(messageIds: List<String>, selectedGroupCount: Int) {
+        val ids = messageIds.toSet()
+        mutateMessageHistory(ids, Res.get(R.string.share_delete_done, selectedGroupCount)) { conversationId ->
+            repository.deleteMessageVersions(conversationId, ids)
+        }
+    }
+
+    private fun mutateMessageHistory(ids: Set<String>, success: String? = null, delete: suspend (String) -> Unit) {
+        if (isStreaming || switching || ids.isEmpty()) return
         val conversationId = currentConversationId ?: return
-        if (compacting) cancelCompaction()
+        val generation = switchGeneration
         viewModelScope.launch {
-            repository.deleteMessage(target.id)
-            reloadPath(conversationId)
+            if (!sendMutex.tryLock()) return@launch
+            try {
+                if (generation != switchGeneration || isStreaming || switching ||
+                    !messages.mapTo(HashSet()) { it.id }.containsAll(ids)
+                ) return@launch
+                if (compacting) cancelCompaction()
+                delete(conversationId)
+                val savedCompaction = repository.getCompactions(conversationId).lastOrNull()
+                if (generation != switchGeneration) return@launch
+                reloadPath(conversationId)
+                if (generation == switchGeneration) {
+                    compaction = savedCompaction
+                    if (success != null) banner = success
+                }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (generation == switchGeneration) banner = error.userMessage()
+            } finally {
+                sendMutex.unlock()
+            }
         }
     }
 

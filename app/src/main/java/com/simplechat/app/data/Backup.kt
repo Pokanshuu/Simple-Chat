@@ -107,6 +107,7 @@ data class BackupMessage(
     val stopReason: String? = null,
     val imageGeneration: Boolean = false,
     val createdAt: Long,
+    val versionGroup: String? = null,
 )
 
 @Serializable
@@ -151,6 +152,7 @@ internal fun PresetEntity.toBackup(): BackupPreset = BackupPreset(
 
 internal fun MessageEntity.toBackup(): BackupMessage = BackupMessage(
     id = id,
+    versionGroup = versionGroup,
     parentId = parentId,
     variantIndex = variantIndex,
     active = active,
@@ -172,6 +174,7 @@ internal fun MessageEntity.toBackup(): BackupMessage = BackupMessage(
 
 internal fun BackupMessage.toEntity(conversationId: String): MessageEntity = MessageEntity(
     id = id,
+    versionGroup = versionGroup,
     conversationId = conversationId,
     parentId = parentId,
     variantIndex = variantIndex,
@@ -244,7 +247,7 @@ internal fun BackupConversation.withFreshIds(newId: String): BackupConversation 
     fun remap(old: String): String = if (old.isBlank()) "" else "$newId#$old"
     return copy(
         id = newId,
-        messages = messages.map { it.copy(id = remap(it.id), parentId = remap(it.parentId)) },
+        messages = messages.map { it.copy(id = remap(it.id), parentId = remap(it.parentId), versionGroup = it.versionGroup?.let(::remap)) },
     )
 }
 

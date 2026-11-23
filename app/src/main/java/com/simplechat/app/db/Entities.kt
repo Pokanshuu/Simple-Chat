@@ -183,6 +183,8 @@ data class MessageEntity(
     @ColumnInfo(defaultValue = "0") val imageGeneration: Boolean = false,
     val imageRequest: String? = null,
     val createdAt: Long,
+    /** Original sibling group after a deletion moves this message to another parent. */
+    val versionGroup: String? = null,
 ) {
     companion object {
         /** 根消息的 parentId 哨兵。 */

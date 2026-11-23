@@ -180,9 +180,10 @@ fun MessageList(
     textSelection: MessageTextSelection = remember { MessageTextSelection() },
     shareSelection: MessageShareSelection? = null,
     onShare: ((UiMessage) -> Unit)? = null,
+    onDeleteSelectionStart: ((UiMessage) -> Unit)? = null,
     onShareExcerpt: ((UiMessage, String) -> Unit)? = null,
     loadingLabelFor: (String) -> String? = { null },
-    loadingWordsUseThemeColor: Boolean = false,
+    loadingWordsUseThemeColor: Boolean = true,
 ) {
     /*
      * 「谁被碰过」。
@@ -290,6 +291,9 @@ fun MessageList(
                 selectionActive = textSelection.isActive || shareSelection?.active == true,
                 sharing = shareSelection?.active == true,
                 onShare = if (onShare != null && sharedGroup?.available == true) ({ onShare(message) }) else null,
+                onDeleteSelectionStart = if (onDeleteSelectionStart != null && sharedGroup?.available == true) {
+                    { onDeleteSelectionStart(message) }
+                } else null,
                 onSelectingChange = { state ->
                     if (state != null) textSelection.begin(message.id, state)
                     else textSelection.dismiss(message.id)
@@ -362,6 +366,7 @@ private fun MessageRow(
     selectionActive: Boolean,
     sharing: Boolean,
     onShare: (() -> Unit)?,
+    onDeleteSelectionStart: (() -> Unit)?,
     onSelectingChange: (SelectionState?) -> Unit,
     canContinue: Boolean,
     speakingId: String?,
@@ -489,6 +494,12 @@ private fun MessageRow(
             AppMenuItem(stringResource(R.string.action_delete), AppIcons.Trash, destructive = true) {
                 menuOpen = false
                 onDelete()
+            }
+            if (onDeleteSelectionStart != null) {
+                AppMenuItem(stringResource(R.string.share_select_delete), AppIcons.ListChecks) {
+                    menuOpen = false
+                    onDeleteSelectionStart()
+                }
             }
         }
     }
@@ -915,7 +926,7 @@ fun AssistantBlock(
     /** 思考内容是否自动收起；见 `MessageList` 的同名参数。 */
     autoCollapseThinking: Boolean = true,
     loadingLabel: String? = null,
-    loadingWordsUseThemeColor: Boolean = false,
+    loadingWordsUseThemeColor: Boolean = true,
     reasoningSearchRequest: Long? = null,
 ) {
     /*

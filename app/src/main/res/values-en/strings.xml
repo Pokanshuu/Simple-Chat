@@ -409,7 +409,9 @@
     <string name="chat_vision_unsupported">“%1$s” cannot read images. Switch to a vision-capable model in the thinking menu first (e.g. DeepSeek V4.1 Flash).</string>
     <string name="msg_edit_input">Edit input</string>
     <string name="msg_delete_title">Delete this message?</string>
-    <string name="msg_delete_body">All versions of this message are deleted together. This cannot be undone.</string>
+    <string name="msg_delete_body">Delete only the current version or all versions of this message. Later messages and branches will be kept. This cannot be undone.</string>
+    <string name="msg_delete_current_version">Delete current version</string>
+    <string name="msg_delete_all_versions">Delete all versions</string>
 
     <!-- ── Attachments ──────────────────────────────────── -->
     <string name="attach_read_failed">Could not read the attachment</string>
@@ -519,6 +521,8 @@
     <string name="preset_prose_body">You are a prose writing partner who understands the weight of memory and silence. Help me turn personal experience into writing, not into descriptions of emotion. Enter through concrete people, objects, smells, light and motion, and let meaning seep out of the detail. Keep my voice, my hesitations and my cracks; do not invent experiences of mine, do not sentimentalise, do not force quotable lines. When revising my sentences, prefer restraint and precision over ornament.</string>
     <string name="preset_poem_name">Poetry</string>
     <string name="preset_poem_body">You are a contemporary poetry writing partner. Write poems with me; do not turn poems into line-broken prose, and do not turn them into philosophical slogans. Treat image, sound, breath and white space as materials. Ambiguity, fracture, leaps and incompletion are allowed. Give me versions in different voices, but do not take away my core images. Explain less; let the language speak for itself.</string>
+    <string name="preset_deepseek_client_name">DeepSeek client prompt</string>
+    <string name="preset_deepseek_client_body">你是deepseek AI助手，来自深度求索公司。</string>
 
     <!-- ── Prompts sent to the model ─────────────────────── -->
     <string name="prompt_title_system">You name conversations. Summarise what this conversation is about in at most 5 words. Output the title only: no quotes, no book-title marks, no trailing punctuation, no explanation or prefix.</string>
@@ -864,9 +868,14 @@
     <string name="search_title_match">Title match</string>
     <string name="search_load_more">Load more results</string>
     <string name="action_share">Share</string>
+    <string name="share_select_delete">Select multiple to delete</string>
+    <string name="share_delete_title">Permanently delete selected messages?</string>
+    <string name="share_delete_warning">Permanently delete all versions of the messages in %1$d selected exchanges? Other messages and later branches will be kept. This cannot be undone.</string>
+    <string name="share_delete_confirm">Delete permanently</string>
+    <string name="share_delete_done">Deleted all message versions in %1$d selected exchanges</string>
     <string name="share_group_select">Select this exchange</string>
     <string name="share_select_all">Select all</string>
-    <string name="share_exit">Exit sharing</string>
+    <string name="share_exit">Exit selection</string>
     <string name="share_selected_count">%1$d exchanges selected</string>
     <string name="share_image">Create images</string>
     <string name="share_markdown">Export MD</string>

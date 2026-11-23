@@ -164,13 +164,17 @@ internal object MessageShareRegression {
             count(0)
             touch("回答 4")
             count(1)
+            val rowBounds = Rect().also { find("回答 4").getBoundsInScreen(it) }
+            val x = rowBounds.exactCenterX()
+            val y = rowBounds.exactCenterY()
+            val distance = minOf(activity.window.decorView.height * 0.15f, (y - statusBottom) * 0.7f)
             val swipeStart = SystemClock.uptimeMillis()
-            send(MotionEvent.ACTION_DOWN, 1100f, 1600f, swipeStart)
+            send(MotionEvent.ACTION_DOWN, x, y, swipeStart)
             repeat(20) { step ->
-                send(MotionEvent.ACTION_MOVE, 1100f, 1600f - step * 12, swipeStart)
+                send(MotionEvent.ACTION_MOVE, x, y - distance * (step + 1) / 20, swipeStart)
                 delay(12)
             }
-            send(MotionEvent.ACTION_UP, 1100f, 1360f, swipeStart)
+            send(MotionEvent.ACTION_UP, x, y - distance, swipeStart)
             delay(450)
             count(1)
             screenshot("share-selection-dark.png")
@@ -287,6 +291,20 @@ internal object MessageShareRegression {
             val multi = messageShareIntent(context, pages, "image/png", document.title)
             check(multi.action == Intent.ACTION_SEND_MULTIPLE && multi.clipData!!.itemCount == pages.size)
             status("long formatted text generates ${pages.size} bounded PNG pages; multi-image intent grants every page")
+
+            touch("回答 4", long = true)
+            tapResource(R.string.share_select_delete)
+            count(1)
+            tapResource(R.string.action_delete)
+            find(context.getString(R.string.share_delete_warning, 1))
+            tapResource(R.string.action_cancel)
+            count(1)
+            tapResource(R.string.action_delete)
+            tapResource(R.string.share_delete_confirm)
+            find(context.getString(R.string.share_delete_done, 1))
+            withTimeout(5000) { while (nodes().any { it.text?.toString()?.contains("回答 4") == true }) delay(40) }
+            check(nodes().any { it.text?.toString()?.contains("回答 3") == true })
+            status("multi-select deletion warns before removing selected versions and exits without deleting later messages")
         } finally {
             instrumentation.removeMonitor(monitor)
             instrumentation.runOnMainSync { activity.finish() }

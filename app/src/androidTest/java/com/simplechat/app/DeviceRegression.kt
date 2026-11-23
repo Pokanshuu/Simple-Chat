@@ -33,6 +33,7 @@ class DeviceRegression : Instrumentation() {
     private var navigationTests = false
     private var selectionTests = false
     private var shareTests = false
+    private var deletionTests = false
     private var nativeShareTests = false
     private var releaseUiTests = false
     private var compactionTests = false
@@ -54,6 +55,7 @@ class DeviceRegression : Instrumentation() {
         navigationTests = arguments?.getString("navigation") == "true"
         selectionTests = arguments?.getString("selection") == "true"
         shareTests = arguments?.getString("share") == "true"
+        deletionTests = arguments?.getString("deletion") == "true"
         nativeShareTests = arguments?.getString("nativeShare") == "true"
         releaseUiTests = arguments?.getString("releaseUi") == "true"
         compactionTests = arguments?.getString("compaction") == "true"
@@ -74,7 +76,8 @@ class DeviceRegression : Instrumentation() {
         try {
             runBlocking {
                 val source = realArchive
-                if (memoryTests) CrossChatMemoryRegression.run(this@DeviceRegression, ::passed)
+                if (deletionTests) deletionReopen()
+                else if (memoryTests) CrossChatMemoryRegression.run(this@DeviceRegression, ::passed)
                 else if (streamConcurrencyTests) StreamConcurrencyRegression.run(this@DeviceRegression, ::passed)
                 else if (historyScrollTests) HistoryScrollRegression.run(this@DeviceRegression, ::passed)
                 else if (composerTests) ComposerRegression.run(this@DeviceRegression, ::passed)
@@ -117,6 +120,36 @@ class DeviceRegression : Instrumentation() {
 
     private fun passed(text: String) {
         sendStatus(0, Bundle().apply { putString("stream", "\nPASS $text\n") })
+    }
+
+    private suspend fun deletionReopen() {
+        val name = "delete-test-${java.util.UUID.randomUUID()}.db"
+        var db = AppDatabase.build(targetContext, name)
+        try {
+            var repo = ChatRepository(db, targetContext)
+            val c = repo.createConversation(ConversationMode.CREATIVE, "DEEPSEEK", "model")
+            val q = repo.appendUserMessage(c, "root").id
+            val alt = repo.addActiveVariant(c, q, MessageRole.ASSISTANT, "alt").id
+            val altChild = repo.appendUserMessage(c, "alt child").id
+            val current = repo.addActiveVariant(c, q, MessageRole.ASSISTANT, "current").id
+            val child = repo.appendUserMessage(c, "current child").id
+            val tail = repo.addActiveVariant(c, child, MessageRole.ASSISTANT, "tail").id
+            repo.deleteMessage(current, false)
+            db.close()
+            db = AppDatabase.build(targetContext, name)
+            repo = ChatRepository(db, targetContext)
+            check(repo.loadActivePath(c).map { it.id } == listOf(q, child, tail))
+            check(db.messageDao().getLightFor(c).single { it.id == child }.versionGroup == current)
+            repo.deleteMessageVersions(c, setOf(alt))
+            check(db.messageDao().getLightFor(c).map { it.id }.toSet() == setOf(q, altChild, child, tail))
+            repo.deleteMessageVersions(c, setOf(q, child))
+            check(repo.loadActivePath(c).map { it.id } == listOf(tail))
+            check(db.messageDao().getLightFor(c).map { it.id }.toSet() == setOf(altChild, tail))
+            passed("persisted active and inactive branches survive reopen and repeated batch deletion")
+        } finally {
+            db.close()
+            targetContext.deleteDatabase(name)
+        }
     }
 
     private suspend fun regression() {
@@ -284,22 +317,25 @@ class DeviceRegression : Instrumentation() {
                 awaitBranch(3, 3, 4)
                 switchTo(2)
                 awaitBranch(2, 2, 4)
-                withContext(Dispatchers.Main) { vm.deleteMessage(vm.messages.single { it.parentId == parent }) }
-                awaitBranch(3, 2, 3)
+                withContext(Dispatchers.Main) { vm.deleteMessage(vm.messages.single { it.parentId == parent }, allVersions = false) }
+                suspend fun awaitPromoted(index: Int) = withTimeout(4_000) {
+                    while (!withContext(Dispatchers.Main) { vm.messages.lastOrNull()?.id == branches[index].second && vm.messages.last().parentId == parent }) delay(20)
+                }
+                awaitPromoted(2)
                 switchTo(1)
-                awaitBranch(1, 1, 3)
+                awaitBranch(1, 1, 4)
                 switchTo(0)
-                awaitBranch(0, 0, 3)
-                withContext(Dispatchers.Main) { vm.deleteMessage(vm.messages.single { it.parentId == parent }) }
-                awaitBranch(3, 1, 2)
+                awaitBranch(0, 0, 4)
+                withContext(Dispatchers.Main) { vm.deleteMessage(vm.messages.single { it.parentId == parent }, allVersions = false) }
+                awaitPromoted(0)
                 switchTo(0)
-                awaitBranch(1, 0, 2)
+                awaitBranch(1, 0, 4)
                 switchTo(1)
-                awaitBranch(3, 1, 2)
+                awaitBranch(3, 1, 4)
                 val hits = db.conversationDao().search("branch-test", includeInactiveBranches = true).first().filter { it.conversation.id == branchId }
                 check(hits.map { it.variantIndex }.sortedBy { it } == listOf(0, 1))
                 val newBranch = repository.addActiveVariant(branchId, parent, role, "new after deletion")
-                check(newBranch.variantIndex == 2 && newBranch.variantCount == 3)
+                check(newBranch.variantIndex == 4 && newBranch.variantCount == 5)
             }
             passed("delete middle and first versions, switch both ways, and retain surviving subtrees and search positions")
             withContext(Dispatchers.Main) { vm.newConversation() }

@@ -45,6 +45,19 @@ class MessageShareTest {
         assertFalse(selection.active)
     }
 
+    @Test fun `cancel keeps selected exchanges and closing clears multi-select mode`() {
+        val groups = messageShareGroups(listOf(user("q1"), answer("a1"), user("q2"), answer("a2")))
+        val selection = MessageShareSelection()
+        selection.begin("a1", groups)
+        selection.toggle(groups.last())
+
+        assertEquals(setOf("q1", "q2"), selection.selectedIds)
+        assertEquals(2, selection.selected(groups).size)
+        selection.close()
+        assertFalse(selection.active)
+        assertTrue(selection.selectedIds.isEmpty())
+    }
+
     @Test fun `markdown contains only selected bodies and attachments without private metadata`() {
         val messages = listOf(user("u", "Question\n中文😀"), answer("a", "# Title\n\n**Answer**\n\n```kt\ncode\n```").copy(
             reasoning = "PRIVATE_THINKING", model = "PRIVATE_MODEL", errorMessage = "PRIVATE_ERROR",

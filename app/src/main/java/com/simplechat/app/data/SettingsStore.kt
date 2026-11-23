@@ -272,7 +272,7 @@ data class StoredSettings(
     val modelOverrides: Map<String, ModelCapabilityOverride> = emptyMap(),
     val onboardingComplete: Boolean = false,
     val loadingWords: List<String> = emptyList(),
-    val loadingWordsUseThemeColor: Boolean = false,
+    val loadingWordsUseThemeColor: Boolean = true,
 
 ) {
     val hasKey: Boolean get() = apiKey.isNotBlank()
@@ -393,7 +393,7 @@ class SettingsStore(
             modelOverrides = readModelMap<ModelCapabilityOverride>(prefs, Keys.MODEL_OVERRIDES),
             onboardingComplete = prefs[Keys.ONBOARDING_COMPLETE] == true && prefs.hasSettingsBeyondProfileSeed(),
             loadingWords = readLoadingWords(prefs),
-            loadingWordsUseThemeColor = prefs[Keys.LOADING_WORDS_USE_THEME_COLOR] ?: false,
+            loadingWordsUseThemeColor = prefs[Keys.LOADING_WORDS_USE_THEME_COLOR] ?: true,
 
         )
     }

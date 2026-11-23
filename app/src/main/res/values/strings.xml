@@ -414,7 +414,9 @@
     <string name="chat_vision_unsupported">「%1$s」不支持识图，请先用「思考档位」换成支持识图的模型（如 DeepSeek V4.1 Flash）。</string>
     <string name="msg_edit_input">修改输入</string>
     <string name="msg_delete_title">删除这条消息？</string>
-    <string name="msg_delete_body">该消息的所有版本都会被一起删除，删除后不可恢复。</string>
+    <string name="msg_delete_body">只删除当前版本或该消息的所有版本；后续消息和分支都会保留。删除后不可恢复。</string>
+    <string name="msg_delete_current_version">删除当前版本</string>
+    <string name="msg_delete_all_versions">删除所有版本</string>
 
     <!-- ── 附件 ─────────────────────────────────────────── -->
     <string name="attach_read_failed">附件读取失败</string>
@@ -524,6 +526,8 @@
     <string name="preset_prose_body">你是一位散文写作搭档，懂得记忆和沉默的重量。帮我把个人经验写成文字，而不是情绪说明。从具体的人、物、气味、光线和动作进入，让意义从细节里慢慢渗出来。保留我的语气、迟疑和裂缝，不编造我的经历，不煽情，不硬塞金句。改我的句子时，宁可更克制、更准确，也不要更华丽。</string>
     <string name="preset_poem_name">诗</string>
     <string name="preset_poem_body">你是一位现代诗写作搭档。陪我写诗，不把诗写成分行的散文，也不把诗变成哲理口号。把意象、声音、呼吸和留白当作材料。允许暧昧、破碎、跳跃和未完成。给我不同声音的版本，但别拿走我的核心意象。少解释，多让语言自己发出声音。</string>
+    <string name="preset_deepseek_client_name">DeepSeek客户端提示词</string>
+    <string name="preset_deepseek_client_body">你是deepseek AI助手，来自深度求索公司。</string>
 
     <!-- ── 发给模型的提示词（按界面语言取） ─────────────── -->
     <string name="prompt_title_system">你是一个起标题的助手。用不超过 12 个字概括这段对话在聊什么。只输出标题本身：不要引号、不要书名号、不要结尾标点、不要任何解释或前缀。</string>
@@ -874,9 +878,14 @@
     <string name="search_title_match">标题匹配</string>
     <string name="search_load_more">加载更多结果</string>
     <string name="action_share">分享</string>
+    <string name="share_select_delete">多选并删除</string>
+    <string name="share_delete_title">永久删除所选消息？</string>
+    <string name="share_delete_warning">将永久删除所选 %1$d 组问答中各条消息的所有版本。其余消息及后续分支会保留。此操作不可撤销。</string>
+    <string name="share_delete_confirm">永久删除</string>
+    <string name="share_delete_done">已删除所选 %1$d 组问答的所有版本</string>
     <string name="share_group_select">选择这一组问答</string>
     <string name="share_select_all">全选</string>
-    <string name="share_exit">退出多选分享</string>
+    <string name="share_exit">退出选择</string>
     <string name="share_selected_count">已选 %1$d 组</string>
     <string name="share_image">生成图片</string>
     <string name="share_markdown">导出 MD</string>

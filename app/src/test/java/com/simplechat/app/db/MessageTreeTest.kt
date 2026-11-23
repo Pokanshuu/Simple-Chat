@@ -1,6 +1,7 @@
 package com.simplechat.app.db
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -114,28 +115,209 @@ class MessageTreeTest {
     }
 
     @Test
-    fun `subtree includes all descendants across branches`() {
+    fun `deleting one message version keeps its downstream branch reachable`() {
         val tree = listOf(
-            node("u1", active = true),
-            node("a1", parentId = "u1"),
-            node("a1b", parentId = "u1"),          // 兄弟，也是 u1 的子树
-            node("u2", parentId = "a1"),
-            node("u3", parentId = "a1b"),
+            light("u1", active = true),
+            light("a1", parentId = "u1", active = true),
+            light("u2", parentId = "a1", active = true),
+            light("a2", parentId = "u2", active = true),
+            light("u3", parentId = "a2", active = true),
         )
+        val plan = MessageTree.deletionPlan(tree, setOf("a1"), allVersions = false)
+        val afterDelete = tree.filterNot { it.id in plan.deletedIds }.map { existing ->
+            plan.promoted.firstOrNull { it.id == existing.id } ?: existing
+        }
 
-        val doomed = MessageTree.subtreeIds(tree, "u1").toSet()
-
-        assertEquals(setOf("u1", "a1", "a1b", "u2", "u3"), doomed)
+        assertEquals(setOf("a1"), plan.deletedIds)
+        assertEquals("u1", plan.promoted.single().parentId)
+        assertEquals(listOf("u1", "u2", "a2", "u3"), MessageTree.activePathIds(afterDelete))
     }
 
     @Test
-    fun `subtree of a leaf is just itself`() {
+    fun `deleting all versions keeps downstream branches and selects active continuation`() {
         val tree = listOf(
-            node("u1", active = true),
-            node("a1", parentId = "u1", active = true),
+            light("u1", active = true),
+            light("a1", parentId = "u1", active = false, variantIndex = 0),
+            light("a1b", parentId = "u1", active = true, variantIndex = 1),
+            light("u2", parentId = "a1", active = true),
+            light("u2b", parentId = "a1b", active = true),
+            light("a2", parentId = "u2b", active = true),
+        )
+        val plan = MessageTree.deletionPlan(tree, setOf("a1"), allVersions = true)
+        val afterDelete = tree.filterNot { it.id in plan.deletedIds }.map { existing ->
+            plan.promoted.firstOrNull { it.id == existing.id } ?: existing
+        }
+
+        assertEquals(setOf("a1", "a1b"), plan.deletedIds)
+        assertEquals(setOf("u2", "u2b"), plan.promoted.map { it.id }.toSet())
+        assertEquals(listOf("u1", "u2b", "a2"), MessageTree.activePathIds(afterDelete))
+        assertEquals(listOf(0, 1), plan.promoted.map { it.variantIndex }.sorted())
+    }
+
+    @Test
+    fun `multi-delete splices consecutive selected messages and preserves their downstream branches`() {
+        val tree = listOf(
+            light("u1", active = true),
+            light("a1", parentId = "u1", active = true),
+            light("u2", parentId = "a1", active = true),
+            light("a2", parentId = "u2", active = true),
+            light("a2b", parentId = "u2", active = false, variantIndex = 1),
+            light("u3", parentId = "a2"),
+            light("u1b", parentId = "", active = false, variantIndex = 1),
+            light("a1b", parentId = "u1b", active = true),
         )
 
-        assertEquals(listOf("a1"), MessageTree.subtreeIds(tree, "a1"))
+        val plan = MessageTree.deletionPlan(tree, setOf("a1", "u2", "a2"), allVersions = true)
+        val afterDelete = tree.filterNot { it.id in plan.deletedIds }.map { existing ->
+            plan.promoted.firstOrNull { it.id == existing.id } ?: existing
+        }
+
+        assertEquals(setOf("a1", "u2", "a2", "a2b"), plan.deletedIds)
+        assertEquals(setOf("u3"), plan.promoted.map { it.id }.toSet())
+        assertEquals("u1", plan.promoted.single().parentId)
+        assertEquals(listOf("u1", "u3"), MessageTree.activePathIds(afterDelete))
+        assertTrue(afterDelete.any { it.id == "u1b" })
+        assertTrue(afterDelete.any { it.id == "a1b" })
+    }
+
+    @Test
+    fun `deleting active version preserves inactive downstream branches`() {
+        val tree = listOf(
+            light("u1", active = true),
+            light("a1", parentId = "u1", active = true, variantIndex = 0),
+            light("a1b", parentId = "u1", active = false, variantIndex = 1),
+            light("u2", parentId = "a1", active = true),
+            light("u2b", parentId = "a1b", active = true),
+            light("a2", parentId = "u2", active = true),
+            light("a2b", parentId = "u2b", active = true),
+        )
+
+        val plan = MessageTree.deletionPlan(tree, setOf("a1"), allVersions = false)
+        val afterDelete = tree.filterNot { it.id in plan.deletedIds }.map { node ->
+            plan.promoted.firstOrNull { it.id == node.id } ?: node
+        }
+
+        assertEquals(setOf("a1"), plan.deletedIds)
+        assertEquals(listOf("u2"), plan.promoted.map { it.id })
+        assertEquals("a1", plan.promoted.single().versionGroup)
+        assertEquals(listOf("u1", "u2", "a2"), MessageTree.activePathIds(afterDelete))
+        assertTrue(afterDelete.any { it.id == "u2b" && it.active && it.parentId == "a1b" })
+        assertTrue(afterDelete.any { it.id == "a2b" })
+    }
+
+    @Test
+    fun `later deletion does not mistake preserved continuation for a sibling version`() {
+        val tree = listOf(
+            light("u1", active = true),
+            light("a1", parentId = "u1", active = true, variantIndex = 0),
+            light("a1b", parentId = "u1", active = false, variantIndex = 1),
+            light("u2", parentId = "a1", active = true),
+            light("u2b", parentId = "a1b", active = true),
+        )
+        val first = MessageTree.deletionPlan(tree, setOf("a1"), allVersions = false)
+        val afterFirst = tree.filterNot { it.id in first.deletedIds }.map { node ->
+            first.promoted.firstOrNull { it.id == node.id } ?: node
+        }
+        val second = MessageTree.deletionPlan(afterFirst, setOf("a1b"), allVersions = true)
+
+        assertEquals(setOf("a1b"), second.deletedIds)
+        assertEquals(setOf("u2b"), second.promoted.map { it.id }.toSet())
+        assertTrue(afterFirst.any { it.id == "u2" && it.versionGroup == "a1" })
+    }
+
+    @Test
+    fun `deleting inactive version preserves active sibling and its path`() {
+        val tree = listOf(
+            light("u1", active = true),
+            light("a1", parentId = "u1", active = true, variantIndex = 0),
+            light("a1b", parentId = "u1", active = false, variantIndex = 1),
+            light("u2", parentId = "a1b", active = true),
+            light("a2", parentId = "u2", active = true),
+        )
+        val plan = MessageTree.deletionPlan(tree, setOf("a1b"), allVersions = false)
+        val afterDelete = tree.filterNot { it.id in plan.deletedIds }.map { node ->
+            plan.promoted.firstOrNull { it.id == node.id } ?: node
+        }
+
+        assertTrue(plan.activateExisting.isEmpty())
+        assertEquals(listOf("u1", "a1"), MessageTree.activePathIds(afterDelete))
+        assertEquals("u1", plan.promoted.single().parentId)
+        assertFalse(plan.promoted.single().active)
+        assertTrue(afterDelete.any { it.id == "a2" })
+    }
+
+    @Test
+    fun `deep chain survives deleting ten thousand consecutive nodes`() {
+        val tree = (0..10000).map { i -> light("m$i", if (i == 0) "" else "m${i - 1}", active = true) }
+        val plan = MessageTree.deletionPlan(tree, tree.dropLast(1).mapTo(HashSet()) { it.id }, true)
+        assertEquals(10000, plan.deletedIds.size)
+        assertEquals(tree.last().copy(parentId = "", versionGroup = "m9999"), plan.promoted.single())
+    }
+
+    @Test
+    fun `random repeated deletions preserve every surviving ancestry and active continuation`() {
+        repeat(100) { seed ->
+            val random = kotlin.random.Random(seed)
+            val counts = mutableMapOf<String, Int>()
+            var tree = (0 until 90).map { i ->
+                val parent = if (i == 0) "" else "m${random.nextInt(i)}"
+                val index = counts.getOrDefault(parent, 0)
+                counts[parent] = index + 1
+                light("m$i", parent, active = index == 0, variantIndex = index)
+            }
+            repeat(12) {
+                val selected = tree.shuffled(random).take(random.nextInt(1, 4)).toSet()
+                val allVersions = random.nextBoolean()
+                val groups = selected.map { it.versionGroup ?: it.parentId }.toSet()
+                val before = tree.associateBy { it.id }
+                val expected = tree.filter { it in selected || allVersions && (it.versionGroup ?: it.parentId) in groups }.toSet()
+                val plan = MessageTree.deletionPlan(tree, selected.mapTo(HashSet()) { it.id }, allVersions)
+                assertEquals("seed $seed", expected.mapTo(HashSet()) { it.id }, plan.deletedIds)
+                val oldPath = MessageTree.activePathIds(tree).filterNot { it in plan.deletedIds }
+                val moves = plan.promoted.associateBy { it.id }
+                tree = tree.filterNot { it in expected }.map { node -> moves[node.id] ?: node.copy(active = node.active || node.id in plan.activateExisting) }
+                tree.forEach { node ->
+                    var original = before.getValue(node.id)
+                    assertEquals(original.versionGroup ?: original.parentId, node.versionGroup ?: node.parentId)
+                    while (original.parentId in plan.deletedIds) original = before.getValue(original.parentId)
+                    assertEquals(original.parentId, node.parentId)
+                }
+                tree.groupBy { it.parentId }.values.forEach { siblings ->
+                    assertEquals(1, siblings.count { it.active })
+                    assertEquals(siblings.size, siblings.distinctBy { it.variantIndex }.size)
+                }
+                assertEquals(oldPath, MessageTree.activePathIds(tree).take(oldPath.size))
+            }
+        }
+    }
+
+    @Test
+    fun `leaf and missing message deletion are harmless`() {
+        val tree = listOf(light("u1", active = true), light("a1", parentId = "u1", active = true))
+        val leaf = MessageTree.deletionPlan(tree, setOf("a1"), allVersions = true)
+        val missing = MessageTree.deletionPlan(tree, setOf("missing"), allVersions = true)
+
+        assertTrue(leaf.promoted.isEmpty())
+        assertTrue(leaf.activateExisting.isEmpty())
+        assertTrue(missing.deletedIds.isEmpty())
+        assertTrue(missing.promoted.isEmpty())
+    }
+
+    @Test
+    fun `selected branches are spliced independently`() {
+        val tree = listOf(
+            light("u1", active = true),
+            light("a1", parentId = "u1", active = true),
+            light("u2", parentId = "a1", active = true),
+            light("a2", parentId = "u2", active = true),
+            light("u1b", parentId = "", active = false, variantIndex = 1),
+            light("a1b", parentId = "u1b", active = true),
+            light("u2b", parentId = "a1b", active = true),
+        )
+        val plan = MessageTree.deletionPlan(tree, setOf("a1", "a1b"), allVersions = true)
+
+        assertEquals(setOf("a1", "a1b"), plan.deletedIds)
+        assertEquals(mapOf("u1" to "u2", "u1b" to "u2b"), plan.promoted.associate { it.parentId to it.id })
     }
 
     @Test
@@ -256,6 +438,7 @@ class MessageTreeTest {
         parentId: String = MessageEntity.ROOT_PARENT,
         active: Boolean = false,
         variantIndex: Int = 0,
+        versionGroup: String? = null,
     ) = MessageLight(
         id = id,
         parentId = parentId,
@@ -264,6 +447,7 @@ class MessageTreeTest {
         role = if (variantIndex % 2 == 0) "user" else "assistant",
         status = "DONE",
         createdAt = 0,
+        versionGroup = versionGroup,
     )
 
     @Test

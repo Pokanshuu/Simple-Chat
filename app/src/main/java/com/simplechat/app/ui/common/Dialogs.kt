@@ -122,8 +122,10 @@ fun AppConfirmDialog(
     title: String,
     message: String? = null,
     confirmText: String,
+    secondaryText: String? = null,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
+    onSecondary: (() -> Unit)? = null,
     destructive: Boolean = false,
     showCancel: Boolean = true,
 ) {
@@ -171,9 +173,26 @@ fun AppConfirmDialog(
                 )
             }
 
+            if (secondaryText != null && onSecondary != null) {
+                Spacer(Modifier.size(6.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(PillShape)
+                        .clickable(onClick = onSecondary)
+                        .padding(vertical = 14.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = secondaryText,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = colors.danger,
+                    )
+                }
+            }
+
             if (showCancel) {
                 Spacer(Modifier.size(6.dp))
-
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()

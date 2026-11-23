@@ -9,6 +9,12 @@ package com.simplechat.app.db
  */
 object MessageTree {
 
+    data class DeletionPlan(
+        val deletedIds: Set<String>,
+        val promoted: List<MessageLight>,
+        val activateExisting: Set<String>,
+    )
+
     /** Root-to-target ancestry, including inactive branches. Invalid chains cannot be activated. */
     fun ancestry(all: List<MessageLight>, targetId: String): List<MessageLight> {
         val byId = all.associateBy { it.id }
@@ -79,32 +85,61 @@ object MessageTree {
     fun siblingCountsOf(parentIds: List<String>): Map<String, Int> =
         parentIds.groupingBy { it }.eachCount()
 
-    /**
-     * 某节点**整棵子树**（含自己）的 id 列表。
-     *
-     * 删除一条消息 = 删它的子树：下游都是基于它生成的，
-     * 留着一个"没有前文的下文"没有任何意义。
-     */
-    fun subtreeIds(all: List<MessageEntity>, rootId: String): List<String> {
-        return collectSubtreeIds(all, rootId, MessageEntity::parentId, MessageEntity::id)
-    }
+    /** Remove selected message versions and splice their direct surviving continuations into place. */
+    fun deletionPlan(
+        all: List<MessageLight>,
+        selectedIds: Set<String>,
+        allVersions: Boolean,
+    ): DeletionPlan {
+        val selectedNodes = all.filter { it.id in selectedIds }
+        val deletedIds = if (allVersions) {
+            val selectedGroups = selectedNodes.mapTo(HashSet()) { it.versionGroup ?: it.parentId }
+            all.filter { (it.versionGroup ?: it.parentId) in selectedGroups }.mapTo(LinkedHashSet()) { it.id }
+        } else selectedNodes.mapTo(LinkedHashSet()) { it.id }
+        val childrenByParent = all.sortedBy { it.variantIndex }.groupBy { it.parentId }
 
-    internal fun subtreeLightIds(all: List<MessageLight>, rootId: String): List<String> =
-        collectSubtreeIds(all, rootId, MessageLight::parentId, MessageLight::id)
-
-    private fun <T> collectSubtreeIds(all: List<T>, rootId: String, parentId: (T) -> String, nodeId: (T) -> String): List<String> {
-        val childrenByParent = all.groupBy(parentId)
-        val out = ArrayList<String>()
-        val seen = HashSet<String>()
-        val stack = ArrayDeque<String>().apply { addLast(rootId) }
-
-        while (stack.isNotEmpty()) {
-            val id = stack.removeLast()
-            if (!seen.add(id)) continue
-            out += id
-            childrenByParent[id]?.forEach { stack.addLast(nodeId(it)) }
+        val boundaryByParent = LinkedHashMap<String, MutableList<Pair<MessageLight, Boolean>>>()
+        val activeParents = LinkedHashSet<String>()
+        val visited = HashSet<String>()
+        val roots = all.filter { it.id in deletedIds && it.parentId !in deletedIds }.sortedBy { it.variantIndex }
+        roots.forEach { root ->
+            if (root.active) activeParents += root.parentId
+            val pending = ArrayDeque<Pair<MessageLight, Boolean>>()
+            pending.addLast(root to root.active)
+            while (pending.isNotEmpty()) {
+                val (node, onPath) = pending.removeLast()
+                if (!visited.add(node.id)) continue
+                if (node.id !in deletedIds) {
+                    boundaryByParent.getOrPut(root.parentId) { mutableListOf() } += node to onPath
+                    continue
+                }
+                childrenByParent[node.id].orEmpty().asReversed().forEach { child ->
+                    pending.addLast(child to (onPath && child.active))
+                }
+            }
         }
-        return out
+
+        val promoted = mutableListOf<MessageLight>()
+        val activateExisting = mutableSetOf<String>()
+        roots.map { it.parentId }.distinct().forEach { parentId ->
+            val candidates = boundaryByParent[parentId].orEmpty()
+            val survivingSibling = childrenByParent[parentId].orEmpty().lastOrNull { it.id !in deletedIds }
+            val firstIndex = (survivingSibling?.variantIndex ?: -1) + 1
+            var activeCandidate = candidates.firstOrNull { it.second }?.first
+            if (parentId in activeParents && activeCandidate == null) {
+                if (survivingSibling != null) activateExisting += survivingSibling.id
+                else activeCandidate = (candidates.firstOrNull { it.first.active } ?: candidates.firstOrNull())?.first
+            }
+            candidates.forEachIndexed { index, (message, _) ->
+                promoted += message.copy(
+                    parentId = parentId,
+                    variantIndex = firstIndex + index,
+                    active = message.id == activeCandidate?.id,
+                    versionGroup = message.versionGroup ?: message.parentId,
+                )
+            }
+        }
+        return DeletionPlan(deletedIds, promoted, activateExisting)
     }
 
     /** 某个父节点下，`variantIndex` 最大的那个兄弟（删除后用来接管 active）。 */
@@ -148,6 +183,7 @@ object MessageTree {
                 id = id,
                 conversationId = conversationId,
                 parentId = parentId,
+                versionGroup = null,
                 variantIndex = 0,
                 active = true,
             )

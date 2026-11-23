@@ -92,7 +92,12 @@ internal fun ShareSelectableRow(
 }
 
 @Composable
-internal fun MessageShareTopBar(selection: MessageShareSelection, groups: List<MessageShareGroup>, onClose: () -> Unit) {
+internal fun MessageShareTopBar(
+    selection: MessageShareSelection,
+    groups: List<MessageShareGroup>,
+    onClose: () -> Unit,
+    showClose: Boolean = true,
+) {
     val available = groups.filter { it.available }
     Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f).clip(CircleShape).clickable { selection.toggleAll(groups) }.padding(vertical = 10.dp),
@@ -100,7 +105,24 @@ internal fun MessageShareTopBar(selection: MessageShareSelection, groups: List<M
             ShareCheck(available.isNotEmpty() && available.all { it.id in selection.selectedIds }, available.isNotEmpty())
             Text(stringResource(R.string.share_select_all), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
         }
-        IconCircleButton(AppIcons.Close, stringResource(R.string.share_exit), onClose)
+        if (showClose) IconCircleButton(AppIcons.Close, stringResource(R.string.share_exit), onClose)
+    }
+}
+
+@Composable
+internal fun MessageDeleteBottomBar(count: Int, onCancel: () -> Unit, onDelete: () -> Unit) {
+    val colors = LocalChatColors.current
+    Column(Modifier.fillMaxWidth().background(colors.card).navigationBarsPadding().padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(stringResource(R.string.share_selected_count, count), style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.action_cancel)) }
+            Button(onClick = onDelete, enabled = count > 0, modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(containerColor = colors.danger, contentColor = Color.White)) {
+                Text(stringResource(R.string.action_delete))
+            }
+        }
     }
 }
 

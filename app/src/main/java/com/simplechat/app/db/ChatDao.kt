@@ -176,6 +176,7 @@ data class MessageLight(
     val role: String,
     val status: String,
     val createdAt: Long,
+    val versionGroup: String? = null,
 )
 
 data class MemorySession(val id: String, val title: String, val updatedAt: Long)
@@ -248,7 +249,7 @@ interface MessageDao {
                substr(attachments, 1, :cap) AS attachments,
                reasoning, status, errorMessage, model, excluded,
                thinkingMs, ttftMs, tps, tokens_in, tokens_out, tokens_cache_hit,
-               timeline, stopReason, imageGeneration, imageRequest, createdAt
+               timeline, stopReason, imageGeneration, imageRequest, createdAt, versionGroup
         FROM messages WHERE conversationId = :conversationId
         """,
     )
@@ -272,7 +273,7 @@ interface MessageDao {
                '' AS content, NULL AS attachments, NULL AS reasoning,
                status, NULL AS errorMessage,
                model, excluded, thinkingMs, ttftMs, tps, tokens_in, tokens_out, tokens_cache_hit,
-               NULL AS timeline, stopReason, imageGeneration, imageRequest, createdAt
+               NULL AS timeline, stopReason, imageGeneration, imageRequest, createdAt, versionGroup
         FROM messages WHERE id = :id
         """,
     )
@@ -310,7 +311,7 @@ interface MessageDao {
      */
     @Query(
         """
-        SELECT id, parentId, variantIndex, active, role, status, createdAt
+        SELECT id, parentId, variantIndex, active, role, status, createdAt, versionGroup
         FROM messages WHERE conversationId = :conversationId
         """,
     )
@@ -361,7 +362,7 @@ interface MessageDao {
                substr(attachments, 1, :cap) AS attachments,
                reasoning, status, errorMessage, model, excluded,
                thinkingMs, ttftMs, tps, tokens_in, tokens_out, tokens_cache_hit,
-               timeline, stopReason, imageGeneration, imageRequest, createdAt
+               timeline, stopReason, imageGeneration, imageRequest, createdAt, versionGroup
         FROM messages WHERE id IN (:ids)
         """,
     )
@@ -542,6 +543,9 @@ interface MessageDao {
 
     @Query("DELETE FROM messages WHERE id IN (:ids)")
     suspend fun deleteByIds(ids: List<String>)
+
+    @Query("UPDATE messages SET versionGroup = COALESCE(versionGroup, parentId), parentId = :parentId, variantIndex = :variantIndex, active = :active WHERE id = :id")
+    suspend fun moveAfterDeletedMessage(id: String, parentId: String, variantIndex: Int, active: Boolean)
 
     @Query("SELECT COUNT(*) FROM messages WHERE conversationId = :conversationId")
     suspend fun countFor(conversationId: String): Int
