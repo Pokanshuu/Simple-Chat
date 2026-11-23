@@ -36,7 +36,7 @@ import java.util.Collections
 import kotlinx.coroutines.*
 
 internal object MessageShareRegression {
-    suspend fun run(instrumentation: Instrumentation, status: (String) -> Unit) {
+    suspend fun run(instrumentation: Instrumentation, status: (String) -> Unit, deletionOnly: Boolean = false) {
         val context = instrumentation.targetContext
         val root = File(context.cacheDir, "share-regression-${java.util.UUID.randomUUID()}").apply { mkdirs() }
         val ctx = object : ContextWrapper(context) { override fun getFilesDir() = root; override fun getApplicationContext() = this }
@@ -123,6 +123,52 @@ internal object MessageShareRegression {
             image.recycle()
         }
         try {
+            if (deletionOnly) {
+                val cid = repo.createConversation(ConversationMode.CREATIVE, "DEEPSEEK", "model", title = "Version deletion regression")
+                val question = repo.appendUserMessage(cid, (1..28).joinToString("\n") { "Earlier context $it" })
+                val oldest = repo.addActiveVariant(cid, question.id, MessageRole.ASSISTANT, "Oldest version")
+                val shorter = repo.addActiveVariant(cid, question.id, MessageRole.ASSISTANT, "Short version")
+                val alternateTail = repo.appendUserMessage(cid, (1..9).joinToString("\n") { "Alternate continuation $it" })
+                val longer = repo.addActiveVariant(cid, question.id, MessageRole.ASSISTANT,
+                    (1..22).joinToString("\n\n") { "Long version paragraph $it" })
+                val activeTail = repo.appendUserMessage(cid, (1..9).joinToString("\n") { "Current continuation $it" })
+                withContext(Dispatchers.Main) { vm.openConversation(cid) }
+                withTimeout(10_000) { while (withContext(Dispatchers.Main) { vm.switching || vm.messages.size != 3 }) delay(30) }
+                instrumentation.runOnMainSync {
+                    activity.setContent { SimpleChatTheme(themeMode = ThemeMode.DARK) { ChatScreen(vm, {}, {}, Modifier.fillMaxSize()) } }
+                }
+                find("3/3")
+                delay(600)
+                suspend fun versionControlY(count: String): Int {
+                    val control = find(count)
+                    return Rect().also(control::getBoundsInScreen).centerY()
+                }
+                val startY = versionControlY("3/3")
+                val tolerance = (16 * activity.resources.displayMetrics.density).toInt()
+                suspend fun checkAnchor(count: String) {
+                    find(count)
+                    delay(400)
+                    val actualY = versionControlY(count)
+                    check(kotlin.math.abs(actualY - startY) <= tolerance) { "Version $count moved from $startY to $actualY px" }
+                }
+                tapResource(R.string.msg_variant_prev)
+                find("Short version")
+                checkAnchor("2/3")
+                tapResource(R.string.msg_variant_next)
+                checkAnchor("3/3")
+                touch("Long version paragraph 22", long = true)
+                tapResource(R.string.action_delete)
+                tapResource(R.string.msg_delete_current_version)
+                find("Short version")
+                checkAnchor("2/2")
+                find("Current continuation 1")
+                check(db.messageDao().getLightFor(cid).map { it.id }.toSet() ==
+                    setOf(question.id, oldest.id, shorter.id, alternateTail.id, activeTail.id))
+                check(repo.loadActivePath(cid).map { it.id } == listOf(question.id, shorter.id, activeTail.id))
+                check(db.messageDao().getLightFor(cid).none { it.id == longer.id })
+                status("long and short versions keep their controls aligned; deleting the visible version keeps the other versions and continuation")
+                return
+            }
             val cid = repo.createConversation(ConversationMode.CREATIVE, "DEEPSEEK", "model", title = "多选分享 · 回归测试")
             for (index in 1..4) {
                 val question = repo.appendUserMessage(cid, "问题 $index：一起整理这段对话。")

@@ -933,10 +933,11 @@ class ChatViewModel(
      * 切换版本会**整段替换下游**（旧分支的子树让位给新分支的），
      * 原地修补要处理的组合太多，读一遍反而又快又不会错。
      */
-    private suspend fun reloadPath(conversationId: String) {
+    private suspend fun reloadPath(conversationId: String, beforePublish: () -> Unit = {}) {
         val generation = switchGeneration
         val path = repository.loadActivePath(conversationId)
         if (conversationId != currentConversationId || generation != switchGeneration) return
+        beforePublish()
         messages.clear()
         messages.addAll(path)
         pathRevision++
@@ -1531,8 +1532,8 @@ class ChatViewModel(
     suspend fun clearDraft(key: String) = repository.clearDraft(key)
 
     /** Delete the selected message version, optionally including its sibling versions. */
-    fun deleteMessage(target: UiMessage, allVersions: Boolean) {
-        mutateMessageHistory(setOf(target.id)) {
+    fun deleteMessage(target: UiMessage, allVersions: Boolean, onReplacement: (String?) -> Unit = {}) {
+        mutateMessageHistory(setOf(target.id), onReplacement = onReplacement) {
             repository.deleteMessage(target.id, allVersions)
         }
     }
@@ -1541,10 +1542,16 @@ class ChatViewModel(
         val ids = messageIds.toSet()
         mutateMessageHistory(ids, Res.get(R.string.share_delete_done, selectedGroupCount)) { conversationId ->
             repository.deleteMessageVersions(conversationId, ids)
+            null
         }
     }
 
-    private fun mutateMessageHistory(ids: Set<String>, success: String? = null, delete: suspend (String) -> Unit) {
+    private fun mutateMessageHistory(
+        ids: Set<String>,
+        success: String? = null,
+        onReplacement: (String?) -> Unit = {},
+        delete: suspend (String) -> String?,
+    ) {
         if (isStreaming || switching || ids.isEmpty()) return
         val conversationId = currentConversationId ?: return
         val generation = switchGeneration
@@ -1555,10 +1562,10 @@ class ChatViewModel(
                     !messages.mapTo(HashSet()) { it.id }.containsAll(ids)
                 ) return@launch
                 if (compacting) cancelCompaction()
-                delete(conversationId)
+                val replacementId = delete(conversationId)
                 val savedCompaction = repository.getCompactions(conversationId).lastOrNull()
                 if (generation != switchGeneration) return@launch
-                reloadPath(conversationId)
+                reloadPath(conversationId) { onReplacement(replacementId) }
                 if (generation == switchGeneration) {
                     compaction = savedCompaction
                     if (success != null) banner = success
@@ -1596,14 +1603,26 @@ class ChatViewModel(
      * 路径会**整段重建** —— 旧分支的下游跟着回来，新分支的下游跟着消失。
      * 这就是"分支切换"在树模型下的天然行为。
      */
-    fun switchVariant(target: UiMessage, variantIndex: Int) {
-        if (isStreaming) return
+    fun switchVariant(target: UiMessage, variantIndex: Int, onReplacement: (String) -> Unit = {}) {
+        if (isStreaming || switching) return
         val conversationId = currentConversationId ?: return
         if (variantIndex !in 0 until target.variantCount) return
-        if (compacting) cancelCompaction()
-
+        val generation = switchGeneration
         viewModelScope.launch {
-            if (repository.activateVariantAt(conversationId, target.parentId, variantIndex)) reloadPath(conversationId)
+            if (!sendMutex.tryLock()) return@launch
+            try {
+                if (generation != switchGeneration || isStreaming || switching || messages.none { it.id == target.id }) return@launch
+                if (compacting) cancelCompaction()
+                val replacementId = repository.activateVariantAt(conversationId, target.parentId, variantIndex) ?: return@launch
+                if (generation != switchGeneration) return@launch
+                reloadPath(conversationId) { onReplacement(replacementId) }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (generation == switchGeneration) banner = error.userMessage()
+            } finally {
+                sendMutex.unlock()
+            }
         }
     }
 

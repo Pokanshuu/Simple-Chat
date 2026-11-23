@@ -706,11 +706,13 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         applyMessageDeletionPlan(conversationId, tree, plan)
     }
 
-    suspend fun deleteMessage(messageId: String, allVersions: Boolean) = db.withTransaction {
-        val node = messages.exportHeader(messageId) ?: return@withTransaction
+    suspend fun deleteMessage(messageId: String, allVersions: Boolean): String? = db.withTransaction {
+        val node = messages.exportHeader(messageId) ?: return@withTransaction null
         val tree = messages.getLightFor(node.conversationId)
         val plan = MessageTree.deletionPlan(tree, setOf(messageId), allVersions)
         applyMessageDeletionPlan(node.conversationId, tree, plan)
+        plan.replacementId ?: plan.promoted.firstOrNull { it.active && it.parentId == node.parentId }?.id
+            ?: plan.activateExisting.singleOrNull()
     }
 
     private suspend fun applyMessageDeletionPlan(
@@ -722,6 +724,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             MessageTree.ancestry(tree, summary.throughMessageId).any { it.id in plan.deletedIds }
         }.forEach { compactionDao.delete(it.id) }
         plan.deletedIds.chunked(MessageQueryChunk).forEach { messages.deleteByIds(it) }
+        plan.clearActiveChildren.forEach { messages.clearActiveSiblings(conversationId, it) }
         plan.promoted.forEach { child ->
             messages.moveAfterDeletedMessage(child.id, child.parentId, child.variantIndex, child.active)
         }
@@ -729,10 +732,10 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     }
 
     /** Resolve the position and activate it in the same transaction. */
-    suspend fun activateVariantAt(conversationId: String, parentId: String, position: Int): Boolean = db.withTransaction {
-        val id = messages.siblingIds(conversationId, parentId).getOrNull(position) ?: return@withTransaction false
+    suspend fun activateVariantAt(conversationId: String, parentId: String, position: Int): String? = db.withTransaction {
+        val id = messages.siblingIds(conversationId, parentId).getOrNull(position) ?: return@withTransaction null
         messages.activate(id, conversationId, parentId)
-        true
+        id
     }
 
     /**
