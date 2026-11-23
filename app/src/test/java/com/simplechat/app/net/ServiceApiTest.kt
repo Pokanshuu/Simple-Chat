@@ -73,8 +73,8 @@ class ServiceApiTest {
             searchApi = ServiceApiConfig(enabled = true, baseUrl = "https://search.invalid"))
         val progress = mutableListOf<List<ReplyBlock>>()
         val session = WebResearchSession(settings, "Read https://example.com/article and explain", ServiceApi(client), onProgress = { progress += it })
-        assertTrue(session.execute(IndependentSearchName, """{"query":"article background"}""").contains("Evidence"))
-        assertTrue(session.execute(IndependentFetchName, """{"url":"https://example.com/article"}""").contains("Fetched body"))
+        assertTrue(session.execute(IndependentSearchName, """{"query":"article background"}""").message.contains("Evidence"))
+        assertTrue(session.execute(IndependentFetchName, """{"url":"https://example.com/article"}""").message.contains("Fetched body"))
         assertEquals(2, requests.size)
         assertTrue(requests.all { it.url.host == "search.invalid" && it.header("Authorization") == "Bearer fixture-key" })
         val sent = Buffer(); requests[1].body!!.writeTo(sent)
@@ -95,8 +95,8 @@ class ServiceApiTest {
         }.toList()
         assertEquals(1, turns)
         assertTrue(StreamEvent.Content("I can search.") in events)
-        assertTrue(session.execute(IndependentFetchName, """{"url":"https://example.org/unregistered"}""").contains("Only public"))
-        assertTrue(session.execute(IndependentSearchName, "{} ").contains("Invalid"))
+        assertTrue(session.execute(IndependentFetchName, """{"url":"https://example.org/unregistered"}""").message.contains("Only public"))
+        assertTrue(session.execute(IndependentSearchName, "{} ").message.contains("Invalid"))
     }
 
     @Test fun `model can search then read a source before bounded final answer across protocols`() = runBlocking {

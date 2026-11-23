@@ -113,9 +113,9 @@ internal class WebResearchSession(
                 ReplyBlock.FetchResult(fetch.id, fetch.kind, url = url, title = title)
             }
     }
-    suspend fun execute(name: String, arguments: String): String {
+    suspend fun execute(name: String, arguments: String): AgentToolOutcome {
         val param = if (name == IndependentSearchName) "query" else "url"
-        val value = webToolArgument(arguments, param) ?: return "Invalid tool arguments: supply $param."
+        val value = webToolArgument(arguments, param) ?: return AgentToolOutcome(AgentToolStatus.INVALID_ARGUMENTS, "Invalid tool arguments: supply $param.")
         val start = blocks.size
         val urls = when (name) {
             IndependentSearchName -> {
@@ -124,17 +124,17 @@ internal class WebResearchSession(
             }
             IndependentFetchName -> {
                 val url = publicPage(value)?.takeIf { it in candidates }
-                    ?: return "Only public URLs provided by the user or returned by search can be read."
+                    ?: return AgentToolOutcome(AgentToolStatus.BLOCKED, "Only public URLs provided by the user or returned by search can be read.")
                 fetch(url)
                 listOf(url)
             }
-            else -> return "Unknown web tool."
+            else -> return AgentToolOutcome(AgentToolStatus.BLOCKED, "Unknown web tool.")
         }
-        if (blocks.size == start) return "Already attempted or tool budget exhausted; use previous results."
+        if (blocks.size == start) return AgentToolOutcome(AgentToolStatus.BUDGET_EXCEEDED, "Already attempted or tool budget exhausted; use previous results.")
         val result = blocks.last()
         if (result is ReplyBlock.SearchResult && result.failed || result is ReplyBlock.FetchResult && result.failed)
-            return "The tool request failed; no evidence was obtained from this call."
-        return buildJsonArray {
+            return AgentToolOutcome(AgentToolStatus.FAILED, "The tool request failed; no evidence was obtained from this call.")
+        val evidence = buildJsonArray {
             var remaining = 12000
             for (url in urls.distinct()) {
                 val source = sources[url] ?: continue
@@ -146,6 +146,9 @@ internal class WebResearchSession(
                 if (size > remaining) continue
                 add(item); remaining -= size
             }
-        }.toString()
+        }
+        return if (evidence.isEmpty()) {
+            AgentToolOutcome(AgentToolStatus.EMPTY, "The web tool returned no usable evidence.")
+        } else AgentToolOutcome.success(evidence.toString())
     }
 }

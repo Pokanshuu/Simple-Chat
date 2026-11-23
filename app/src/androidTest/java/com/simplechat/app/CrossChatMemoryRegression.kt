@@ -49,8 +49,8 @@ internal object CrossChatMemoryRegression {
             check("activebranchsecret" in body && "abandonedbranchsecret" !in body)
             requests.add(SystemClock.elapsedRealtime() to ("retrievalanswer" in body && "[1]" in body && body.indexOf("currentwindowsecret") == body.lastIndexOf("currentwindowsecret")))
             val events = if (chain.request().url.encodedPath.endsWith("/messages")) {
-                "data: {\"type\":\"message_stop\"}\n\n"
-            } else "data: [DONE]\n\n"
+                "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"Fixture reply\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n"
+            } else "data: {\"choices\":[{\"delta\":{\"content\":\"Fixture reply\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
             Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
                 .code(200).message("OK").body(events.toResponseBody("text/event-stream".toMediaType())).build()
         }.build()
@@ -139,7 +139,8 @@ internal object CrossChatMemoryRegression {
                         while (request == null) { delay(5); request = requests.poll() }
                         checkNotNull(request)
                     }
-                    check(recalled == enabled) { "Unexpected cross-window recall state in $style, enabled=$enabled" }
+                    check(recalled == enabled) { "Unexpected cross-window recall state in $style, enabled=$enabled; " +
+                        com.simplechat.app.data.Diagnostics.snapshot().filter { "[MEM]" in it }.takeLast(4).joinToString(" | ") }
                     timings.getValue(enabled) += received - start
                     if (enabled) {
                         val entry = com.simplechat.app.data.Diagnostics.snapshot().last { "[MEM]" in it }

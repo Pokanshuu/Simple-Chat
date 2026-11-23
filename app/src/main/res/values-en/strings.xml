@@ -777,6 +777,7 @@
     <string name="api_style_anthropic">Anthropic compatible (extended)</string>
     <string name="settings_web_search">Smart search</string>
     <string name="settings_web_search_hint">Official Flash supports built-in search. Other models can use a separate Search API configured in this profile.</string>
+    <string name="search_answer_unresolved">This turn did not produce a reliable search answer. Retry the current question.</string>
     <string name="search_answer_contradicts_tool">Web search succeeded this turn; results and sources are shown above, but the model incorrectly claimed it could not search. That contradictory answer was withheld to avoid misleading you. Retry or review the sources above.</string>
     <string name="settings_location">Region</string>
     <string name="settings_location_hint_short">Used for the time reminder</string>

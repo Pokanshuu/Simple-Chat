@@ -10,6 +10,7 @@ import android.view.MotionEvent
 import android.view.InputDevice
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
+import androidx.lifecycle.viewModelScope
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.room.Room
 import com.simplechat.app.data.*
@@ -181,9 +182,12 @@ internal object SearchNavigationRegression {
             delay(300)
             val scrolledRow = rowKey(nodes())
             check(scrolledRow != null && scrolledRow != priorRow)
-            tap { it.text?.toString() == scrolledRow }
+            // The first visible snippet can belong to a row clipped above its title.
+            val secondHit = nodes().filter { it.isVisibleToUser && it.text?.contains("other result") == true }
+                .getOrNull(1)?.text?.toString() ?: error("Missing fully visible second result")
+            tap { it.text?.toString() == secondHit }
             withTimeout(10_000) { while (withContext(Dispatchers.Main) { vm.switching || vm.searchTarget != null }) delay(50) }
-            check(nodes().any { it.isVisibleToUser && it.text?.toString() == scrolledRow })
+            check(nodes().any { it.isVisibleToUser && it.text?.toString() == secondHit })
             val metrics = instrumentation.targetContext.resources.displayMetrics
             val now = android.os.SystemClock.uptimeMillis()
             val startX = 30f * metrics.density
@@ -198,7 +202,9 @@ internal object SearchNavigationRegression {
             }
             withTimeout(5000) { while (nodes().none { it.isEditable && it.text?.toString() == "NAV_NEEDLE" && it.isVisibleToUser }) delay(50) }
             check(rowKey(nodes()) == scrolledRow)
-            check(selectedRowCount() == 1) { "Selection must move to the second clicked message" }
+            screenshot("second-result-selected")
+            val selectedCountAfterSecondTap = selectedRowCount()
+            check(selectedCountAfterSecondTap == 1) { "Selection must move to the second clicked message: row=$secondHit selected=$selectedCountAfterSecondTap" }
             status("warm repeat jump and right-swipe return restore the same query/results/scroll position")
             val returnedInput = nodes().first { it.isEditable && it.isVisibleToUser }
             check(returnedInput.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
@@ -265,7 +271,13 @@ internal object SearchNavigationRegression {
             status("failure nodes: " + nodes().filter { it.isVisibleToUser }.mapNotNull { it.text?.toString()?.take(100) }.joinToString(" | ").take(1600))
             throw error
         } finally {
-            withContext(Dispatchers.Main) { vm.stop(); activity.finish() }
+            val viewModelJobs = withContext(Dispatchers.Main) {
+                vm.stop()
+                activity.finish()
+                listOfNotNull(vm.viewModelScope.coroutineContext[Job], history.viewModelScope.coroutineContext[Job])
+            }
+            viewModelJobs.forEach { it.cancel() }
+            viewModelJobs.joinAll()
             scope.coroutineContext[Job]!!.cancelAndJoin()
             db.close(); root.deleteRecursively()
         }

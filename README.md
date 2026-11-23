@@ -4,12 +4,10 @@
 
 **中文 | [English](README.en.md)**
 
-[![Version](https://img.shields.io/badge/version-1.2.4-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
+[![Version](https://img.shields.io/badge/version-1.2.5-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-查看 [v1.2.4 发布说明](release-notes/RELEASE_NOTES_v1.2.4.md)，了解会话内生图、对话记忆和图标切换。
-
-最新预发布：[v1.2.5](release-notes/RELEASE_NOTES_v1.2.5.md)。
+查看 [v1.2.5 正式版发布说明](release-notes/RELEASE_NOTES_v1.2.5.md)，了解主题、壁纸、第三方朗读、回收站和聊天工具。
 
 ## 简介
 
@@ -195,7 +193,7 @@ app/src/main/java/com/simplechat/app/
 
 ## 文档
 
-设计文档、实现记录与变更记录见 [`docs/README.md`](docs/README.md)，代码注释中的 `§` 编号对应这些文档。历史记录保留各版本的验证范围。当前稳定版为 v1.2.3（构建号 43）。见 [v1.2.3 发布说明](release-notes/RELEASE_NOTES_v1.2.3.md)。
+设计文档、实现记录与变更记录见 [`docs/README.md`](docs/README.md)，代码注释中的 `§` 编号对应这些文档。历史记录保留各版本的验证范围。当前稳定版为 v1.2.5（构建号 64）。
 
 相关入口：
 

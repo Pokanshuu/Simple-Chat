@@ -185,7 +185,8 @@ internal object NewFeaturesUiRegression {
                 }
                 bitmap.recycle()
             }
-            check(nodes().any { it.text?.toString() == unknown })
+            val accessibilityText = nodes().mapNotNull { it.text?.toString() }.joinToString("\n")
+            check(accessibilityText.contains("unknownlayout") && accessibilityText.contains("这段不能丢失")) { "Unsupported TeX source was not exposed: $accessibilityText" }
             val sourceAction = nodes().first { it.text?.toString() == Res.get(R.string.latex_compatible_source) }
             var sourceButton: AccessibilityNodeInfo? = sourceAction
             while (sourceButton != null && !sourceButton.isClickable) sourceButton = sourceButton.parent
@@ -197,7 +198,7 @@ internal object NewFeaturesUiRegression {
                 }
                 bitmap.recycle()
             }
-            check(nodes().any { it.text?.toString() == boxed }) {
+            check(nodes().any { it.text?.toString()?.contains(boxed) == true }) {
                 "Source toggle: " + nodes().mapNotNull { it.text?.toString() }.joinToString(" | ")
             }
             status("LaTeX: boxed Chinese content uses compatible layout; original and unknown-command text remain fully accessible")

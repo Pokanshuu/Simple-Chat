@@ -247,6 +247,7 @@ data class StoredSettings(
      * 与官方 Chat Demo 的默认值一致。
      */
     val webSearch: Boolean = false,
+    val webSearchWriteId: String? = null,
     /**
      * 地区（用于「时间地点提醒」里的地点那一项），自由文本，留空则不填。
      *
@@ -393,6 +394,7 @@ class SettingsStore(
             panelAccentEnabled = prefs[Keys.PANEL_ACCENT_ENABLED] ?: false,
             panelAccentOpacity = prefs[Keys.PANEL_ACCENT_OPACITY] ?: StoredSettings().panelAccentOpacity,
             webSearch = prefs[Keys.WEB_SEARCH] ?: StoredSettings().webSearch,
+            webSearchWriteId = prefs[Keys.WEB_SEARCH_WRITE_ID],
             locationRegion = prefs[Keys.LOCATION] ?: StoredSettings().locationRegion,
             searchReasoning = prefs[Keys.SEARCH_REASONING] ?: false,
             readAloudEnabled = prefs[Keys.READ_ALOUD_ENABLED] ?: true,
@@ -580,8 +582,11 @@ class SettingsStore(
         }
     }
 
-    suspend fun setWebSearch(enabled: Boolean) {
-        editApi { it[Keys.WEB_SEARCH] = enabled }
+    suspend fun setWebSearch(enabled: Boolean, profileId: String, writeId: String) {
+        editApi(profileId) {
+            it[Keys.WEB_SEARCH] = enabled
+            it[Keys.WEB_SEARCH_WRITE_ID] = writeId
+        }
     }
 
     private fun readService(prefs: Preferences, key: Preferences.Key<String>): ServiceApiConfig =
@@ -944,6 +949,7 @@ class SettingsStore(
         val DEFAULT_MODE = stringPreferencesKey("default_mode")
         val API_STYLE = stringPreferencesKey("api_style")
         val WEB_SEARCH = booleanPreferencesKey("web_search")
+        val WEB_SEARCH_WRITE_ID = stringPreferencesKey("web_search_write_id")
         val LOCATION = stringPreferencesKey("location_region")
 
         /** 朗读音色：机器标识；空 = 系统默认。 */

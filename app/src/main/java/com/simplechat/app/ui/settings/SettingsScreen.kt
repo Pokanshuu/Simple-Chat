@@ -4854,7 +4854,7 @@ private fun RecycleBinPages(
         PrimaryTabRow(
             selectedTabIndex = pager.currentPage,
             modifier = Modifier.fillMaxWidth().padding(top = Space.Gap, bottom = Space.Gap),
-            containerColor = Color.White,
+            containerColor = Color.Transparent,
             divider = {},
         ) {
             labels.forEachIndexed { index, label ->

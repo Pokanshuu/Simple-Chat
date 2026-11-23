@@ -90,7 +90,7 @@ class DeepSeekCompatibilityTest {
             assertEquals(id == DEEPSEEK_FLASH, "title" in wire)
             assertEquals(if (id == DEEPSEEK_FLASH) 2 else null, wire["tools"]?.jsonArray?.size)
             if (id == DEEPSEEK_FLASH) {
-                assertTrue(wire.toString().contains("Never claim that this chat has no search"))
+                assertTrue(wire.toString().contains("Distinguish failed, empty or unattempted search"))
             }
             assertTrue(StreamEvent.Title("Example") in events)
         }

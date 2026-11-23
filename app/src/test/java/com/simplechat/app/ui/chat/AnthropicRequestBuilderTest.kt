@@ -127,8 +127,8 @@ class AnthropicRequestBuilderTest {
         assertEquals(listOf(AnthropicTool.ReadUrl), build(listOf(link)).tools)
         assertEquals(listOf(AnthropicTool.WebSearch), build(listOf(plain), search = true).tools)
         assertEquals(listOf(AnthropicTool.ReadUrl, AnthropicTool.WebSearch), build(listOf(link), search = true).tools)
-        assertTrue(build(listOf(plain), search = true).system.contains("Never claim that this chat has no search"))
-        assertFalse(build(listOf(plain), search = false).system.contains("Never claim that this chat has no search"))
+        assertTrue(build(listOf(plain), search = true).system.contains("Distinguish failed, empty or unattempted search"))
+        assertFalse(build(listOf(plain), search = false).system.contains("Distinguish failed, empty or unattempted search"))
     }
 
     @Test

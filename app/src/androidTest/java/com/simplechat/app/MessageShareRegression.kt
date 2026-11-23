@@ -170,6 +170,20 @@ internal object MessageShareRegression {
                 checkAnchor("2/3")
                 tapResource(R.string.msg_variant_next)
                 checkAnchor("3/3")
+                tapResource(R.string.msg_variant_prev)
+                find("2/3")
+                tapResource(R.string.msg_variant_prev)
+                find("Oldest version")
+                val terminalFooter = Rect().also(find("1/3")::getBoundsInScreen)
+                val input = Rect().also(find(context.getString(R.string.input_hint))::getBoundsInScreen)
+                val maxGap = (80 * activity.resources.displayMetrics.density).toInt()
+                check(input.top - terminalFooter.bottom in 0..maxGap) {
+                    "Switching to a terminal version left the footer at ${terminalFooter.bottom} and input at ${input.top}"
+                }
+                tapResource(R.string.msg_variant_next)
+                find("2/3")
+                tapResource(R.string.msg_variant_next)
+                find("3/3")
                 touch("Long version paragraph 22", long = true)
                 tapResource(R.string.action_delete)
                 find(context.getString(R.string.msg_delete_reply_body, context.getString(R.string.msg_delete_body)))

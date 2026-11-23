@@ -90,7 +90,7 @@ internal object CompactionRegression {
                     }
                     val response = Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
                     if (rejectLongHistory.get() && input == "continue-WITH-270K-HISTORY" &&
-                        payload["messages"]!!.jsonArray.size > 2
+                        payload.toString().contains("中".repeat(100))
                     ) {
                         response.code(400).message("Bad Request").body(
                             """{"error":{"message":"user input too long, 270000 tokens exceeds max 150000 tokens"}}"""

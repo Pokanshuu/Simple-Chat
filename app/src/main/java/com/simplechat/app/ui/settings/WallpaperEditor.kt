@@ -499,13 +499,11 @@ private fun AdvancedControlOptions(panels: PanelAppearance, onChange: (PanelAppe
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(label, Modifier.weight(1.4f), style = MaterialTheme.typography.bodyMedium)
                     Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                        if (control == InterfaceControl.USER_BUBBLE || control == InterfaceControl.MESSAGE_INDEX) {
-                            Checkbox(
-                                effects.usesOpacity(control),
-                                { onChange(panels.copy(controlEffects = effects.withOpacity(control, it))) },
-                                Modifier.semantics { contentDescription = "$label · $opacity" },
-                            )
-                        }
+                        Checkbox(
+                            effects.usesOpacity(control),
+                            { onChange(panels.copy(controlEffects = effects.withOpacity(control, it))) },
+                            Modifier.semantics { contentDescription = "$label · $opacity" },
+                        )
                     }
                     Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                         Checkbox(effects.usesAcrylic(control), { onChange(panels.copy(controlEffects = effects.withAcrylic(control, it))) },

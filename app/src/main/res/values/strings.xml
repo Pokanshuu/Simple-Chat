@@ -790,6 +790,7 @@
     <string name="api_style_anthropic">Anthropic 兼容（扩展）</string>
     <string name="settings_web_search">智能搜索</string>
     <string name="settings_web_search_hint">官方 Flash 可使用内置搜索。其他模型可在此配置中启用独立搜索 API。</string>
+    <string name="search_answer_unresolved">本轮未能可靠确认搜索结果。请重试当前问题。</string>
     <string name="search_answer_contradicts_tool">本轮已成功联网搜索，结果和来源显示在上方，但模型给出了“无法搜索”的矛盾说明。为避免误导，我没有显示这段回答。请重试，或根据上方来源查看结果。</string>
     <string name="settings_location">地区</string>
     <string name="settings_location_hint_short">用于时间地点提醒</string>

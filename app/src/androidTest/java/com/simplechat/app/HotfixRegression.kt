@@ -178,7 +178,7 @@ internal object HotfixRegression {
             val entity = db.messageDao().findById(a)!!
             db.messageDao().upsert(entity.copy(id = "search-inactive", variantIndex = 1, active = false, content = "needle other variant", createdAt = entity.createdAt + 1))
             val title = repo.createConversation(ConversationMode.CREATIVE, "DEEPSEEK", "deepseek-flash", title = "needle title only")
-            val hits = repo.searchConversations("needle").first()
+            val hits = repo.searchConversations("needle", includeInactiveBranches = true).first()
             check(hits.size == 4 && hits.filter { it.conversation.id == cid }.size == 3)
             check(hits.single { it.messageId == u.id }.messageRole == "user")
             check(hits.single { it.messageId == a }.messageRole == "assistant")
@@ -243,7 +243,10 @@ internal object HotfixRegression {
             check(repo.loadActivePath(cid).last().id == "search-inactive")
             status("Room and search UI: all messages in one window, user/AI roles, message dates, inactive variants, title-only result, bounded previews, per-row jump")
             repeat(105) { repo.appendUserMessage(cid, "needle paging $it") }
-            val history = withContext(Dispatchers.Main) { HistoryViewModel(repo).also { it.updateQuery("needle") } }
+            store.setSearchInactiveBranches(true)
+            val history = withContext(Dispatchers.Main) {
+                HistoryViewModel(repo, store).also { it.updateQuery("needle") }
+            }
             val firstPage = withTimeout(10_000) { history.searchPage.first { it.hits.size == 100 } }
             check(firstPage.hasMore)
             withContext(Dispatchers.Main) { history.loadMoreSearchResults() }

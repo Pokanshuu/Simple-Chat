@@ -4,12 +4,10 @@
 
 **[中文](README.md) | English**
 
-[![Version](https://img.shields.io/badge/version-1.2.4-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
+[![Version](https://img.shields.io/badge/version-1.2.5-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-See the [v1.2.4 release notes (Chinese)](release-notes/RELEASE_NOTES_v1.2.4.md) for image generation, per-conversation memory, and icon switching.
-
-Latest pre-release: [v1.2.5 release notes (Chinese)](release-notes/RELEASE_NOTES_v1.2.5.md).
+See the [v1.2.5 release notes (Chinese)](release-notes/RELEASE_NOTES_v1.2.5.md) for themes, wallpapers, third-party speech, the Recycle Bin, and chat tools.
 
 ## Introduction
 

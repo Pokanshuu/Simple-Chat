@@ -33,7 +33,7 @@ class ImageToolLoopTest {
         val events = agentLoop(
             session = null,
             style = ApiStyle.OPENAI,
-            generateImage = { "generated" },
+            generateImage = { AgentToolOutcome.success("generated") },
         ) { history, _, _ ->
             if (history.transcript.events.any { it.kind == AgentTranscriptKind.TOOL_RESULT }) {
                 flowOf(StreamEvent.Content("done"), StreamEvent.Stopped("stop"))
@@ -70,7 +70,7 @@ class ImageToolLoopTest {
             session = null,
             nativeSearch = null,
             nativeFetch = null,
-            generateImage = { "ok" },
+            generateImage = { AgentToolOutcome.success("ok") },
         )
         assertEquals(AgentToolStatus.INVALID_ARGUMENTS,
             image.execute(imageToolDefinition.name, "{}") .status)
@@ -84,7 +84,7 @@ class ImageToolLoopTest {
         var executed = false
         val events = agentLoop(null, ApiStyle.OPENAI, generateImage = {
             executed = true
-            "bad"
+            AgentToolOutcome.success("bad")
         }) { _, _, _ ->
             flowOf(
                 StreamEvent.ToolCallDelta(0, "unknown-1", "future_tool", "{}"),
@@ -122,9 +122,9 @@ class ImageToolLoopTest {
         val events = agentLoop(
             session = null,
             style = ApiStyle.OPENAI,
-            nativeSearch = { executed = true; "must not run" },
+            nativeSearch = { executed = true; AgentToolOutcome.success("must not run") },
             runtime = {
-                AgentRuntimeState(webConfigured = true, webEnabled = enabled)
+                AgentRuntimeState(webConfigured = true, clientSearchEnabled = enabled, webSwitchOn = enabled)
             },
         ) { history, offer, _ ->
             requests++
@@ -152,7 +152,7 @@ class ImageToolLoopTest {
             val events = agentLoop(null, style, generateImage = { invocation ->
                 assertEquals("Rainy afternoon on the Shanghai Bund", invocation.prompt)
                 generated++
-                "Attached successfully"
+                AgentToolOutcome.success("Attached successfully")
             }) { history, offerWeb, snapshot ->
                 assertFalse(offerWeb)
                 if (++requests == 1) {
@@ -174,7 +174,7 @@ class ImageToolLoopTest {
                         else -> history.responses.takeLast(2).toString()
                     }
                     assertTrue(result.contains("image1") && result.contains("Attached successfully"))
-                    assertTrue(result.contains("image2") && result.contains("Image tool is disabled"))
+                    assertTrue(result.contains("image2") && result.contains("image tool budget is exhausted"))
                     flowOf(StreamEvent.Content("Done"), StreamEvent.Stopped("stop"))
                 }
             }.toList()
@@ -188,10 +188,10 @@ class ImageToolLoopTest {
         val executed = mutableListOf<String>()
         agentLoop(null, ApiStyle.OPENAI, generateImage = {
             executed += "image"
-            "Image provider failed"
+            AgentToolOutcome(AgentToolStatus.FAILED, "Image provider failed")
         }, nativeSearch = { query ->
             executed += query
-            "Rain in Shanghai"
+            AgentToolOutcome.success("Rain in Shanghai")
         }) { history, _, _ ->
             if (history.chat.isEmpty()) flowOf(
                 StreamEvent.ToolCallDelta(0, "i", "generate_image", """{"operation":"create","prompt":"Rainy Shanghai"}"""),
@@ -204,5 +204,107 @@ class ImageToolLoopTest {
             }
         }.toList()
         assertEquals(listOf("Shanghai weather", "image"), executed)
+    }
+
+    @Test fun disabledWebRoutesRecoverWithOneToolFreeRequest() = runBlocking {
+        for (native in listOf(false, true)) {
+            var requests = 0
+            var webCalls = 0
+            var images = 0
+            val base = com.simplechat.app.net.anthropic.AnthropicRequest(
+                model = "deepseek-flash", system = "",
+                messages = emptyList(),
+                tools = if (native) listOf(com.simplechat.app.net.anthropic.AnthropicTool.WebSearch) else emptyList(),
+            )
+            val events = agentLoop(null, ApiStyle.ANTHROPIC,
+                nativeSearch = { webCalls++; AgentToolOutcome.success("must not run") },
+                nativeFetch = { webCalls++; AgentToolOutcome.success("must not run") },
+                generateImage = { images++; AgentToolOutcome.success("must not run") },
+                runtime = { AgentRuntimeState(webConfigured = true, imageConfigured = true, imageExposed = true) },
+            ) { history, offer, _ ->
+                requests++
+                val request = history.anthropic(base, offer)
+                assertFalse(offer)
+                assertTrue(request.tools.isEmpty())
+                assertTrue(request.system.contains("web_search=configured_but_disabled_by_user"))
+                if (requests == 1) {
+                    assertTrue(history.imageOffered)
+                    // Different gateways either emit a stale call or return no visible body.
+                    if (native) flowOf(StreamEvent.Stopped("end_turn")) else flowOf(
+                        StreamEvent.ToolCallDelta(0, "stale", IndependentFetchName, "{}"),
+                        StreamEvent.Stopped("tool_use"),
+                    )
+                } else {
+                    assertTrue(history.textOnlyAnswer)
+                    assertFalse(history.imageOffered)
+                    assertTrue(request.system.contains("Answer the latest user message in plain text"))
+                    flowOf(StreamEvent.BlockStart(0, ReplyBlock.Text("Search is off. I cannot verify the forecast.")),
+                        StreamEvent.Stopped("end_turn"))
+                }
+            }.toList()
+            assertEquals(2, requests)
+            assertEquals(0, webCalls)
+            assertEquals(0, images)
+            assertFalse(events.any { it is StreamEvent.ToolCallDelta })
+            assertTrue(events.any { it is StreamEvent.BlockStart && it.block is ReplyBlock.Text })
+        }
+    }
+
+    @Test fun emptyAnswerRecoveryIsBoundedAndDoesNotRetryOrdinaryText() = runBlocking {
+        var requests = 0
+        val events = agentLoop(null, ApiStyle.OPENAI) { _, _, _ ->
+            requests++
+            flowOf(StreamEvent.Stopped("stop"), StreamEvent.Done)
+        }.toList()
+        assertEquals(2, requests)
+        assertEquals(1, events.count { it is StreamEvent.Done })
+        requests = 0
+        agentLoop(null, ApiStyle.OPENAI) { _, _, _ ->
+            requests++
+            flowOf(StreamEvent.Content("An offline answer."), StreamEvent.Stopped("stop"))
+        }.toList()
+        assertEquals(1, requests)
+    }
+
+    @Test fun enabledSearchRetriesStaleSwitchDenialOnBothRoutes() = runBlocking {
+        for (native in listOf(false, true)) {
+            var requests = 0
+            var discarded = 0
+            var executed = 0
+            agentLoop(
+                null, if (native) ApiStyle.ANTHROPIC else ApiStyle.OPENAI,
+                nativeSearch = { query ->
+                    assertEquals("上海 11 月 30 日天气", query)
+                    executed++
+                    AgentToolOutcome.success("11 月 30 日预报")
+                },
+                runtime = { AgentRuntimeState(
+                    webConfigured = true, webSwitchOn = true,
+                    clientSearchEnabled = !native, nativeSearchEnabled = native,
+                ) },
+                onSearchAnswerRetry = { discarded++ },
+            ) { history, offer, _ ->
+                assertEquals(!native, offer)
+                assertEquals(native, history.requestState.nativeSearchEnabled)
+                when (++requests) {
+                    1 -> if (native) flowOf(
+                        StreamEvent.BlockStart(0, ReplyBlock.Text("现在搜索功能依然是关闭的状态。")),
+                        StreamEvent.Stopped("end_turn"),
+                    ) else flowOf(StreamEvent.Content("现在**搜索功能依然是关闭的状态**。"), StreamEvent.Stopped("stop"))
+                    2 -> {
+                        assertTrue(history.runtimeInstruction.contains("explicit place and target date"))
+                        if (native) flowOf(StreamEvent.BlockStart(0, ReplyBlock.Text("下面是 11 月 30 日的预报。")))
+                        else flowOf(
+                            StreamEvent.ToolCallDelta(0, "follow-up", IndependentSearchName, """{"query":"上海 11 月 30 日天气"}"""),
+                            StreamEvent.Stopped("tool_calls"),
+                        )
+                    }
+                    else -> flowOf(StreamEvent.Content("下面是 11 月 30 日的预报。"))
+                }
+            }.toList()
+            assertEquals(1, discarded)
+            assertEquals(if (native) 2 else 3, requests)
+            assertEquals(if (native) 0 else 1, executed)
+        }
     }
 }

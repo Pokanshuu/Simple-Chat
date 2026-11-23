@@ -113,7 +113,7 @@ import com.simplechat.app.ui.common.PillShape
 import androidx.compose.animation.animateContentSize
 import com.simplechat.app.ui.common.MotionEasing
 import kotlinx.coroutines.launch
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 
 /**
  * 消息列表。
@@ -276,23 +276,23 @@ fun MessageList(
          */
         reverseLayout = false,
     ) {
-        itemsIndexed(
+        items(
             /*
              * 正序喂进去：最旧一条在下标 0（= 视觉顶部），最新的在最后。
              * 与列表方向一致，不再需要 `asReversed()`。
              */
             items = rows,
-            key = { _, row -> row.key },
-            contentType = { _, row -> if (row.footer) "actions" else messages[row.messageIndex].role },
-        ) { _, entry ->
-            val message = messages[entry.messageIndex]
+            key = { it.key },
+            contentType = { if (it.footer) "actions" else it.message.role },
+        ) { entry ->
+            val message = entry.message
             val topGap = if (entry.footer) MessageGap else if (entry.messageIndex > 0) 18.dp else 0.dp
             Column(Modifier.padding(top = topGap)) {
             if (entry.footer || message.deletedNavigation) {
                 if (!message.deletedNavigation && message.role == MessageRole.ASSISTANT) {
                     MessageActions(
                         message, peekedId == message.id,
-                        supportsContinuation && canContinueReply(message, entry.messageIndex == messages.lastIndex),
+                        supportsContinuation && canContinueReply(message, entry.lastOnPath),
                         speakingId == message.id, readAloudAvailable,
                         { onCopy(message) }, { onRegenerate(message) }, { onContinue(message) },
                         { onSpeak(message) }, { onEdit(message) }, onDelete?.let { delete -> { delete(message) } },
@@ -311,7 +311,6 @@ fun MessageList(
                     }
                 }
             } else {
-            val index = entry.messageIndex
             val sharedGroup = shareGroupByMessage[message.id]
             val row: @Composable () -> Unit = {
             CompositionLocalProvider(LocalShareExcerpt provides onShareExcerpt?.let { share -> { text -> share(message, text) } }) {
@@ -338,7 +337,7 @@ fun MessageList(
                  * 能不能续写由**位置 + 状态**共同决定（见 `ContinuePolicy`）。
                  * 「最后一条」在这里判最准：列表本身就是活跃路径。
                  */
-                canContinue = supportsContinuation && canContinueReply(message, isLastOnPath = index == messages.lastIndex),
+                canContinue = supportsContinuation && canContinueReply(message, isLastOnPath = entry.lastOnPath),
                 speakingId = speakingId,
                 readAloudAvailable = readAloudAvailable,
                 autoCollapseThinking = autoCollapseThinking,

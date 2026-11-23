@@ -147,7 +147,8 @@ internal object NativeShareRenderRegression {
             status("70-row native table exported across ${longPages.size} bounded PNG pages")
 
             val longImage = withTimeout(90_000) { exportSharedImages(activity, longDocument, ShareImageMode.LONG) }
-            check(longImage.size < longPages.size)
+            val fitsLongPage = longImage.size < longPages.size
+            check(longImage.size <= longPages.size)
             val limit = shareImagePageHeight(ShareImageMode.LONG,
                 (activity.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager).memoryClass)
             var tall = false
@@ -158,8 +159,10 @@ internal object NativeShareRenderRegression {
                 tall = tall || bounds.outHeight > 2400
                 file.copyTo(File(activity.cacheDir, "share-native-long-$index.png"), true)
             }
-            check(tall)
-            status("long screenshot mode combines the same table into ${longImage.size} image(s), bounded at $limit pixels")
+            if (fitsLongPage) check(tall)
+            else check(longImage.size == longPages.size && !tall)
+            status(if (fitsLongPage) "long screenshot mode combines the same table into ${longImage.size} image(s), bounded at $limit pixels"
+                else "long screenshot exceeded the device memory budget and safely fell back to ${longImage.size} standard pages")
 
             val overflowTable = "| Row | Formula | End |\n| --- | --- | --- |\n" +
                 (1..180).joinToString("\n") { "| ROW_$it | \$\\frac{1}{$it}\$ | LAST_$it |" }

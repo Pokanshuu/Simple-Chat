@@ -1,5 +1,14 @@
 package com.simplechat.app.net
 
+private val staleSearchOffClaim = Regex(
+    "(?:联网|联网搜索|网络搜索|智能搜索|搜索)(?:功能|开关)?[^\\n。！？]{0,16}(?:已关闭|被关闭|是关闭|仍关闭|处于关闭|没有打开|未开启)|" +
+        "(?:关闭了|关掉了|未开启|没有打开)[^\\n。！？]{0,10}(?:联网搜索|智能搜索|网络搜索|搜索功能)|" +
+        "\\b(?:web search|search|browsing)(?: feature)? (?:is|remains|has been) (?:still )?(?:off|disabled|turned off)\\b",
+    RegexOption.IGNORE_CASE,
+)
+
+internal fun claimsSearchIsOff(text: String): Boolean = staleSearchOffClaim.containsMatchIn(text)
+
 private val searchCapabilityDenial = Regex(
     "(?:没有|無|未提供|未接入|不具备|不具備).{0,16}(?:搜索|搜尋|联网|網絡|網路|上网|网页).{0,10}(?:工具|能力|功能)|" +
         "(?:不能|无法|無法|沒法|没法|搜不了|不能够|不能夠).{0,10}(?:搜索|搜尋|联网|網絡|網路|上网|浏览网页)|" +

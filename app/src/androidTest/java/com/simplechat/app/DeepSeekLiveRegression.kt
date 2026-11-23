@@ -119,7 +119,7 @@ internal object DeepSeekLiveRegression {
             store.setApiStyle("OPENAI")
             store.setModel(DEEPSEEK_FLASH)
             store.setReasoningLevel(ReasoningLevel.HIGH.name)
-            store.setWebSearch(true)
+            store.setWebSearch(true, store.flow.first().activeApiProfileId, UUID.randomUUID().toString())
             val conversationId = repository.createConversation(ConversationMode.CREATIVE, "DEEPSEEK", DEEPSEEK_FLASH, title = "Synthetic ledger")
             for ((index, batch) in inventory.withIndex()) {
                 val user = repository.appendUserMessage(conversationId, batch)

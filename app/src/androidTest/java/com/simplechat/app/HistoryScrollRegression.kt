@@ -6,6 +6,9 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -14,6 +17,7 @@ import com.simplechat.app.ui.chat.MessageList
 import com.simplechat.app.ui.chat.MessageRole
 import com.simplechat.app.ui.chat.MessageStatus
 import com.simplechat.app.ui.chat.UiMessage
+import com.simplechat.app.ui.chat.messageListEntries
 import com.simplechat.app.ui.theme.SimpleChatTheme
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
@@ -60,8 +64,47 @@ internal object HistoryScrollRegression {
                 }
             } } }
             status(withTimeout(60_000) { result.await() })
+            status(shortenPathDuringMeasure(instrumentation, activity, rows))
         } finally {
             instrumentation.runOnMainSync { activity.finish() }
         }
     }
+
+    private suspend fun shortenPathDuringMeasure(
+        instrumentation: Instrumentation,
+        activity: MainActivity,
+        rows: List<UiMessage>,
+    ): String {
+        val result = CompletableDeferred<String>()
+        instrumentation.runOnMainSync {
+            activity.setContent { SimpleChatTheme {
+                val messages = remember { mutableStateListOf<UiMessage>().apply { addAll(rows.take(40)) } }
+                val state = rememberLazyListState(initialFirstVisibleItemIndex = 30)
+                MessageList(messages, Modifier.fillMaxSize(), rows = messageListEntries(messages, false), listState = state)
+                LaunchedEffect(state) {
+                    try {
+                        withTimeout(8_000) {
+                            while (state.layoutInfo.totalItemsCount != 40) withFrameNanos {}
+                            check(state.firstVisibleItemIndex >= 20)
+                            repeat(8) {
+                                state.scrollToItem(30)
+                                // A synchronous layout pass can run before the previous provider is recomposed.
+                                Snapshot.withMutableSnapshot { messages.subList(2, messages.size).clear() }
+                                state.dispatchRawDelta(-64f)
+                                while (state.layoutInfo.totalItemsCount != 2) withFrameNanos {}
+                                check(state.firstVisibleItemIndex in 0..1)
+                                Snapshot.withMutableSnapshot { messages.addAll(rows.subList(2, 40)) }
+                                while (state.layoutInfo.totalItemsCount != 40) withFrameNanos {}
+                            }
+                        }
+                        result.complete("Eight switches from 40 messages to 2 during measurement completed without an out-of-bounds read")
+                    } catch (error: Exception) {
+                        result.completeExceptionally(error)
+                    }
+                }
+            } }
+        }
+        return withTimeout(15_000) { result.await() }
+    }
+
 }

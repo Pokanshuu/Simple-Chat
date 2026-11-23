@@ -145,7 +145,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 /** 输入栏下方最多同时展开一个面板。 */
 private enum class InputPanelState { NONE, THINKING, STATS, SETTINGS, ATTACH, IMAGE_MODELS, IMAGE_RATIOS }
 
-private data class MessagePathAnchor(val messageId: String, val offset: Int, val headRoom: Int, val tailRoom: Int)
+private data class MessagePathAnchor(val messageId: String, val offset: Int, val headRoom: Int)
 
 /** 切换会话的淡入时长。**快** —— 慢一点就从"过渡"变成"等待"了。 */
 private const val SwitchFadeInMs = 160
@@ -725,11 +725,10 @@ fun ChatScreen(
     val density = LocalDensity.current
     val inputAreaHeight = remember { mutableStateOf(0) }
     val anchorTopSpace = remember(listState) { mutableStateOf(0) }
-    val anchorBottomSpace = remember(listState) { mutableStateOf(0) }
-    val messagePadding = remember(density, inputAreaHeight, anchorTopSpace, anchorBottomSpace) {
+    val messagePadding = remember(density, inputAreaHeight, anchorTopSpace) {
         object : PaddingValues by PaddingValues(horizontal = 16.dp, vertical = 12.dp) {
             override fun calculateTopPadding() = with(density) { anchorTopSpace.value.toDp() } + 12.dp
-            override fun calculateBottomPadding() = with(density) { (inputAreaHeight.value + anchorBottomSpace.value).toDp() } + 12.dp
+            override fun calculateBottomPadding() = with(density) { inputAreaHeight.value.toDp() } + 12.dp
         }
     }
 
@@ -740,7 +739,10 @@ fun ChatScreen(
     val shareSelection = remember(vm) { MessageShareSelection() }
     var deleteSelectionMode by remember(vm) { mutableStateOf(false) }
     val canDeleteMessages = !vm.isStreaming && !vm.switching
-    val messageRows = messageListEntries(vm.messages, shareSelection.active)
+    // LazyColumn may measure its previous item provider before recomposition applies.
+    // Keep the row indices and the messages they index in the same immutable snapshot.
+    val renderedMessages = vm.messages.toList()
+    val messageRows = messageListEntries(renderedMessages, shareSelection.active)
     var pathAnchor by remember(listState) { mutableStateOf<MessagePathAnchor?>(null) }
 
     /** 换会话期间列表还没就位 —— 用来决定要不要显示转圈。 */
@@ -800,7 +802,6 @@ fun ChatScreen(
         vm.dismissSearch()
         searchPlacementReset++
         anchorTopSpace.value = 0
-        anchorBottomSpace.value = 0
         detached = false
     }
     SideEffect { if (vm.searchTarget != null) detached = true }
@@ -911,7 +912,6 @@ fun ChatScreen(
             val index = messageRows.indexOfFirst { it.key == anchor.messageId }
             if (index >= 0) {
                 anchorTopSpace.value = anchor.headRoom
-                anchorBottomSpace.value = anchor.tailRoom
                 listState.requestScrollToItem(index, anchor.headRoom - anchor.offset)
             }
         }
@@ -1027,14 +1027,11 @@ fun ChatScreen(
         val targetKey = if (replacementId != null) messageBranchKey(message) else message.id
         val target = visibleItems.firstOrNull { it.key == targetKey }
         fun atOffset(id: String, offset: Int): MessagePathAnchor {
-            // A short replacement may leave too little content below the anchor.
-            // Reserve one bounded viewport remainder in the same remeasure as placement.
-            val layout = listState.layoutInfo
+            // Let the list clamp the requested position to the new content bounds.
+            // Padding below the anchor would keep the removed continuation as blank space.
             val baseOffset = offset + anchorTopSpace.value
-            val available = layout.viewportEndOffset - layout.afterContentPadding + anchorBottomSpace.value - offset
-            // Deleting a middle message must not reserve the old tail as padding.
-            val tailRoom = if (deleting.isNotEmpty()) 0 else available.coerceIn(0, layout.viewportSize.height)
-            return MessagePathAnchor(id, baseOffset, baseOffset.coerceIn(0, layout.viewportSize.height), tailRoom)
+            val viewportHeight = listState.layoutInfo.viewportSize.height
+            return MessagePathAnchor(id, baseOffset, baseOffset.coerceIn(0, viewportHeight))
         }
         val anchor = if (target != null && replacementId != null) {
             atOffset(targetKey, target.offset)
@@ -1221,7 +1218,7 @@ fun ChatScreen(
                         // 点消息区空白处收键盘；不消费事件，气泡照常可点
                         .dismissKeyboardOnTouch(clearFocus = { !textSelection.isActive })
                 ) {
-                    if (vm.messages.isEmpty()) {
+                    if (renderedMessages.isEmpty()) {
                         // 空态也要避开输入栏，否则"一起创作吧"会压在输入框上
                         EmptyState(
                             modifier = Modifier.fillMaxSize(),
@@ -1229,7 +1226,7 @@ fun ChatScreen(
                         )
                     } else {
                         MessageList(
-                            messages = vm.messages,
+                            messages = renderedMessages,
                             rows = messageRows,
                             loadingLabelFor = vm::loadingLabelFor,
                             onStopImage = vm::stop,
@@ -1328,7 +1325,7 @@ fun ChatScreen(
                             onFork = { message -> vm.forkFrom(message) },
                             onVariantChange = { message, index ->
                                 // 切版本也重建路径（旧分支下游让位）—— 锚住操作栏那一行，
-                                // 换完视口不动，连点 `‹ ›` 才点得准。详见 anchorOnPathChange。
+                                // 内容够长时保留操作栏位置。短分支则按实际列表边界定位。
                                 val visibleItems = listState.layoutInfo.visibleItemsInfo
                                 vm.switchVariant(message, index) { anchorOnPathChange(message, it, visibleItems = visibleItems) }
                             },
@@ -1912,7 +1909,7 @@ fun ChatScreen(
                              * 用的（切版本 / 删除），而跳转时列表没动，`scrollToItem` 就是
                              * 确定性的 —— 再套一层锚点反而是白绕。
                              */
-                            val rowIndex = messageRows.indexOfFirst { it.key == vm.messages.getOrNull(entry.index)?.id }
+                            val rowIndex = messageRows.indexOfFirst { it.key == renderedMessages.getOrNull(entry.index)?.id }
                             if (rowIndex >= 0) listState.scrollToItem(rowIndex, 0)
                             /*
                              * 跳走 = "我在读已经有的东西"，跟底要停（§34.4）。

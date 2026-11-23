@@ -88,6 +88,8 @@ class ChatApi(
         independentFetch: Boolean = true,
         independentSearch: Boolean = true,
         agentStateInstruction: String = "",
+        automaticWebSearchAllowed: Boolean = true,
+        onRequestMetadata: ((List<String>, String?) -> Unit)? = null,
     ): Flow<StreamEvent> {
         val flash = isOfficialDeepSeekEndpoint(baseUrl) && model.id == DEEPSEEK_FLASH
         val tools = if (flash) buildList {
@@ -98,13 +100,14 @@ class ChatApi(
         val openAiSearchEnabled = openAiSearch && supportsOpenAiSearchTool(baseUrl, model.id, apiStyle)
         // DeepSeek native tools use `type` (not `name`); client function tools use the `name` field.
         val serverSearchEnabled = tools?.any { it.type == "deepseek_web_search" } == true || openAiSearchEnabled
+        val automaticSearch = automaticWebSearchAllowed && isOfficialOpenAiEndpoint(baseUrl) && usesAutomaticOpenAiSearch(model.id, apiStyle)
         val appInstructions = buildList {
             if (independentWeb) add(webToolInstruction)
             else if (webToolCompleted) add(webAnswerInstruction)
             if (imageToolCompleted) add(imageAnswerInstruction)
             if (agentStateInstruction.isNotBlank()) add(agentStateInstruction)
             if (generateImageTool) add(imageToolInstruction)
-            if (serverSearchEnabled || usesAutomaticOpenAiSearch(model.id, apiStyle) && isOfficialOpenAiEndpoint(baseUrl)) {
+            if (serverSearchEnabled || automaticSearch) {
                 add(serverSearchInstruction)
             }
         }
@@ -134,7 +137,7 @@ class ChatApi(
                         }).ifEmpty { null },
                         title = title,
                         reasoning = if (isOfficialDeepSeekEndpoint(baseUrl) && !thinkingEnabled) ResponsesReasoningDto("none") else request.reasoning,
-                    )
+                    ).also { onRequestMetadata?.invoke(it.tools.orEmpty().map { tool -> tool.function?.name ?: tool.name ?: tool.type }, null) }
                 },
                 messages = requestMessages, model = model, extraHeaders = extraHeaders, retryBeforeContent = retryBeforeContent,
                 onOutput = onResponseOutput,
@@ -156,11 +159,12 @@ class ChatApi(
                 )
             }
 
-        val automaticSearch = usesAutomaticOpenAiSearch(model.id, apiStyle)
+        onRequestMetadata?.invoke(request.tools.orEmpty().map { it.function?.name ?: it.name ?: it.type } +
+            listOfNotNull("web_search_options".takeIf { automaticSearch }), request.toolChoice)
         return sseClient.stream(
             url = chatCompletionsUrl(baseUrl),
             apiKey = apiKey,
-            request = if (automaticSearch && isOfficialOpenAiEndpoint(baseUrl)) {
+            request = if (automaticSearch) {
                 request.copy(webSearchOptions = buildJsonObject {})
             } else request,
             extraHeaders = extraHeaders,
@@ -341,7 +345,7 @@ data class ImageInput(
 
 internal const val imageToolInstruction = "SimpleChat provides generate_image in this conversation, regardless of the chat model's native capabilities or earlier replies about tools. For actual image requests, including follow-ups such as 'can you draw that?', resolve the subject from the conversation and call the tool with a self-contained visual prompt. Use create for a new image and edit for a change to an existing image. For questions about this chat's abilities, report this configuration without searching the web or generating an image. Do not generate for image analysis, prompt writing, quoted requests, or explicit requests not to generate. Do not claim that an image was generated until the tool confirms success."
 
-internal const val serverSearchInstruction = "This turn has access to the app's server-side web search tool. For current or time-sensitive questions, use the tool and base your answer on its returned results. When search tool results are present in this turn, you have searched: synthesize them and cite the supplied sources. Never claim that this chat has no search or web tool, or that you cannot search, unless the tool actually failed or was unavailable. Do not invent search results."
+internal const val serverSearchInstruction = "$webTargetInstruction This turn has access to the app's server-side web search tool. For current or time-sensitive questions, use the tool and base your answer on its returned results. When search tool results are present in this turn, you have searched: synthesize them and cite the supplied sources. Distinguish failed, empty or unattempted search from a disabled tool. Do not invent search results."
 
 internal val imageToolDefinition = FunctionDefinitionDto(
     name = "generate_image",

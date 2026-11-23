@@ -1,6 +1,6 @@
 # SimpleChat · 待办
 
-当前正式版为 v1.2.0。参阅 [发布说明](release-notes/RELEASE_NOTES_v1.2.0.md)。
+当前正式版为 v1.2.5。参阅 [发布说明](release-notes/RELEASE_NOTES_v1.2.5.md)。
 
 ## 2026-11-16 审查后的发布前重点
 
