@@ -64,7 +64,8 @@ data class ChatRequestDto(
 @Serializable
 data class ResponsesRequestDto(
     val model: String,
-    val input: List<ResponsesInputMessage>,
+    val input: List<JsonElement>,
+    val include: List<String>? = null,
     val stream: Boolean,
     val tools: List<DeepSeekTool>? = null,
     val title: DeepSeekTitle? = null,
@@ -76,9 +77,6 @@ data class ResponsesRequestDto(
 
 @Serializable
 data class ResponsesReasoningDto(val effort: String, val summary: String? = null)
-
-@Serializable
-data class ResponsesInputMessage(val role: String, val content: kotlinx.serialization.json.JsonElement)
 
 @Serializable
 data class ReasoningDto(val enabled: Boolean, val effort: String? = null)
@@ -101,6 +99,9 @@ data class ThinkingDto(val type: String) {
 data class OutMessageDto(
     val role: String,
     val content: JsonElement,
+    @SerialName("tool_calls") val toolCalls: List<JsonElement>? = null,
+    @SerialName("tool_call_id") val toolCallId: String? = null,
+    @SerialName("reasoning_content") val reasoningContent: String? = null,
 )
 
 @Serializable

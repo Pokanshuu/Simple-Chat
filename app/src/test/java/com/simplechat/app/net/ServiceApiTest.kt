@@ -5,6 +5,8 @@ import com.simplechat.app.data.*
 import com.simplechat.app.ui.chat.*
 import java.io.File
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.json.*
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -70,88 +72,77 @@ class ServiceApiTest {
         val settings = StoredSettings(baseUrl = "https://chat.invalid", apiKey = "fixture-key",
             searchApi = ServiceApiConfig(enabled = true, baseUrl = "https://search.invalid"))
         val progress = mutableListOf<List<ReplyBlock>>()
-        val result = searchAugmentation(settings, "Read https://example.com/article and explain", ServiceApi(client),
-            plan = { input ->
-                if (Json.parseToJsonElement(input).jsonObject["round"]?.jsonPrimitive?.content == "1")
-                    """{"search":["example article background"],"fetch":[]}"""
-                else """{"search":["EXAMPLE ARTICLE BACKGROUND"],"fetch":[1,999]}"""
-            }) {
-            progress += it
-        }
+        val session = WebResearchSession(settings, "Read https://example.com/article and explain", ServiceApi(client), onProgress = { progress += it })
+        assertTrue(session.execute(IndependentSearchName, """{"query":"article background"}""").contains("Evidence"))
+        assertTrue(session.execute(IndependentFetchName, """{"url":"https://example.com/article"}""").contains("Fetched body"))
         assertEquals(2, requests.size)
         assertTrue(requests.all { it.url.host == "search.invalid" && it.header("Authorization") == "Bearer fixture-key" })
         val sent = Buffer(); requests[1].body!!.writeTo(sent)
         assertEquals("https://example.com/article", Json.parseToJsonElement(sent.readUtf8()).jsonObject["url"]!!.jsonPrimitive.content)
-        assertTrue(result.context.contains("Evidence") && result.context.contains("Fetched body"))
-        assertEquals(2, result.sources.size)
         assertTrue(progress.first().single() is ReplyBlock.ToolUse)
         assertTrue(progress.last().any { it is ReplyBlock.FetchResult && !it.failed })
     }
 
-    @Test fun `planner resolves follow ups and reads only registered result urls`() = runBlocking {
-        val outbound = mutableListOf<Pair<String, JsonObject>>()
-        val client = OkHttpClient.Builder().addInterceptor { chain ->
-            val request = chain.request()
-            val path = request.url.encodedPath
-            val body = Buffer(); request.body!!.writeTo(body)
-            outbound += path to Json.parseToJsonElement(body.readUtf8()).jsonObject
-            val payload = if (path.endsWith("fetch")) """{"title":"Android release","content":"Release notes"}"""
-                else """{"results":[{"url":"http://localhost/internal"},{"url":"https://example.org/android#notes","title":"Android release","snippet":"See release notes"}]}"""
-            Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK")
-                .body(payload.toResponseBody("application/json".toMediaType())).build()
-        }.build()
-        val settings = StoredSettings(baseUrl = "https://chat.invalid", apiKey = "test-key",
-            searchApi = ServiceApiConfig(enabled = true, baseUrl = "https://search.invalid"))
-        var rounds = 0
-        val result = searchAugmentation(settings, "And on Android?", ServiceApi(client),
-            recentTurns = listOf("user" to "Check the SimpleChat Windows release"), plan = { input ->
-                rounds++
-                assertTrue(input.contains("SimpleChat Windows release"))
-                if (rounds == 1) """{"search":["SimpleChat Android official release"],"fetch":[]}"""
-                else {
-                    assertTrue(input.contains("See release notes"))
-                    assertFalse(input.contains("localhost"))
-                    """{"search":[],"fetch":[1,1]}"""
-                }
-            })
-        assertEquals(2, rounds)
-        assertEquals(2, outbound.size)
-        assertEquals("SimpleChat Android official release", outbound[0].second["query"]!!.jsonPrimitive.content)
-        assertEquals("https://example.org/android", outbound[1].second["url"]!!.jsonPrimitive.content)
-        assertTrue(result.context.contains("Release notes"))
-        assertFalse(result.incomplete)
-    }
-
-    @Test fun `skip or malformed plan does not send raw message to a search service`() = runBlocking {
+    @Test fun `no tool stop does not send any private text to search`() = runBlocking {
         val client = OkHttpClient.Builder().addInterceptor { throw AssertionError("Unexpected independent API request") }.build()
-        val settings = StoredSettings(baseUrl = "https://chat.invalid", apiKey = "test-key",
-            searchApi = ServiceApiConfig(enabled = true, baseUrl = "https://search.invalid"))
-        val skipped = searchAugmentation(settings, "Just say hello", ServiceApi(client), plan = { """{"search":[],"fetch":[]}""" })
-        assertTrue(skipped.blocks.isEmpty())
-        assertFalse(skipped.incomplete)
-        val malformed = searchAugmentation(settings, "A private draft", ServiceApi(client), plan = { "search the whole message" })
-        assertTrue(malformed.blocks.isEmpty())
-        assertTrue(malformed.incomplete)
+        val settings = StoredSettings(apiKey = "test-key", searchApi = ServiceApiConfig(enabled = true))
+        val session = WebResearchSession(settings, "private draft", ServiceApi(client))
+        var turns = 0
+        val events = webToolLoop(session, ApiStyle.OPENAI) { _, enabled, _ ->
+            turns++
+            assertTrue(enabled)
+            flowOf(StreamEvent.Content("I can search."), StreamEvent.Stopped("stop"))
+        }.toList()
+        assertEquals(1, turns)
+        assertTrue(StreamEvent.Content("I can search.") in events)
+        assertTrue(session.execute(IndependentFetchName, """{"url":"https://example.org/unregistered"}""").contains("Only public"))
+        assertTrue(session.execute(IndependentSearchName, "{} ").contains("Invalid"))
     }
 
-    @Test fun `failed fetch preserves successful search evidence`() = runBlocking {
-        val client = OkHttpClient.Builder().addInterceptor { chain ->
-            val request = chain.request()
-            val fetch = request.url.encodedPath.endsWith("fetch")
-            val payload = if (fetch) "{}" else
-                """{"results":[{"url":"https://example.org/page","snippet":"Useful search evidence"}]}"""
-            Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(if (fetch) 503 else 200).message("Test")
-                .body(payload.toResponseBody("application/json".toMediaType())).build()
-        }.build()
-        val settings = StoredSettings(baseUrl = "https://chat.invalid", apiKey = "test-key",
-            searchApi = ServiceApiConfig(enabled = true, baseUrl = "https://search.invalid"))
-        var round = 0
-        val result = searchAugmentation(settings, "Check the release details", ServiceApi(client), plan = {
-            if (++round == 1) """{"search":["release details"],"fetch":[]}""" else """{"search":[],"fetch":[1]}"""
-        })
-        assertTrue(result.incomplete)
-        assertTrue(result.context.contains("Useful search evidence"))
-        assertTrue(result.blocks.any { it is ReplyBlock.FetchResult && it.failed })
+    @Test fun `model can search then read a source before bounded final answer across protocols`() = runBlocking {
+        for (style in listOf(ApiStyle.OPENAI, ApiStyle.ANTHROPIC, ApiStyle.OPENAI_RESPONSES)) {
+            val requests = mutableListOf<JsonObject>()
+            val client = OkHttpClient.Builder().addInterceptor { chain ->
+                val request = chain.request(); val body = Buffer(); request.body!!.writeTo(body)
+                requests += Json.parseToJsonElement(body.readUtf8()).jsonObject
+                val fetch = request.url.encodedPath.endsWith("fetch")
+                Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(if (fetch) 503 else 200).message("Test")
+                    .body((if (fetch) "{}" else """{"results":[{"url":"https://example.org/source","snippet":"Evidence"}]}""").toResponseBody()).build()
+            }.build()
+            val settings = StoredSettings(apiKey = "key", searchApi = ServiceApiConfig(enabled = true, baseUrl = "https://search.invalid"))
+            val progress = mutableListOf<List<ReplyBlock>>()
+            val session = WebResearchSession(settings, "And tomorrow?", ServiceApi(client), onProgress = { progress += it })
+            var rounds = 0
+            val events = webToolLoop(session, style) { history, offer, output ->
+                val turn = ++rounds
+                assertEquals(turn < 3, offer)
+                val wire = when (style) {
+                    ApiStyle.OPENAI -> if (turn == 1) "" else history.chat.last().also { assertEquals("id${turn-1}", it.toolCallId) }.content.toString()
+                    ApiStyle.ANTHROPIC -> if (turn == 1) "" else history.messages.last().content.jsonArray.single().jsonObject.also {
+                        assertEquals("id${turn-1}", it["tool_use_id"]!!.jsonPrimitive.content)
+                    }.toString()
+                    else -> if (turn == 1) "" else history.responses.last().jsonObject.also {
+                        assertEquals("id${turn-1}", it["call_id"]!!.jsonPrimitive.content)
+                    }.toString()
+                }
+                if (turn == 2) assertTrue(wire.contains("Evidence"))
+                if (turn == 3) {
+                    assertTrue(wire.contains("failed"))
+                    flowOf(StreamEvent.Content("Final"), StreamEvent.Stopped("stop"))
+                } else {
+                    val name = if (turn == 1) IndependentSearchName else IndependentFetchName
+                    val args = if (turn == 1) """{"query":"Hong Kong forecast tomorrow"}""" else """{"url":"https://example.org/source"}"""
+                    output?.invoke(0, buildJsonObject { put("type", "function_call"); put("name", name); put("call_id", "id$turn"); put("arguments", args) })
+                    flowOf(StreamEvent.ToolCallDelta(0, "id$turn", name, args.take(3)), StreamEvent.ToolCallDelta(0, null, null, args.drop(3)), StreamEvent.Stopped("tool_use"))
+                }
+            }.toList()
+            assertEquals(3, rounds)
+            assertEquals(2, requests.size)
+            assertEquals("Hong Kong forecast tomorrow", requests.first()["query"]!!.jsonPrimitive.content)
+            assertTrue(progress.last().any { it is ReplyBlock.FetchResult && it.failed })
+            assertTrue(progress.last().any { it is ReplyBlock.SearchResult && it.results.isNotEmpty() })
+            assertEquals(listOf(StreamEvent.Content("Final"), StreamEvent.Stopped("stop")), events)
+        }
     }
 
     @Test fun `file references serialize for both protocols without embedding original`() {

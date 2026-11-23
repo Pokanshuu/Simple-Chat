@@ -73,6 +73,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import com.simplechat.app.net.ImageToolCall
+import com.simplechat.app.net.WebResearchSession
+import com.simplechat.app.net.webToolLoop
 import com.simplechat.app.net.ImageGenerationIntent
 import com.simplechat.app.net.ImageToolOperation
 import com.simplechat.app.net.blocksImageToolExecution
@@ -2019,14 +2021,24 @@ class ChatViewModel(
                     return
                 }
                 val systemContext = if (discussingImage && previousImage != null && !options.model.supportsVision) {
-                    listOf(research.context, "The user refers to an image generated earlier in this chat. This chat model cannot view the image pixels. Do not claim to have seen the image or deny that the app generated it.")
-                        .filter { it.isNotBlank() }.joinToString("\n\n")
-                } else research.context
+                    "The user refers to an image generated earlier in this chat. This chat model cannot view the image pixels. Do not claim to have seen the image or deny that the app generated it."
+                } else ""
                 if (nativeGeminiTurn && !textOnly) {
                     generateTurnImage(turnImageRequest(latestQuestion, imageIntent == ImageGenerationIntent.EDIT || attachedImages.isNotEmpty()))
                     return
                 }
                 val imageTool = ImageToolCall()
+                val webSession = if (!textOnly && prefix == null && searchRequested && independentSearchAvailable) {
+                    WebResearchSession(route.copy(baseUrl = route.baseUrl.ifBlank { routeProvider.defaultBaseUrl }), latestQuestion,
+                        recentTurns = messages.filter { it.role == MessageRole.USER && it.id != latestUser?.id }
+                            .takeLast(3).map { "user" to it.content.take(700) }) { blocks ->
+                        val added = blocks.drop(research.blocks.size)
+                        research = research.copy(blocks = blocks)
+                        accumulator?.seed(accumulator.blocks + added)
+                        refreshBuffered()
+                        patch(replyId) { it.copy(timeline = timeline) }
+                    }
+                } else null
                 val memoryText = memorySnapshot ?: crossChatMemoryFor(route, conversationId, latestQuestion)
                     .also { memorySnapshot = it }
                 if (accumulator != null) {
@@ -2035,17 +2047,17 @@ class ChatViewModel(
                         generateImageTool = imageToolEnabled && !textOnly,
                         visualFollowUp = visualFollowUp,
                     )
-                    optionalFieldsSent = !textOnly && (request.tools.isNotEmpty() || request.title != null ||
-                        request.messages.any { it.role == "user" && it.content is kotlinx.serialization.json.JsonArray } || research.context.isNotBlank())
-                    chatApi.streamMessage(
+                    optionalFieldsSent = !textOnly && (webSession != null || request.tools.isNotEmpty() || request.title != null ||
+                        request.messages.any { it.role == "user" && it.content is kotlinx.serialization.json.JsonArray })
+                    webToolLoop(webSession, selectedApiStyle) { history, offer, _ -> chatApi.streamMessage(
                         baseUrl = route.baseUrl.ifBlank { routeProvider.defaultBaseUrl },
                         apiKey = route.apiKey,
-                        request = request,
+                        request = history.anthropic(request, offer),
                         extraHeaders = routeProvider.headersFor(openCodeSessionId) +
                             if (!textOnly && route.supportsFileReferences && (route.filesApi.enabled || messages.any { message -> message.attachments.any { it.fileId != null } }))
                                 mapOf("anthropic-beta" to "files-api-2025-04-14") else emptyMap(),
                         contextWindow = options.model.contextWindow,
-                    ).collect { event ->
+                    ) }.collect { event ->
                         when (event) {
                             is StreamEvent.BlockStart -> {
                                 if (event.block is ReplyBlock.Text) noteBody()
@@ -2107,16 +2119,19 @@ class ChatViewModel(
                     val search = builtInFlash && searchRequested && !independentSearchAvailable
                     val openAiSearch = !textOnly && searchRequested && !independentSearchAvailable &&
                         com.simplechat.app.net.supportsOpenAiSearchTool(route.baseUrl, options.model.id, selectedApiStyle)
-                    optionalFieldsSent = !textOnly && (imageToolEnabled || openAiSearch || outgoing.any { it.content is kotlinx.serialization.json.JsonArray } ||
-                        search || readLink || research.context.isNotBlank() || title && outgoing.sumOf {
+                    optionalFieldsSent = !textOnly && (webSession != null || imageToolEnabled || openAiSearch || outgoing.any { it.content is kotlinx.serialization.json.JsonArray } ||
+                        search || readLink || title && outgoing.sumOf {
                             ((it.content as? kotlinx.serialization.json.JsonPrimitive)?.content?.length ?: 8001).toLong() + 32
                         } <= 8000)
-                    chatApi.streamChat(
+                    webToolLoop(webSession, selectedApiStyle) { history, offer, onOutput -> chatApi.streamChat(
                         apiStyle = selectedApiStyle,
                         baseUrl = route.baseUrl.ifBlank { routeProvider.defaultBaseUrl },
                         apiKey = route.apiKey,
                         model = options.model,
-                        messages = outgoing,
+                        messages = outgoing + history.chat,
+                        independentWeb = offer,
+                        responseHistory = history.responses,
+                        onResponseOutput = onOutput,
                         search = search,
                         openAiSearch = openAiSearch,
                         readLink = readLink,
@@ -2128,7 +2143,7 @@ class ChatViewModel(
                         temperature = options.temperature.toDouble(),
                         topP = options.topP.toDouble(),
                         extraHeaders = routeProvider.headersFor(openCodeSessionId),
-                    ).collect { event ->
+                    ) }.collect { event ->
                         when (event) {
                             is StreamEvent.Reasoning -> {
                                 // 请求档位控制发送参数，显示以服务端实际返回为准。
@@ -2222,68 +2237,11 @@ class ChatViewModel(
                 }
             }
 
-            fun canRetryThisTurn(): Boolean = !pendingImageTool && prefix == null && contentChars == 0 && reasonBuf.isEmpty() &&
+            fun canRetryThisTurn(): Boolean = research.blocks.isEmpty() && !pendingImageTool && prefix == null && contentChars == 0 && reasonBuf.isEmpty() &&
                 accumulator?.answer.isNullOrEmpty() && accumulator?.thinking.isNullOrEmpty() &&
                 generation == streamGeneration && !stoppedByUser
 
             try {
-                if (!nativeGeminiTurn && imageIntent != ImageGenerationIntent.CAPABILITY &&
-                    prefix == null && !omitAttachmentsAndTools && searchRequested && independentSearchAvailable) {
-                    val question = messages.lastOrNull { it.role == MessageRole.USER }?.content.orEmpty()
-                    val previousBlocks = prefix?.timeline.orEmpty()
-                    val baseUrl = route.baseUrl.ifBlank { routeProvider.defaultBaseUrl }
-                    val recentTurns = messages.asSequence().filter { it.id != latestUser?.id && it.id != replyId &&
-                        it.status == MessageStatus.DONE && it.content.isNotBlank() }
-                        .map { (if (it.role == MessageRole.USER) "user" else "assistant") to it.content.take(700) }
-                        .toList().takeLast(6)
-                    try {
-                        research = com.simplechat.app.net.searchAugmentation(
-                            route.copy(baseUrl = baseUrl), question,
-                            recentTurns = recentTurns, date = java.time.LocalDate.now().toString(),
-                            plan = { input ->
-                                val instruction = com.simplechat.app.net.ResearchPlannerInstruction
-                                val headers = routeProvider.headersFor(openCodeSessionId)
-                                val stream = if (extended) {
-                                    chatApi.streamMessage(
-                                        baseUrl = baseUrl, apiKey = route.apiKey, extraHeaders = headers,
-                                        contextWindow = options.model.contextWindow, retryBeforeContent = false,
-                                        request = buildAnthropicRequest(
-                                            model = options.model.id, systemPrompt = instruction,
-                                            path = listOf(UiMessage("research-plan", MessageRole.USER, input)),
-                                            searchEnabled = false, thinkingEnabled = false, requestTitle = false,
-                                            latestReminder = null, maxTokens = 512, outputLimit = options.model.maxOutputTokens,
-                                            deepSeekExtensions = isOfficialDeepSeekEndpoint(baseUrl), allowServerTools = false,
-                                        ),
-                                    )
-                                } else {
-                                    chatApi.streamChat(
-                                        apiStyle = selectedApiStyle, baseUrl = baseUrl, apiKey = route.apiKey,
-                                        model = options.model, thinkingEnabled = false, maxTokens = 512,
-                                        extraHeaders = headers, retryBeforeContent = false,
-                                        messages = listOf(OutMessageDto("system", MessageContent.text(instruction)),
-                                            OutMessageDto("user", MessageContent.text(input))),
-                                    )
-                                }
-                                collectCompactionSummary(stream, maxChars = 2_048)
-                            },
-                        ) { progress ->
-                            research = research.copy(blocks = progress)
-                            timeline = previousBlocks + progress
-                            accumulator?.seed(timeline)
-                            patch(replyId) { it.copy(timeline = timeline) }
-                        }
-                        if (research.incomplete && route.showRetrySkipNotice) retrySkipNotice = Res.get(R.string.tool_request_skipped_continue)
-                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                        throw cancelled
-                    } catch (toolError: Exception) {
-                        android.util.Log.w("SimpleChat/Tools", "search tool skipped")
-                        research = com.simplechat.app.net.SearchAugmentation()
-                        timeline = previousBlocks
-                        accumulator?.seed(timeline)
-                        patch(replyId) { it.copy(timeline = timeline) }
-                        if (route.showRetrySkipNotice) retrySkipNotice = Res.get(R.string.tool_request_skipped_continue)
-                    }
-                }
                 sendAttempt(omitAttachmentsAndTools)
                 var textOnly = omitAttachmentsAndTools
                 if (canDegrade && !textOnly && !wantsImage && canRetryThisTurn()) {

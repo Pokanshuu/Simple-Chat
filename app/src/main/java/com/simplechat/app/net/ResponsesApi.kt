@@ -29,7 +29,7 @@ internal fun buildResponsesRequest(
     val output = model.clampOutputTokens(maxTokens?.coerceAtLeast(16))
     return ResponsesRequestDto(
         model = model.id,
-        input = messages.map { ResponsesInputMessage(it.role, responsesInputContent(it.content)) },
+        input = messages.map { buildJsonObject { put("role", it.role); put("content", responsesInputContent(it.content)) } },
         stream = true,
         maxOutputTokens = output,
         temperature = temperature.takeUnless { model.supportsThinking || thinkingEnabled },
@@ -68,10 +68,10 @@ internal fun responsesUrl(baseUrl: String): String {
 }
 
 /** Tracks delivered text per output part so final snapshots can fill in omitted deltas. */
-internal class ResponsesSseLineParser(private val json: Json) {
+internal class ResponsesSseLineParser(private val json: Json, private val onOutput: ((Int, JsonObject) -> Unit)? = null) {
     private enum class Kind { SUMMARY, REASONING, TEXT, REFUSAL }
     private data class Part(val kind: Kind, val output: Int, val index: Int)
-    private val completedImageCalls = mutableSetOf<Int>()
+    private val completedCalls = mutableSetOf<Int>()
     private val delivered = mutableMapOf<Part, StringBuilder>()
 
     fun parse(line: String): SseLineParser.Result {
@@ -121,7 +121,7 @@ internal class ResponsesSseLineParser(private val json: Json) {
                     "max_output_tokens" -> "length"
                     null -> when {
                         type == "response.incomplete" -> "incomplete"
-                        completedImageCalls.isNotEmpty() -> "tool_calls"
+                        completedCalls.isNotEmpty() -> "tool_calls"
                         else -> "stop"
                     }
                     else -> reason
@@ -138,12 +138,12 @@ internal class ResponsesSseLineParser(private val json: Json) {
     }
 
     private fun item(item: JsonObject?, output: Int, events: MutableList<StreamEvent>) {
+        if (item != null) onOutput?.invoke(output, item)
         when (item?.text("type")) {
             "function_call" -> {
                 val arguments = item.text("arguments")
-                if (item.text("name") == imageToolDefinition.name && arguments != null &&
-                    completedImageCalls.add(output)) {
-                    events += StreamEvent.ToolCallDelta(output, item.text("call_id"), imageToolDefinition.name, arguments)
+                if (item.text("name") in clientToolNames && arguments != null && completedCalls.add(output)) {
+                    events += StreamEvent.ToolCallDelta(output, item.text("call_id"), item.text("name"), arguments)
                 }
             }
             "reasoning" -> {

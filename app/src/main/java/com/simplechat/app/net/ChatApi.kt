@@ -80,6 +80,9 @@ class ChatApi(
         requestTitle: Boolean = false,
         generateImageTool: Boolean = false,
         requireImageTool: Boolean = false,
+        independentWeb: Boolean = false,
+        responseHistory: List<JsonElement> = emptyList(),
+        onResponseOutput: ((Int, kotlinx.serialization.json.JsonObject) -> Unit)? = null,
     ): Flow<StreamEvent> {
         val flash = isOfficialDeepSeekEndpoint(baseUrl) && model.id == DEEPSEEK_FLASH
         val tools = if (flash) buildList {
@@ -91,6 +94,8 @@ class ChatApi(
         // DeepSeek native tools use `type` (not `name`); client function tools use the `name` field.
         val serverSearchEnabled = tools?.any { it.type == "deepseek_web_search" } == true || openAiSearchEnabled
         val appInstructions = buildList {
+            if (independentWeb) add(webToolInstruction)
+            else if (responseHistory.isNotEmpty() || messages.lastOrNull()?.toolCallId != null) add(webAnswerInstruction)
             if (generateImageTool) add(imageToolInstruction)
             if (serverSearchEnabled || usesAutomaticOpenAiSearch(model.id, apiStyle) && isOfficialOpenAiEndpoint(baseUrl)) {
                 add(serverSearchInstruction)
@@ -115,16 +120,21 @@ class ChatApi(
                         openAiSearchEnabled
                     }
                     request.copy(
-                        tools = (tools.orEmpty() + listOfNotNull(imageTool, searchTool)).ifEmpty { null },
+                        input = request.input + responseHistory,
+                        include = listOf("reasoning.encrypted_content").takeIf { independentWeb && model.supportsThinking },
+                        tools = (tools.orEmpty() + listOfNotNull(imageTool, searchTool) + webTools(independentWeb).map {
+                            DeepSeekTool("function", name = it.name, description = it.description, parameters = it.parameters)
+                        }).ifEmpty { null },
                         title = title,
                         reasoning = if (isOfficialDeepSeekEndpoint(baseUrl) && !thinkingEnabled) ResponsesReasoningDto("none") else request.reasoning,
                     )
                 },
                 messages = requestMessages, model = model, extraHeaders = extraHeaders, retryBeforeContent = retryBeforeContent,
+                onOutput = onResponseOutput,
             )
         }
         val imageTool = if (generateImageTool) DeepSeekTool("function", imageToolDefinition) else null
-        val allTools = (tools.orEmpty() + listOfNotNull(imageTool)).ifEmpty { null }
+        val allTools = (tools.orEmpty() + listOfNotNull(imageTool) + webTools(independentWeb).map { DeepSeekTool("function", it) }).ifEmpty { null }
         val request = buildChatRequest(model, requestMessages, thinkingEnabled, reasoningEffort, maxTokens, temperature, topP, isOfficialDeepSeekEndpoint(baseUrl))
             .let {
                 if (allTools == null && title == null) it else it.copy(

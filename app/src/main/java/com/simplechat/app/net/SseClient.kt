@@ -60,8 +60,10 @@ class SseClient(
         model: ModelInfo,
         extraHeaders: Map<String, String>,
         retryBeforeContent: Boolean,
-    ): Flow<StreamEvent> = streamRequest(url, apiKey, extraHeaders, retryBeforeContent, responses = true) {
-        validateRequestBudget(estimatedInputTokens(messages), request.maxOutputTokens, model.contextWindow, model.maxOutputTokens)
+        onOutput: ((Int, kotlinx.serialization.json.JsonObject) -> Unit)? = null,
+    ): Flow<StreamEvent> = streamRequest(url, apiKey, extraHeaders, retryBeforeContent, responses = true, onOutput = onOutput) {
+        val toolHistoryTokens = request.input.asSequence().drop(messages.size).sumOf(::contentTokens)
+        validateRequestBudget(estimatedInputTokens(messages) + toolHistoryTokens, request.maxOutputTokens, model.contextWindow, model.maxOutputTokens)
         StreamingRequestBody(json, ResponsesRequestDto.serializer(), request)
     }
 
@@ -71,6 +73,7 @@ class SseClient(
         extraHeaders: Map<String, String>,
         retryBeforeContent: Boolean,
         responses: Boolean = false,
+        onOutput: ((Int, kotlinx.serialization.json.JsonObject) -> Unit)? = null,
         prepareBody: () -> StreamingRequestBody<*>,
     ): Flow<StreamEvent> = flow {
         val body = prepareBody()
@@ -114,7 +117,7 @@ class SseClient(
                     }
 
                     val source = response.body.source()
-                    val responsesParser = if (responses) ResponsesSseLineParser(json) else null
+                    val responsesParser = if (responses) ResponsesSseLineParser(json, onOutput) else null
                     var finished = false
                     var receivedStop = false
                     while (!finished) {

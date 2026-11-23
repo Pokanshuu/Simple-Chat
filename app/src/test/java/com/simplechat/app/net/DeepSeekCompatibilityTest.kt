@@ -100,6 +100,41 @@ class DeepSeekCompatibilityTest {
         assertEquals(R.string.error_deepseek_flash_feature, providerHintRes("The server-side tool calls (deepseek_web_search, deepseek_read_url) and the title generation feature are unavailable for model deepseek-v4-pro. Please use deepseek-flash instead."))
     }
 
+    @Test fun proCanSearchWithoutImageToolAndReceiveMatchedResult() = runBlocking {
+        val bodies = mutableListOf<JsonObject>()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            val payload = if (request.url.host == "search.invalid") {
+                """{"results":[{"url":"https://example.org/forecast","summary":"Rain tomorrow"}]}"""
+            } else {
+                bodies += json.parseToJsonElement(Buffer().also { request.body!!.writeTo(it) }.readUtf8()).jsonObject
+                val frames = if (bodies.size == 1) listOf(
+                    """{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"c1","name":"$IndependentSearchName","input":{}}}""",
+                    """{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"Hong Kong forecast tomorrow\"}"}}""",
+                    """{"type":"message_delta","delta":{"stop_reason":"tool_use"}}""",
+                ) else listOf(
+                    """{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Rain tomorrow"}}""",
+                    """{"type":"message_delta","delta":{"stop_reason":"end_turn"}}""",
+                )
+                (frames + """{"type":"message_stop"}""").joinToString("\n\n", postfix = "\n\n") { "data: $it" }
+            }
+            Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK").body(payload.toResponseBody()).build()
+        }.build()
+        val api = ChatApi(client, SseClient(client, json), AnthropicApi(client, json), json)
+        val config = StoredSettings(modelId = DEEPSEEK_PRO, apiKey = "key", searchApi = ServiceApiConfig(enabled = true, baseUrl = "https://search.invalid"))
+        val path = listOf(UiMessage("u", MessageRole.USER, "Hong Kong"), UiMessage("a", MessageRole.ASSISTANT, "Today or tomorrow?"), UiMessage("u2", MessageRole.USER, "Tomorrow"))
+        val base = buildAnthropicRequest(DEEPSEEK_PRO, "", path, false, true, false, null)
+        val events = webToolLoop(WebResearchSession(config, "Tomorrow", ServiceApi(client)), ApiStyle.ANTHROPIC) { h, offer, _ ->
+            api.streamMessage(official, "key", h.anthropic(base, offer))
+        }.toList()
+        assertEquals(2, bodies.size)
+        assertEquals(setOf(IndependentSearchName, IndependentFetchName), bodies.first()["tools"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content }.toSet())
+        val last = bodies.last()["messages"]!!.jsonArray.last().jsonObject["content"]!!.jsonArray.single().jsonObject
+        assertEquals("c1", last["tool_use_id"]!!.jsonPrimitive.content)
+        assertTrue(last["content"]!!.jsonPrimitive.content.contains("Rain tomorrow"))
+        assertTrue(events.any { it is StreamEvent.BlockStart && it.block is ReplyBlock.Text })
+    }
+
     @Test fun onlyOfficialNonThinkingImageRequestsCanRequireTheImageTool() = runBlocking {
         val captured = mutableListOf<JsonObject>()
         val client = OkHttpClient.Builder().addInterceptor { chain ->

@@ -13,13 +13,14 @@ import kotlinx.serialization.json.JsonPrimitive
 internal fun estimatedInputTokens(request: ChatRequestDto): Long = estimatedInputTokens(request.messages)
 
 internal fun estimatedInputTokens(messages: List<OutMessageDto>): Long =
-    messages.sumOf { 8L + contentTokens(it.content) }
+    messages.sumOf { 8L + contentTokens(it.content) + it.toolCalls.orEmpty().sumOf(::contentTokens) +
+        (it.reasoningContent?.let(TokenEstimate::of) ?: 0) }
 
 internal fun estimatedInputTokens(request: AnthropicRequest): Long =
     TokenEstimate.of(request.system).toLong() +
         request.messages.sumOf { 8L + contentTokens(it.content) }
 
-private fun contentTokens(content: JsonElement): Long = when (content) {
+internal fun contentTokens(content: JsonElement): Long = when (content) {
     is JsonPrimitive -> TokenEstimate.of(content.content).toLong()
     is JsonArray -> content.sumOf { contentTokens(it) }
     is JsonObject -> when ((content["type"] as? JsonPrimitive)?.content) {
