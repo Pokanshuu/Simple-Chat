@@ -88,7 +88,7 @@ class ServiceApiTest {
         val settings = StoredSettings(apiKey = "test-key", searchApi = ServiceApiConfig(enabled = true))
         val session = WebResearchSession(settings, "private draft", ServiceApi(client))
         var turns = 0
-        val events = webToolLoop(session, ApiStyle.OPENAI) { _, enabled, _ ->
+        val events = agentLoop(session, ApiStyle.OPENAI) { _, enabled, _ ->
             turns++
             assertTrue(enabled)
             flowOf(StreamEvent.Content("I can search."), StreamEvent.Stopped("stop"))
@@ -113,7 +113,7 @@ class ServiceApiTest {
             val progress = mutableListOf<List<ReplyBlock>>()
             val session = WebResearchSession(settings, "And tomorrow?", ServiceApi(client), onProgress = { progress += it })
             var rounds = 0
-            val events = webToolLoop(session, style) { history, offer, output ->
+            val events = agentLoop(session, style) { history, offer, output ->
                 val turn = ++rounds
                 assertEquals(turn < 3, offer)
                 val wire = when (style) {

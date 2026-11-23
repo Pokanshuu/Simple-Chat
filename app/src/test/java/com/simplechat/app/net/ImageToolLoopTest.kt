@@ -21,12 +21,87 @@ class ImageToolLoopTest {
         assertFalse(imageOnly.knownTool(IndependentSearchName))
     }
 
+    @Test fun registryKeepsWireNamesSeparateFromLogicalToolIds() {
+        val registry = AgentToolRegistry.forCapabilities(AgentCapabilities(webSearch = true, imageGeneration = true))
+        assertEquals(AgentToolId.WEB_SEARCH, registry.registration(IndependentSearchName)?.id)
+        assertEquals(AgentToolId.IMAGE_GENERATION, registry.registration(imageToolDefinition.name)?.id)
+        assertTrue(registry.enabled().any { it.id == AgentToolId.WEB_SEARCH })
+        assertTrue(registry.enabled().any { it.id == AgentToolId.IMAGE_GENERATION })
+    }
+
+    @Test fun genericAgentLoopRecordsStateCallsAndResults() = runBlocking {
+        val events = agentLoop(
+            session = null,
+            style = ApiStyle.OPENAI,
+            generateImage = { "generated" },
+        ) { history, _, _ ->
+            if (history.transcript.events.any { it.kind == AgentTranscriptKind.TOOL_RESULT }) {
+                flowOf(StreamEvent.Content("done"), StreamEvent.Stopped("stop"))
+            } else {
+                flowOf(
+                    StreamEvent.ToolCallDelta(0, "image-1", imageToolDefinition.name,
+                        """{"operation":"create","prompt":"A blue square"}"""),
+                    StreamEvent.Stopped("tool_calls"),
+                )
+            }
+        }.toList()
+        assertTrue(events.any { it is StreamEvent.Content && it.text == "done" })
+    }
+
+    @Test fun executorReturnsStructuredDisabledAndInvalidResults() = runBlocking {
+        val search = AgentToolExecutor(
+            harness = AgentHarness(AgentCapabilities(webSearch = false)),
+            webAllowed = false,
+            imageAllowed = false,
+            session = null,
+            nativeSearch = null,
+            nativeFetch = null,
+            generateImage = null,
+        )
+        val disabled = search.execute(IndependentSearchName, """{"query":"weather"}""")
+        assertEquals(AgentToolStatus.DISABLED, disabled.status)
+        val unknown = search.execute("future_tool", "{}")
+        assertEquals(AgentToolStatus.BLOCKED, unknown.status)
+
+        val image = AgentToolExecutor(
+            harness = AgentHarness(AgentCapabilities(imageGeneration = true)),
+            webAllowed = false,
+            imageAllowed = true,
+            session = null,
+            nativeSearch = null,
+            nativeFetch = null,
+            generateImage = { "ok" },
+        )
+        assertEquals(AgentToolStatus.INVALID_ARGUMENTS,
+            image.execute(imageToolDefinition.name, "{}") .status)
+
+        assertFalse(disabled.isUsableEvidence())
+        assertTrue(AgentToolExecutionResult(AgentToolId.WEB_SEARCH, AgentToolStatus.SUCCESS, "result").isUsableEvidence())
+        assertFalse(AgentToolExecutionResult(AgentToolId.WEB_SEARCH, AgentToolStatus.FAILED, "failed").isUsableEvidence())
+    }
+
+    @Test fun unknownToolNeverReachesAnExecutor() = runBlocking {
+        var executed = false
+        val events = agentLoop(null, ApiStyle.OPENAI, generateImage = {
+            executed = true
+            "bad"
+        }) { _, _, _ ->
+            flowOf(
+                StreamEvent.ToolCallDelta(0, "unknown-1", "future_tool", "{}"),
+                StreamEvent.Stopped("tool_calls"),
+            )
+        }.toList()
+        assertFalse(executed)
+        assertTrue(events.any { it is StreamEvent.Stopped && it.reason == "tool_calls" })
+    }
+
     @Test fun capabilityInstructionReflectsTheActualSwitches() {
         val disabled = agentCapabilityInstruction(
             webConfigured = true, webEnabled = false,
             imageConfigured = true, imageExposed = false,
         )
         assertTrue(disabled.contains("web_search=configured_but_disabled_by_user"))
+        assertTrue(disabled.contains("web_fetch=configured_but_disabled_or_unavailable"))
         assertTrue(disabled.contains("image_generation=configured_but_not_exposed_for_this_request"))
         assertTrue(disabled.contains("do not search"))
         assertTrue(disabled.contains("do not call it"))
@@ -44,7 +119,7 @@ class ImageToolLoopTest {
         var enabled = true
         var executed = false
         var requests = 0
-        val events = webToolLoop(
+        val events = agentLoop(
             session = null,
             style = ApiStyle.OPENAI,
             nativeSearch = { executed = true; "must not run" },
@@ -74,7 +149,7 @@ class ImageToolLoopTest {
             var generated = 0
             var requests = 0
             val args = """{"operation":"create","prompt":"Rainy afternoon on the Shanghai Bund"}"""
-            val events = webToolLoop(null, style, generateImage = { invocation ->
+            val events = agentLoop(null, style, generateImage = { invocation ->
                 assertEquals("Rainy afternoon on the Shanghai Bund", invocation.prompt)
                 generated++
                 "Attached successfully"
@@ -111,7 +186,7 @@ class ImageToolLoopTest {
 
     @Test fun searchAndImageInSameBatchBothExecute() = runBlocking {
         val executed = mutableListOf<String>()
-        webToolLoop(null, ApiStyle.OPENAI, generateImage = {
+        agentLoop(null, ApiStyle.OPENAI, generateImage = {
             executed += "image"
             "Image provider failed"
         }, nativeSearch = { query ->

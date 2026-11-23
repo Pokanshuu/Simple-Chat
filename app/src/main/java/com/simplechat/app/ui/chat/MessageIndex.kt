@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -42,9 +41,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
@@ -58,6 +61,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.R
+import com.simplechat.app.data.InterfaceControl
+import com.simplechat.app.ui.theme.GlassForeground
+import com.simplechat.app.ui.theme.floatingGlassBackground
 import com.simplechat.app.ui.common.AppShadow
 import com.simplechat.app.ui.common.SoftShape
 import com.simplechat.app.ui.common.Space
@@ -364,75 +370,65 @@ fun MessageIndexOverlay(
                         spotColor = AppShadow.RaisedSpot,
                     )
                     .clip(IndexPanelShape)
-                    .background(colors.card),
+                    .floatingGlassBackground(colors.card, InterfaceControl.MESSAGE_INDEX),
             ) {
-                if (entries.isEmpty()) {
-                    Text(
-                        text = stringResource(R.string.msg_index_no_messages),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = colors.placeholder,
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .padding(Space.Inline),
-                    )
-                } else {
-                    /*
-                     * 面板一露出就把列表滚到**当前那条**（§34.4）。
-                     *
-                     * 写在 `revealed > 0` 这一支里，效果就是"跟着面板一起出现" ——
-                     * 拖动跟手的第一帧就已经在正确的位置，而不是等松手落位才跳一下。
-                     * 面板开着时消息区被遮罩挡着滚不动，`currentId` 不会变，
-                     * 所以不需要跟着实时走。
-                     */
-                    LaunchedEffect(currentId, entries) {
-                        val index = entries.indexOfFirst { it.id == currentId }
-                        if (index >= 0) indexListState.scrollToItem(index)
-                    }
-                    LazyColumn(
-                        state = indexListState,
-                        contentPadding = PaddingValues(vertical = IndexEdgePadding),
-                        modifier = Modifier.fillMaxSize(),
-                    ) {
-                        items(items = entries, key = { it.id }) { entry ->
-                            MessageIndexRow(
-                                entry = entry,
-                                current = entry.id == currentId,
-                                onClick = { onJump(entry) },
-                            )
+                GlassForeground(InterfaceControl.MESSAGE_INDEX) {
+                    if (entries.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.msg_index_no_messages),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = LocalChatColors.current.placeholder,
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .padding(Space.Inline),
+                        )
+                    } else {
+                        /*
+                         * 面板一露出就把列表滚到**当前那条**（§34.4）。
+                         *
+                         * 写在 `revealed > 0` 这一支里，效果就是"跟着面板一起出现" ——
+                         * 拖动跟手的第一帧就已经在正确的位置，而不是等松手落位才跳一下。
+                         * 面板开着时消息区被遮罩挡着滚不动，`currentId` 不会变，
+                         * 所以不需要跟着实时走。
+                         */
+                        LaunchedEffect(currentId, entries) {
+                            val index = entries.indexOfFirst { it.id == currentId }
+                            if (index >= 0) indexListState.scrollToItem(index)
+                        }
+                        LazyColumn(
+                            state = indexListState,
+                            contentPadding = PaddingValues(vertical = IndexEdgePadding),
+                            modifier = Modifier.fillMaxSize().fadeOutlineEdges(),
+                        ) {
+                            items(items = entries, key = { it.id }) { entry ->
+                                MessageIndexRow(
+                                    entry = entry,
+                                    current = entry.id == currentId,
+                                    onClick = { onJump(entry) },
+                                )
+                            }
                         }
                     }
                 }
-
-                /*
-                 * 上下边缘渐隐（§34.2「文字在消失处渐隐」）。
-                 *
-                 * 用面板底色蒙一层，文字是**淡进面板**的，不是被一条硬边切断 ——
-                 * 与消息区底部那段渐变同一套做法。
-                 */
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .fillMaxWidth()
-                        .height(IndexFadeHeight)
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(colors.card, colors.card.copy(alpha = 0f)),
-                            ),
-                        ),
-                )
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .height(IndexFadeHeight)
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(colors.card.copy(alpha = 0f), colors.card),
-                            ),
-                        ),
-                )
             }
         }
+    }
+}
+
+/** Fade just the list pixels so the panel surface and wallpaper show through. */
+private fun Modifier.fadeOutlineEdges(): Modifier = graphicsLayer {
+    compositingStrategy = CompositingStrategy.Offscreen
+}.drawWithCache {
+    val edgeFraction = (IndexFadeHeight.toPx() / size.height.coerceAtLeast(1f)).coerceAtMost(0.5f)
+    val mask = Brush.verticalGradient(
+        0f to Color.Transparent,
+        edgeFraction to Color.Black,
+        (1f - edgeFraction) to Color.Black,
+        1f to Color.Transparent,
+    )
+    onDrawWithContent {
+        drawContent()
+        drawRect(mask, blendMode = BlendMode.DstIn)
     }
 }
 
@@ -449,13 +445,12 @@ private fun MessageIndexRow(
     current: Boolean,
     onClick: () -> Unit,
 ) {
-    val colors = LocalChatColors.current
     Box(
         modifier = Modifier
             .padding(horizontal = Space.Gap)
             .fillMaxWidth()
             .clip(SoftShape)
-            .background(if (current) colors.fieldBackground else colors.card)
+            .background(if (current) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f) else Color.Transparent)
             .clickable(onClick = onClick)
             .heightIn(min = Space.Row)
             .padding(horizontal = Space.Inline, vertical = 2.dp),

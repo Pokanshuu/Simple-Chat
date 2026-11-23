@@ -5,7 +5,6 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,6 +51,9 @@ import com.simplechat.app.ui.common.BubbleShapeOut
 import com.simplechat.app.ui.common.cropTo
 import com.simplechat.app.ui.theme.LocalBackdropSource
 import com.simplechat.app.ui.theme.LocalChatColors
+import com.simplechat.app.ui.theme.userBubbleBackground
+import com.simplechat.app.ui.theme.floatingPanelSurface
+import com.simplechat.app.ui.theme.glassContrastForeground
 import com.simplechat.app.ui.theme.LocalWallpaper
 import com.simplechat.app.ui.theme.WallpaperState
 import com.simplechat.app.ui.theme.backdropSource
@@ -227,6 +229,7 @@ internal fun ThemeChatSample(
     allowScroll: Boolean,
 ) {
     val colors = LocalChatColors.current
+    val bubbleSurface = floatingPanelSurface(InterfaceControl.USER_BUBBLE)
     val backdrop = rememberBackdropSource(liveBlur && needsLiveSurface(InterfaceControl.INPUT, InterfaceControl.SCROLL_BUTTON))
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().backdropSource(backdrop, drawBackground)) {
@@ -243,10 +246,10 @@ internal fun ThemeChatSample(
             ) {
                 Text(
                     stringResource(R.string.wallpaper_preview_user),
-                    color = colors.onUserBubble,
+                    color = glassContrastForeground(bubbleSurface, colors.pageBackground, MaterialTheme.colorScheme.onSurface),
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.align(Alignment.End).fillMaxWidth(0.78f)
-                        .background(colors.userBubble, BubbleShapeOut).padding(horizontal = 14.dp, vertical = 10.dp),
+                        .userBubbleBackground(BubbleShapeOut, bubbleSurface).padding(horizontal = 14.dp, vertical = 10.dp),
                 )
                 Text(
                     stringResource(R.string.wallpaper_preview_reply),

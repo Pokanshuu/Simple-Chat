@@ -50,6 +50,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.graphics.rememberGraphicsLayer
+import com.simplechat.app.ui.theme.LocalBubbleBackdrop
+import com.simplechat.app.ui.theme.rememberBubbleBackdrop
 import androidx.compose.ui.graphics.layer.drawLayer
 import com.simplechat.app.ui.theme.sharedSceneBackground
 import com.simplechat.app.ui.theme.GlassForeground
@@ -1030,8 +1032,9 @@ fun ChatScreen(
             val layout = listState.layoutInfo
             val baseOffset = offset + anchorTopSpace.value
             val available = layout.viewportEndOffset - layout.afterContentPadding + anchorBottomSpace.value - offset
-            return MessagePathAnchor(id, baseOffset, baseOffset.coerceIn(0, layout.viewportSize.height),
-                available.coerceIn(0, layout.viewportSize.height))
+            // Deleting a middle message must not reserve the old tail as padding.
+            val tailRoom = if (deleting.isNotEmpty()) 0 else available.coerceIn(0, layout.viewportSize.height)
+            return MessagePathAnchor(id, baseOffset, baseOffset.coerceIn(0, layout.viewportSize.height), tailRoom)
         }
         val anchor = if (target != null && replacementId != null) {
             atOffset(targetKey, target.offset)
@@ -1124,10 +1127,13 @@ fun ChatScreen(
      * 否则输入栏里透出来的壁纸会和屏幕上的错位。
      */
     val liveBlur = com.simplechat.app.ui.theme.rememberLiveBlurAvailable()
+    val outlineVisible by remember(messageIndex) { derivedStateOf { messageIndex.revealed > 0f } }
     val glassSource = com.simplechat.app.ui.theme.rememberBackdropSource(
-        liveBlur && needsLiveSurface(InterfaceControl.INPUT, InterfaceControl.INPUT_PANEL, InterfaceControl.SCROLL_BUTTON),
+        liveBlur && (needsLiveSurface(InterfaceControl.INPUT, InterfaceControl.INPUT_PANEL, InterfaceControl.SCROLL_BUTTON) ||
+            (outlineVisible && needsLiveSurface(InterfaceControl.MESSAGE_INDEX))),
     )
     val wallpaperLayer = if (wallpaperBitmap != null) rememberGraphicsLayer() else null
+    val bubbleBackdrop = rememberBubbleBackdrop(wallpaperLayer)
     val wallpaperFade = remember(wallpaper.file) { Animatable(0f) }
     LaunchedEffect(wallpaper.file, wallpaperBitmap) {
         if (wallpaperBitmap != null) wallpaperFade.animateTo(1f, tween(280, easing = MotionEasing))
@@ -1149,7 +1155,7 @@ fun ChatScreen(
              * 适配方式与位置在绘制矩形里算 —— 用 nativeCanvas 是因为 Compose 的
              * `drawImage` 不接受 colorFilter，而重新编码一张位图来调色既慢又占内存。
              */
-            .sharedSceneBackground(wallpaperLayer, alpha = { wallpaperFade.value }) { wallpaperBitmap?.let { drawWallpaper(it, wallpaper, colors.pageBackground) } }
+            .sharedSceneBackground(wallpaperLayer, alpha = { wallpaperFade.value }, bubbleBackdrop = bubbleBackdrop) { wallpaperBitmap?.let { drawWallpaper(it, wallpaper, colors.pageBackground) } }
             .dismissMessageSelectionOnTap(textSelection),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -1921,6 +1927,7 @@ fun ChatScreen(
         }
         androidx.compose.runtime.CompositionLocalProvider(
             com.simplechat.app.ui.theme.LocalBackdropSource provides glassSource,
+            LocalBubbleBackdrop provides bubbleBackdrop,
         ) {
         Layout(
             modifier = contentWidth

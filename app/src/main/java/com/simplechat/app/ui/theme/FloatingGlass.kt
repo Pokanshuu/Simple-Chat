@@ -21,6 +21,11 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TileMode
@@ -60,9 +65,14 @@ internal fun acrylicMixColor(color: Color, strength: Float): Color =
 internal fun floatingPanelSurface(control: InterfaceControl): Color {
     val colors = LocalChatColors.current
     // Menus sit one surface level above cards in the dark palette.
-    val neutral = if (control == InterfaceControl.MENU) colors.menuBackground else colors.card
-    val plain = neutral.copy(alpha = LocalFloatingBaseOpacity.current)
-    return if (LocalControlEffects.current.usesAccent(control)) panelTint(plain) else plain
+    val base = when (control) {
+        InterfaceControl.MENU -> colors.menuBackground
+        InterfaceControl.USER_BUBBLE -> colors.userBubble
+        else -> colors.card
+    }
+    val effects = LocalControlEffects.current
+    val plain = base.copy(alpha = if (effects.usesOpacity(control)) LocalFloatingBaseOpacity.current else 1f)
+    return if (effects.usesAccent(control)) panelTint(plain) else plain
 }
 
 @Composable
@@ -92,7 +102,7 @@ class BackdropSource internal constructor(
 @Composable
 internal fun needsLiveSurface(vararg controls: InterfaceControl): Boolean {
     val effects = LocalControlEffects.current
-    return LocalAcrylicEnabled.current && LocalFloatingBaseOpacity.current < 1f && controls.any(effects::usesAcrylic)
+    return LocalAcrylicEnabled.current && LocalFloatingBaseOpacity.current < 1f && controls.any { effects.usesOpacity(it) && effects.usesAcrylic(it) }
 }
 
 /** 可以实时模糊时返回一个模糊源，否则返回 null（不创建任何离屏图层）。 */
@@ -132,14 +142,64 @@ fun Modifier.backdropSource(
 internal fun Modifier.sharedSceneBackground(
     layer: GraphicsLayer?,
     alpha: () -> Float = { 1f },
+    bubbleBackdrop: BubbleBackdrop? = null,
     draw: DrawScope.() -> Unit,
 ): Modifier {
     if (layer == null) return drawBehind(draw)
-    return drawWithCache {
+    val placement = if (bubbleBackdrop == null) this else onGloballyPositioned {
+        bubbleBackdrop.origin = it.positionInRoot()
+    }
+    return placement.drawWithCache {
         layer.record { draw() }
+        bubbleBackdrop?.layer?.record { drawLayer(layer) }
         onDrawBehind {
             layer.alpha = alpha()
             drawLayer(layer)
+        }
+    }
+}
+
+// A separate, wallpaper-only layer can be sampled from within the recorded message list.
+internal class BubbleBackdrop(val layer: GraphicsLayer) {
+    var origin by mutableStateOf(Offset.Unspecified)
+}
+
+internal val LocalBubbleBackdrop = compositionLocalOf<BubbleBackdrop?> { null }
+
+@Composable
+internal fun rememberBubbleBackdrop(wallpaperLayer: GraphicsLayer?): BubbleBackdrop? {
+    if (wallpaperLayer == null || !rememberLiveBlurAvailable() || !needsLiveSurface(InterfaceControl.USER_BUBBLE)) return null
+    val layer = rememberGraphicsLayer()
+    val radius = with(LocalDensity.current) { floatingBlurRadius(LocalFloatingGlass.current).toPx() }
+    val effect = remember(radius) { BlurEffect(radius, radius, TileMode.Clamp) }
+    androidx.compose.runtime.SideEffect { layer.renderEffect = effect }
+    return remember(layer) { BubbleBackdrop(layer) }
+}
+
+@Composable
+internal fun Modifier.userBubbleBackground(shape: Shape, surface: Color): Modifier {
+    if (!LocalAcrylicEnabled.current || !LocalControlEffects.current.usesAcrylic(InterfaceControl.USER_BUBBLE) || surface.alpha >= 1f) {
+        return background(surface, shape)
+    }
+    val backdrop = LocalBubbleBackdrop.current
+    val mix = acrylicMixColor(LocalChatColors.current.card, LocalFloatingGlass.current)
+    val holder = remember { OriginHolder() }
+    return onGloballyPositioned { holder.origin = it.positionInRoot() }.drawWithCache {
+        val outline = shape.createOutline(size, layoutDirection, this)
+        val path = Path().apply {
+            when (outline) {
+                is Outline.Rectangle -> addRect(outline.rect)
+                is Outline.Rounded -> addRoundRect(outline.roundRect)
+                is Outline.Generic -> addPath(outline.path)
+            }
+        }
+        onDrawBehind {
+            if (backdrop != null && backdrop.origin != Offset.Unspecified && holder.origin != Offset.Unspecified) {
+                val delta = backdrop.origin - holder.origin
+                clipPath(path) { translate(delta.x, delta.y) { drawLayer(backdrop.layer) } }
+            }
+            drawOutline(outline, mix)
+            drawOutline(outline, surface)
         }
     }
 }

@@ -124,7 +124,7 @@ class DeepSeekCompatibilityTest {
         val config = StoredSettings(modelId = DEEPSEEK_PRO, apiKey = "key", searchApi = ServiceApiConfig(enabled = true, baseUrl = "https://search.invalid"))
         val path = listOf(UiMessage("u", MessageRole.USER, "Hong Kong"), UiMessage("a", MessageRole.ASSISTANT, "Today or tomorrow?"), UiMessage("u2", MessageRole.USER, "Tomorrow"))
         val base = buildAnthropicRequest(DEEPSEEK_PRO, "", path, false, true, false, null)
-        val events = webToolLoop(WebResearchSession(config, "Tomorrow", ServiceApi(client)), ApiStyle.ANTHROPIC) { h, offer, _ ->
+        val events = agentLoop(WebResearchSession(config, "Tomorrow", ServiceApi(client)), ApiStyle.ANTHROPIC) { h, offer, _ ->
             api.streamMessage(official, "key", h.anthropic(base, offer))
         }.toList()
         assertEquals(2, bodies.size)

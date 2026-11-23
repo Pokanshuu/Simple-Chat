@@ -14,6 +14,25 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.graphics.toArgb
+import com.simplechat.app.ui.theme.LocalChatColors
+import com.simplechat.app.data.ControlEffects
+import com.simplechat.app.data.InterfaceControl
+import com.simplechat.app.ui.chat.MessageIndexOverlay
+import com.simplechat.app.ui.chat.MessageIndexEntry
+import com.simplechat.app.ui.chat.rememberMessageIndexDragState
+import com.simplechat.app.ui.chat.MessageList
+import com.simplechat.app.ui.chat.MessageRole
+import com.simplechat.app.ui.chat.UiMessage
+import com.simplechat.app.ui.theme.LocalBackdropSource
+import com.simplechat.app.ui.theme.LocalBubbleBackdrop
+import com.simplechat.app.ui.theme.LocalControlEffects
+import com.simplechat.app.ui.theme.backdropSource
+import com.simplechat.app.ui.theme.rememberBackdropSource
+import com.simplechat.app.ui.theme.rememberBubbleBackdrop
+import com.simplechat.app.ui.theme.sharedSceneBackground
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,11 +65,84 @@ internal object ThemeInteractionRegression {
         try {
             verifyVoice(instrumentation, activity)
             passed("tinted composer keeps recording across the contrast change and submits on release")
+            verifyBubbleAndOutline(instrumentation, activity)
+            passed("user bubble and outline independently apply base opacity, tint and acrylic")
             verifySidebar(instrumentation, activity)
             passed("tablet sidebar shows wallpaper with acrylic off and on, and covers it at full opacity")
         } finally {
             instrumentation.runOnMainSync { activity.finish() }
         }
+    }
+
+    private suspend fun verifyBubbleAndOutline(instrumentation: Instrumentation, activity: MainActivity) {
+        val wallpaper = androidx.compose.ui.graphics.Color.Magenta
+        val bubble = InterfaceControl.USER_BUBBLE
+        val outline = InterfaceControl.MESSAGE_INDEX
+        var effects by mutableStateOf(ControlEffects().withAccent(bubble, false).withAccent(outline, false)
+            .withAcrylic(bubble, false).withAcrylic(outline, false))
+        var outlineOpen by mutableStateOf(false)
+        var originalBubbleColor = Color.TRANSPARENT
+        instrumentation.runOnMainSync {
+            activity.setContent {
+                SimpleChatTheme(themeMode = ThemeMode.LIGHT, accent = AccentColor.BLUE) {
+                    val baseColor = LocalChatColors.current.userBubble.toArgb()
+                    androidx.compose.runtime.SideEffect { originalBubbleColor = baseColor }
+                    CompositionLocalProvider(
+                        LocalFloatingBaseOpacity provides 0f,
+                        LocalPanelAccentOpacity provides 1f,
+                        LocalAcrylicEnabled provides true,
+                        LocalControlEffects provides effects,
+                    ) {
+                        val wallpaperLayer = rememberGraphicsLayer()
+                        val bubbleBackdrop = rememberBubbleBackdrop(wallpaperLayer)
+                        val backdrop = rememberBackdropSource(true)
+                        val list = rememberLazyListState()
+                        val drag = rememberMessageIndexDragState()
+                        androidx.compose.runtime.LaunchedEffect(outlineOpen) {
+                            if (outlineOpen) {
+                                androidx.compose.runtime.snapshotFlow { drag.panelWidthPx }.first { it > 0f }
+                                drag.onDragDelta(-drag.panelWidthPx)
+                            }
+                        }
+                        Box(Modifier.fillMaxSize().sharedSceneBackground(wallpaperLayer, bubbleBackdrop = bubbleBackdrop) { drawRect(wallpaper) }) {
+                            CompositionLocalProvider(LocalBubbleBackdrop provides bubbleBackdrop, LocalBackdropSource provides backdrop) {
+                                MessageList(listOf(UiMessage("bubble", MessageRole.USER, "Bubble fixture")), listState = list,
+                                    modifier = Modifier.fillMaxSize().backdropSource(backdrop) { drawRect(wallpaper) })
+                                MessageIndexOverlay(drag, listOf(MessageIndexEntry("bubble", 0, "Outline fixture")), list, {})
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        val text = Rect().also { awaitNode(instrumentation) { it.text?.toString() == "Bubble fixture" }.getBoundsInScreen(it) }
+        val density = activity.resources.displayMetrics.density
+        fun pixel(x: (Int) -> Int, y: (Int) -> Int): Int {
+            val shot = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+            return try { shot.getPixel(x(shot.width), y(shot.height)) } finally { shot.recycle() }
+        }
+        fun bubblePixel() = pixel({ text.centerX() }, { text.top - (5 * density).toInt() })
+        fun outlinePixel() = pixel({ it * 4 / 5 }, { it / 2 })
+        fun light(pixel: Int) = Color.green(pixel)
+        withTimeout(5_000) { while (light(bubblePixel()) > 5) delay(60) }
+        instrumentation.runOnMainSync { effects = effects.withAcrylic(bubble, true) }
+        withTimeout(5_000) { while (light(bubblePixel()) < 10) delay(60) }
+        instrumentation.runOnMainSync { effects = effects.withOpacity(bubble, false) }
+        val expected = originalBubbleColor
+        withTimeout(5_000) {
+            while (kotlin.math.abs(Color.red(bubblePixel()) - Color.red(expected)) > 2 ||
+                kotlin.math.abs(light(bubblePixel()) - light(expected)) > 2) delay(60)
+        }
+        instrumentation.runOnMainSync { effects = effects.withAccent(bubble, true); outlineOpen = true }
+        awaitNode(instrumentation) { it.text?.toString() == "Outline fixture" }
+        withTimeout(5_000) { while (light(outlinePixel()) > 5) delay(60) }
+        check(light(bubblePixel()) < light(expected) - 10) { "Bubble tint did not apply" }
+        instrumentation.runOnMainSync { effects = effects.withAcrylic(outline, true) }
+        withTimeout(5_000) { while (light(outlinePixel()) < 10) delay(60) }
+        instrumentation.runOnMainSync { effects = effects.withOpacity(outline, false) }
+        withTimeout(5_000) { while (light(outlinePixel()) < 240) delay(60) }
+        instrumentation.runOnMainSync { effects = effects.withAccent(outline, true) }
+        withTimeout(5_000) { while (light(outlinePixel()) > 220) delay(60) }
     }
 
     private suspend fun verifyVoice(instrumentation: Instrumentation, activity: MainActivity) {

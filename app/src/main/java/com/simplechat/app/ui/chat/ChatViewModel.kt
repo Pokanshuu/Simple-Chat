@@ -75,7 +75,8 @@ import kotlinx.coroutines.sync.Mutex
 import com.simplechat.app.net.ImageToolCall
 import com.simplechat.app.net.WebResearchSession
 import com.simplechat.app.net.AgentRuntimeState
-import com.simplechat.app.net.webToolLoop
+import com.simplechat.app.net.AgentTranscript
+import com.simplechat.app.net.agentLoop
 import com.simplechat.app.net.ImageGenerationIntent
 import com.simplechat.app.net.ImageToolOperation
 import com.simplechat.app.net.blocksImageToolExecution
@@ -1878,9 +1879,10 @@ class ChatViewModel(
         val nativeSearchAvailable = route.officialFlash || com.simplechat.app.net.supportsOpenAiSearchTool(
             route.baseUrl.ifBlank { routeProvider.defaultBaseUrl }, options.model.id, selectedApiStyle,
         )
-        val imageToolEnabled = com.simplechat.app.net.shouldOfferImageTool(imageRouteAvailable, imageIntent) &&
-            !nativeGeminiTurn && !automaticSearch &&
-            prefix == null && !omitAttachmentsAndTools && imageIntent != ImageGenerationIntent.CAPABILITY
+        // For function-capable chat models, configuration controls exposure and the model controls intent.
+        // Regex intent remains only for native image-model compatibility and safety fallbacks.
+        val imageToolEnabled = imageRouteAvailable && !nativeGeminiTurn && !automaticSearch &&
+            prefix == null && !omitAttachmentsAndTools
         // Keep native Flash tool blocks out of the client-function continuation.
         val nativeSearchUsable = nativeSearchAvailable && !(route.officialFlash && imageToolEnabled)
         val independentSearchAvailable = !nativeSearchUsable && route.hasConfiguredSearchApi
@@ -1914,6 +1916,7 @@ class ChatViewModel(
             var generatedImageAttached = false
             var imageToolFailed = false
             var imageCallHandled = false
+            var agentTranscript: AgentTranscript? = null
             var imageFallback: ImageRequest? = null
             var localAnswer: String? = null
             var contextRejection: CompactionRequestFailure? = null
@@ -2055,10 +2058,6 @@ class ChatViewModel(
 
             var memorySnapshot: String? = null
             suspend fun streamAttempt(textOnly: Boolean) {
-                if (imageIntent == ImageGenerationIntent.CAPABILITY && !textOnly) {
-                    localAnswer = Res.get(if (imageRouteAvailable) R.string.image_capability_available else R.string.image_capability_unavailable)
-                    return
-                }
                 val systemContext = buildString {
                     if (discussingImage && previousImage != null && !options.model.supportsVision) {
                         append("The user refers to an image generated earlier in this chat. This chat model cannot view the image pixels. Do not claim to have seen the image or deny that the app generated it.")
@@ -2081,7 +2080,7 @@ class ChatViewModel(
                         val edit = invocation.operation == ImageToolOperation.EDIT ||
                             contextualEdit && (explicitReference || editReferences.isNotEmpty())
                         when {
-                            blocksImageToolExecution(latestQuestion) -> "No image was generated. The user did not request image creation or editing."
+                            blocksImageToolExecution(latestQuestion) -> "No image was generated. The request was explicitly non-generative or only asked about capability."
                             edit && editReferences.isEmpty() -> "No image was generated. Ask the user to attach the original image."
                             else -> {
                                 accumulator?.seed(accumulator.blocks.filterNot { it is ReplyBlock.Text })
@@ -2176,14 +2175,16 @@ class ChatViewModel(
                     )
                     optionalFieldsSent = !textOnly && (searchThroughFlash != null || webSession != null || request.tools.isNotEmpty() || request.title != null ||
                         request.messages.any { it.role == "user" && it.content is kotlinx.serialization.json.JsonArray })
-                    webToolLoop(webSession, selectedApiStyle, runImageTool, searchThroughFlash, fetchThroughFlash, runtime = {
+                    agentLoop(webSession, selectedApiStyle, runImageTool, searchThroughFlash, fetchThroughFlash, runtime = {
                         AgentRuntimeState(
                             webConfigured = nativeSearchAvailable || route.hasConfiguredSearchApi || automaticSearch,
                             webEnabled = automaticSearch || webSearch,
+                            webFetchEnabled = webSession != null || fetchThroughFlash != null,
                             imageConfigured = imageRouteAvailable,
                             imageExposed = nativeGeminiTurn || imageToolEnabled,
                         )
                     }) { history, offer, _ ->
+                        agentTranscript = history.transcript
                         imageCallHandled = imageCallHandled || history.imageHandled
                         chatApi.streamMessage(
                         baseUrl = route.baseUrl.ifBlank { routeProvider.defaultBaseUrl },
@@ -2260,14 +2261,16 @@ class ChatViewModel(
                         search || readLink || title && outgoing.sumOf {
                             ((it.content as? kotlinx.serialization.json.JsonPrimitive)?.content?.length ?: 8001).toLong() + 32
                         } <= 8000)
-                    webToolLoop(webSession, selectedApiStyle, runImageTool, searchThroughFlash, fetchThroughFlash, runtime = {
+                    agentLoop(webSession, selectedApiStyle, runImageTool, searchThroughFlash, fetchThroughFlash, runtime = {
                         AgentRuntimeState(
                             webConfigured = nativeSearchAvailable || route.hasConfiguredSearchApi || automaticSearch,
                             webEnabled = automaticSearch || webSearch,
+                            webFetchEnabled = webSession != null || fetchThroughFlash != null,
                             imageConfigured = imageRouteAvailable,
                             imageExposed = nativeGeminiTurn || imageToolEnabled,
                         )
                     }) { history, offer, onOutput ->
+                        agentTranscript = history.transcript
                         imageCallHandled = imageCallHandled || history.imageHandled
                         chatApi.streamChat(
                         apiStyle = selectedApiStyle,
@@ -2421,6 +2424,11 @@ class ChatViewModel(
             }
 
             val finishedAt = SystemClock.elapsedRealtime()
+            agentTranscript?.let { transcript ->
+                val calls = transcript.events.count { it.kind == com.simplechat.app.net.AgentTranscriptKind.TOOL_CALL }
+                val results = transcript.events.count { it.kind == com.simplechat.app.net.AgentTranscriptKind.TOOL_RESULT }
+                Diagnostics.log("AGENT", "events=${transcript.events.size} calls=$calls results=$results")
+            }
             accumulator?.settle(finishedAt)
             if (reasoningStartedAt != null && reasoningEndedAt == null) reasoningEndedAt = finishedAt
             refreshBuffered()

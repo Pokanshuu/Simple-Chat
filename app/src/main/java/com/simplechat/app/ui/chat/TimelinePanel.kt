@@ -1,8 +1,12 @@
 package com.simplechat.app.ui.chat
 
+import androidx.compose.animation.AnimatedContent
 import com.simplechat.app.ui.markdown.rememberSearchTextDecoration
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -103,11 +107,20 @@ fun TimelinePanel(
                 view.steps.forEach { step ->
                     when (step) {
                         is TimelineStep.Thinking -> ThinkingStep(step)
-                        is TimelineStep.Preamble -> Text(
-                            text = step.markdown,
-                            style = ProcessTextStyle,
-                            color = colors.processText,
-                        )
+                        is TimelineStep.Preamble -> AnimatedContent(
+                            targetState = step.markdown,
+                            transitionSpec = {
+                                fadeIn(tween(180, easing = MotionEasing)) togetherWith
+                                    fadeOut(tween(120, easing = MotionEasing))
+                            },
+                            label = "toolPreambleFade",
+                        ) { markdown ->
+                            Text(
+                                text = markdown,
+                                style = ProcessTextStyle,
+                                color = colors.processText,
+                            )
+                        }
                         is TimelineStep.Search -> SearchStep(step, onOpenSources)
                         is TimelineStep.Open -> OpenStepRow(step)
                         is TimelineStep.Find -> FindStepRow(step)

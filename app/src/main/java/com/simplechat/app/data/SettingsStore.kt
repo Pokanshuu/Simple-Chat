@@ -90,13 +90,21 @@ internal data class WallpaperAppearance(
 
 enum class InterfaceControl(val id: String) {
     INPUT("input"), INPUT_PANEL("input_panel"), SIDEBAR("sidebar"), MENU("menu"), SCROLL_BUTTON("scroll_button"),
+    USER_BUBBLE("user_bubble"), MESSAGE_INDEX("message_index"),
 }
 
 /** Store exclusions so older profiles and newly introduced controls inherit the global effects. */
 data class ControlEffects(
     val acrylicExcluded: Set<String> = emptySet(),
     val accentExcluded: Set<String> = emptySet(),
+    val opacityExcluded: Set<String> = emptySet(),
 ) {
+    fun usesOpacity(control: InterfaceControl) = control.id !in opacityExcluded
+
+    fun withOpacity(control: InterfaceControl, apply: Boolean) = copy(
+        opacityExcluded = if (apply) opacityExcluded - control.id else opacityExcluded + control.id,
+    )
+
     fun usesAcrylic(control: InterfaceControl) = control.id !in acrylicExcluded
     fun usesAccent(control: InterfaceControl) = control.id !in accentExcluded
 
@@ -378,7 +386,10 @@ class SettingsStore(
             // 旧开关关闭时实际使用实色。读取旧配置时折算成不透明度 100%。
             wallpaperPanelAlpha = if (prefs[Keys.WALLPAPER_GLASS_PANEL] == false) 1f else
                 (prefs[Keys.WALLPAPER_PANEL_ALPHA] ?: StoredSettings().wallpaperPanelAlpha).coerceIn(0f, 1f),
-            controlEffects = ControlEffects(prefs[Keys.ACRYLIC_EXCLUDED].orEmpty(), prefs[Keys.ACCENT_EXCLUDED].orEmpty()),
+            controlEffects = ControlEffects(
+                prefs[Keys.ACRYLIC_EXCLUDED].orEmpty(), prefs[Keys.ACCENT_EXCLUDED].orEmpty(),
+                prefs[Keys.OPACITY_EXCLUDED].orEmpty(),
+            ),
             panelAccentEnabled = prefs[Keys.PANEL_ACCENT_ENABLED] ?: false,
             panelAccentOpacity = prefs[Keys.PANEL_ACCENT_OPACITY] ?: StoredSettings().panelAccentOpacity,
             webSearch = prefs[Keys.WEB_SEARCH] ?: StoredSettings().webSearch,
@@ -660,6 +671,7 @@ class SettingsStore(
             prefs[Keys.WALLPAPER_PANEL_ALPHA] = panels.opacity.coerceIn(0f, 1f)
             prefs[Keys.ACRYLIC_EXCLUDED] = panels.controlEffects.acrylicExcluded
             prefs[Keys.ACCENT_EXCLUDED] = panels.controlEffects.accentExcluded
+            prefs[Keys.OPACITY_EXCLUDED] = panels.controlEffects.opacityExcluded
             prefs[Keys.PANEL_ACCENT_ENABLED] = panels.accentEnabled
             prefs[Keys.PANEL_ACCENT_OPACITY] = panels.accentOpacity.coerceIn(0f, MaxPanelAccentOpacity)
         }
@@ -968,6 +980,7 @@ class SettingsStore(
         val WALLPAPER_PANEL_ALPHA = floatPreferencesKey("wallpaper_panel_alpha")
         val ACRYLIC_EXCLUDED = stringSetPreferencesKey("interface_acrylic_excluded")
         val ACCENT_EXCLUDED = stringSetPreferencesKey("interface_accent_excluded")
+        val OPACITY_EXCLUDED = stringSetPreferencesKey("interface_opacity_excluded")
         val PANEL_ACCENT_ENABLED = booleanPreferencesKey("panel_accent_enabled")
         val PANEL_ACCENT_OPACITY = floatPreferencesKey("panel_accent_opacity")
         val WALLPAPER_GLASS_PANEL = booleanPreferencesKey("wallpaper_glass_panel")

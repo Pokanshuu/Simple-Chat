@@ -41,6 +41,7 @@ internal class WebToolHistory {
         internal set
     var runtimeInstruction: String = ""
         internal set
+    val transcript = AgentTranscript()
 
     fun anthropic(request: AnthropicRequest, offer: Boolean, fetch: Boolean = true, search: Boolean = true) = request.copy(
         system = buildString {
@@ -57,10 +58,66 @@ internal class WebToolHistory {
     )
 }
 
-private data class Call(var id: String = "", var name: String = "", val args: StringBuilder = StringBuilder())
+internal data class AgentToolCallWire(var id: String = "", var name: String = "", val args: StringBuilder = StringBuilder())
+
+internal data class AgentModelTurn(
+    val calls: Map<Int, AgentToolCallWire>,
+    val results: Map<Int, AgentToolExecutionResult>,
+    val text: String,
+    val reasoning: String,
+    val blocks: MutableMap<Int, JsonObject>,
+    val responsesOutput: Map<Int, JsonObject>,
+)
+
+/** Protocol-specific history projection. The loop itself never builds provider messages. */
+internal interface AgentModelAdapter {
+    fun appendToolTurn(history: WebToolHistory, turn: AgentModelTurn)
+}
+
+private object AnthropicAgentAdapter : AgentModelAdapter {
+    override fun appendToolTurn(history: WebToolHistory, turn: AgentModelTurn) {
+        turn.calls.forEach { (i, call) -> turn.blocks[i] = buildJsonObject {
+            put("type", "tool_use"); put("id", call.id); put("name", call.name)
+            put("input", runCatching { Json.parseToJsonElement(call.args.toString()).jsonObject }
+                .getOrElse { JsonObject(emptyMap()) })
+        } }
+        history.messages += AnthropicMessageParam("assistant", JsonArray(turn.blocks.values.toList()))
+        history.messages += AnthropicMessageParam("user", JsonArray(turn.calls.map { (i, call) -> buildJsonObject {
+            put("type", "tool_result"); put("tool_use_id", call.id); put("content", turn.results.getValue(i).message)
+        } }))
+    }
+}
+
+private object ResponsesAgentAdapter : AgentModelAdapter {
+    override fun appendToolTurn(history: WebToolHistory, turn: AgentModelTurn) {
+        history.responses += turn.responsesOutput.values
+        turn.calls.forEach { (i, call) -> history.responses += buildJsonObject {
+            put("type", "function_call_output"); put("call_id", call.id)
+            put("output", turn.results.getValue(i).message)
+        } }
+    }
+}
+
+private object ChatCompletionsAgentAdapter : AgentModelAdapter {
+    override fun appendToolTurn(history: WebToolHistory, turn: AgentModelTurn) {
+        history.chat += OutMessageDto("assistant", JsonPrimitive(turn.text), toolCalls = turn.calls.values.map { call -> buildJsonObject {
+            put("id", call.id); put("type", "function")
+            putJsonObject("function") { put("name", call.name); put("arguments", call.args.toString()) }
+        } }, reasoningContent = turn.reasoning.ifEmpty { null })
+        turn.calls.forEach { (i, call) -> history.chat += OutMessageDto(
+            "tool", JsonPrimitive(turn.results.getValue(i).message), toolCallId = call.id,
+        ) }
+    }
+}
+
+private fun agentModelAdapter(style: ApiStyle): AgentModelAdapter = when (style) {
+    ApiStyle.ANTHROPIC -> AnthropicAgentAdapter
+    ApiStyle.OPENAI_RESPONSES -> ResponsesAgentAdapter
+    ApiStyle.OPENAI -> ChatCompletionsAgentAdapter
+}
 
 /** Only a completed tool stop can execute anything. History is ephemeral and uses the provider's tool-result role. */
-internal fun webToolLoop(
+internal fun agentLoop(
     session: WebResearchSession?, style: ApiStyle,
     generateImage: (suspend (ImageToolInvocation) -> String)? = null,
     nativeSearch: (suspend (String) -> String)? = null,
@@ -69,6 +126,7 @@ internal fun webToolLoop(
         AgentRuntimeState(
             webConfigured = session != null || nativeSearch != null || nativeFetch != null,
             webEnabled = session != null || nativeSearch != null || nativeFetch != null,
+            webFetchEnabled = session != null || nativeFetch != null,
             imageConfigured = generateImage != null,
             imageExposed = generateImage != null,
         )
@@ -82,13 +140,18 @@ internal fun webToolLoop(
         val state = runtime()
         val harness = AgentHarness(state.capabilities, policy)
         history.runtimeInstruction = state.instruction()
+        history.transcript.add(AgentTranscriptEvent(
+            kind = AgentTranscriptKind.STATE_CHANGE,
+            round = round,
+            detail = history.runtimeInstruction,
+        ))
         val offerWeb = harness.canOfferWeb(webRounds)
         history.imageOffered = harness.canOfferImage(if (history.imageHandled) 1 else 0)
         if (!offerWeb && !history.imageOffered) {
             emitAll(request(history, false, null))
             return@flow
         }
-        val calls = sortedMapOf<Int, Call>()
+        val calls = sortedMapOf<Int, AgentToolCallWire>()
         val text = StringBuilder(); val reasoning = StringBuilder()
         val contents = sortedMapOf<Int, JsonObject>()
         val output = sortedMapOf<Int, JsonObject>()
@@ -96,11 +159,12 @@ internal fun webToolLoop(
         val signatures = mutableMapOf<Int, StringBuilder>()
         var stop: StreamEvent.Stopped? = null
         var failed = false
+        history.transcript.add(AgentTranscriptEvent(AgentTranscriptKind.MODEL_TURN, round))
         request(history, offerWeb, if (style == ApiStyle.OPENAI_RESPONSES) ({ i, item -> output[i] = item }) else null).collect { event ->
             when (event) {
                 is StreamEvent.ToolCallDelta -> {
                     require(event.index in 0..255 && (event.index in calls || calls.size < 16)) { "Too many tool calls" }
-                    val call = calls.getOrPut(event.index) { Call() }
+                    val call = calls.getOrPut(event.index) { AgentToolCallWire() }
                     event.id?.let { call.id = it }; event.name?.let { call.name += it }
                     event.arguments?.let { require(it.length <= 8192 - call.args.length) { "Tool arguments too large" }; call.args.append(it) }
                 }
@@ -130,7 +194,8 @@ internal fun webToolLoop(
         }
         val hasWeb = calls.values.any { it.name == IndependentSearchName || it.name == IndependentFetchName }
         val hasImage = calls.values.any { it.name == imageToolDefinition.name }
-        if (failed || calls.isEmpty() || (!hasWeb && !hasImage) || stop?.reason !in setOf("tool_calls", "tool_use")) {
+        val hasKnownCall = calls.values.any { harness.knownTool(it.name) }
+        if (failed || calls.isEmpty() || !hasKnownCall || (!hasWeb && !hasImage) || stop?.reason !in setOf("tool_calls", "tool_use")) {
             if (!failed) calls.forEach { (i, c) -> emit(StreamEvent.ToolCallDelta(i, c.id, c.name, c.args.toString())) }
             stop?.let { emit(it) }; emit(StreamEvent.Done); return@flow
         }
@@ -138,69 +203,55 @@ internal fun webToolLoop(
         require(calls.values.all { it.id.isNotBlank() } && calls.values.distinctBy { it.id }.size == calls.size) { "Invalid tool call IDs" }
         // Read switches again after the model response: the user may have changed them while it streamed.
         val executionHarness = AgentHarness(runtime().capabilities, policy)
-        val results = mutableMapOf<Int, String>()
+        val executor = AgentToolExecutor(
+            harness = executionHarness,
+            webAllowed = offerWeb,
+            imageAllowed = history.imageOffered && !history.imageHandled,
+            session = session,
+            nativeSearch = nativeSearch,
+            nativeFetch = nativeFetch,
+            generateImage = generateImage,
+        )
+        val results = mutableMapOf<Int, AgentToolExecutionResult>()
         for ((index, call) in calls.entries.sortedBy { it.value.name == imageToolDefinition.name }) {
             currentCoroutineContext().ensureActive()
-            results[index] = when (call.name) {
-                imageToolDefinition.name -> {
-                    if (!executionHarness.knownTool(imageToolDefinition.name) || !history.imageOffered || history.imageHandled) "Image tool is disabled for this turn. No image was generated."
-                    else {
-                        history.imageHandled = true
-                        val invocation = parseImageToolInvocation(call.args.toString())
-                        if (invocation == null) "Invalid image tool arguments. No image was generated."
-                        else checkNotNull(generateImage)(invocation)
-                    }
-                }
-                IndependentSearchName, IndependentFetchName -> when {
-                    !executionHarness.knownTool(call.name) -> "This web tool is disabled for this turn. No web request was made."
-                    !offerWeb -> "Web tool budget exhausted for this turn."
-                    session != null -> session.execute(call.name, call.args.toString())
-                    call.name == IndependentSearchName && nativeSearch != null -> {
-                        val query = webToolArgument(call.args.toString(), "query")?.let(ServiceApi::query)
-                        if (query == null) "Invalid search query." else nativeSearch(query)
-                    }
-                    call.name == IndependentFetchName && nativeFetch != null -> {
-                        val url = webToolArgument(call.args.toString(), "url")
-                        if (url == null) "Invalid page URL." else nativeFetch(url)
-                    }
-                    else -> "Page reading is unavailable through this tool."
-                }
-                else -> "Unknown tool."
-            }
+            history.transcript.add(AgentTranscriptEvent(
+                kind = AgentTranscriptKind.TOOL_CALL,
+                round = round,
+                toolId = harness.toolId(call.name)?.name,
+                callId = call.id,
+                detail = call.args.toString(),
+            ))
+            results[index] = executor.execute(call.name, call.args.toString())
+            if (results.getValue(index).consumedImageCall) history.imageHandled = true
+            history.transcript.add(AgentTranscriptEvent(
+                kind = AgentTranscriptKind.TOOL_RESULT,
+                round = round,
+                toolId = harness.toolId(call.name)?.name,
+                callId = call.id,
+                status = results.getValue(index).status.name.lowercase(),
+                detail = results.getValue(index).message.take(500),
+            ))
         }
         if (hasWeb) {
             webRounds++
             history.webUsed = true
         }
-        when (style) {
-            ApiStyle.ANTHROPIC -> {
-                parts.forEach { (i, part) -> contents[i] = buildJsonObject {
-                    val signature = signatures[i]
-                    if (signature != null) { put("type", "thinking"); put("thinking", part.toString()); put("signature", signature.toString()) }
-                    else { put("type", "text"); put("text", part.toString()) }
-                } }
-                calls.forEach { (i, c) -> contents[i] = buildJsonObject {
-                    put("type", "tool_use"); put("id", c.id); put("name", c.name)
-                    put("input", runCatching { Json.parseToJsonElement(c.args.toString()).jsonObject }.getOrElse { JsonObject(emptyMap()) })
-                } }
-                history.messages += AnthropicMessageParam("assistant", JsonArray(contents.values.toList()))
-                history.messages += AnthropicMessageParam("user", JsonArray(calls.map { (i, c) -> buildJsonObject {
-                    put("type", "tool_result"); put("tool_use_id", c.id); put("content", results.getValue(i))
-                } }))
-            }
-            ApiStyle.OPENAI_RESPONSES -> {
-                history.responses += output.values
-                calls.forEach { (i, c) -> history.responses += buildJsonObject {
-                    put("type", "function_call_output"); put("call_id", c.id); put("output", results.getValue(i))
-                } }
-            }
-            else -> {
-                history.chat += OutMessageDto("assistant", JsonPrimitive(text.toString()), toolCalls = calls.values.map { c -> buildJsonObject {
-                    put("id", c.id); put("type", "function"); putJsonObject("function") { put("name", c.name); put("arguments", c.args.toString()) }
-                } }, reasoningContent = reasoning.toString().ifEmpty { null })
-                calls.forEach { (i, c) -> history.chat += OutMessageDto("tool", JsonPrimitive(results.getValue(i)), toolCallId = c.id) }
-            }
-        }
+        val allToolsFailed = results.values.isNotEmpty() && results.values.all { !it.isUsableEvidence() }
+        history.transcript.add(AgentTranscriptEvent(
+            kind = AgentTranscriptKind.STATE_CHANGE,
+            round = round,
+            status = if (allToolsFailed) "all_tools_failed" else "tool_results_available",
+            detail = "${results.size} tool result(s)",
+        ))
+        agentModelAdapter(style).appendToolTurn(history, AgentModelTurn(
+            calls = calls,
+            results = results,
+            text = text.toString(),
+            reasoning = reasoning.toString(),
+            blocks = contents,
+            responsesOutput = output,
+        ))
     }
 }
 

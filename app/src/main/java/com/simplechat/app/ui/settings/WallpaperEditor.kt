@@ -3,6 +3,8 @@ package com.simplechat.app.ui.settings
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import com.simplechat.app.ui.theme.sharedSceneBackground
+import com.simplechat.app.ui.theme.LocalBubbleBackdrop
+import com.simplechat.app.ui.theme.rememberBubbleBackdrop
 import com.simplechat.app.ui.theme.needsLiveSurface
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -285,9 +287,10 @@ internal fun ThemeEditorLayout(
                                         }
                                     }
                                 }
-                                val previewLayer = if (liveBlur && needsLiveSurface(InterfaceControl.INPUT, InterfaceControl.SCROLL_BUTTON)) rememberGraphicsLayer() else null
+                                val previewLayer = if (liveBlur && needsLiveSurface(InterfaceControl.INPUT, InterfaceControl.SCROLL_BUTTON, InterfaceControl.USER_BUBBLE)) rememberGraphicsLayer() else null
+                                val bubbleBackdrop = rememberBubbleBackdrop(previewLayer)
                                 Box(
-                                    Modifier.size(frameWidth, frameHeight).clip(SoftShape).sharedSceneBackground(previewLayer, draw = drawBackground)
+                                    Modifier.size(frameWidth, frameHeight).clip(SoftShape).sharedSceneBackground(previewLayer, bubbleBackdrop = bubbleBackdrop, draw = drawBackground)
                                         .pointerInput(cropActive, savedCrop, frame, imageAction) {
                                             if (!cropActive || frame.width <= 0f || frame.height <= 0f) return@pointerInput
                                             detectTransformGestures { centroid, translation, zoomChange, _ ->
@@ -309,6 +312,7 @@ internal fun ThemeEditorLayout(
                                         val shrink = (frame.width / window.width.coerceAtLeast(1)).coerceIn(0.1f, 1f)
                                         CompositionLocalProvider(
                                             LocalDensity provides Density(density.density * shrink, density.fontScale),
+                                            LocalBubbleBackdrop provides bubbleBackdrop,
                                         ) {
                                             ThemeChatSample({ previewLayer?.let { drawLayer(it) } }, previewLayer != null, allowScroll = tab != EditTab.CROP)
                                         }
@@ -434,7 +438,11 @@ internal fun ThemeEditorLayout(
 
 @Composable
 private fun PanelControls(panels: PanelAppearance, liveBlur: Boolean, onChange: (PanelAppearance) -> Unit) {
-    ThemeEffectSlider(R.string.theme_base_opacity, panels.opacity, 0f..1f, defaultPercent = 85) {
+    ThemeEffectSlider(
+        R.string.theme_base_opacity, panels.opacity, 0f..1f,
+        detentPercents = listOf(50, 85),
+        detentLabels = listOf(stringResource(R.string.theme_acrylic_clear), stringResource(R.string.theme_acrylic_heavy)),
+    ) {
         onChange(panels.copy(opacity = it))
     }
     SettingsSwitchRow(stringResource(R.string.floating_glass_title) + " " + stringResource(R.string.theme_recommended), panels.acrylicEnabled, { onChange(panels.copy(acrylicEnabled = it)) })
@@ -470,11 +478,12 @@ private fun AdvancedControlOptions(panels: PanelAppearance, onChange: (PanelAppe
     }
     AnimatedVisibility(expanded) {
         Column(Modifier.fillMaxWidth().padding(horizontal = Space.Screen)) {
+            val opacity = stringResource(R.string.theme_opacity_column)
             val acrylic = stringResource(R.string.floating_glass_title)
             val accent = stringResource(R.string.theme_accent_column)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Spacer(Modifier.weight(1.4f))
-                for (title in listOf(acrylic, accent)) Text(title, Modifier.weight(1f), textAlign = TextAlign.Center, style = MaterialTheme.typography.labelMedium)
+                for (title in listOf(opacity, acrylic, accent)) Text(title, Modifier.weight(1f), textAlign = TextAlign.Center, style = MaterialTheme.typography.labelMedium)
             }
             val effects = panels.controlEffects
             for (control in InterfaceControl.entries) {
@@ -484,9 +493,20 @@ private fun AdvancedControlOptions(panels: PanelAppearance, onChange: (PanelAppe
                     InterfaceControl.SIDEBAR -> R.string.theme_sidebar
                     InterfaceControl.MENU -> R.string.theme_popup
                     InterfaceControl.SCROLL_BUTTON -> R.string.theme_scroll_bottom_button
+                    InterfaceControl.USER_BUBBLE -> R.string.theme_user_bubble
+                    InterfaceControl.MESSAGE_INDEX -> R.string.theme_message_index
                 })
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(label, Modifier.weight(1.4f), style = MaterialTheme.typography.bodyMedium)
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        if (control == InterfaceControl.USER_BUBBLE || control == InterfaceControl.MESSAGE_INDEX) {
+                            Checkbox(
+                                effects.usesOpacity(control),
+                                { onChange(panels.copy(controlEffects = effects.withOpacity(control, it))) },
+                                Modifier.semantics { contentDescription = "$label · $opacity" },
+                            )
+                        }
+                    }
                     Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                         Checkbox(effects.usesAcrylic(control), { onChange(panels.copy(controlEffects = effects.withAcrylic(control, it))) },
                             Modifier.semantics { contentDescription = "$label · $acrylic" }, enabled = panels.acrylicEnabled)
@@ -513,7 +533,14 @@ private fun ThemeEffectSlider(label: Int, value: Float, range: ClosedFloatingPoi
                 color = if (enabled) MaterialTheme.colorScheme.onSurface else LocalChatColors.current.placeholder,
             )
             val percent = (value * 100).roundToInt()
-            Text(if (value == defaultValue) stringResource(R.string.theme_slider_default) else "$percent%", style = MaterialTheme.typography.labelMedium)
+            val detentIndex = detentPercents.indexOfFirst { value == it / 100f }
+            val namedStop = detentLabels.getOrNull(detentIndex)
+            val labelText = when {
+                value == defaultValue -> stringResource(R.string.theme_slider_default)
+                namedStop != null -> "$namedStop $percent%"
+                else -> "$percent%"
+            }
+            Text(labelText, style = MaterialTheme.typography.labelMedium)
         }
         AppSlider(
             value, onChange, valueRange = range, enabled = enabled, detent = defaultValue,

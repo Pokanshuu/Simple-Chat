@@ -218,6 +218,9 @@
     <string name="theme_input_panel">Input panels</string>
     <string name="theme_sidebar">Sidebar</string>
     <string name="theme_popup">Pop-up menus</string>
+    <string name="theme_user_bubble">User message bubble</string>
+    <string name="theme_opacity_column">Opacity</string>
+    <string name="theme_message_index">Conversation outline</string>
     <string name="theme_scroll_bottom_button">Scroll-to-bottom button</string>
     <string name="theme_acrylic_strength">Acrylic strength</string>
     <string name="theme_wallpaper_overlay">Opacity</string>

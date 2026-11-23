@@ -220,6 +220,9 @@
     <string name="theme_input_panel">输入扩展面板</string>
     <string name="theme_sidebar">侧边栏</string>
     <string name="theme_popup">弹出菜单</string>
+    <string name="theme_user_bubble">用户消息气泡</string>
+    <string name="theme_opacity_column">不透明度</string>
+    <string name="theme_message_index">对话大纲</string>
     <string name="theme_scroll_bottom_button">回到底部按钮</string>
     <string name="theme_acrylic_strength">亚克力强度</string>
     <string name="theme_wallpaper_overlay">不透明度</string>

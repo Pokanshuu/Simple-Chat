@@ -67,6 +67,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -100,6 +103,10 @@ import com.simplechat.app.ui.markdown.LocalSearchHighlight
 import com.simplechat.app.ui.markdown.rememberSearchTextDecoration
 import com.simplechat.app.ui.theme.ChatColors
 import com.simplechat.app.ui.theme.LocalChatColors
+import com.simplechat.app.ui.theme.userBubbleBackground
+import com.simplechat.app.ui.theme.floatingPanelSurface
+import com.simplechat.app.data.InterfaceControl
+import com.simplechat.app.ui.theme.glassContrastForeground
 import com.simplechat.app.ui.theme.LocalAssistantFontFamily
 import com.simplechat.app.ui.theme.LocalUserFontFamily
 import com.simplechat.app.ui.common.PillShape
@@ -656,7 +663,10 @@ fun UserBubble(
     /** 用户展开 / 收起这条气泡时调用 —— 原样转达给外层（见 `MessageList` 的 `onFoldToggle`）。 */
     onFoldToggle: () -> Unit = {},
 ) {
-    val colors = LocalChatColors.current
+    val palette = LocalChatColors.current
+    val surface = floatingPanelSurface(InterfaceControl.USER_BUBBLE)
+    val foreground = glassContrastForeground(surface, palette.pageBackground, MaterialTheme.colorScheme.onSurface)
+    val colors = palette.copy(onUserBubble = foreground)
     /*
      * 用户发言层的自定义字体（设置 → 外观 → 字体 → 我的发言）。
      * 未选择时直接用全局排版本身，不 copy —— 保持原来的常量语义。
@@ -704,16 +714,7 @@ fun UserBubble(
             Box(
                 modifier = Modifier
                     .widthIn(max = maxBubbleWidth)
-                    // 右下角收紧，给"从右发出"一个方向感
-                    .background(
-                        /*
-                         * 用户气泡的玻璃化：主题蓝保持，但把不透明度抬到 0.75 左右
-                         * （下限 0.70）。气泡里是用户自己打的字，再透下去就会和背景
-                         * 壁纸糊在一起 —— 玻璃感是次要的，能读才是主要的。
-                         */
-                        colors.userBubble,
-                        BubbleShapeOut,
-                    )
+                    .userBubbleBackground(BubbleShapeOut, surface)
                     .then(pressListener)
                     .combinedClickable(
                         interactionSource = interaction,
@@ -740,11 +741,13 @@ fun UserBubble(
                      * 图片自己带点击（放大查看），会吃掉这一下 ——
                      * 不会顺手把整条消息带进编辑态。
                      */
-                    MessageAttachments(
-                        attachments = message.attachments,
-                        onOpenImage = onOpenImage,
-                        inUserBubble = true,
-                    )
+                    CompositionLocalProvider(LocalChatColors provides colors) {
+                        MessageAttachments(
+                            attachments = message.attachments,
+                            onOpenImage = onOpenImage,
+                            inUserBubble = true,
+                        )
+                    }
                     if (message.content.isNotBlank()) {
                         /*
                          * 超长正文的**两态渲染**（根因与实测见设计文档 §31）：
@@ -759,21 +762,6 @@ fun UserBubble(
                         val chunks = remember(message.content) { textChunks(message.content) }
 
                         Box {
-                            /*
-                             * 收起态：正文往**右下角**化开。
-                             *
-                             * 正文是按 `maxLines` **硬裁**的，不加这层就能看到一条齐刷刷的断口；
-                             * 以右下角为圆心做径向渐变，正好把断口那一段"吃掉"，
-                             * 同时让视线顺着往右读，暗示"还有下文"。
-                             *
-                             * ⚠️ **层级是这里唯一要紧的事。** 渐隐必须画在
-                             * **只包正文的这个 Column** 上 —— 它的下一个兄弟才是右下角那个箭头，
-                             * 于是箭头天然压在遮罩上方。
-                             *
-                             * 早先把它画到外面那层 Column（同时装着正文和箭头）上，就错了：
-                             * `drawWithContent` 在**所有后代之后**绘制，箭头也被一起盖住。
-                             * 兄弟先后顺序只在**同一层**里作数，跨层不成立 —— 这正是踩的那一脚。
-                             */
                             Column(
                                 modifier = Modifier
                                     /*
@@ -801,22 +789,6 @@ fun UserBubble(
                                             Modifier
                                         },
                                     )
-                                    .then(
-                                    if (folded && !expanded) {
-                                        Modifier.drawWithContent {
-                                            drawContent()
-                                            drawRect(
-                                                brush = Brush.radialGradient(
-                                                    colors = listOf(colors.userBubble, Color.Transparent),
-                                                    center = Offset(size.width, size.height),
-                                                    radius = fadePx,
-                                                ),
-                                            )
-                                        }
-                                    } else {
-                                        Modifier
-                                    },
-                                ),
                             ) {
                                 /*
                                  * 选择态：正文外面套一层 `SelectionContainer`，长按即可起选、
@@ -858,6 +830,19 @@ fun UserBubble(
                                          */
                                         Text(
                                             text = message.content,
+                                            modifier = if (folded) Modifier.graphicsLayer {
+                                                compositingStrategy = CompositingStrategy.Offscreen
+                                            }.drawWithContent {
+                                                drawContent()
+                                                drawRect(
+                                                    brush = Brush.radialGradient(
+                                                        colors = listOf(Color.Black, Color.Transparent),
+                                                        center = Offset(size.width, size.height),
+                                                        radius = fadePx,
+                                                    ),
+                                                    blendMode = BlendMode.DstOut,
+                                                )
+                                            } else Modifier,
                                             style = userTextStyle,
                                             color = colors.onUserBubble,
                                             maxLines = UserBubbleCollapsedLines,
@@ -893,7 +878,7 @@ fun UserBubble(
                                         shape = PillShape,
                                         iconSize = 14.dp,
                                         background = colors.card.copy(alpha = 0.72f),
-                                        tint = colors.processText,
+                                        tint = foreground,
                                     )
                                 }
                             }
@@ -1107,9 +1092,19 @@ fun AssistantBlock(
             }
         }
         val answerHighlight = LocalSearchHighlight.current.takeIf { reasoningSearchRequest == null }
-        SelectableText(selecting, selectionState) {
-            CompositionLocalProvider(LocalCitationClick provides onCitationClick, LocalSearchHighlight provides answerHighlight) {
-                MarkdownWithMath(content = answer, streaming = message.streaming)
+        // Tool calls can leave a short preamble/process text before the final answer.
+        // Fade the answer in only when it first becomes available; historical replies start visible.
+        val answerVisibility = remember(message.id) { MutableTransitionState(answer.isNotBlank()) }
+        answerVisibility.targetState = answer.isNotBlank()
+        AnimatedVisibility(
+            visibleState = answerVisibility,
+            enter = fadeIn(tween(220, easing = MotionEasing)),
+            exit = fadeOut(tween(120, easing = MotionEasing)),
+        ) {
+            SelectableText(selecting, selectionState) {
+                CompositionLocalProvider(LocalCitationClick provides onCitationClick, LocalSearchHighlight provides answerHighlight) {
+                    MarkdownWithMath(content = answer, streaming = message.streaming)
+                }
             }
         }
 
@@ -1409,6 +1404,7 @@ private fun ActionIcon(
     description: String,
     onClick: () -> Unit,
     colors: ChatColors,
+    destructive: Boolean = false,
 ) {
     IconCircleButton(
         icon = icon,
@@ -1416,7 +1412,7 @@ private fun ActionIcon(
         onClick = onClick,
         size = ActionButtonSize,
         iconSize = ActionIconSize,
-        tint = colors.processText,
+        tint = if (destructive) colors.danger else colors.processText,
     )
 }
 

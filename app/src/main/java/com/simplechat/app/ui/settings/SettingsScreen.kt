@@ -51,6 +51,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Tab
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -70,6 +72,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.simplechat.app.BuildConfig
 import androidx.compose.ui.focus.FocusRequester
@@ -3465,7 +3468,12 @@ internal fun SettingsActionRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Space.IconGap),
     ) {
-        if (icon != null) Icon(icon, contentDescription = null, modifier = Modifier.size(Space.Icon))
+        if (icon != null) Icon(
+            icon,
+            contentDescription = null,
+            modifier = Modifier.size(Space.Icon),
+            tint = if (destructive) colors.danger else MaterialTheme.colorScheme.onSurface,
+        )
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
                 text = label,
@@ -4843,13 +4851,20 @@ private fun RecycleBinPages(
     val scope = rememberCoroutineScope()
     Column(Modifier.fillMaxSize()) {
         val labels = listOf(stringResource(R.string.trash_conversations_tab), stringResource(R.string.trash_messages_tab))
-        SegmentedSwitch(
-            options = labels.indices.toList(),
-            selected = pager.currentPage,
-            onSelect = { index -> scope.launch { pager.animateScrollToPage(index) } },
-            label = { labels[it] },
+        PrimaryTabRow(
+            selectedTabIndex = pager.currentPage,
             modifier = Modifier.fillMaxWidth().padding(top = Space.Gap, bottom = Space.Gap),
-        )
+            containerColor = Color.White,
+            divider = {},
+        ) {
+            labels.forEachIndexed { index, label ->
+                Tab(
+                    selected = pager.currentPage == index,
+                    onClick = { scope.launch { pager.animateScrollToPage(index) } },
+                    text = { Text(label) },
+                )
+            }
+        }
         HorizontalPager(state = pager, modifier = Modifier.fillMaxWidth().weight(1f)) { page ->
             Column(Modifier.fillMaxSize().verticalScroll(scrollStates[page]).navigationBarsPadding()) {
                 if (page == 0) TrashPage(loadTrash, onRestore, onPurge)
@@ -5056,7 +5071,7 @@ private fun RecycleBinEmptyState(label: String) {
         verticalArrangement = Arrangement.spacedBy(Space.Gap),
     ) {
         val secondary = LocalChatColors.current.processText
-        Icon(AppIcons.Trash, contentDescription = null, modifier = Modifier.size(Space.Row), tint = secondary)
+        Icon(AppIcons.Trash, contentDescription = null, modifier = Modifier.size(Space.Row), tint = LocalChatColors.current.danger)
         Text(label, style = MaterialTheme.typography.bodySmall, color = secondary,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center)
     }
