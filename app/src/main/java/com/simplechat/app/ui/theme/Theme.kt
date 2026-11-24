@@ -225,6 +225,22 @@ internal fun resolveCategoryFontScale(
     (systemScale * checkNotNull(settings.fontScale)).takeIf { it.isFinite() && it > 0f } ?: globalScale
 } else globalScale
 
+/** How much of the accent's saturation survives in bubble text. */
+private const val BubbleThemeChroma = 0.7f
+
+/**
+ * Accent color used for user-bubble text.
+ *
+ * The raw brand accent is tuned for small, high-chroma hits (buttons, links, the send
+ * key). Used as the color of a whole paragraph it reads as shouting, so chroma is pulled
+ * back while the hue stays — the bubble still reads as "theme colored", just calmer.
+ */
+fun bubbleThemeTextColor(accent: Color): Color {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(accent.toArgb(), hsv)
+    return Color.hsv(hsv[0], (hsv[1] * BubbleThemeChroma).coerceIn(0f, 1f), hsv[2])
+}
+
 /** Scope children to one typography category, applying its saved size and optional color. */
 @Composable
 fun TypographyCategory(slot: FontSlot, content: @Composable () -> Unit) {
@@ -242,7 +258,8 @@ fun TypographyCategory(slot: FontSlot, content: @Composable () -> Unit) {
         FontSlot.UI -> baseScheme.onBackground
     }
     val themeColor = when (slot) {
-        FontSlot.USER -> baseScheme.primary
+        // A whole paragraph in the raw accent shouts; dampen it for body copy.
+        FontSlot.USER -> bubbleThemeTextColor(baseScheme.primary)
         FontSlot.UI -> if (category.useThemeColor) baseScheme.primary else null
         FontSlot.ASSISTANT -> null
     }

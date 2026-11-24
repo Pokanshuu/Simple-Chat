@@ -236,7 +236,8 @@ internal fun ThemeEditorLayout(
                 ) {
                     val sideBySide = maxWidth >= 680.dp || (maxWidth >= 580.dp && maxWidth > maxHeight)
                     val toolsWidth = minOf(360.dp, maxWidth * 0.48f)
-                    val effectsHeight = minOf(220.dp, maxHeight * 0.36f)
+                    // Panels scroll past this cap; 220dp cut the text tools off far too early.
+                    val effectsHeight = minOf(360.dp, maxHeight * 0.5f)
                     Column(Modifier.fillMaxSize()) {
                         val canSave = !saving && (!cropChanged || (source != null && frameSize.width > 0f && frameSize.height > 0f))
                         Row(
@@ -461,8 +462,10 @@ internal fun ThemeEditorLayout(
                                 }
                             }
                         } else {
+                            // Content keeps its natural height; the preview absorbs the rest.
+                            // Giving it weight(1f) left a large blank band under short panels.
                             preview(Modifier.weight(1f).fillMaxWidth())
-                            toolContent(Modifier.weight(1f).fillMaxWidth())
+                            toolContent(Modifier.fillMaxWidth())
                             if (tab == EditTab.TEXT) ThemeTextSubtabs(textPane, onTextPaneChange)
                             tabs()
                         }

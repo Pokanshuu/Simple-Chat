@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.ui.input.pointer.pointerInput
 
 import androidx.compose.ui.draw.clip
@@ -14,6 +15,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -36,7 +38,6 @@ import com.simplechat.app.ui.common.AppSlider
 import com.simplechat.app.ui.common.AppMenu
 import com.simplechat.app.ui.common.AppSwitch
 import com.simplechat.app.ui.common.CapsuleButton
-import com.simplechat.app.ui.common.IconCircleButton
 import com.simplechat.app.ui.common.PillShape
 import com.simplechat.app.ui.common.Space
 import com.simplechat.app.ui.theme.*
@@ -65,7 +66,7 @@ internal fun ThemeTextSubtabs(pane: TextPane, onPaneChange: (TextPane) -> Unit, 
     Row(
         modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
             .padding(horizontal = Space.Inline, vertical = Space.Gap),
-        horizontalArrangement = Arrangement.spacedBy(Space.Gap),
+        horizontalArrangement = Arrangement.spacedBy(Space.Gap, Alignment.CenterHorizontally),
     ) {
         TextPane.entries.forEach { item ->
             CapsuleButton(stringResource(item.label), onClick = { onPaneChange(item) }, selected = pane == item)
@@ -109,7 +110,9 @@ internal fun ThemeTextEditor(
                     update(category.copy(useThemeColor = it))
                 }
             }
+            // Same dampened accent the chat uses, so the swatch matches the rendered text.
             val accent = LocalAccentColor.current.primary(dark)
+                .let { if (slot == FontSlot.USER) bubbleThemeTextColor(it) else it }
             val defaultColor = if (dark) TextPrimaryDark else TextPrimaryLight
             val initialColor = if (slot == FontSlot.USER && category.useThemeColor) accent else defaultColor
             val storedColor = if (dark) category.darkTextColorArgb else category.lightTextColorArgb
@@ -119,18 +122,21 @@ internal fun ThemeTextEditor(
                 update(initialized.copy(customColorEnabled = enabled))
             }
             var colorMenu by remember(slot, dark, category.customColorEnabled) { mutableStateOf(false) }
-            Row(Modifier.fillMaxWidth().padding(horizontal = Space.Screen), verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.theme_text_color_value), Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+            val colors = LocalChatColors.current
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = Space.Row).padding(horizontal = Space.Screen),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(stringResource(R.string.theme_text_color_value), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                 val swatch = if (category.customColorEnabled) storedColor?.let(::Color) ?: initialColor else initialColor
                 Box {
-                    IconCircleButton(
-                        icon = AppIcons.Palette,
-                        contentDescription = stringResource(R.string.theme_text_color_value),
-                        onClick = { if (category.customColorEnabled) colorMenu = true },
-                        size = 40.dp,
-                        iconSize = 20.dp,
-                        background = swatch,
-                        enabled = category.customColorEnabled,
+                    // A value swatch, not a control: keep it at the 28dp swatch size on the
+                    // Space grid instead of a 40dp icon button.
+                    Box(
+                        Modifier.size(28.dp).clip(CircleShape)
+                            .background(swatch)
+                            .border(1.dp, colors.outline, CircleShape)
+                            .clickable(enabled = category.customColorEnabled) { colorMenu = true },
                     )
                     AppMenu(expanded = colorMenu, onDismissRequest = { colorMenu = false }, alignEnd = true, width = 320.dp) {
                         Column(Modifier.padding(horizontal = Space.Gap, vertical = Space.Gap), verticalArrangement = Arrangement.spacedBy(Space.Gap)) {
