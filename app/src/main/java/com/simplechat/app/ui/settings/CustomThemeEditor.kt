@@ -16,9 +16,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import com.simplechat.app.data.FontSlot
 import com.simplechat.app.data.InterfaceControl
 import com.simplechat.app.data.ConversationWallpaper
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -65,7 +67,42 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 
 @Composable
-internal fun CustomThemeEditor(stored: StoredSettings, store: SettingsStore, onDismiss: () -> Unit) {
+internal fun CustomThemeEditor(
+    stored: StoredSettings,
+    store: SettingsStore,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val currentDark = com.simplechat.app.ui.theme.LocalIsDarkTheme.current
+    val systemFontScale = com.simplechat.app.ui.theme.LocalSystemTextScale.current ?: androidx.compose.ui.platform.LocalDensity.current.fontScale
+    val scope = rememberCoroutineScope()
+    var draft by remember(stored.fontScale, stored.followSystemFont, stored.typography, stored.uiFontId, stored.userFontId, stored.assistantFontId) { mutableStateOf(com.simplechat.app.data.TypographyDraft(
+        stored.fontScale, stored.followSystemFont, stored.uiFontId, stored.userFontId, stored.assistantFontId, stored.typography,
+    )) }
+    var dark by remember(currentDark) { mutableStateOf(currentDark) }
+    var mainTab by rememberSaveable { mutableStateOf(EditTab.ADJUST) }
+    var textPane by rememberSaveable { mutableStateOf(TextPane.ASSISTANT) }
+    var importSlot by remember { mutableStateOf<com.simplechat.app.data.FontSlot?>(null) }
+    var managing by remember { mutableStateOf(false) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val slot = importSlot
+        importSlot = null
+        if (uri != null && slot != null) scope.launch {
+            val font = withContext(Dispatchers.IO) {
+                com.simplechat.app.data.FontFiles.import(context, uri, displayNameOf(context, uri) ?: "Font")
+            }
+            if (font == null) Toast.makeText(context, R.string.fonts_import_failed, Toast.LENGTH_SHORT).show()
+            else {
+                store.addImportedFont(font)
+                draft = draft.withFont(slot, font.id)
+            }
+        }
+    }
+    val fonts = remember(context, stored.fonts, draft.uiFontId, draft.userFontId, draft.assistantFontId) {
+        fun resolve(id: String?) = stored.fonts.firstOrNull { it.id == id }
+            ?.let { com.simplechat.app.ui.theme.fontFamilyOf(context, it) }
+        com.simplechat.app.ui.theme.TypographyFonts(resolve(draft.uiFontId), resolve(draft.userFontId), resolve(draft.assistantFontId))
+    }
     WallpaperEditDialog(
         path = stored.wallpaperPath?.takeIf { it.isNotBlank() },
         currentWallpaper = LocalWallpaper.current,
@@ -75,8 +112,31 @@ internal fun CustomThemeEditor(stored: StoredSettings, store: SettingsStore, onD
             accentEnabled = stored.panelAccentEnabled, accentOpacity = stored.panelAccentOpacity.coerceIn(0f, MaxPanelAccentOpacity),
         ),
         onDismiss = onDismiss,
-        onCommit = { path, appearance, panels, recropped -> store.saveCustomTheme(path, appearance, panels, recropped) },
+        tab = mainTab,
+        onTabChange = { mainTab = it },
+        textPane = textPane,
+        onTextPaneChange = { textPane = it },
+        textEditor = { modifier ->
+            ThemeTextEditor(
+                draft = draft,
+                fonts = stored.fonts,
+                dark = dark,
+                onChange = { draft = it },
+                onImportFont = { slot -> importSlot = slot; picker.launch(arrayOf("*/*")) },
+                onManageFonts = { managing = true },
+                pane = textPane,
+                onPaneChange = { textPane = it },
+                modifier = modifier,
+            )
+        },
+        previewTheme = { content -> com.simplechat.app.ui.theme.TypographyPreview(draft, fonts, dark, systemFontScale = systemFontScale, content = content) },
+        previewDark = dark,
+        onPreviewDarkChange = { dark = it },
+        onCommit = { path, appearance, panels, recropped ->
+            store.saveCustomTheme(path, appearance, panels, recropped, draft)
+        },
     )
+    if (managing) FontLibraryDialog(stored.fonts, store, onRemove = { id -> FontSlot.entries.forEach { slot -> if (draft.fontId(slot) == id) draft = draft.withFont(slot, null) } }) { managing = false }
 }
 
 @Composable
@@ -99,6 +159,11 @@ internal fun ConversationWallpaperEditor(
             accentOpacity = com.simplechat.app.ui.theme.LocalPanelAccentOpacity.current,
         ),
         showInterfaceTab = false,
+        tab = EditTab.CROP,
+        onTabChange = {},
+        textPane = TextPane.SIZE,
+        onTextPaneChange = {},
+        previewDark = com.simplechat.app.ui.theme.LocalIsDarkTheme.current,
         onDismiss = onDismiss,
         onCommit = { path, appearance, _, _ -> onCommit(path?.let { ConversationWallpaper(it, appearance) }) },
     )
@@ -118,6 +183,14 @@ private fun WallpaperEditDialog(
     initialPanels: PanelAppearance,
     onDismiss: () -> Unit,
     showInterfaceTab: Boolean = true,
+    tab: EditTab,
+    onTabChange: (EditTab) -> Unit,
+    textPane: TextPane,
+    onTextPaneChange: (TextPane) -> Unit,
+    textEditor: (@Composable (Modifier) -> Unit)? = null,
+    previewTheme: @Composable (@Composable () -> Unit) -> Unit = { it() },
+    previewDark: Boolean = false,
+    onPreviewDarkChange: (Boolean) -> Unit = {},
     onCommit: suspend (String?, WallpaperAppearance, PanelAppearance, Boolean) -> Unit,
 ) {
     val context = LocalContext.current
@@ -149,6 +222,14 @@ private fun WallpaperEditDialog(
     val savedCrop = original.takeIf { !removed && picked == null }
     val source = if (removed) null else picked ?: savedCrop?.bitmap
     ThemeEditorLayout(
+        textEditor = textEditor,
+        tab = tab,
+        onTabChange = onTabChange,
+        textPane = textPane,
+        onTextPaneChange = onTextPaneChange,
+        previewTheme = previewTheme,
+        previewDark = previewDark,
+        onPreviewDarkChange = onPreviewDarkChange,
         source = source,
         savedCrop = savedCrop?.rect,
         onPrepareCrop = { if (!removed && picked == null) loadOriginal = true },
@@ -244,18 +325,23 @@ internal fun ThemeChatSample(
                     .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 128.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                Text(
-                    stringResource(R.string.wallpaper_preview_user),
-                    color = glassContrastForeground(bubbleSurface, colors.pageBackground, MaterialTheme.colorScheme.onSurface),
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.align(Alignment.End).fillMaxWidth(0.78f)
-                        .userBubbleBackground(BubbleShapeOut, bubbleSurface).padding(horizontal = 14.dp, vertical = 10.dp),
-                )
-                Text(
-                    stringResource(R.string.wallpaper_preview_reply),
-                    color = MaterialTheme.colorScheme.onBackground,
-                    style = MaterialTheme.typography.bodyLarge.copy(lineBreak = LineBreak.Paragraph),
-                )
+                com.simplechat.app.ui.theme.TypographyCategory(FontSlot.USER) {
+                    Text(
+                        stringResource(R.string.wallpaper_preview_user),
+                        color = com.simplechat.app.ui.theme.LocalTypographyTextColor.current
+                            ?: glassContrastForeground(bubbleSurface, colors.pageBackground, MaterialTheme.colorScheme.onSurface),
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.align(Alignment.End).fillMaxWidth(0.78f)
+                            .userBubbleBackground(BubbleShapeOut, bubbleSurface).padding(horizontal = 14.dp, vertical = 10.dp),
+                    )
+                }
+                com.simplechat.app.ui.theme.TypographyCategory(FontSlot.ASSISTANT) {
+                    Text(
+                        stringResource(R.string.wallpaper_preview_reply),
+                        color = MaterialTheme.colorScheme.onBackground,
+                        style = MaterialTheme.typography.bodyLarge.copy(lineBreak = LineBreak.Paragraph),
+                    )
+                }
             }
         }
         CompositionLocalProvider(LocalBackdropSource provides backdrop) {

@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -38,6 +39,10 @@ import com.simplechat.app.ui.common.AppIcons
 import com.simplechat.app.ui.common.IconCircleButton
 import com.simplechat.app.ui.theme.LocalIsDarkTheme
 import com.simplechat.app.ui.theme.LocalAccentColor
+import com.simplechat.app.ui.theme.LocalTypographySettings
+import com.simplechat.app.ui.theme.LocalTypographyFonts
+import com.simplechat.app.ui.theme.LocalTypographyGlobalScale
+import com.simplechat.app.ui.theme.LocalSystemTextScale
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -52,6 +57,10 @@ internal fun MessageShareTools(
 ) {
     val context = LocalContext.current
     val accent = LocalAccentColor.current
+    val typography = LocalTypographySettings.current
+    val typographyFonts = LocalTypographyFonts.current
+    val globalFontScale = LocalTypographyGlobalScale.current
+    val systemFontScale = LocalSystemTextScale.current ?: LocalDensity.current.fontScale
     val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
@@ -114,7 +123,9 @@ internal fun MessageShareTools(
     if (excerpt != null) {
         androidx.compose.runtime.LaunchedEffect(excerpt) {
             runExport {
-                images = exportSharedImages(context, excerpt, ShareImageMode.LONG, accent)
+                images = exportSharedImages(context, excerpt, ShareImageMode.LONG, accent,
+                    typography = typography, typographyFonts = typographyFonts,
+                    fontScale = globalFontScale, systemFontScale = systemFontScale)
                 preview = true
             }
         }
@@ -179,7 +190,8 @@ internal fun MessageShareTools(
                 imageDocument = null
                 runExport {
                     images = exportSharedImages(context, snapshot, mode, accent, hideBranding = branding,
-                        hideReasoning = hideReasoning)
+                        hideReasoning = hideReasoning, typography = typography, typographyFonts = typographyFonts,
+                        fontScale = globalFontScale, systemFontScale = systemFontScale)
                     preview = true
                 }
             },

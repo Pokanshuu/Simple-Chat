@@ -172,11 +172,6 @@ private enum class SettingsPage(private val parentName: String?) {
     MEMORY("ROOT"),
     /** 外观：主题模式、主题色、字体大小入口。 */
     APPEARANCE("ROOT"),
-    /** 字体大小（外观 → 二级）。 */
-    FONT("APPEARANCE"),
-    /** 自定义字体：导入、管理、三层分别选择（外观 → 二级）。 */
-    FONTS("APPEARANCE"),
-    /** 壁纸：从本地选图作为聊天背景（外观 → 二级）。 */
     /** 对话行为：思考折叠、搜索范围等开关。 */
     CHAT("ROOT"),
     SEARCH_SETTINGS("CHAT"),
@@ -249,7 +244,7 @@ private enum class ApiStylePreference(val labelRes: Int) {
     }
 }
 
-/** 字号档位。与官方一致：中间一档为「标准」。 */private val fontSizeSteps = listOf(
+/** 字号档位。与官方一致：中间一档为「标准」。 */internal val fontSizeSteps = listOf(
     0.85f to R.string.font_step_small,
     0.925f to R.string.font_step_smaller,
     1.0f to R.string.font_step_standard,
@@ -701,8 +696,6 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                 SettingsPage.PRESETS -> stringResource(R.string.settings_presets)
                 SettingsPage.MEMORY -> stringResource(R.string.settings_group_memory)
                 SettingsPage.APPEARANCE -> stringResource(R.string.settings_appearance)
-                SettingsPage.FONT -> stringResource(R.string.settings_font_size)
-                SettingsPage.FONTS -> stringResource(R.string.settings_custom_fonts)
                 SettingsPage.CHAT -> stringResource(R.string.settings_chat_behavior)
                 SettingsPage.SEARCH_SETTINGS -> stringResource(R.string.settings_search_options)
                 SettingsPage.LOADING_WORDS -> stringResource(R.string.settings_loading_words)
@@ -780,14 +773,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                                     }
                                 }
                             },
-                            onOpenFont = { page = SettingsPage.FONT },
-                            onOpenFonts = { page = SettingsPage.FONTS },
                             onOpenCustomTheme = { showThemeEditor = true },
-                        )
-
-                        SettingsPage.FONTS -> FontsPage(
-                            stored = stored,
-                            store = store,
                         )
 
                         SettingsPage.CHAT -> ChatBehaviorPage(
@@ -935,12 +921,6 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                             presets = presets,
                             onEdit = { dialog = SettingsDialog.PresetEditor(it) },
                             onDelete = { dialog = SettingsDialog.DeletePreset(it) },
-                        )
-
-                        SettingsPage.FONT -> FontPage(
-                            stored = stored,
-                            onFollowSystem = { scope.launch { store.setFollowSystemFont(it) } },
-                            onScaleCommit = { scope.launch { store.setFontScale(it) } },
                         )
 
                         SettingsPage.ABOUT -> AboutPage(
@@ -1626,8 +1606,6 @@ private fun AppearancePage(
     onThemeChange: (ThemeMode) -> Unit,
     onAccentChange: (AccentColor) -> Unit,
     onIconChange: (Boolean) -> Unit,
-    onOpenFont: () -> Unit,
-    onOpenFonts: () -> Unit,
     onOpenCustomTheme: () -> Unit,
 ) {
     var iconMenuOpen by remember { mutableStateOf(false) }
@@ -1697,34 +1675,6 @@ private fun AppearancePage(
         )
     }
 
-    SettingsSectionLabel(stringResource(R.string.settings_group_text))
-
-    SettingsCard {
-        SettingsNavRow(
-            icon = AppIcons.FontSize,
-            label = stringResource(R.string.settings_font_size),
-            value = if (stored.followSystemFont) {
-                stringResource(R.string.value_follow_system)
-            } else {
-                stringResource(
-                    fontSizeSteps
-                        .minByOrNull { kotlin.math.abs(it.first - stored.fontScale) }
-                        ?.second ?: R.string.font_step_standard,
-                )
-            },
-            onClick = onOpenFont,
-        )
-        RowDivider()
-        SettingsNavRow(
-            icon = AppIcons.FontSize,
-            label = stringResource(R.string.settings_custom_fonts),
-            value = when {
-                stored.fonts.isEmpty() -> stringResource(R.string.fonts_none)
-                else -> stringResource(R.string.fonts_count, stored.fonts.size)
-            },
-            onClick = onOpenFonts,
-        )
-    }
 
 }
 
@@ -2747,113 +2697,6 @@ private fun FieldBox(content: @Composable () -> Unit) {
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
         content()
-    }
-}
-
-// ══════════════════════════════════════════════════════════
-//  二级：字体大小
-// ══════════════════════════════════════════════════════════
-
-@Composable
-private fun FontPage(
-    stored: StoredSettings,
-    onFollowSystem: (Boolean) -> Unit,
-    onScaleCommit: (Float) -> Unit,
-) {
-    val colors = LocalChatColors.current
-    val follow = stored.followSystemFont
-
-    // 拖动时只改本地状态做即时预览，松手才落盘 —— 否则一次拖动几十次写 DataStore
-    var index by remember(stored.fontScale) {
-        mutableStateOf(
-            fontSizeSteps.indexOfFirst { it.first == stored.fontScale }.takeIf { it >= 0 } ?: 2,
-        )
-    }
-    val previewScale = fontSizeSteps[index].first
-    val baseDensity = LocalDensity.current
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Spacer(Modifier.size(24.dp))
-
-        // ── 预览：真实气泡，用当前档位的字号渲染 ──────────
-        CompositionLocalProvider(
-            LocalDensity provides Density(
-                density = baseDensity.density,
-                fontScale = baseDensity.fontScale * previewScale,
-            ),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                Text(
-                    text = stringResource(R.string.font_preview_label),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = colors.onUserBubble,
-                    modifier = Modifier
-                        .clip(BubbleShapeOut)
-                        .background(colors.userBubble)
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                )
-            }
-        }
-
-        Spacer(Modifier.size(20.dp))
-
-        Text(
-            text = stringResource(R.string.font_scale_hint),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-
-        Spacer(Modifier.size(24.dp))
-
-        // ── 底部控制区 ────────────────────────────────────
-        SettingsCard {
-            SettingsSwitchRow(
-                label = stringResource(R.string.value_follow_system),
-                icon = null,
-                checked = follow,
-                onCheckedChange = onFollowSystem,
-            )
-        }
-
-        Spacer(Modifier.size(16.dp))
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "A",
-                style = MaterialTheme.typography.labelMedium,
-                color = colors.placeholder,
-            )
-            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                Text(
-                    text = if (follow) stringResource(R.string.value_follow_system) else stringResource(fontSizeSteps[index].second),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (follow) colors.placeholder else MaterialTheme.colorScheme.primary,
-                    textAlign = TextAlign.Center,
-                )
-            }
-            Text(
-                text = "A",
-                style = MaterialTheme.typography.headlineSmall,
-                color = colors.placeholder,
-            )
-        }
-
-        AppSlider(
-            value = index.toFloat(),
-            onValueChange = { index = it.toInt().coerceIn(0, fontSizeSteps.lastIndex) },
-            intervals = fontSizeSteps.lastIndex,
-            enabled = !follow,
-            valueRange = 0f..fontSizeSteps.lastIndex.toFloat(),
-            onValueChangeFinished = { onScaleCommit(fontSizeSteps[index].first) },
-        )
     }
 }
 
@@ -4374,199 +4217,12 @@ private fun DiagnosticsPage(
 // ══════════════════════════════════════════════════════════
 
 /** 从 content Uri 读展示名（文件管理器里看到的文件名）。 */
-private fun displayNameOf(context: android.content.Context, uri: android.net.Uri): String? =
+internal fun displayNameOf(context: android.content.Context, uri: android.net.Uri): String? =
     runCatching {
         context.contentResolver
             .query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
             ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
     }.getOrNull()
-
-private fun fontIdOfSlot(stored: StoredSettings, slot: com.simplechat.app.data.FontSlot): String? =
-    when (slot) {
-        com.simplechat.app.data.FontSlot.UI -> stored.uiFontId
-        com.simplechat.app.data.FontSlot.USER -> stored.userFontId
-        com.simplechat.app.data.FontSlot.ASSISTANT -> stored.assistantFontId
-    }
-
-private fun fontLabelOf(stored: StoredSettings, slot: com.simplechat.app.data.FontSlot): String? =
-    stored.fonts.firstOrNull { it.id == fontIdOfSlot(stored, slot) }?.displayName
-
-/**
- * 自定义字体页：导入、删除、三层分别选择。
- *
- * 导入只负责把文件复制进私有目录并登记元数据；真正"用上"靠
- * `LocalUserFontFamily` / `LocalAssistantFontFamily` 与主题的 `uiFontFamily`。
- */
-@Composable
-private fun FontsPage(
-    stored: StoredSettings,
-    store: SettingsStore,
-) {
-    val colors = LocalChatColors.current
-    val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-    var slotMenu by remember { mutableStateOf<com.simplechat.app.data.FontSlot?>(null) }
-
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        if (uris.isEmpty()) return@rememberLauncherForActivityResult
-        scope.launch {
-            val added = uris.mapNotNull { uri ->
-                com.simplechat.app.data.FontFiles.import(
-                    context = context,
-                    uri = uri,
-                    displayName = displayNameOf(context, uri) ?: "字体",
-                )
-            }
-            if (added.isEmpty()) {
-                android.widget.Toast.makeText(context, R.string.fonts_import_failed, android.widget.Toast.LENGTH_SHORT).show()
-            } else {
-                store.setFonts(stored.fonts + added)
-            }
-        }
-    }
-
-    SettingsSectionLabel(stringResource(R.string.fonts_group_imported))
-
-    SettingsCard {
-        if (stored.fonts.isEmpty()) {
-            SettingsActionRow(
-                label = stringResource(R.string.fonts_empty),
-                hint = stringResource(R.string.fonts_empty_hint),
-                onClick = {},
-                enabled = false,
-            )
-        } else {
-            stored.fonts.forEachIndexed { index, font ->
-                if (index > 0) RowDivider()
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = Space.Row)
-                        .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = font.displayName,
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = stringResource(R.string.fonts_preview_line),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    TextButton(
-                        onClick = {
-                            scope.launch {
-                                com.simplechat.app.data.FontFiles.delete(context, font)
-                                com.simplechat.app.ui.theme.forgetFontFamily(context, font)
-                                // 正在使用它的层先回到系统字体，否则列表里会留一个悬空 id
-                                listOf(
-                                    com.simplechat.app.data.FontSlot.UI,
-                                    com.simplechat.app.data.FontSlot.USER,
-                                    com.simplechat.app.data.FontSlot.ASSISTANT,
-                                ).forEach { slot ->
-                                    if (fontIdOfSlot(stored, slot) == font.id) store.setFontSlot(slot, null)
-                                }
-                                store.setFonts(stored.fonts.filterNot { it.id == font.id })
-                            }
-                        },
-                    ) {
-                        Text(stringResource(R.string.fonts_remove), color = colors.danger)
-                    }
-                }
-            }
-        }
-    }
-
-    Spacer(Modifier.height(Space.Inline))
-
-    SettingsCard {
-        SettingsActionRow(
-            label = stringResource(R.string.fonts_import),
-            hint = stringResource(R.string.fonts_import_hint),
-            onClick = { picker.launch(arrayOf("*/*")) },
-            icon = AppIcons.PlusCircle,
-        )
-    }
-
-    SettingsSectionLabel(stringResource(R.string.fonts_group_apply))
-
-    SettingsCard {
-        val slots = listOf(
-            Triple(com.simplechat.app.data.FontSlot.UI, R.string.fonts_slot_ui, R.string.fonts_slot_ui_hint),
-            Triple(com.simplechat.app.data.FontSlot.USER, R.string.fonts_slot_user, R.string.fonts_slot_user_hint),
-            Triple(com.simplechat.app.data.FontSlot.ASSISTANT, R.string.fonts_slot_assistant, R.string.fonts_slot_assistant_hint),
-        )
-        slots.forEachIndexed { index, (slot, title, hint) ->
-            if (index > 0) RowDivider()
-            Box(Modifier.fillMaxWidth()) {
-                FontSlotRow(
-                    title = stringResource(title),
-                    hint = stringResource(hint),
-                    value = fontLabelOf(stored, slot),
-                    onClick = { slotMenu = slot },
-                )
-                AppMenu(expanded = slotMenu == slot, onDismissRequest = { slotMenu = null }) {
-                    Column(Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState())) {
-                        val selectedFontId = fontIdOfSlot(stored, slot)
-                        fun chooseFont(id: String?) {
-                            slotMenu = null
-                            scope.launch { store.setFontSlot(slot, id) }
-                        }
-                        AppMenuItem(
-                            label = stringResource(R.string.fonts_system_default),
-                            selected = selectedFontId == null,
-                            onClick = { chooseFont(null) },
-                        )
-                        stored.fonts.forEach { font ->
-                            AppMenuItem(
-                                label = font.displayName,
-                                selected = selectedFontId == font.id,
-                                onClick = { chooseFont(font.id) },
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** 字体槽位一行：标题 + 说明 + 当前选择。 */
-@Composable
-private fun FontSlotRow(
-    title: String,
-    hint: String,
-    value: String?,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .heightIn(min = Space.Row)
-            .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Space.IconGap),
-    ) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(text = title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
-            Text(text = hint, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Text(
-            text = value ?: stringResource(R.string.fonts_system_default),
-            style = MaterialTheme.typography.labelMedium,
-            color = if (value == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-        )
-    }
-}
 
 // ══════════════════════════════════════════════════════════
 //  壁纸

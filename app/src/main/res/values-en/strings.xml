@@ -211,7 +211,22 @@
     <string name="settings_data_summary">Import · Export · Clear</string>
     <string name="settings_appearance">Appearance</string>
     <string name="settings_accent">Theme</string>
-    <string name="settings_custom_theme">Custom theme and wallpaper</string>
+    <string name="settings_custom_theme">Fonts, theme and wallpaper</string>
+    <string name="theme_text_tab">Text</string>
+    <string name="theme_text_size">Text size</string>
+    <string name="theme_text_user">Bubble text</string>
+    <string name="theme_text_assistant">Reply text</string>
+    <string name="theme_text_ui">Interface text</string>
+    <string name="theme_text_custom_color">Custom color</string>
+    <string name="theme_text_use_accent">Use theme color</string>
+    <string name="theme_text_custom_size">Adjust text size separately</string>
+    <string name="theme_text_custom_size_hint">When enabled, this category no longer follows global text size</string>
+    <string name="theme_text_hue">Hue</string>
+    <string name="theme_text_saturation">Saturation</string>
+    <string name="theme_text_lightness">Lightness</string>
+    <string name="theme_text_sample_user">Hello, welcome back.</string>
+    <string name="theme_text_sample_reply">This is a reply preview for mixed text, spacing and line height.\n\n- Lists and headings use the same font settings.\n- Fractions \(\\frac{a+b}{c+d}\) remain intact.</string>
+    <string name="theme_text_import_font">Import font</string>
     <string name="theme_advanced">Advanced options</string>
     <string name="theme_accent_column">Theme color</string>
     <string name="theme_input">Message input</string>
@@ -1022,6 +1037,9 @@
     <string name="theme_recommended">(Recommended)</string>
     <string name="theme_acrylic_clear">Clear</string>
     <string name="theme_acrylic_heavy">Heavy</string>
+    <string name="theme_text_switch_to_light">Switch to light preview</string>
+    <string name="theme_text_switch_to_dark">Switch to dark preview</string>
+    <string name="theme_text_color_value">Current preview text color</string>
 </resources>
 
 

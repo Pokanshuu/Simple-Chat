@@ -282,7 +282,9 @@ private fun MarkdownBlockView(math: InlineMathDocument, isTail: Boolean) {
 
     // 正文样式按语种分档（多语言 §4：中文两端对齐、西文左对齐）。
     // 两份样式都是常量，不产生分配；也不进参数 —— 参数变了就不会跳过重组。
-    val bodyStyle = markdownBodyStyle(LocaleHelper.isCjkUi(LocalContext.current))
+    val baseBodyStyle = markdownBodyStyle(LocaleHelper.isCjkUi(LocalContext.current))
+    val categoryColor = com.simplechat.app.ui.theme.LocalTypographyTextColor.current
+    val bodyStyle = if (categoryColor == null) baseBodyStyle else baseBodyStyle.copy(color = categoryColor)
 
     // 同步解析（见 MarkdownStateCache 的说明）：高度第一次测量就是真实的。
     val state = remember(math.markdown, isTail) {
@@ -349,7 +351,7 @@ private fun MarkdownBlockView(math: InlineMathDocument, isTail: Boolean) {
             // 大标题（h1–h3）上方补白：官方 32px，块间距已给 16dp，这里再补 16dp
             modifier = modifier.padding(top = headingTopGap(text)),
             colors = markdownColor(
-                text = scheme.onBackground,
+                text = categoryColor ?: scheme.onBackground,
                 codeBackground = colors.markdownCodeBlock,
                 inlineCodeBackground = colors.markdownInlineCode,
                 dividerColor = colors.markdownRule,

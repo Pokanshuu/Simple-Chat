@@ -48,7 +48,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.runtime.mutableIntStateOf
 import com.simplechat.app.data.InterfaceControl
@@ -63,8 +62,6 @@ import com.simplechat.app.ui.theme.drawWallpaper
 import com.simplechat.app.ui.theme.rememberWallpaperBitmap
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -120,24 +117,6 @@ private val WideSidebarWidth = 256.dp
 
 /** 抽屉圆角。撑满时必须收成 0，否则全屏面板会在四角露出底下的内容。 */
 private val DrawerCorner = 16.dp
-
-/** Keep the system gesture area free of chat text even when the drawer is translucent. */
-private fun Modifier.drawerNavigationVeil(insets: WindowInsets, surface: Color, page: Color): Modifier {
-    if (surface.alpha == 1f) return this
-    val solid = surface.compositeOver(page.copy(alpha = 1f))
-    return drawWithCache {
-        val inset = insets.getBottom(this).toFloat().coerceAtMost(size.height)
-        val edge = size.height - inset
-        val start = (edge - 56.dp.toPx()).coerceAtLeast(0f)
-        val fade = if (inset > 0f && start < edge) {
-            Brush.verticalGradient(listOf(solid.copy(alpha = 0f), solid), startY = start, endY = edge)
-        } else null
-        onDrawBehind {
-            if (fade != null) drawRect(fade, topLeft = Offset(0f, start), size = Size(size.width, edge - start))
-            if (inset > 0f) drawRect(solid, topLeft = Offset(0f, edge), size = Size(size.width, inset))
-        }
-    }
-}
 
 /**
  * 顶层路由与侧拉抽屉。
@@ -405,11 +384,8 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                             .floatingGlassBackground(
                                 colors.card, InterfaceControl.SIDEBAR, surface, drawerSource,
                                 extendIntoBottomInset = bottomInset,
-                            )
-                            .then(if (drawerSource == null) {
-                                Modifier.drawerNavigationVeil(navigationBars, surface, colors.pageBackground)
-                            } else Modifier),
-                    ) { GlassForeground(InterfaceControl.SIDEBAR) { sidebarContent(false) } }
+                            ),
+                    ) { GlassForeground(InterfaceControl.SIDEBAR, surface) { sidebarContent(false) } }
                 }
             }
         },
@@ -550,7 +526,15 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(scrim)
+                        .drawBehind {
+                            // Dim only the exposed chat, so a translucent drawer never sees this scrim.
+                            val offset = drawerState.currentOffset
+                            val covered = if (offset.isFinite()) {
+                                (sheetWidth + offset).coerceIn(0f, size.width)
+                            } else 0f
+                            val left = if (layoutDirection == LayoutDirection.Ltr) covered else 0f
+                            drawRect(scrim, topLeft = Offset(left, 0f), size = Size(size.width - covered, size.height))
+                        }
                         .pointerInput(Unit) {
                             detectTapGestures { closeDrawer() }
                         },

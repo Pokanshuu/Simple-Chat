@@ -92,11 +92,14 @@ import com.simplechat.app.ui.common.PillShape
 import com.simplechat.app.ui.common.SoftShape
 import com.simplechat.app.ui.common.Space
 import com.simplechat.app.ui.theme.LocalChatColors
+import com.simplechat.app.ui.theme.LocalAccentColor
+import com.simplechat.app.ui.theme.themePageBackground
 import com.simplechat.app.ui.theme.WallpaperState
 import com.simplechat.app.ui.theme.WallpaperImage
 import com.simplechat.app.ui.theme.LocalFloatingBaseOpacity
 import com.simplechat.app.ui.theme.LocalFloatingGlass
 import com.simplechat.app.ui.theme.LocalPanelAccentOpacity
+import com.simplechat.app.ui.theme.LocalIsDarkTheme
 import com.simplechat.app.ui.theme.MenuBackdropHost
 import com.simplechat.app.ui.theme.drawWallpaper
 import com.simplechat.app.ui.theme.drawWallpaperImage
@@ -118,7 +121,7 @@ internal data class WallpaperEdit(
     val flipH: Boolean,
 )
 
-private enum class EditTab { CROP, ADJUST, EFFECTS }
+internal enum class EditTab { CROP, ADJUST, TEXT, EFFECTS }
 private enum class Tool { OPACITY, DIM, BLUR, BRIGHTNESS, CONTRAST, SATURATION }
 
 /** 沿用壁纸编辑器的画幅和工具栏，所有分类共用这一块聊天预览。 */
@@ -130,6 +133,10 @@ internal fun ThemeEditorLayout(
     isNewImage: Boolean,
     imageAction: Int,
     currentWallpaper: WallpaperState,
+    tab: EditTab,
+    onTabChange: (EditTab) -> Unit,
+    textPane: TextPane,
+    onTextPaneChange: (TextPane) -> Unit,
     initial: WallpaperEdit,
     initialPanels: PanelAppearance,
     showInterfaceTab: Boolean = true,
@@ -137,6 +144,10 @@ internal fun ThemeEditorLayout(
     onDismiss: () -> Unit,
     onPick: () -> Unit,
     onRemove: () -> Unit,
+    textEditor: (@Composable (Modifier) -> Unit)? = null,
+    previewTheme: @Composable (@Composable () -> Unit) -> Unit = { it() },
+    previewDark: Boolean = false,
+    onPreviewDarkChange: (Boolean) -> Unit = {},
     onSave: (Rect?, WallpaperEdit, PanelAppearance) -> Unit,
 ) {
     val colors = LocalChatColors.current
@@ -146,7 +157,7 @@ internal fun ThemeEditorLayout(
     val currentImage = rememberWallpaperBitmap(currentWallpaper)
     var edit by remember { mutableStateOf(initial) }
     var panels by remember { mutableStateOf(initialPanels) }
-    var tab by remember(imageAction) { mutableStateOf(if (isNewImage || !hasWallpaper) EditTab.CROP else EditTab.ADJUST) }
+    LaunchedEffect(imageAction, isNewImage, hasWallpaper) { if (isNewImage || !hasWallpaper) onTabChange(EditTab.CROP) }
     var tool by remember { mutableStateOf(Tool.OPACITY) }
     var comparing by remember { mutableStateOf(false) }
     var zoom by remember(imageAction) { mutableFloatStateOf(1f) }
@@ -262,9 +273,10 @@ internal fun ThemeEditorLayout(
                                 val frameWidth = minOf(maxWidth, maxHeight * screenRatio)
                                 val frameHeight = frameWidth / screenRatio
                                 val frame = with(density) { Size(frameWidth.toPx(), frameHeight.toPx()) }
+                                val previewBackground = themePageBackground(previewDark, LocalAccentColor.current)
                                 androidx.compose.runtime.SideEffect { frameSize = frame }
                                 val drawBackground: DrawScope.() -> Unit = {
-                                    drawRect(colors.pageBackground)
+                                    drawRect(previewBackground)
                                     if (image != null && size.width > 0f && size.height > 0f) {
                                         val state = if (comparing) currentWallpaper.copy(opacity = 1f, brightness = 1f, contrast = 1f, saturation = 1f, blur = 0f, dim = 0f)
                                         else currentWallpaper.copy(
@@ -280,10 +292,10 @@ internal fun ThemeEditorLayout(
                                             val h = imageH * scale
                                             val left = (size.width - w) / 2f + offset.x
                                             val top = (size.height - h) / 2f + offset.y
-                                            drawWallpaperImage(image, state, RectF(left, top, left + w, top + h), colors.pageBackground, comparing)
+                                            drawWallpaperImage(image, state, RectF(left, top, left + w, top + h), previewBackground, comparing)
                                             if (state.dim > 0f) drawRect(Color.Black.copy(alpha = state.dim))
                                         } else {
-                                            drawWallpaper(image, state, colors.pageBackground, comparing)
+                                            drawWallpaper(image, state, previewBackground, comparing)
                                         }
                                     }
                                 }
@@ -313,8 +325,11 @@ internal fun ThemeEditorLayout(
                                         CompositionLocalProvider(
                                             LocalDensity provides Density(density.density * shrink, density.fontScale),
                                             LocalBubbleBackdrop provides bubbleBackdrop,
+                                            LocalIsDarkTheme provides previewDark,
                                         ) {
-                                            ThemeChatSample({ previewLayer?.let { drawLayer(it) } }, previewLayer != null, allowScroll = tab != EditTab.CROP)
+                                            previewTheme {
+                                                ThemeChatSample({ previewLayer?.let { drawLayer(it) } }, previewLayer != null, allowScroll = tab != EditTab.CROP)
+                                            }
                                         }
                                         if (cropActive) CropGuides()
                                     }
@@ -338,6 +353,11 @@ internal fun ThemeEditorLayout(
                                         ) {
                                             PanelControls(panels, liveBlur) { panels = it }
                                         }
+                                        EditTab.TEXT -> textEditor?.invoke(
+                                            Modifier.fillMaxWidth().then(
+                                                if (sideBySide) Modifier else Modifier.heightIn(max = effectsHeight).verticalScroll(rememberScrollState()),
+                                            ),
+                                        )
                                         EditTab.CROP -> {
                                             FlowRow(
                                                 Modifier.fillMaxWidth().padding(horizontal = Space.Screen, vertical = Space.Gap),
@@ -398,17 +418,35 @@ internal fun ThemeEditorLayout(
 
                         val tabs: @Composable () -> Unit = {
                             Row(
-                                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                                    .padding(horizontal = Space.Inline, vertical = Space.Gap),
-                                horizontalArrangement = Arrangement.spacedBy(Space.Gap, Alignment.CenterHorizontally),
+                                Modifier.fillMaxWidth().padding(horizontal = Space.Inline, vertical = Space.Gap),
+                                horizontalArrangement = Arrangement.spacedBy(Space.Gap),
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                EditTab.entries.filter { showInterfaceTab || it != EditTab.EFFECTS }.forEach { item ->
-                                    val label = when (item) {
-                                        EditTab.CROP -> R.string.wallpaper_editor_tab_crop
-                                        EditTab.ADJUST -> R.string.wallpaper_editor_tab_adjust
-                                        EditTab.EFFECTS -> R.string.theme_glass_and_panels
+                                Row(
+                                    Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(Space.Gap),
+                                ) {
+                                    listOf(EditTab.CROP, EditTab.ADJUST, EditTab.TEXT, EditTab.EFFECTS)
+                                        .filter { showInterfaceTab || it != EditTab.EFFECTS && it != EditTab.TEXT }
+                                        .forEach { item ->
+                                        val label = when (item) {
+                                            EditTab.CROP -> R.string.wallpaper_editor_tab_crop
+                                            EditTab.ADJUST -> R.string.wallpaper_editor_tab_adjust
+                                            EditTab.EFFECTS -> R.string.theme_glass_and_panels
+                                            EditTab.TEXT -> R.string.theme_text_tab
+                                        }
+                                        EditorPill(stringResource(label), selected = item == tab) { onTabChange(item) }
                                     }
-                                    EditorPill(stringResource(label), selected = item == tab, filled = true) { tab = item }
+                                }
+                                if (showInterfaceTab && textEditor != null) {
+                                    IconCircleButton(
+                                        icon = if (previewDark) AppIcons.Sun else AppIcons.Moon,
+                                        contentDescription = stringResource(if (previewDark) R.string.theme_text_switch_to_light else R.string.theme_text_switch_to_dark),
+                                        onClick = { onPreviewDarkChange(!previewDark) },
+                                        size = 40.dp,
+                                        iconSize = 20.dp,
+                                        outlined = true,
+                                    )
                                 }
                             }
                         }
@@ -416,17 +454,16 @@ internal fun ThemeEditorLayout(
                         if (sideBySide) {
                             Row(Modifier.weight(1f).fillMaxWidth()) {
                                 preview(Modifier.weight(1f).fillMaxHeight())
-                                Column(
-                                    Modifier.width(toolsWidth).fillMaxHeight()
-                                        .padding(end = Space.Inline, bottom = Space.Gap),
-                                ) {
-                                    tabs()
+                                Column(Modifier.width(toolsWidth).fillMaxHeight().padding(end = Space.Inline)) {
                                     toolContent(Modifier.weight(1f).verticalScroll(rememberScrollState()))
+                                    if (tab == EditTab.TEXT) ThemeTextSubtabs(textPane, onTextPaneChange)
+                                    tabs()
                                 }
                             }
                         } else {
                             preview(Modifier.weight(1f).fillMaxWidth())
-                            toolContent(Modifier)
+                            toolContent(Modifier.weight(1f).fillMaxWidth())
+                            if (tab == EditTab.TEXT) ThemeTextSubtabs(textPane, onTextPaneChange)
                             tabs()
                         }
                     }

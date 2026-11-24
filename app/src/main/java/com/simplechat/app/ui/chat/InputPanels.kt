@@ -71,6 +71,7 @@ import com.simplechat.app.ui.common.PillShape
 import com.simplechat.app.ui.common.SegmentedSwitch
 import com.simplechat.app.ui.common.SoftShape
 import com.simplechat.app.ui.theme.LocalChatColors
+import com.simplechat.app.ui.theme.floatingPanelSurface
 import kotlin.math.roundToInt
 
 /** 输入栏下方的面板容器。输入栏会上移，和选图面板一致。 */
@@ -81,6 +82,7 @@ fun InputPanel(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val shape = ContainerShape
+    val surface = floatingPanelSurface(InterfaceControl.INPUT_PANEL)
 
     // 面板自己的投影也做淡入，和输入栏投影的淡出对得上
     val elevation by animateDpAsState(
@@ -108,6 +110,7 @@ fun InputPanel(
                         spot = AppShadow.PanelSpot,
                         contactElevation = elevation / 4,
                         contactColor = AppShadow.PanelContactColor,
+                        opacity = surface.alpha,
                     )
                     .clip(shape)
                     // 悬浮玻璃（docs/32 §32.3.3），与输入栏同一个值、同一套下限

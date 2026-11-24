@@ -700,8 +700,8 @@ object AppShadow {
      * 数值是实机来回比对出来的：再低就"没有"，再高就"发脏"。
      */
     val PanelElevation = 8.dp
-    val PanelAmbient = Color.Black.copy(alpha = 0.10f)
-    val PanelSpot = Color.Black.copy(alpha = 0.18f)
+    val PanelAmbient = Color.Black.copy(alpha = 0.05f)
+    val PanelSpot = Color.Black.copy(alpha = 0.08f)
 
     /** 浮层（菜单）与抽屉：需要明确"浮起来"。 */
     val RaisedElevation = 16.dp
@@ -744,20 +744,21 @@ fun Modifier.layeredShadow(
     spot: Color,
     contactElevation: Dp,
     contactColor: Color,
+    opacity: Float = 1f,
 ): Modifier = this
     .shadow(
         elevation = elevation,
         shape = shape,
         clip = false,
-        ambientColor = ambient,
-        spotColor = spot,
+        ambientColor = ambient.copy(alpha = ambient.alpha * opacity.coerceIn(0f, 1f)),
+        spotColor = spot.copy(alpha = spot.alpha * opacity.coerceIn(0f, 1f)),
     )
     .shadow(
         elevation = contactElevation,
         shape = shape,
         clip = false,
-        ambientColor = contactColor,
-        spotColor = contactColor,
+        ambientColor = contactColor.copy(alpha = contactColor.alpha * opacity.coerceIn(0f, 1f)),
+        spotColor = contactColor.copy(alpha = contactColor.alpha * opacity.coerceIn(0f, 1f)),
     )
 
 /**

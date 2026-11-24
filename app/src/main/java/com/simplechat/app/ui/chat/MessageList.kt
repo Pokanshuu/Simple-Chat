@@ -109,6 +109,11 @@ import com.simplechat.app.data.InterfaceControl
 import com.simplechat.app.ui.theme.glassContrastForeground
 import com.simplechat.app.ui.theme.LocalAssistantFontFamily
 import com.simplechat.app.ui.theme.LocalUserFontFamily
+import com.simplechat.app.ui.theme.LocalTypographySettings
+import com.simplechat.app.ui.theme.LocalTypographyFonts
+import com.simplechat.app.ui.theme.LocalTypographyTextColor
+import com.simplechat.app.ui.theme.TypographyCategory
+import com.simplechat.app.data.FontSlot
 import com.simplechat.app.ui.common.PillShape
 import androidx.compose.animation.animateContentSize
 import com.simplechat.app.ui.common.MotionEasing
@@ -546,21 +551,28 @@ private fun MessageRow(
     SearchHighlightHost(search, onDismissSearch) {
     Column(modifier = Modifier.fillMaxWidth().then(windowPressListener)) {
         when (message.role) {
-            MessageRole.USER -> UserBubble(
-                message = message,
-                interactive = actionable && !selectionActive,
-                selecting = selecting,
-                selectionState = selectionState,
-                // 点一下就进「修改输入」（对齐官方入口习惯）
-                onClick = onEdit,
-                onLongClick = { menuOpen = true },
-                onOpenImage = onOpenImage,
-                menu = menu,
-                pressListener = pressListener,
-                onFoldToggle = onFoldToggle,
-            )
+            MessageRole.USER -> {
+                val userContent: @Composable () -> Unit = {
+                    UserBubble(
+                        message = message,
+                        interactive = actionable && !selectionActive,
+                        selecting = selecting,
+                        selectionState = selectionState,
+                        // 点一下就进「修改输入」（对齐官方入口习惯）
+                        onClick = onEdit,
+                        onLongClick = { menuOpen = true },
+                        onOpenImage = onOpenImage,
+                        menu = menu,
+                        pressListener = pressListener,
+                        onFoldToggle = onFoldToggle,
+                    )
+                }
+                if (LocalTypographySettings.current == null) userContent()
+                else TypographyCategory(FontSlot.USER, userContent)
+            }
 
-            MessageRole.ASSISTANT -> AssistantBlock(
+            MessageRole.ASSISTANT -> {
+                val assistantContent: @Composable () -> Unit = { AssistantBlock(
                 message = message,
                 loadingLabel = loadingLabel,
                 loadingWordsUseThemeColor = loadingWordsUseThemeColor,
@@ -582,7 +594,10 @@ private fun MessageRow(
                 pressListener = pressListener,
                 // 与用户气泡同一条补偿：展开思考内容时"上方固定、向下展开"
                 onFoldToggle = onFoldToggle,
-            )
+                ) }
+                if (LocalTypographySettings.current == null) assistantContent()
+                else TypographyCategory(FontSlot.ASSISTANT, assistantContent)
+            }
         }
 
         if (showActions && actionable && !sharing && !isUser) {
@@ -640,8 +655,9 @@ fun UserBubble(
      * 用户发言层的自定义字体（设置 → 外观 → 字体 → 我的发言）。
      * 未选择时直接用全局排版本身，不 copy —— 保持原来的常量语义。
      */
-    val userFont = LocalUserFontFamily.current
+    val userFont = LocalTypographyFonts.current.user ?: LocalUserFontFamily.current
     val baseBodyStyle = MaterialTheme.typography.bodyLarge
+    val categoryTextColor = LocalTypographyTextColor.current
     val userTextStyle = if (userFont == null) baseBodyStyle else baseBodyStyle.copy(fontFamily = userFont)
 
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
@@ -785,7 +801,7 @@ fun UserBubble(
                                                     modifier = searchModifier,
                                                     onTextLayout = onSearchLayout,
                                                     style = userTextStyle,
-                                                    color = colors.onUserBubble,
+                                                    color = categoryTextColor ?: colors.onUserBubble,
                                                 )
                                             }
                                         }
@@ -815,7 +831,7 @@ fun UserBubble(
                                                 )
                                             } else Modifier,
                                             style = userTextStyle,
-                                            color = colors.onUserBubble,
+                                            color = categoryTextColor ?: colors.onUserBubble,
                                             maxLines = UserBubbleCollapsedLines,
                                             overflow = TextOverflow.Clip,
                                             onTextLayout = { folded = it.didOverflowHeight },

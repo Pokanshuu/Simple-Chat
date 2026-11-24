@@ -93,9 +93,9 @@ fun markdownBodyStyle(cjk: Boolean): TextStyle {
      * 才 `.copy` 一次。没选时仍返回那个常量对象，避免每块 Markdown 都新建样式
      * （那会让 Compose 判为样式变化，整段重排版）。
      */
-    val family = LocalAssistantFontFamily.current ?: return if (cjk) MarkdownBodyCjkStyle else MarkdownBodyWesternStyle
     val base = if (cjk) MarkdownBodyCjkStyle else MarkdownBodyWesternStyle
-    return base.copy(fontFamily = family)
+    val family = LocalTypographyFonts.current.assistant ?: LocalAssistantFontFamily.current
+    return if (family == null) base else base.copy(fontFamily = family)
 }
 
 /** 中文档正文：左对齐（原因见上）。 */

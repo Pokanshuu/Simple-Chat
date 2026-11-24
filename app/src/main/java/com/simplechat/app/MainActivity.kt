@@ -165,6 +165,8 @@ class MainActivity : ComponentActivity() {
                 accent = accent,
                 fontScale = fontScale,
                 uiFontFamily = uiFont,
+                typographySettings = current?.typography,
+                typographyFonts = com.simplechat.app.ui.theme.TypographyFonts(uiFont, userFont, assistantFont),
             ) {
                 ApplySystemBarAppearance()
                 CompositionLocalProvider(

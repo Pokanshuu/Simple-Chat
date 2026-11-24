@@ -8,6 +8,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import com.simplechat.app.data.FontFiles
 import com.simplechat.app.data.ImportedFont
+import com.simplechat.app.data.StoredSettings
+import com.simplechat.app.data.TypographyDraft
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
@@ -49,6 +51,26 @@ fun fontFamilyOf(context: Context, font: ImportedFont): FontFamily? {
 fun forgetFontFamily(context: Context, font: ImportedFont) {
     fontFamilyCache.remove(FontFiles.fileOf(context, font.fileName).absolutePath)
 }
+
+/** Resolve the three selected font IDs from an editor draft using the same cache as runtime. */
+fun typographyFontsOf(context: Context, fonts: List<ImportedFont>, draft: TypographyDraft): TypographyFonts {
+    fun find(id: String?) = id?.let { selected -> fonts.firstOrNull { it.id == selected }?.let { fontFamilyOf(context, it) } }
+    return TypographyFonts(
+        ui = find(draft.uiFontId),
+        user = find(draft.userFontId),
+        assistant = find(draft.assistantFontId),
+    )
+}
+
+fun typographyFontsOf(context: Context, settings: StoredSettings): TypographyFonts =
+    typographyFontsOf(context, settings.fonts, TypographyDraft(
+        fontScale = settings.fontScale,
+        followSystemFont = settings.followSystemFont,
+        uiFontId = settings.uiFontId,
+        userFontId = settings.userFontId,
+        assistantFontId = settings.assistantFontId,
+        typography = settings.typography,
+    ))
 
 /**
  * 把整套排版换成指定字体族。

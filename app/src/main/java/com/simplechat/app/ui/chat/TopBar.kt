@@ -6,7 +6,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -30,6 +30,9 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import com.simplechat.app.R
 import com.simplechat.app.ui.common.AppIcons
+import com.simplechat.app.ui.common.Space
+
+private val TopBarActionSize = 48.dp
 
 /** 顶栏：`☰` 标题 ｜ 自动朗读 · 新建对话。设置入口在抽屉底部。 */
 @Composable
@@ -80,8 +83,8 @@ fun ChatTopBar(
             }
             .fillMaxWidth()
             .then(if (applyStatusBarInset) Modifier.statusBarsPadding() else Modifier)
-            .height(56.dp)
-            .padding(horizontal = 8.dp),
+            .heightIn(min = TopBarActionSize)
+            .padding(horizontal = Space.Gap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TopBarAction(AppIcons.Menu, stringResource(R.string.topbar_history), onMenu)
@@ -91,7 +94,7 @@ fun ChatTopBar(
             color = MaterialTheme.colorScheme.onBackground,
             modifier = Modifier
                 .weight(1f)
-                .padding(start = 8.dp),
+                .padding(start = Space.Gap),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -121,7 +124,7 @@ private fun TopBarAction(
 ) {
     Box(
         modifier = Modifier
-            .size(48.dp)
+            .size(TopBarActionSize)
             .clip(CircleShape)
             .semantics { if (state != null) stateDescription = state }
             .clickable(onClick = onClick),

@@ -59,6 +59,7 @@ fun MarkdownWithMath(
     }
 
     val fontSize = MaterialTheme.typography.bodyLarge.fontSize
+    val categoryTextColor = com.simplechat.app.ui.theme.LocalTypographyTextColor.current
     /*
      * 公式主题：**透明底 + 正文色**。
      *
@@ -70,7 +71,7 @@ fun MarkdownWithMath(
      * 强制浅色 / 深色，两者可能不一致 —— 会出现"深色页面上一段黑公式"。
      */
     val dark = LocalIsDarkTheme.current
-    val textColor = MaterialTheme.colorScheme.onBackground
+    val textColor = categoryTextColor ?: MaterialTheme.colorScheme.onBackground
     val latexTheme = remember(dark, textColor) {
         if (dark) LatexTheme.dark(color = textColor) else LatexTheme.light(color = textColor)
     }

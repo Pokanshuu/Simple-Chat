@@ -23,6 +23,10 @@ import com.simplechat.app.data.AttachmentFiles
 import com.simplechat.app.ui.markdown.*
 import com.simplechat.app.ui.theme.LocalChatColors
 import com.simplechat.app.ui.theme.AccentColor
+import com.simplechat.app.ui.theme.TypographyFonts
+import com.simplechat.app.data.TypographySettings
+import com.simplechat.app.data.FontSlot
+import com.simplechat.app.ui.theme.TypographyCategory
 import com.simplechat.app.ui.theme.ProcessTextStyle
 import com.simplechat.app.ui.common.BubbleShapeOut
 import java.io.File
@@ -37,7 +41,12 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
     mode: ShareImageMode = ShareImageMode.PAGES,
     accent: AccentColor = AccentColor.BLUE,
     hideBranding: Boolean = false,
-    hideReasoning: Boolean = true): List<File> = withContext(Dispatchers.Default) {
+    hideReasoning: Boolean = true,
+    typography: TypographySettings? = null,
+    typographyFonts: TypographyFonts = TypographyFonts(),
+    fontScale: Float = 1f,
+    systemFontScale: Float = 1f,
+): List<File> = withContext(Dispatchers.Default) {
     val characterCount = document.messages.sumOf { message ->
         shareImageText(message, hideReasoning).sumOf { it.text.length.toLong() } +
             message.attachments.filterNot { it.isImage }.sumOf { it.data.length.toLong() }
@@ -45,7 +54,9 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
     require(characterCount <= 200_000) { context.getString(R.string.share_image_too_long) }
     val fonts = loadExportFonts(context)
     val directory = shareDirectory(context)
-    val renderer = try { ShareComposeRenderer.create(context, accent) }
+    val renderer = try {
+        ShareComposeRenderer.create(context, accent, typography, typographyFonts, fontScale, systemFontScale)
+    }
         catch (error: Throwable) { directory.deleteRecursively(); throw error }
     val memoryClass = (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).memoryClass
     val writer = ShareImageWriter(context, directory, document.title, shareImagePageHeight(mode, memoryClass), mode == ShareImageMode.LONG, hideBranding, document.excerptFooter)
@@ -59,6 +70,7 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
                 val options = MarkdownExportOptions(fonts, rows, metrics,
                     tableHeader = rows?.first == 0 || tablePage != writer.pageNumber)
                 val size = renderer.measure {
+                    TypographyCategory(if (user) FontSlot.USER else FontSlot.ASSISTANT) {
                     CompositionLocalProvider(LocalMarkdownExport provides options) {
                         when (block) {
                             is ShareRenderBlock.Formula -> ExportFormula(block.tex, block.source)
@@ -81,6 +93,7 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
                                 } else Text(block.source, style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.fillMaxWidth())
                         }
+                    }
                     }
                 }
                 val atomic = block is ShareRenderBlock.Formula || block is ShareRenderBlock.Table
@@ -164,7 +177,8 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
         throw error
     } finally { renderer.close() }
     // Rerender at the ordinary page size so row boundaries and repeated headers remain correct.
-    result ?: exportSharedImages(context, document, ShareImageMode.PAGES, accent, hideBranding, hideReasoning)
+    result ?: exportSharedImages(context, document, ShareImageMode.PAGES, accent, hideBranding, hideReasoning,
+        typography, typographyFonts, fontScale, systemFontScale)
 }
 
 /** Cut only in a blank horizontal band between native text lines, never through glyph ink. */

@@ -201,6 +201,8 @@ data class StoredSettings(
     val userFontId: String? = null,
     /** 模型回复层选中的字体 id；null = 系统字体。 */
     val assistantFontId: String? = null,
+    /** Per-category type size and color overrides; absent in legacy settings means all inherit defaults. */
+    val typography: TypographySettings = TypographySettings(),
     /** 聊天背景壁纸：`filesDir/wallpaper/` 下的文件名；null = 不使用。 */
     val wallpaperPath: String? = null,
     /** 壁纸叠在背景色上的不透明度（0..1）。太实会盖住气泡对比度，默认偏淡。 */
@@ -362,12 +364,13 @@ class SettingsStore(
             defaultModeId = prefs[Keys.DEFAULT_MODE] ?: StoredSettings().defaultModeId,
             languageId = prefs[LANGUAGE_KEY] ?: StoredSettings().languageId,
             apiStyleId = prefs[Keys.API_STYLE] ?: StoredSettings().apiStyleId,
-            fonts = prefs[Keys.FONTS]?.let { raw ->
-                runCatching { apiProfileJson.decodeFromString<List<ImportedFont>>(raw) }.getOrNull()
-            } ?: emptyList(),
+            fonts = readImportedFonts(prefs),
             uiFontId = prefs[Keys.UI_FONT],
             userFontId = prefs[Keys.USER_FONT],
             assistantFontId = prefs[Keys.ASSISTANT_FONT],
+            typography = prefs[Keys.TYPOGRAPHY]?.let { raw ->
+                runCatching { apiProfileJson.decodeFromString<TypographySettings>(raw) }.getOrNull()
+            } ?: TypographySettings(),
             wallpaperPath = prefs[Keys.WALLPAPER],
             wallpaperOpacity = prefs[Keys.WALLPAPER_OPACITY] ?: StoredSettings().wallpaperOpacity,
             acrylicEnabled = prefs[Keys.ACRYLIC_ENABLED] ?: false,
@@ -534,6 +537,11 @@ class SettingsStore(
         preferences.edit { it[Keys.FOLLOW_SYSTEM_FONT] = follow }
     }
 
+    private fun readImportedFonts(prefs: Preferences): List<ImportedFont> =
+        prefs[Keys.FONTS]?.let { raw ->
+            runCatching { apiProfileJson.decodeFromString<List<ImportedFont>>(raw) }.getOrNull()
+        }.orEmpty()
+
     private fun readLoadingWords(prefs: Preferences): List<String> =
         prefs[Keys.LOADING_WORDS]?.let { raw ->
             runCatching { apiProfileJson.decodeFromString<List<String>>(raw) }.getOrNull()
@@ -612,7 +620,27 @@ class SettingsStore(
 
     /** 保存导入的字体列表（只存元数据，字节在 filesDir/fonts）。 */
     suspend fun setFonts(fonts: List<ImportedFont>) {
-        preferences.edit { it[Keys.FONTS] = apiProfileJson.encodeToString(fonts) }
+        preferences.edit { it[Keys.FONTS] = apiProfileJson.encodeToString(fonts.distinctBy(ImportedFont::id)) }
+    }
+
+    /** Append an imported font without racing another editor operation. */
+    suspend fun addImportedFont(font: ImportedFont) {
+        preferences.edit { prefs ->
+            val fonts = readImportedFonts(prefs).filterNot { it.id == font.id } + font
+            prefs[Keys.FONTS] = apiProfileJson.encodeToString(fonts)
+        }
+    }
+
+    /** Remove the registry entry and clear selections that refer to it atomically. */
+    suspend fun removeImportedFont(id: String) {
+        if (id.isBlank()) return
+        preferences.edit { prefs ->
+            val fonts = readImportedFonts(prefs).filterNot { it.id == id }
+            prefs[Keys.FONTS] = apiProfileJson.encodeToString(fonts)
+            listOf(Keys.UI_FONT, Keys.USER_FONT, Keys.ASSISTANT_FONT).forEach { key ->
+                if (prefs[key] == id) prefs.remove(key)
+            }
+        }
     }
 
     /** 设置某一层用哪个字体；`null` 表示回到系统字体。 */
@@ -654,6 +682,7 @@ class SettingsStore(
         wallpaper: WallpaperAppearance,
         panels: PanelAppearance,
         resetWallpaperPlacement: Boolean,
+        typographyDraft: TypographyDraft? = null,
     ) {
         preferences.edit { prefs ->
             if (wallpaperPath == null) prefs.remove(Keys.WALLPAPER) else prefs[Keys.WALLPAPER] = wallpaperPath
@@ -679,7 +708,30 @@ class SettingsStore(
             prefs[Keys.OPACITY_EXCLUDED] = panels.controlEffects.opacityExcluded
             prefs[Keys.PANEL_ACCENT_ENABLED] = panels.accentEnabled
             prefs[Keys.PANEL_ACCENT_OPACITY] = panels.accentOpacity.coerceIn(0f, MaxPanelAccentOpacity)
+            typographyDraft?.let { prefs.writeTypographySettings(it) }
         }
+    }
+
+    /** Save the global font preferences, font selections and text overrides in one update. */
+    suspend fun saveTypographySettings(draft: TypographyDraft) {
+        preferences.edit { it.writeTypographySettings(draft) }
+    }
+
+    private fun MutablePreferences.writeTypographySettings(draft: TypographyDraft) {
+        require(draft.fontScale.isFinite() && draft.fontScale > 0f)
+        require(FontSlot.entries.all { slot ->
+            draft.typography[slot].fontScale?.let { it.isFinite() && it > 0f } ?: true
+        })
+        this[Keys.FONT_SCALE] = draft.fontScale
+        this[Keys.FOLLOW_SYSTEM_FONT] = draft.followSystemFont
+        writeFontId(Keys.UI_FONT, draft.uiFontId)
+        writeFontId(Keys.USER_FONT, draft.userFontId)
+        writeFontId(Keys.ASSISTANT_FONT, draft.assistantFontId)
+        this[Keys.TYPOGRAPHY] = apiProfileJson.encodeToString(draft.typography)
+    }
+
+    private fun MutablePreferences.writeFontId(key: Preferences.Key<String>, fontId: String?) {
+        if (fontId == null) remove(key) else this[key] = fontId
     }
 
     /** 自定义截取位置开关。 */
@@ -968,6 +1020,8 @@ class SettingsStore(
         val UI_FONT = stringPreferencesKey("ui_font")
         val USER_FONT = stringPreferencesKey("user_font")
         val ASSISTANT_FONT = stringPreferencesKey("assistant_font")
+        /** Version-tolerant typography overrides; missing keys inherit existing global/theme settings. */
+        val TYPOGRAPHY = stringPreferencesKey("typography_settings")
 
         /** 壁纸文件名（filesDir/wallpaper 下）；空 = 不使用。 */
         val WALLPAPER = stringPreferencesKey("wallpaper")

@@ -21,6 +21,8 @@ import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalDensity
+import com.simplechat.app.data.TypographySettings
+import com.simplechat.app.ui.theme.TypographyFonts
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
 import com.simplechat.app.ui.theme.SimpleChatTheme
@@ -37,7 +39,8 @@ import kotlin.coroutines.resumeWithException
 
 /** A one-pixel, non-interactive host. Only records into a private graphics layer; draws no UI. */
 internal class ShareComposeRenderer private constructor(context: Context, private val parent: ViewGroup,
-    private val accent: AccentColor) {
+    private val accent: AccentColor, private val typography: TypographySettings?, private val fonts: TypographyFonts,
+    private val globalScale: Float, private val systemScale: Float) {
     private class Content(val body: @Composable () -> Unit) {
         var size by mutableStateOf(IntSize.Zero)
     }
@@ -63,8 +66,9 @@ internal class ShareComposeRenderer private constructor(context: Context, privat
         host.addView(compose)
         parent.addView(host, ViewGroup.LayoutParams(1, 1))
         compose.setContent {
-            CompositionLocalProvider(LocalDensity provides Density(2f, 1f)) {
-                SimpleChatTheme(themeMode = ThemeMode.LIGHT, accent = accent) {
+            CompositionLocalProvider(LocalDensity provides Density(2f, systemScale)) {
+                SimpleChatTheme(themeMode = ThemeMode.LIGHT, accent = accent, typographySettings = typography,
+                    typographyFonts = fonts, fontScale = globalScale / systemScale) {
                     val layer = rememberGraphicsLayer()
                     val item = content
                     key(item) {
@@ -123,7 +127,14 @@ internal class ShareComposeRenderer private constructor(context: Context, privat
     }
 
     companion object {
-        suspend fun create(context: Context, accent: AccentColor = AccentColor.BLUE): ShareComposeRenderer = suspendCancellableCoroutine { continuation ->
+        suspend fun create(
+            context: Context,
+            accent: AccentColor = AccentColor.BLUE,
+            typography: TypographySettings? = null,
+            fonts: TypographyFonts = TypographyFonts(),
+            globalScale: Float = 1f,
+            systemScale: Float = 1f,
+        ): ShareComposeRenderer = suspendCancellableCoroutine { continuation ->
             val handler = Handler(Looper.getMainLooper())
             val create = Runnable {
                 if (continuation.isActive) {
@@ -131,7 +142,7 @@ internal class ShareComposeRenderer private constructor(context: Context, privat
                         var owner = context
                         while (owner is ContextWrapper && owner !is Activity) owner = owner.baseContext
                         val activity = owner as? Activity ?: error("Image export requires a visible activity")
-                        val renderer = ShareComposeRenderer(activity, activity.window.decorView as ViewGroup, accent)
+                        val renderer = ShareComposeRenderer(activity, activity.window.decorView as ViewGroup, accent, typography, fonts, globalScale, systemScale)
                         continuation.resume(renderer, onCancellation = { _, resource, _ -> handler.post { resource.closeNow() } })
                     } catch (error: Exception) { continuation.resumeWithException(error) }
                 }

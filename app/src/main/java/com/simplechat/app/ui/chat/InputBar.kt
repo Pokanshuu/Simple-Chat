@@ -244,6 +244,7 @@ internal fun InputBar(
                         spot = AppShadow.PanelSpot,
                         contactElevation = shadowElevation / 4,
                         contactColor = AppShadow.PanelContactColor,
+                        opacity = background.alpha,
                     )
                     .clip(shape)
                     // 语音态是实心主色 / 错误色，不参与玻璃

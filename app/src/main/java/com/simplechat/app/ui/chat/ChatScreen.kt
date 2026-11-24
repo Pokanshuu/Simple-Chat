@@ -89,11 +89,11 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.Layout
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.drawscope.translate
-import androidx.compose.foundation.layout.offset
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -1858,7 +1858,7 @@ fun ChatScreen(
 
         }
 
-        val overlay: @Composable () -> Unit = {
+        val backToBottom: @Composable () -> Unit = {
             Box(Modifier.fillMaxSize()) {
                 // Outside the recorded scene: this button samples that scene itself.
                 val atBottom by rememberIsAtBottom(listState)
@@ -1891,6 +1891,10 @@ fun ChatScreen(
                         .padding(end = 16.dp, bottom = 12.dp)
                         .offset { IntOffset(0, -inputAreaHeight.value) },
                 )
+            }
+        }
+        val overlay: @Composable () -> Unit = {
+            Box(Modifier.fillMaxSize()) {
                 /*
                  * 消息索引（§34）—— **盖在最上面**：索引开着的时候输入栏、回到底部、
                  * 面板统统按不动，用户就是在找路。点遮罩即收。
@@ -1930,8 +1934,8 @@ fun ChatScreen(
             modifier = contentWidth
                 .weight(1f)
                 .then(if (shareSelection.active) Modifier else Modifier.messageIndexDrag(messageIndex)),
-            contents = listOf(backdrop, composer, overlay),
-        ) { (backdrop, composer, overlay), constraints ->
+            contents = listOf(backdrop, backToBottom, composer, overlay),
+        ) { (backdrop, backToBottom, composer, overlay), constraints ->
             val input = composer.single().measure(constraints.copy(minHeight = 0))
             val height = input.height
             val previousHeight = Snapshot.withoutReadObservation {
@@ -1951,9 +1955,11 @@ fun ChatScreen(
                 inputAreaHeight.value = height
             }
             val background = backdrop.single().measure(constraints)
+            val scrollButton = backToBottom.single().measure(constraints)
             val foreground = overlay.single().measure(constraints)
             layout(background.width, background.height) {
                 background.placeRelative(0, 0)
+                scrollButton.placeRelative(0, 0)
                 input.placeRelative(0, background.height - height)
                 foreground.placeRelative(0, 0)
             }

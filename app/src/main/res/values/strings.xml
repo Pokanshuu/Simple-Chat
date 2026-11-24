@@ -213,7 +213,22 @@
     <string name="settings_data_summary">导入 / 导出 / 清空</string>
     <string name="settings_appearance">外观</string>
     <string name="settings_accent">主题</string>
-    <string name="settings_custom_theme">自定义主题与壁纸</string>
+    <string name="settings_custom_theme">字体主题与壁纸</string>
+    <string name="theme_text_tab">文字</string>
+    <string name="theme_text_size">文字大小</string>
+    <string name="theme_text_user">气泡文字</string>
+    <string name="theme_text_assistant">回复文字</string>
+    <string name="theme_text_ui">界面文字</string>
+    <string name="theme_text_custom_color">自定义颜色</string>
+    <string name="theme_text_use_accent">使用主题色</string>
+    <string name="theme_text_custom_size">单独调整文字大小</string>
+    <string name="theme_text_custom_size_hint">开启后，此类别不再跟随全局文字大小</string>
+    <string name="theme_text_hue">色相</string>
+    <string name="theme_text_saturation">饱和度</string>
+    <string name="theme_text_lightness">亮度</string>
+    <string name="theme_text_sample_user">你好，欢迎回来。</string>
+    <string name="theme_text_sample_reply">这是一段回复预览，用来检查中英文混排、文字间距与行高。\n\n- 列表与标题会沿用相同的字体设置。\n- 分式 \(\\frac{a+b}{c+d}\) 仍然保持完整。</string>
+    <string name="theme_text_import_font">导入字体</string>
     <string name="theme_advanced">高级选项</string>
     <string name="theme_accent_column">主题色</string>
     <string name="theme_input">输入框</string>
@@ -1033,6 +1048,9 @@
     <string name="theme_recommended">（推荐）</string>
     <string name="theme_acrylic_clear">清透</string>
     <string name="theme_acrylic_heavy">厚重</string>
+    <string name="theme_text_switch_to_light">切换至浅色预览</string>
+    <string name="theme_text_switch_to_dark">切换至深色预览</string>
+    <string name="theme_text_color_value">当前预览文字色</string>
 </resources>
 
 

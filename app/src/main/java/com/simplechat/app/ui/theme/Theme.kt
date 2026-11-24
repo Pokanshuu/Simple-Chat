@@ -10,12 +10,18 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
+import com.simplechat.app.ui.theme.tokens.ThemeTokens
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.Density
+import com.simplechat.app.data.FontSlot
+import com.simplechat.app.data.TypographyDraft
+import com.simplechat.app.data.TypographySettings
 import com.simplechat.app.R
 import com.simplechat.app.data.Res
 
@@ -166,6 +172,8 @@ val LocalChatColors = staticCompositionLocalOf { LightChatColors }
  * 它们原来是写死的淡蓝（`CapsuleSelectedLight` / `UserBubbleLight`），
  * 换成绿色主题后若还留着蓝，一眼就是"没换干净"。
  */
+fun themePageBackground(dark: Boolean, accent: AccentColor): Color = chatColors(dark, accent).pageBackground
+
 private fun chatColors(dark: Boolean, accent: AccentColor): ChatColors {
     val tint = tintOf(accent.primary(dark), dark)
     return (if (dark) DarkChatColors else LightChatColors).copy(
@@ -188,6 +196,193 @@ private fun chatColors(dark: Boolean, accent: AccentColor): ChatColors {
  */
 val LocalIsDarkTheme = staticCompositionLocalOf { false }
 val LocalAccentColor = staticCompositionLocalOf { AccentColor.BLUE }
+
+/** Persisted typography settings. Null keeps the pre-category runtime exactly unchanged. */
+val LocalTypographySettings = staticCompositionLocalOf<TypographySettings?> { null }
+
+/** Fonts resolved by the caller from stored font IDs. */
+@Immutable
+data class TypographyFonts(val ui: FontFamily? = null, val user: FontFamily? = null, val assistant: FontFamily? = null) {
+    operator fun get(slot: FontSlot): FontFamily? = when (slot) {
+        FontSlot.USER -> user
+        FontSlot.ASSISTANT -> assistant
+        FontSlot.UI -> ui
+    }
+}
+
+val LocalTypographyFonts = staticCompositionLocalOf { TypographyFonts() }
+val LocalTypographyGlobalScale = staticCompositionLocalOf { 1f }
+val LocalTypographyTextColor = staticCompositionLocalOf<Color?> { null }
+internal val LocalSystemTextScale = staticCompositionLocalOf<Float?> { null }
+internal val LocalBaseTextScheme = staticCompositionLocalOf<ColorScheme?> { null }
+internal val LocalBaseChatColors = staticCompositionLocalOf<ChatColors?> { null }
+
+internal fun resolveCategoryFontScale(
+    settings: com.simplechat.app.data.CategoryTypographySettings,
+    globalScale: Float,
+    systemScale: Float,
+): Float = if (settings.overrideFontSizeEnabled && settings.fontScale?.let { it.isFinite() && it > 0f } == true) {
+    (systemScale * checkNotNull(settings.fontScale)).takeIf { it.isFinite() && it > 0f } ?: globalScale
+} else globalScale
+
+/** Scope children to one typography category, applying its saved size and optional color. */
+@Composable
+fun TypographyCategory(slot: FontSlot, content: @Composable () -> Unit) {
+    val settings = LocalTypographySettings.current ?: return content()
+    val category = settings[slot]
+    val density = LocalDensity.current
+    val globalScale = LocalTypographyGlobalScale.current
+    val systemScale = LocalSystemTextScale.current ?: density.fontScale
+    val categoryScale = resolveCategoryFontScale(category, globalScale, systemScale)
+    val baseScheme = LocalBaseTextScheme.current ?: MaterialTheme.colorScheme
+    val baseColors = LocalBaseChatColors.current ?: LocalChatColors.current
+    val defaultColor = when (slot) {
+        FontSlot.USER -> baseColors.onUserBubble
+        FontSlot.ASSISTANT -> baseScheme.onBackground
+        FontSlot.UI -> baseScheme.onBackground
+    }
+    val themeColor = when (slot) {
+        FontSlot.USER -> baseScheme.primary
+        FontSlot.UI -> if (category.useThemeColor) baseScheme.primary else null
+        FontSlot.ASSISTANT -> null
+    }
+    val resolved = category.effectiveTextColor(
+        slot = slot,
+        isDark = LocalIsDarkTheme.current,
+        defaultArgb = defaultColor.toArgb(),
+        themeArgb = themeColor?.toArgb(),
+    )
+    val effectiveColor = Color(resolved).takeIf {
+        category.customColorEnabled || (slot != FontSlot.ASSISTANT && category.useThemeColor)
+    }
+    val baseTypography = SimpleChatTypography
+    val explicitFont = LocalTypographyFonts.current[slot]
+    val legacyFont = when (slot) {
+        FontSlot.USER -> LocalUserFontFamily.current
+        FontSlot.ASSISTANT -> LocalAssistantFontFamily.current
+        FontSlot.UI -> null
+    }
+    // User bubbles historically inherited the UI font when no user font was selected.
+    val chosenFont = explicitFont ?: legacyFont ?: LocalTypographyFonts.current.ui.takeIf { slot == FontSlot.USER }
+    val effectiveScheme = when {
+        effectiveColor == null -> baseScheme
+        slot == FontSlot.USER -> baseScheme
+        else -> baseScheme.copy(
+            onBackground = effectiveColor,
+            onSurface = effectiveColor,
+            onSurfaceVariant = effectiveColor.copy(alpha = 0.78f),
+        )
+    }
+    val effectiveChatColors = when {
+        effectiveColor == null -> baseColors
+        slot == FontSlot.USER -> baseColors.copy(onUserBubble = effectiveColor)
+        slot == FontSlot.ASSISTANT -> baseColors.copy(processText = effectiveColor.copy(alpha = 0.78f))
+        else -> baseColors.copy(
+            processText = effectiveColor.copy(alpha = 0.78f),
+            placeholder = effectiveColor.copy(alpha = 0.55f),
+        )
+    }
+    CompositionLocalProvider(
+        LocalDensity provides Density(density.density, categoryScale),
+        LocalTypographyTextColor provides effectiveColor,
+        LocalChatColors provides effectiveChatColors,
+    ) {
+        val scopedTypography = when (slot) {
+            FontSlot.USER, FontSlot.ASSISTANT -> baseTypography.copy(
+                bodyLarge = chosenFont?.let { baseTypography.bodyLarge.copy(fontFamily = it) } ?: baseTypography.bodyLarge,
+                bodyMedium = chosenFont?.let { baseTypography.bodyMedium.copy(fontFamily = it) } ?: baseTypography.bodyMedium,
+            )
+            FontSlot.UI -> {
+                val uiFont = LocalTypographyFonts.current.ui
+                if (uiFont != null) baseTypography.withFontFamily(uiFont) else baseTypography
+            }
+        }
+        MaterialTheme(colorScheme = effectiveScheme, typography = scopedTypography) {
+            CompositionLocalProvider(
+                LocalContentColor provides (effectiveColor ?: effectiveScheme.onBackground),
+                content = content,
+            )
+        }
+    }
+}
+
+/** Preview the exact runtime typography contract from an editor draft without mutating stored state. */
+@Composable
+fun TypographyPreview(
+    draft: TypographyDraft,
+    fonts: TypographyFonts,
+    dark: Boolean,
+    systemFontScale: Float? = null,
+    content: @Composable () -> Unit,
+) {
+    val density = LocalDensity.current
+    val systemScale = systemFontScale?.takeIf { it.isFinite() && it > 0f }
+        ?: LocalSystemTextScale.current ?: density.fontScale
+    val requestedGlobalScale = if (draft.followSystemFont) systemScale else draft.fontScale
+    val globalScale = requestedGlobalScale.takeIf { it.isFinite() && it > 0f } ?: systemScale
+    val themeColor = LocalAccentColor.current
+    val previewTokens = remember(dark, themeColor) {
+        com.simplechat.app.ui.theme.tokens.ThemeTokens(dark = dark, colors = chatColors(dark, themeColor), scheme = staticScheme(dark, themeColor))
+    }
+    CompositionLocalProvider(
+        com.simplechat.app.ui.theme.tokens.LocalThemeTokens provides previewTokens,
+        LocalChatColors provides previewTokens.colors,
+        LocalBaseTextScheme provides previewTokens.scheme,
+        LocalBaseChatColors provides previewTokens.colors,
+        LocalAccentColor provides themeColor,
+        LocalIsDarkTheme provides dark,
+        LocalTypographySettings provides draft.typography,
+        LocalTypographyFonts provides fonts,
+        LocalUserFontFamily provides fonts.user,
+        LocalAssistantFontFamily provides fonts.assistant,
+        LocalTypographyGlobalScale provides globalScale,
+        LocalSystemTextScale provides systemScale,
+        LocalDensity provides Density(density.density, globalScale),
+    ) {
+        TypographyCategory(FontSlot.UI, content)
+    }
+}
+
+@Composable
+fun TypographyCategoryPreview(
+    draft: TypographyDraft,
+    fonts: TypographyFonts,
+    dark: Boolean,
+    slot: FontSlot,
+    systemFontScale: Float? = null,
+    content: @Composable () -> Unit,
+) {
+    val density = LocalDensity.current
+    val systemScale = systemFontScale?.takeIf { it.isFinite() && it > 0f }
+        ?: LocalSystemTextScale.current ?: density.fontScale
+    val requestedGlobalScale = if (draft.followSystemFont) systemScale else draft.fontScale
+    val globalScale = requestedGlobalScale.takeIf { it.isFinite() && it > 0f } ?: systemScale
+    val themeColor = LocalAccentColor.current
+    val previewTokens = remember(dark, themeColor) {
+        com.simplechat.app.ui.theme.tokens.ThemeTokens(
+            dark = dark,
+            colors = chatColors(dark, themeColor),
+            scheme = staticScheme(dark, themeColor),
+        )
+    }
+    CompositionLocalProvider(
+        com.simplechat.app.ui.theme.tokens.LocalThemeTokens provides previewTokens,
+        LocalChatColors provides previewTokens.colors,
+        LocalBaseTextScheme provides previewTokens.scheme,
+        LocalBaseChatColors provides previewTokens.colors,
+        LocalAccentColor provides themeColor,
+        LocalIsDarkTheme provides dark,
+        LocalTypographySettings provides draft.typography,
+        LocalTypographyFonts provides fonts,
+        LocalUserFontFamily provides fonts.user,
+        LocalAssistantFontFamily provides fonts.assistant,
+        LocalTypographyGlobalScale provides globalScale,
+        LocalSystemTextScale provides systemScale,
+        LocalDensity provides Density(density.density, globalScale),
+    ) {
+        TypographyCategory(slot, content)
+    }
+}
 
 /**
  * 品牌色色板。
@@ -259,6 +454,8 @@ fun SimpleChatTheme(
     fontScale: Float = 1f,
     /** 软件 UI 字体层；null = 系统字体。不影响用户发言与模型回复（那两层各自覆盖）。 */
     uiFontFamily: FontFamily? = null,
+    typographySettings: TypographySettings? = null,
+    typographyFonts: TypographyFonts = TypographyFonts(ui = uiFontFamily),
     /**
      * 主题文件（docs/33）。null = 内置主题。解析顺序：内置默认值 ← 主题文件 ← 用户设置（accent 等），
      * 最后由 [com.simplechat.app.ui.theme.tokens.ThemeResolver] 做可读性兜底。
@@ -284,6 +481,8 @@ fun SimpleChatTheme(
 
     val baseDensity = LocalDensity.current
 
+    val systemTextScale = baseDensity.fontScale
+    val typographyGlobalScale = systemTextScale * fontScale
     CompositionLocalProvider(
         com.simplechat.app.ui.theme.tokens.LocalThemeTokens provides tokens,
         // 旧入口保留：LocalChatColors 与 MaterialTheme.colorScheme 都来自同一份 tokens，
@@ -291,6 +490,12 @@ fun SimpleChatTheme(
         LocalChatColors provides tokens.colors,
         LocalIsDarkTheme provides dark,
         LocalAccentColor provides accent,
+        LocalTypographySettings provides typographySettings,
+        LocalTypographyFonts provides typographyFonts,
+        LocalTypographyGlobalScale provides typographyGlobalScale,
+        LocalSystemTextScale provides systemTextScale,
+        LocalBaseTextScheme provides scheme,
+        LocalBaseChatColors provides tokens.colors,
         LocalDensity provides Density(
             density = baseDensity.density,
             fontScale = baseDensity.fontScale * fontScale,
@@ -298,13 +503,11 @@ fun SimpleChatTheme(
     ) {
         MaterialTheme(
             colorScheme = scheme,
-            typography = if (uiFontFamily != null) {
-                SimpleChatTypography.withFontFamily(uiFontFamily)
-            } else {
-                SimpleChatTypography
-            },
+            typography = if (uiFontFamily != null) SimpleChatTypography.withFontFamily(uiFontFamily) else SimpleChatTypography,
         ) {
-            CompositionLocalProvider(LocalContentColor provides scheme.onBackground, content = content)
+            CompositionLocalProvider(LocalContentColor provides scheme.onBackground) {
+                TypographyCategory(FontSlot.UI, content)
+            }
         }
     }
 }
