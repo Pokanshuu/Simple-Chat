@@ -53,7 +53,9 @@ private fun isSupportedLatex(tex: String): Boolean {
         var count = 0
         while (pending.isNotEmpty()) {
             val node = pending.removeLast()
-            if (++count > 8_000 || node is LatexNode.Error || node is LatexNode.Command) return false
+            // The parser accepts unknown environments as generic containers. Rendering
+            // their children alone would silently discard the environment's meaning.
+            if (++count > 8_000 || node is LatexNode.Error || node is LatexNode.Command || node is LatexNode.Environment) return false
             node.children().forEach { pending.addLast(it) }
         }
         true

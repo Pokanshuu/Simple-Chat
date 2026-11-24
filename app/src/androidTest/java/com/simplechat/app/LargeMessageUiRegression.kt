@@ -80,9 +80,9 @@ internal object LargeMessageUiRegression {
                 visit(checkNotNull(root) { "No accessibility root" })
                 return result
             }
-            val pageCount = (content.length + 7999) / 8000
-            check(nodes().any { it.text?.contains("/$pageCount") == true }) { "Large-message pager was not rendered" }
-            status("21-million-character message measured with bounded Compose nodes")
+            val openLabel = instrumentation.targetContext.getString(R.string.large_message_open)
+            check(nodes().any { it.text?.toString() == openLabel }) { "Full-text reader entry was not rendered" }
+            status("21-million-character message preview measured with bounded Compose nodes")
             instrumentation.runOnMainSync {
                 target.value = SearchTarget(message.id, "UI_SEARCH_NEAR_END", 1, ready = true)
             }
@@ -93,7 +93,7 @@ internal object LargeMessageUiRegression {
             val bounds = Rect()
             hit.getBoundsInScreen(bounds)
             check(hit.isVisibleToUser && bounds.height() > 0)
-            status("search near the end opens the matching page and exposes the hit")
+            status("search opens the continuous reader near the end and exposes the hit")
             instrumentation.runOnMainSync {
                 activity.setContent { SimpleChatTheme { MessageList(vm.messages, Modifier.fillMaxSize()) } }
             }

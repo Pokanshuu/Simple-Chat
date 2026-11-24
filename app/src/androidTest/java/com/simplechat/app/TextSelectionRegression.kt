@@ -268,8 +268,8 @@ internal object TextSelectionRegression {
             for ((name, role, body) in listOf(
                 Triple("user", MessageRole.USER, "Anchor user bubble has original selectable text."),
                 Triple("expanded-user", MessageRole.USER, "Anchor expanded user bubble.\n" + "User chunk text stays in order.\n".repeat(100)),
-                Triple("paged", MessageRole.ASSISTANT,
-                    "First page.\n\n".padEnd(MESSAGE_PAGE_CHARS, ' ') + "Anchor second page.\n\n" + "Paged paragraph.\n\n".repeat(2100)),
+                Triple("long-reply", MessageRole.ASSISTANT,
+                    "Anchor continuous reply.\n\n" + ("Continuous paragraph. ".repeat(10) + "\n\n").repeat(180)),
             )) {
                 reset(role, body)
                 if (name == "expanded-user") {
@@ -278,13 +278,6 @@ internal object TextSelectionRegression {
                     val bounds = Rect().also { button.getBoundsInScreen(it) }
                     press(bounds.exactCenterX(), bounds.exactCenterY())
                     delay(300)
-                }
-                if (name == "paged") {
-                    val next = findText(instrumentation.targetContext.getString(R.string.page_next))
-                    var button: AccessibilityNodeInfo? = next
-                    while (button != null && !button.isClickable) button = button.parent
-                    check(button?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true)
-                    delay(400)
                 }
                 enter()
                 if (name == "expanded-user") {
@@ -301,7 +294,7 @@ internal object TextSelectionRegression {
                 check(anchors() == before) { "$name selection changed offscreen" }
                 tapText("Outside selection")
                 check(!withContext(Dispatchers.Main) { selection.isActive })
-                enter() // Immediate menu re-entry after exit, including a pinned page.
+                enter() // Immediate menu re-entry after exit, including a pinned long reply.
                 status("$name: original-point selection, offscreen return, tap exit and immediate menu re-entry")
             }
         } finally {

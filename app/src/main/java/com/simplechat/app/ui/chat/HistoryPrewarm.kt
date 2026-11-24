@@ -19,10 +19,10 @@ internal fun historyPrewarmBodies(messages: List<UiMessage>, before: Int): List<
         var remainingChars = MarkdownPrewarmMaxChars
         for (index in before - 1 downTo (before - 4).coerceAtLeast(0)) {
             val row = messages[index]
-            // Timeline answers can contain rewritten citations, and paged rows render slices.
-            // Both get their exact block keys through the normal render path.
+            // Timeline answers can contain rewritten citations, so their exact block keys
+            // are only available when the message renders.
             if (row.role != MessageRole.ASSISTANT || row.streaming || row.timeline.isNotEmpty() ||
-                (row.reasoning?.length ?: 0) > LARGE_MESSAGE_CHARS || row.content.length !in 1..remainingChars
+                row.content.length !in 1..remainingChars
             ) continue
             add(row.content)
             remainingChars -= row.content.length

@@ -314,10 +314,7 @@
     <string name="crash_report_hint">Device, version and stack frames only; no chat content or API keys</string>
     <string name="crash_report_missing">No crash diagnostic record is available</string>
     <string name="import_report_missing">No import report is available. Import a backup first.</string>
-    <string name="large_message_paged">Long message shown in pages. Full text is saved.</string>
-    <string name="large_message_reasoning">Reasoning</string>
-    <string name="page_previous">Previous</string>
-    <string name="page_next">Next</string>
+    <string name="large_message_open">View full text</string>
     <string name="import_done_expected"> · %1$d conversations in the archive</string>
     <string name="import_done_duplicates"> · %1$d already present</string>
     <string name="import_done_failed"> · %1$d could not be imported: %2$s</string>

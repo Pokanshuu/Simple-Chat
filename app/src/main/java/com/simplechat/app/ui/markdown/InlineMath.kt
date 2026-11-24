@@ -108,17 +108,26 @@ internal fun rememberInlineMath(
         theme = if (dark) LatexTheme.dark(color = color) else LatexTheme.light(color = color)) }
     val measurer = rememberLatexMeasurer(config)
     val density = LocalDensity.current
-    val inline = remember(document, measurer, config, dark, density, maxWidth) { document.formulas.mapNotNull { (id, formula) ->
-        val presentation = prepareLatexPresentation(formula.tex)
-        measurer.inlinePresentation(presentation, config, dark, color, density)?.fitWidth(maxWidth, density)?.let { id to it }
-    }.toMap() }
+    val presentations = remember(document.formulas) { document.formulas.mapValues { prepareLatexPresentation(it.value.tex) } }
+    val measured = remember(presentations, measurer, config, dark, density) {
+        presentations.mapNotNull { (id, presentation) ->
+            measurer.inlinePresentation(presentation, config, dark, color, density)?.let { id to it }
+        }.toMap()
+    }
+    val exporting = fonts != null
+    val inline = remember(measured, maxWidth, density, exporting) {
+        measured.mapValues { (_, formula) -> formula.fitWidth(maxWidth, density, exporting) }
+    }
     val annotator = remember(document, inline) { markdownAnnotator { content, child ->
         if (child.type != MarkdownElementTypes.CODE_SPAN) false else {
             val tokens = content.substring(child.startOffset, child.endOffset).trim('`').split(' ')
             if (!tokens.all(document.formulas::containsKey)) false else {
                 for (token in tokens) {
                     val formula = document.formulas.getValue(token)
-                    if (inline.containsKey(token)) appendInlineContent(token, formula.source) else append(formula.source)
+                    if (inline.containsKey(token)) {
+                        // Compose placeholders cannot cross paragraph boundaries.
+                        appendInlineContent(token, formula.source.lineSequence().joinToString(" "))
+                    } else append(formula.source)
                 }
                 true
             }

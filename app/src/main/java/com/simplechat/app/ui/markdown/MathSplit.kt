@@ -89,7 +89,7 @@ internal fun splitMath(content: String): List<ContentSegment> {
             else -> null
         }
         if (closer != null) {
-            val end = mathClose(content, i + 2, closer, minOf(limit, i + 32_004), singleLine = closer == "\\)")
+            val end = mathClose(content, i + 2, closer, minOf(limit, i + 32_004), opener = if (closer == "\\)") "\\(" else null)
             if (end > i + 2) {
                 val tex = content.substring(i + 2, end).trim()
                 if (tex.isNotEmpty()) {
@@ -133,7 +133,9 @@ internal fun splitMath(content: String): List<ContentSegment> {
 }
 
 private val StandaloneEnvironments = setOf(
-    "equation", "equation*", "align", "align*", "aligned", "gather", "gather*", "multline", "multline*", "cases",
+    "equation", "equation*", "align", "align*", "aligned", "alignat", "alignat*", "alignedat",
+    "flalign", "flalign*", "gather", "gather*", "gathered", "multline", "multline*", "split", "subequations",
+    "cases", "dcases", "rcases", "drcases", "array", "matrix", "pmatrix", "bmatrix", "Bmatrix", "vmatrix", "Vmatrix", "smallmatrix",
 )
 
 private fun displayEnvironmentEnd(source: String, start: Int, limit: Int): Int {
@@ -142,7 +144,7 @@ private fun displayEnvironmentEnd(source: String, start: Int, limit: Int): Int {
     val name = source.substring(nameStart, nameEnd)
     if (name !in StandaloneEnvironments) return -1
     val close = "\\end{$name}"
-    val end = mathClose(source, nameEnd + 1, close, limit, singleLine = false)
+    val end = mathClose(source, nameEnd + 1, close, limit, allowBlankLines = true)
     val stop = end + close.length
     return if (end > nameEnd + 1 && source.isStandalone(start, stop)) stop else -1
 }
@@ -168,14 +170,22 @@ private fun mathExcludedRanges(source: String): List<IntRange> {
 
 private val MathMarkdownSyntax = Regex("[\u0060~<]|\\]\\(|(?m)^(?: {4}|\\t| {0,3}\\[)")
 
-private fun mathClose(content: String, start: Int, closer: String, limit: Int, singleLine: Boolean): Int {
+private fun mathClose(
+    content: String,
+    start: Int,
+    closer: String,
+    limit: Int,
+    opener: String? = null,
+    allowBlankLines: Boolean = false,
+): Int {
     var i = start
     var lineHasContent = true
     while (i < limit) {
         val char = content[i]
         if (i + closer.length <= limit && content.startsWith(closer, i)) return i
+        if (opener != null && content.startsWith(opener, i)) return -1
         if (char in LineBreaks) {
-            if (singleLine || !lineHasContent) return -1
+            if (!allowBlankLines && !lineHasContent) return -1
             lineHasContent = false
             if (char == '\r' && content.getOrNull(i + 1) == '\n') i++
         } else if (!char.isWhitespace()) {

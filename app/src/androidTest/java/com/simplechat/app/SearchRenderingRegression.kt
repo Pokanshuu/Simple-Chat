@@ -71,7 +71,7 @@ internal object SearchRenderingRegression {
                 Triple("code", MessageRole.ASSISTANT, "$paragraphs\n\n```kotlin\n" + (1..100).joinToString("\n") { "val line$it = $it" } + "\nval keyword = \"章鱼\"\n```"),
                 Triple("table", MessageRole.ASSISTANT, "$paragraphs\n\n| 名称 | 描述 |\n| --- | --- |\n| 测试 | **章鱼** |"),
                 Triple("user", MessageRole.USER, (1..80).joinToString("\n") { "用户输入第 $it 行" } + "\n章鱼：保留用户消息样式"),
-                Triple("page", MessageRole.ASSISTANT, "正常段落。\n\n".repeat(6000) + "**章鱼**：搜索自动打开对应分页。"),
+                Triple("long", MessageRole.ASSISTANT, ("正常段落，保留长回复中的 Markdown 和公式。".repeat(10) + "\n\n").repeat(180) + "**章鱼**：连续长回复末尾的搜索命中。"),
             )
             var request = 0L
             for (theme in listOf(ThemeMode.DARK, ThemeMode.LIGHT)) {

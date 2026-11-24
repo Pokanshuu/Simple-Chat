@@ -155,6 +155,30 @@ class MathSplitTest {
         assertTrue(displayMathSegments("```tex\n$align\n```").none { it is ContentSegment.Formula })
     }
 
+    @Test fun explicitInlineMathCanWrapInTheSourceWithoutSwallowingLaterParagraphs() {
+        val formula = "\\(\\Delta = 144m^2 - 40(3m^2+6) > 0\n\\Rightarrow m^2 > 10\\)"
+        val source = "先计算 $formula。\n\n未闭合 \\(a+b\n\n下一段 \\(x^2\\)。"
+        val document = inlineMathDocument(source)
+        assertEquals(listOf(formula, "\\(x^2\\)"), document.formulas.values.map { it.source })
+        assertEquals(source, document.restore(document.markdown))
+        assertTrue(document.formulas.values.all { prepareLatexPresentation(it.tex).canRender })
+        assertEquals(listOf("x"), splitMath("\\(unclosed\n\\(x\\)").filterIsInstance<ContentSegment.Formula>().map { it.tex })
+    }
+
+    @Test fun standaloneMatricesAndAmsAlignmentsUseTheMathRenderer() {
+        for (body in listOf(
+            """\begin{pmatrix} a&b \\ c&d \end{pmatrix}""",
+            """\begin{alignedat}{2} a&=b & c&=d \end{alignedat}""",
+            """\begin{split} a&=b \\ &=c \end{split}""",
+            """\begin{dcases} a & x>0 \\ b & x\leq0 \end{dcases}""",
+        )) {
+            val formula = displayMathSegments("前\n$body\n后").filterIsInstance<ContentSegment.Formula>().single()
+            assertTrue(formula.display)
+            assertEquals(body, formula.source)
+            assertTrue(body, prepareLatexPresentation(formula.tex).canRender)
+        }
+    }
+
     @Test fun sameLineBracketMathDoesNotBreakATableRow() {
         val source = "| 前 \\[|x|\\] 后 | y |"
         val formula = splitMath(source).filterIsInstance<ContentSegment.Formula>().single()

@@ -31,7 +31,7 @@ class HistoryPrewarmTest {
             reply("ready"),
             reply("partial").copy(status = MessageStatus.STREAMING),
             reply("raw").copy(timeline = listOf(ReplyBlock.Text("rendered"))),
-            reply("paged").copy(reasoning = "r".repeat(LARGE_MESSAGE_CHARS + 1)),
+            reply("x".repeat(LARGE_MESSAGE_CHARS + 1)),
         )
         assertEquals(listOf("ready"), historyPrewarmBodies(entries, before = entries.size))
     }

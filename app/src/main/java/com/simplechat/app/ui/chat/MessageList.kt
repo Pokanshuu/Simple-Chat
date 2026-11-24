@@ -545,37 +545,7 @@ private fun MessageRow(
     CompositionLocalProvider(com.simplechat.app.ui.markdown.LocalSelectionTextHits provides selectionHits.takeIf { selecting }) {
     SearchHighlightHost(search, onDismissSearch) {
     Column(modifier = Modifier.fillMaxWidth().then(windowPressListener)) {
-        if (message.content.length > LARGE_MESSAGE_CHARS || (message.reasoning?.length ?: 0) > LARGE_MESSAGE_CHARS) {
-            Column(Modifier.then(pressListener).combinedClickable(
-                enabled = actionable && !selectionActive,
-                onClick = if (isUser) onEdit else onTogglePeek,
-                onLongClick = { menuOpen = true },
-                onDoubleClick = if (isUser) null else ({ selectionFromMenu = false; onSelectingChange(selectionState) }),
-            )) {
-            if (message.attachments.isNotEmpty()) MessageAttachments(message.attachments, onOpenImage)
-            message.reasoning?.takeIf { it.isNotEmpty() }?.let {
-                Text(stringResource(R.string.large_message_reasoning), style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                val highlight = LocalSearchHighlight.current.takeIf { search?.reasoningMatch == true }
-                CompositionLocalProvider(LocalSearchHighlight provides highlight) {
-                    PagedMessageBody(it, fontFamily = LocalAssistantFontFamily.current)
-                }
-            }
-            val highlight = LocalSearchHighlight.current.takeUnless { search?.reasoningMatch == true }
-            CompositionLocalProvider(LocalSearchHighlight provides highlight) {
-                SelectableText(selecting, selectionState) {
-                    PagedMessageBody(
-                        message.content,
-                        markdown = !isUser,
-                        fontFamily = if (isUser) LocalUserFontFamily.current else LocalAssistantFontFamily.current,
-                    )
-                }
-            }
-            message.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            menu()
-            }
-        }
-        else when (message.role) {
+        when (message.role) {
             MessageRole.USER -> UserBubble(
                 message = message,
                 interactive = actionable && !selectionActive,
@@ -747,7 +717,9 @@ fun UserBubble(
                             inUserBubble = true,
                         )
                     }
-                    if (message.content.isNotBlank()) {
+                    if (message.content.length > LARGE_MESSAGE_CHARS) {
+                        LargeMessageBody(message.content, userFont)
+                    } else if (message.content.isNotBlank()) {
                         /*
                          * 超长正文的**两态渲染**（根因与实测见设计文档 §31）：
                          *
@@ -1102,7 +1074,11 @@ fun AssistantBlock(
         ) {
             SelectableText(selecting, selectionState) {
                 CompositionLocalProvider(LocalCitationClick provides onCitationClick, LocalSearchHighlight provides answerHighlight) {
-                    MarkdownWithMath(content = answer, streaming = message.streaming)
+                    if (answer.length > LARGE_MESSAGE_CHARS) {
+                        LargeMessageBody(answer, LocalAssistantFontFamily.current)
+                    } else {
+                        MarkdownWithMath(content = answer, streaming = message.streaming)
+                    }
                 }
             }
         }

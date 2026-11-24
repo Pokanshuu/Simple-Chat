@@ -191,6 +191,10 @@ private fun ThinkingStep(step: TimelineStep.Thinking) {
         return
     }
     val colors = LocalChatColors.current
+    if (step.text.length > LARGE_MESSAGE_CHARS) {
+        LargeMessageBody(step.text, null)
+        return
+    }
     val (searchDecoration, onTextLayout) = rememberSearchTextDecoration(step.text)
     Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
         ThinkingGutter(

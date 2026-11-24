@@ -53,6 +53,11 @@ internal object MathLayoutRegression {
             \[\ovalbox{\frac{1}{2}}\quad\text{\small 中文}\]
 
             \(\underbrace{${"x+".repeat(60)}x}_{\text{一行长公式}}\)
+
+            > 引用宽公式 \(\overbrace{${"y+".repeat(55)}y}\)：后面的文字仍然可见。
+
+            多行判别式 \(\Delta = 144m^2 - 40(3m^2+6)>0
+            \Rightarrow 144m^2 - 120m^2 - 240 >0 \Rightarrow m^2>10\)。
         """.trimIndent()
         try {
             instrumentation.waitForIdleSync(); delay(1000)
@@ -88,10 +93,14 @@ internal object MathLayoutRegression {
                 check(fallback.layoutInput.text.text.contains("\\(\\unknown{原文}\\)"))
                 check(fallback.placeholderRects.count { it != null } == 1)
                 val wide = layouts.single { it.layoutInput.text.text.contains("\\underbrace") }
-                check(wide.placeholderRects.isEmpty()) { "Oversized inline formula was shrunk below readable size" }
+                check(wide.placeholderRects.singleOrNull() != null) { "Oversized inline formula should use a scrollable viewport" }
                 check(wide.layoutInput.text.text.contains("一行长公式") &&
                     wide.layoutInput.text.text.endsWith("\\)")) { "Oversized inline formula lost source" }
-                check(layouts.sumOf { it.lineCount } < 30) { "Math layout is still fragmented" }
+                val quote = layouts.single { it.layoutInput.text.text.contains("引用宽公式") }
+                check(quote.placeholderRects.singleOrNull() != null && quote.layoutInput.text.text.contains("后面的文字仍然可见"))
+                val multiline = layouts.single { it.layoutInput.text.text.contains("多行判别式") }
+                check(multiline.placeholderRects.singleOrNull() != null) { "Multiline inline TeX remained source" }
+                check(layouts.sumOf { it.lineCount } < 36) { "Math layout is still fragmented" }
                 delay(300)
                 instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
                     File(instrumentation.targetContext.cacheDir, "math-mixed-${theme.name.lowercase()}.png")

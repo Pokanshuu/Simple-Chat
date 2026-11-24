@@ -316,10 +316,7 @@
     <string name="crash_report_hint">仅包含设备、版本和异常堆栈，不含聊天正文或密钥</string>
     <string name="crash_report_missing">暂无崩溃诊断记录</string>
     <string name="import_report_missing">暂无导入报告，请先执行一次导入</string>
-    <string name="large_message_paged">长消息分页显示，全文已完整保存</string>
-    <string name="large_message_reasoning">思考内容</string>
-    <string name="page_previous">上一页</string>
-    <string name="page_next">下一页</string>
+    <string name="large_message_open">查看全文原文</string>
     <string name="import_done_expected"> · 归档共 %1$d 个会话</string>
     <string name="import_done_duplicates"> · 已有 %1$d 个</string>
     <string name="import_done_failed"> · %1$d 个未能导入：%2$s</string>

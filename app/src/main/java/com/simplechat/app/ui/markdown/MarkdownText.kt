@@ -277,17 +277,6 @@ internal suspend fun warmMarkdownCache(content: String, warmBlock: (String) -> U
 @Composable
 private fun MarkdownBlockView(math: InlineMathDocument, isTail: Boolean) {
     val text = math.markdown
-    if (math.formulas.isEmpty()) {
-        MarkdownBlockContents(text, isTail, math, Constraints.Infinity)
-    } else {
-        BoxWithConstraints {
-            MarkdownBlockContents(text, isTail, math, constraints.maxWidth)
-        }
-    }
-}
-
-@Composable
-private fun MarkdownBlockContents(text: String, isTail: Boolean, math: InlineMathDocument, maxFormulaWidth: Int) {
     val colors = LocalChatColors.current
     val scheme = MaterialTheme.colorScheme
 
@@ -313,7 +302,7 @@ private fun MarkdownBlockContents(text: String, isTail: Boolean, math: InlineMat
         StreamingProse(text = text, style = bodyStyle, color = scheme.onBackground, modifier = modifier)
         return
     }
-    val inlineMath = if (math.formulas.isNotEmpty()) rememberInlineMath(math, maxFormulaWidth) else null
+    val inlineMath = if (math.formulas.isNotEmpty()) rememberInlineMath(math, Constraints.Infinity) else null
 
     /*
      * 符号与引用条的颜色跟主题走，**字号/行高必须与正文一致**：
@@ -426,7 +415,7 @@ private fun MarkdownBlockContents(text: String, isTail: Boolean, math: InlineMat
                 // 下划线常驻会让中文正文里到处是"着重线"，很吵。
                 textLink = TextLinkStyles(style = SpanStyle(color = scheme.primary)),
             ),
-            components = selectionMeasuredComponents(rememberSearchableMarkdownComponents(markdownComponents(
+            components = selectionMeasuredComponents(rememberSearchableMarkdownComponents(widthAwareMathComponents(markdownComponents(
                 codeFence = collapsibleCodeFence,
                 codeBlock = highlightedCodeBlock,
                 table = adaptiveTable,
@@ -435,8 +424,45 @@ private fun MarkdownBlockContents(text: String, isTail: Boolean, math: InlineMat
                 orderedList = markdownOrderedList,
                 checkbox = taskCheckbox,
                 horizontalRule = spacedHorizontalRule,
-            ))),
+            )))),
         )
+    }
+}
+
+/** Lists and quotes can be narrower than the Markdown block that owns the formula map. */
+private fun widthAwareMathComponents(original: com.mikepenz.markdown.compose.components.MarkdownComponents) =
+    object : com.mikepenz.markdown.compose.components.MarkdownComponents by original {
+        override val text = widthAwareMath(original.text)
+        override val paragraph = widthAwareMath(original.paragraph)
+        override val heading1 = widthAwareMath(original.heading1)
+        override val heading2 = widthAwareMath(original.heading2)
+        override val heading3 = widthAwareMath(original.heading3)
+        override val heading4 = widthAwareMath(original.heading4)
+        override val heading5 = widthAwareMath(original.heading5)
+        override val heading6 = widthAwareMath(original.heading6)
+        override val setextHeading1 = widthAwareMath(original.setextHeading1)
+        override val setextHeading2 = widthAwareMath(original.setextHeading2)
+    }
+
+private fun widthAwareMath(original: MarkdownComponent): MarkdownComponent = { model ->
+    val document = LocalInlineMathDocument.current
+    val math = remember(document, model.content, model.node) {
+        if (document == null || document.formulas.isEmpty()) null
+        else document.forBlock(model.content.substring(model.node.startOffset, model.node.endOffset))
+    }
+    if (math == null || math.formulas.isEmpty()) original(model)
+    else BoxWithConstraints {
+        val inherited = LocalMarkdownInlineContent.current.inlineContent
+        val exporting = LocalMarkdownExport.current != null
+        val density = LocalDensity.current
+        val width = constraints.maxWidth
+        val fitted = remember(inherited, math.formulas.keys, width, density, exporting) {
+            inherited.filterKeys(math.formulas::containsKey).mapValues { (_, formula) ->
+                formula.fitWidth(width, density, exporting)
+            }
+        }
+        val inline = com.mikepenz.markdown.model.markdownInlineContent(fitted)
+        CompositionLocalProvider(LocalMarkdownInlineContent provides inline) { original(model) }
     }
 }
 

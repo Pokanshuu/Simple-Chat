@@ -26,6 +26,7 @@ class LatexCompatibilityTest {
     }
     @Test fun `unsupported commands fall back instead of rendering an error node`() {
         assertNull(prepareLatexPresentation("""\definitelyunsupported{不能消失}""").nativeTex)
+        assertFalse(prepareLatexPresentation("""\begin{tikzpicture}x\end{tikzpicture}""").canRender)
         assertNotNull(prepareLatexPresentation("""\frac{1}{2} + \sqrt{x^2}""").nativeTex)
         assertFalse(prepareLatexPresentation("""\frac{1}{2}""").simplified)
     }

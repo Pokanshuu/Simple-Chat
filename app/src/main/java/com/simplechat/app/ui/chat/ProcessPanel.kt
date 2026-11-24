@@ -115,6 +115,7 @@ fun ProcessPanel(
 
         when {
             reasoningStreaming -> TailContent(reasoning)
+            expanded && reasoning.length > LARGE_MESSAGE_CHARS -> LargeMessageBody(reasoning, null)
             expanded -> FullContent(reasoning)
             else -> Unit
         }

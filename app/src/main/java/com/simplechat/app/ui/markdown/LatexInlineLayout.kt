@@ -2,6 +2,11 @@ package com.simplechat.app.ui.markdown
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.wrapContentSize
+import com.simplechat.app.ui.chat.preferHorizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
@@ -40,7 +45,7 @@ internal fun LatexMeasurerState.inlinePresentation(
 ): InlineTextContent? {
     presentation.nativeTex?.let { tex ->
         val content = inlineContent(tex, config, dark) ?: return null
-        return content.fitWidth(Constraints.Infinity, density)
+        return content.takeIf { it.hasValidFormulaSize(density) }
     }
     if (presentation.ovalParts.isEmpty()) return null
     val parts = presentation.ovalParts.map { part ->
@@ -156,29 +161,39 @@ internal fun FormulaInlineText(inline: InlineTextContent, source: String, style:
 }
 
 private const val MaxFormulaDimension = 8_192
-private const val MinInlineFormulaScale = 0.55f
+private fun InlineTextContent.hasValidFormulaSize(density: Density): Boolean = with(density) {
+    placeholder.width.toPx() in 0f..MaxFormulaDimension.toFloat() &&
+        placeholder.height.toPx() in 0f..MaxFormulaDimension.toFloat()
+}
 
-/** An inline placeholder wider than its paragraph can disappear entirely. Scale the drawing with its slot. */
-internal fun InlineTextContent.fitWidth(maxWidth: Int, density: Density): InlineTextContent? {
-    val widthPx = with(density) { placeholder.width.toPx() }
-    val heightPx = with(density) { placeholder.height.toPx() }
-    if (!widthPx.isFinite() || !heightPx.isFinite() || maxWidth <= 0 ||
-        widthPx > MaxFormulaDimension || heightPx > MaxFormulaDimension) return null
-    val width = ceil(widthPx).toInt().coerceAtLeast(1)
-    val height = ceil(heightPx).toInt().coerceAtLeast(1)
+/** A formula wider than its paragraph gets a bounded viewport at natural size in chat. */
+internal fun InlineTextContent.fitWidth(maxWidth: Int, density: Density, exporting: Boolean): InlineTextContent {
+    if (maxWidth <= 0 || maxWidth == Constraints.Infinity) return this
+    val width = with(density) { ceil(placeholder.width.toPx()).toInt().coerceAtLeast(1) }
+    val height = with(density) { ceil(placeholder.height.toPx()).toInt().coerceAtLeast(1) }
     if (width <= maxWidth) return this
-    val scale = maxWidth.toFloat() / width
-    if (scale < MinInlineFormulaScale) return null
-    val scaledHeight = ceil(height * scale).toInt().coerceAtLeast(1)
-    val slot = with(density) { Placeholder((maxWidth - 0.5f).toSp(), scaledHeight.toSp(), placeholder.placeholderVerticalAlign) }
+    val slotWidth = (maxWidth - 1).coerceAtLeast(1)
+    val scale = if (exporting) slotWidth.toFloat() / width else 1f
+    val slotHeight = ceil(height * scale).toInt().coerceAtLeast(1)
+    val slot = with(density) { Placeholder(slotWidth.toSp(), slotHeight.toSp(), placeholder.placeholderVerticalAlign) }
     return InlineTextContent(slot) { text ->
-        Layout(content = { Box { children(text) } }) { children, constraints ->
-            val child = children.single().measure(Constraints.fixed(width, height))
-            layout(constraints.constrainWidth(maxWidth), constraints.constrainHeight(scaledHeight)) {
-                child.placeWithLayer(0, 0) {
-                    transformOrigin = TransformOrigin(0f, 0f)
-                    scaleX = scale
-                    scaleY = scale
+        if (exporting) {
+            Layout(content = { Box { children(text) } }) { children, constraints ->
+                val child = children.single().measure(Constraints.fixed(width, height))
+                layout(constraints.constrainWidth(slotWidth), constraints.constrainHeight(slotHeight)) {
+                    child.placeWithLayer(0, 0) {
+                        transformOrigin = TransformOrigin(0f, 0f)
+                        scaleX = scale
+                        scaleY = scale
+                    }
+                }
+            }
+        } else {
+            Box(Modifier.preferHorizontalScroll().horizontalScroll(rememberScrollState())) {
+                val naturalWidth = with(density) { width.toDp() }
+                val naturalHeight = with(density) { height.toDp() }
+                Box(Modifier.requiredSize(naturalWidth, naturalHeight).wrapContentSize(Alignment.TopStart)) {
+                    children(text)
                 }
             }
         }
