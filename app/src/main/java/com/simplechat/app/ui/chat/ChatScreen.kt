@@ -94,6 +94,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -203,6 +204,13 @@ fun ChatScreen(
     onConfigureImageApi: () -> Unit = {},
     onConfigureApi: () -> Unit = {},
     constrainContentWidth: Boolean = false,
+    /**
+     * 宽屏时的壁纸参考坐标系（px，0 = 不启用）：
+     * 壁纸按整个窗口适配，[wallpaperFrameLeftPx] 是本区左边缘在窗口里的位置。
+     * 竖屏抽屉不占布局宽度，两个值都是 0。
+     */
+    wallpaperFrameWidthPx: Int = 0,
+    wallpaperFrameLeftPx: Int = 0,
 ) {
     val colors = LocalChatColors.current
     val focusManager = LocalFocusManager.current
@@ -1152,7 +1160,26 @@ fun ChatScreen(
              * 适配方式与位置在绘制矩形里算 —— 用 nativeCanvas 是因为 Compose 的
              * `drawImage` 不接受 colorFilter，而重新编码一张位图来调色既慢又占内存。
              */
-            .sharedSceneBackground(wallpaperLayer, alpha = { wallpaperFade.value }, bubbleBackdrop = bubbleBackdrop) { wallpaperBitmap?.let { drawWallpaper(it, wallpaper, colors.pageBackground) } }
+            .sharedSceneBackground(wallpaperLayer, alpha = { wallpaperFade.value }, bubbleBackdrop = bubbleBackdrop) {
+                wallpaperBitmap?.let { image ->
+                    if (wallpaperFrameWidthPx > 0) {
+                        // 宽屏：和侧栏共用一张按整窗适配的壁纸，这里只画自己那一段。
+                        // 必须裁到本区 —— 平移后的绘制会溢出到左侧侧栏，把侧栏内容糊掉。
+                        clipRect {
+                            translate(-wallpaperFrameLeftPx.toFloat(), 0f) {
+                                drawWallpaper(
+                                    image,
+                                    wallpaper,
+                                    colors.pageBackground,
+                                    area = Size(wallpaperFrameWidthPx.toFloat(), size.height),
+                                )
+                            }
+                        }
+                    } else {
+                        drawWallpaper(image, wallpaper, colors.pageBackground)
+                    }
+                }
+            }
             .dismissMessageSelectionOnTap(textSelection),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {

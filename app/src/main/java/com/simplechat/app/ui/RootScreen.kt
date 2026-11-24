@@ -47,6 +47,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.runtime.mutableIntStateOf
@@ -62,6 +64,11 @@ import com.simplechat.app.ui.theme.drawWallpaper
 import com.simplechat.app.ui.theme.rememberWallpaperBitmap
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -71,6 +78,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -92,6 +100,7 @@ import com.simplechat.app.ui.history.HistoryDrawerContent
 import com.simplechat.app.ui.history.HistoryViewModel
 import com.simplechat.app.ui.history.searchResultKey
 import com.simplechat.app.ui.settings.SettingsScreen
+import com.simplechat.app.ui.settings.toWallpaperState
 import com.simplechat.app.ui.onboarding.OnboardingScreen
 import com.simplechat.app.ui.theme.LocalChatColors
 import com.simplechat.app.ui.theme.GlassForeground
@@ -326,6 +335,21 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
     val sheetShape = RoundedCornerShape(topEnd = sheetCorner, bottomEnd = sheetCorner)
 
     var sheetWidth by remember { mutableIntStateOf(0) }
+    // 宽屏常驻侧栏和聊天区共用一张壁纸：两个宽度决定各自画哪一段（见下方 drawWallpaper）。
+    var rowWidth by remember { mutableIntStateOf(0) }
+    var chatWidth by remember { mutableIntStateOf(0) }
+    /*
+     * 宽屏下 Row 会被左右安全区各缩进一段（见下面的 windowInsetsPadding），
+     * 侧栏的绘制原点因此不在窗口最左边。壁纸要按**整个窗口**适配，这里先把这两段量出来。
+     */
+    val safeInsetsApplied = configuration.screenWidthDp >= 600
+    val horizontalSafeInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+    val leftSafeInset = if (safeInsetsApplied) {
+        horizontalSafeInsets.getLeft(LocalDensity.current, LocalLayoutDirection.current)
+    } else 0
+    val rightSafeInset = if (safeInsetsApplied) {
+        horizontalSafeInsets.getRight(LocalDensity.current, LocalLayoutDirection.current)
+    } else 0
     val drawerVisible by remember(drawerState) { derivedStateOf {
         drawerState.isOpen || drawerState.targetValue == DrawerValue.Open || drawerState.currentOffset > -sheetWidth.toFloat()
     } }
@@ -412,7 +436,9 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                 pageStates.SaveableStateProvider(target) {
                     when (target) {
                         Route.CHAT -> Row(
-                            modifier = Modifier.fillMaxSize().background(LocalChatColors.current.pageBackground).then(
+                            modifier = Modifier.fillMaxSize()
+                                .onSizeChanged { rowWidth = it.width }
+                                .background(LocalChatColors.current.pageBackground).then(
                                 if (configuration.screenWidthDp >= 600) Modifier.windowInsetsPadding(
                                     WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
                                 ) else Modifier
@@ -431,7 +457,15 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                                      * 看到"聊天区透明、侧栏死白"。
                                      */
                                     val colors = LocalChatColors.current
-                                    val wallpaper = LocalWallpaper.current
+                                    // 会话自定义壁纸优先 —— 否则宽屏侧栏会一直显示全局壁纸，
+                                    // 和右边聊天区（可能挂了会话壁纸）对不上。
+                                    val conversationWallpaper = chatViewModel.currentConversationId?.let { id ->
+                                        remember(chatViewModel, id) {
+                                            chatViewModel.observeConversationWallpaper(id)
+                                        }.collectAsStateWithLifecycle(initialValue = null).value
+                                    }
+                                    val wallpaper = conversationWallpaper?.toWallpaperState(LocalContext.current)
+                                        ?: LocalWallpaper.current
                                     val bitmap = rememberWallpaperBitmap(wallpaper)
                                     val source = rememberBackdropSource(sidebarBlur && bitmap != null)
                                     // Draw over the filled sidebar, not as a translucent strip above the window.
@@ -443,7 +477,24 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                                     }) {
                                         Box(Modifier.matchParentSize().recordBackdrop(source).drawBehind {
                                             drawRect(colors.pageBackground)
-                                            bitmap?.let { drawWallpaper(it, wallpaper, colors.pageBackground) }
+                                            /*
+                                             * 侧栏和聊天区画的是**同一张**壁纸：按整窗宽度适配，
+                                             * 各自只取自己那一段。各画各的（按自己宽度重新适配）
+                                             * 会让窄侧栏把整张图再缩放一遍 —— 接缝处就是两段错开的画面。
+                                             */
+                                            val frameWidth = if (rowWidth > 0) rowWidth.toFloat() else size.width
+                                            bitmap?.let {
+                                                clipRect {
+                                                    translate(-leftSafeInset.toFloat(), 0f) {
+                                                        drawWallpaper(
+                                                            it,
+                                                            wallpaper,
+                                                            colors.pageBackground,
+                                                            area = Size(frameWidth, size.height),
+                                                        )
+                                                    }
+                                                }
+                                            }
                                         })
                                         Box(Modifier.fillMaxSize().floatingGlassBackground(colors.card, InterfaceControl.SIDEBAR, source = source)) {
                                         GlassForeground(InterfaceControl.SIDEBAR) {
@@ -478,7 +529,10 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                                     }
                                 }
                             }
-                            Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
+                            Box(
+                                Modifier.weight(1f).fillMaxHeight().onSizeChanged { chatWidth = it.width },
+                                contentAlignment = Alignment.TopCenter,
+                            ) {
                                 ChatScreen(
                                     vm = chatViewModel,
                                     onOpenDrawer = {
@@ -494,6 +548,11 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                                         chatViewModel.newConversation()
                                     },
                                     constrainContentWidth = configuration.screenWidthDp >= 600,
+                                    // 宽屏：壁纸按整个窗口适配，聊天区只画自己那一段（右侧安全区也已扣掉）。
+                                    wallpaperFrameWidthPx = if (wideChatLayout) rowWidth else 0,
+                                    wallpaperFrameLeftPx = if (wideChatLayout) {
+                                        (rowWidth - rightSafeInset - chatWidth).coerceAtLeast(0)
+                                    } else 0,
                                 )
                             }
                         }
@@ -527,13 +586,51 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                     modifier = Modifier
                         .fillMaxSize()
                         .drawBehind {
-                            // Dim only the exposed chat, so a translucent drawer never sees this scrim.
+                            /*
+                             * 只压暗露出来的对话区（抽屉半透明，压到它下面会透出一层灰）。
+                             *
+                             * 挖掉的部分必须跟着抽屉的**圆角**走：早先是从右边缘起刀的一整块矩形，
+                             * 圆角切掉的那两个小三角于是既没被面板盖住、也没被压暗 ——
+                             * 边缘上就看到一个"突出来"的亮角。这里用 even-odd 把抽屉形状挖成洞，
+                             * 遮罩边界和面板圆角严丝合缝，拖动时也一起移动。
+                             */
                             val offset = drawerState.currentOffset
                             val covered = if (offset.isFinite()) {
                                 (sheetWidth + offset).coerceIn(0f, size.width)
                             } else 0f
-                            val left = if (layoutDirection == LayoutDirection.Ltr) covered else 0f
-                            drawRect(scrim, topLeft = Offset(left, 0f), size = Size(size.width - covered, size.height))
+                            if (covered <= 0f) {
+                                drawRect(scrim)
+                            } else {
+                                val sheetLeft = if (layoutDirection == LayoutDirection.Ltr) {
+                                    covered - sheetWidth
+                                } else {
+                                    size.width - covered
+                                }
+                                val endCorner = CornerRadius(sheetCorner.toPx())
+                                val square = CornerRadius.Zero
+                                val (topLeft, topRight, bottomRight, bottomLeft) = if (layoutDirection == LayoutDirection.Ltr) {
+                                    listOf(square, endCorner, endCorner, square)
+                                } else {
+                                    listOf(endCorner, square, square, endCorner)
+                                }
+                                val path = Path().apply {
+                                    fillType = PathFillType.EvenOdd
+                                    addRect(Rect(0f, 0f, size.width, size.height))
+                                    addRoundRect(
+                                        RoundRect(
+                                            left = sheetLeft,
+                                            top = 0f,
+                                            right = sheetLeft + sheetWidth,
+                                            bottom = size.height,
+                                            topLeftCornerRadius = topLeft,
+                                            topRightCornerRadius = topRight,
+                                            bottomRightCornerRadius = bottomRight,
+                                            bottomLeftCornerRadius = bottomLeft,
+                                        ),
+                                    )
+                                }
+                                drawPath(path, scrim)
+                            }
                         }
                         .pointerInput(Unit) {
                             detectTapGestures { closeDrawer() }
