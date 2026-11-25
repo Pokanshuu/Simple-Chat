@@ -681,8 +681,9 @@ private val MenuGap = 8.dp
  *
  * `Popup` 的窗口尺寸就是内容尺寸，阴影画在内容之外的部分会被直接裁掉 ——
  * 表现是浮层边缘"阴影断了"。预留一圈后阴影才能自然扩散。
+ * 36dp = 16dp 档在最大面积系数下的外延（约 34dp）+ 一点余量。
  */
-private val MenuShadowBleed = 30.dp
+private val MenuShadowBleed = 36.dp
 
 /**
  * 菜单定位。两条规则，按触发方式区分：
@@ -947,7 +948,8 @@ fun AppMenu(
         GlassForeground(InterfaceControl.MENU) {
             val colors = LocalChatColors.current
             val surface = floatingPanelSurface(InterfaceControl.MENU)
-            val shadow = if (touchPoint != null) AppTheme.tokens.shadow.floating else AppTheme.tokens.shadow.raised
+            // 所有弹出菜单共用一档，和输入栏同宽而柔的投影；面积差异交给面积系数。
+            val shadow = AppTheme.tokens.shadow.panel
             Column(
                 modifier = modifier
                     // 淡入时 graphicsLayer 会按自身尺寸合成，所以阴影留白也要包含在该图层内。

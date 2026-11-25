@@ -203,6 +203,16 @@ class ChatViewModel(
     var compaction by mutableStateOf<CompactionEntity?>(null)
         private set
 
+    /**
+     * 界面上应当呈现的摘要：必须在**当前活跃路径**上且有正文。
+     *
+     * [compaction] 保存的是"最后选中/刚生成的那一份"；切到别的分支后它可能不生效，
+     * 但摘要行仍留在库里（切回来还能用）。请求装配与统计都走 `validCompaction`，
+     * 面板必须与它们一致，否则会出现"显示已压缩、实际发的是全量"。
+     */
+    val activeCompaction: CompactionEntity?
+        get() = validCompaction(messages, compaction)
+
     var compacting by mutableStateOf(false)
         private set
     var compactionStatus by mutableStateOf<String?>(null)
@@ -645,7 +655,12 @@ class ChatViewModel(
 
             val loaded = repository.loadActivePath(id)
 
-            val loadedCompaction = repository.getCompactions(id).lastOrNull()
+            /*
+             * 只认当前路径上生效的那份摘要。多份摘要可能来自不同分支，
+             * 原先的 `lastOrNull()` 既没有排序、也不看 boundary，可能把别的分支的摘要
+             * 当成当前摘要显示/使用。行本身不删：切回对应分支时还能重新选中。
+             */
+            val loadedCompaction = selectCompaction(loaded, repository.getCompactions(id))
             val loadedPresetIds = repository.getEnabledPresetIds(id)
 
             if (generation != switchGeneration) return@launch
@@ -963,10 +978,17 @@ class ChatViewModel(
         val generation = switchGeneration
         val path = repository.loadActivePath(conversationId)
         if (conversationId != currentConversationId || generation != switchGeneration) return
+        /*
+         * 路径变了，生效的摘要也可能变：分支 A 的摘要切到分支 B 后失效，
+         * 切回 A 又该恢复。所以每次都按当前路径重选一份，而不是继续沿用旧引用。
+         */
+        val summaries = repository.getCompactions(conversationId)
+        if (conversationId != currentConversationId || generation != switchGeneration) return
         androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
             beforePublish()
             messages.clear()
             messages.addAll(path)
+            compaction = selectCompaction(path, summaries)
             pathRevision++
         }
     }
@@ -1161,20 +1183,70 @@ class ChatViewModel(
 
     /** 放弃压缩，恢复发送全部消息。**本地消息一条都没少。** */
     fun clearCompaction() {
-        val active = compaction ?: return
+        val active = activeCompaction ?: return
+        val path = messages.toList()
         cancelCompaction()
         compaction = null
         viewModelScope.launch {
-            repository.deleteCompaction(active.id)
+            /*
+             * 同一会话可能留着多份覆盖不同分支的摘要，其中几份可能都还覆盖当前路径。
+             * 放弃压缩要按**当前路径**清干净，否则下一次 reloadPath 又会选中一份，
+             * 界面上的"放弃"看起来没生效。
+             */
+            val stale = repository.getCompactions(active.conversationId)
+                .filter { validCompaction(path, it) != null }
+                .map { it.id }
+                .toMutableSet()
+                .apply { add(active.id) }
+            // 查询期间用户又发起/完成了压缩：别把新摘要一并删掉。
+            if (compacting || compaction != null) return@launch
+            stale.forEach { repository.deleteCompaction(it) }
             repository.deleteCompactionCheckpoint(active.conversationId)
         }
     }
 
+    /**
+     * 覆盖该消息的摘要已经过期（原文被原地改掉/重试）。
+     *
+     * **直接删掉**而不是留着：boundary 仍在路径上，留着就会被当作有效摘要继续发送，
+     * 而它描述的是修改前的原文。删掉后请求回到全量，信息最多、不会用错。
+     * 同一条消息可能被多份摘要覆盖，全部清掉；不覆盖它的摘要（别的分支、更早的
+     * boundary）不动。
+     */
+    private suspend fun invalidateCompactionCovering(conversationId: String, messageId: String) {
+        val path = messages.toList()
+        val stale = repository.getCompactions(conversationId)
+            .filter { compactionInvalidatedByEdit(path, it, messageId) }
+        if (stale.isEmpty()) return
+        stale.forEach { repository.deleteCompaction(it.id) }
+        if (compaction?.let { active -> stale.any { it.id == active.id } } == true) compaction = null
+        runCatching { repository.deleteCompactionCheckpoint(conversationId) }
+            .onFailure { android.util.Log.w("SimpleChat/Compaction", "Stale checkpoint could not be deleted") }
+    }
+
     /** 手工修正摘要（AI 记错人名地名时用）。 */
     fun updateCompactionSummary(text: String) {
-        val active = compaction ?: return
+        val active = activeCompaction ?: return
+        val edited = text.trim()
+        /*
+         * 空摘要不是"没内容的前情提要"，而是"把前情提要删了"：
+         * 一旦落库，覆盖范围内的原文会从请求里消失，摘要又没东西可发。
+         * 当作误操作忽略，保留原摘要；真要恢复全量请用「放弃压缩」。
+         */
+        if (edited.isEmpty()) return
+        /*
+         * 与检查点/自动摘要共用同一个上限：超限的摘要会拖慢每一轮请求，
+         * 而且下次压缩的检查点校验会直接判它无效。不落库，给出明确提示。
+         */
+        if (edited.length > com.simplechat.app.data.MaxCompactionSummaryChars) {
+            banner = Res.get(
+                R.string.compact_summary_too_long,
+                com.simplechat.app.data.MaxCompactionSummaryChars,
+            )
+            return
+        }
         cancelCompaction()
-        val updated = active.copy(summary = text.trim(), updatedAt = System.currentTimeMillis())
+        val updated = active.copy(summary = edited, updatedAt = System.currentTimeMillis())
         compaction = updated
         viewModelScope.launch { repository.saveCompaction(updated) }
     }
@@ -1240,7 +1312,7 @@ class ChatViewModel(
         avgTtftMs = null,
         avgTps = null,
         totalThinkingSeconds = null,
-        hasCompaction = compaction != null,
+        hasCompaction = validCompaction(messages, compaction) != null,
     )
 
     /**
@@ -1329,6 +1401,11 @@ class ChatViewModel(
             if (!sendMutex.tryLock()) return@launch
             try {
                 if (conversationId != currentConversationId || isStreaming || switching) return@launch
+                /*
+                 * 重试是**原地**重来：boundary 不会掉出路径，摘要却描述的是旧回复。
+                 * 不先失效的话，这一轮会带着旧摘要、却根本不发被重试的那条消息。
+                 */
+                invalidateCompactionCovering(conversationId, target.id)
                 repository.resetForRetry(target.id, settings.model.id)
                 reloadPath(conversationId)
                 startStream(conversationId, target.id, omitAttachmentsAndTools = omitAttachmentsAndTools)
@@ -1480,13 +1557,7 @@ class ChatViewModel(
                  * 会出现"保存了却没变"（OpenAI 通道生效、Anthropic 通道不生效）。
                  * 思考 / 搜索 / 读链接块保持原序，它们描述的是这段答案的来历。
                  */
-                if (compactionInvalidatedByEdit(messages.toList(), compaction, target.id)) {
-                    val stale = compaction
-                    if (stale != null) repository.deleteCompaction(stale.id)
-                    compaction = null
-                    runCatching { repository.deleteCompactionCheckpoint(conversationId) }
-                        .onFailure { android.util.Log.w("SimpleChat/Compaction", "Stale checkpoint could not be deleted") }
-                }
+                invalidateCompactionCovering(conversationId, target.id)
                 repository.editMessageInPlace(
                     id = target.id,
                     content = text,
@@ -1604,13 +1675,10 @@ class ChatViewModel(
                 ) return@launch
                 if (compacting) cancelCompaction()
                 val replacementId = delete(conversationId)
-                val savedCompaction = repository.getCompactions(conversationId).lastOrNull()
                 if (generation != switchGeneration) return@launch
+                // 摘要行可能被 deleteMessageVersions 一并删掉；reloadPath 会按新路径重选。
                 reloadPath(conversationId) { onReplacement(replacementId) }
-                if (generation == switchGeneration) {
-                    compaction = savedCompaction
-                    if (success != null) banner = success
-                }
+                if (generation == switchGeneration && success != null) banner = success
             } catch (error: kotlinx.coroutines.CancellationException) {
                 throw error
             } catch (error: Exception) {

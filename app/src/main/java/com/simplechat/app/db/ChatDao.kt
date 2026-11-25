@@ -656,7 +656,7 @@ interface ConversationPresetDao {
 @Dao
 interface CompactionDao {
 
-    @Query("SELECT * FROM compactions WHERE conversationId = :conversationId")
+    @Query("SELECT * FROM compactions WHERE conversationId = :conversationId ORDER BY updatedAt DESC")
     suspend fun getFor(conversationId: String): List<CompactionEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

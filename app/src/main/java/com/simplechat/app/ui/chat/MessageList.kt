@@ -47,6 +47,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
@@ -78,6 +79,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.layout.LocalPinnableContainer
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.R
@@ -136,6 +139,13 @@ fun MessageList(
     messages: List<UiMessage>,
     modifier: Modifier = Modifier,
     rows: List<MessageListEntry> = messageListEntries(messages, false),
+    /**
+     * 压缩摘要覆盖到的最后一条消息 id。
+     *
+     * 在它下面画一个主题色小圆点：圆点之前的消息只存在于本地，
+     * 摘要已经代替它们发给模型。传 null 表示当前没有生效的压缩。
+     */
+    compactionBoundaryId: String? = null,
     listState: LazyListState = rememberLazyListState(),
     /**
      * 列表内边距。
@@ -292,6 +302,11 @@ fun MessageList(
         ) { entry ->
             val message = entry.message
             val topGap = if (entry.footer) MessageGap else if (entry.messageIndex > 0) 18.dp else 0.dp
+            // 边界只画一次：有操作栏时画在 footer 下面，没有时画在消息本体下面。
+            val showCompactionBoundary = compactionBoundaryId != null &&
+                message.id == compactionBoundaryId &&
+                (entry.footer || !entry.separateActions) &&
+                !message.deletedNavigation
             Column(Modifier.padding(top = topGap)) {
             if (entry.footer || message.deletedNavigation) {
                 if (!message.deletedNavigation && message.role == MessageRole.ASSISTANT) {
@@ -381,9 +396,43 @@ fun MessageList(
                     onToggle = { shareSelection.toggle(sharedGroup) }, content = row)
             } else row()
             }
+            if (showCompactionBoundary) CompactionBoundaryMarker()
             }
         }
     }
+    }
+}
+
+/**
+ * 压缩边界：一个主题色小圆点 + 灰色「已压缩」。
+ *
+ * 点本身是分界，不占满整行；小字负责让这个点无需解释也能看懂。
+ * 圆点以上（含圆点所在消息）的内容只存在于本地，发出去的请求里由摘要代替。
+ */
+@Composable
+private fun CompactionBoundaryMarker() {
+    val label = stringResource(R.string.compact_boundary_marker)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp)
+            // 读屏只读这一整句，不再重复念可见的「已压缩」。
+            .clearAndSetSemantics { contentDescription = label },
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary),
+        )
+        Spacer(Modifier.size(6.dp))
+        Text(
+            text = stringResource(R.string.compact_boundary_label),
+            style = MaterialTheme.typography.labelSmall,
+            color = LocalChatColors.current.placeholder,
+        )
     }
 }
 

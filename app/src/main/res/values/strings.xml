@@ -613,6 +613,9 @@
     <string name="compact_note">只影响发给模型的内容，本地消息不受影响。压缩可能需要几分钟，甚至更久。</string>
     <string name="compact_running">正在压缩上下文…</string>
     <string name="compact_summarized">已总结较早的对话</string>
+    <string name="compact_summary_too_long">摘要过长，未保存（最多 %1$d 个字符）。</string>
+    <string name="compact_boundary_marker">此前的消息已被压缩，模型看不到</string>
+    <string name="compact_boundary_label">已压缩</string>
     <string name="compact_redo">重新压缩</string>
     <string name="compact_discard">放弃</string>
     <string name="compact_start">压缩上下文</string>

@@ -3,6 +3,7 @@ package com.simplechat.app.ui.chat
 import com.simplechat.app.ui.theme.floatingGlassBackground
 import com.simplechat.app.ui.theme.GlassForeground
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -53,6 +54,9 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import com.simplechat.app.R
 import com.simplechat.app.ui.common.ContainerShape
+import com.simplechat.app.ui.common.FoldAnimMs
+import com.simplechat.app.ui.common.MotionDurationMs
+import com.simplechat.app.ui.common.MotionEasing
 import com.simplechat.app.ui.common.surfaceShadow
 import com.simplechat.app.data.TokenEstimate
 import com.simplechat.app.db.CompactionEntity
@@ -73,6 +77,15 @@ import com.simplechat.app.ui.theme.LocalChatColors
 import com.simplechat.app.ui.theme.floatingPanelSurface
 import kotlin.math.roundToInt
 
+/**
+ * 面板展开：先快后慢。
+ *
+ * 300ms 的 `FastOutSlowIn` 是"慢-快-慢"，对从 0 长到 360dp 的抽屉来说，
+ * 起手那一下会先迟疑再窜出去。这里换成 ease-out：一按下去就动，
+ * 剩下的一点高度慢慢收住。
+ */
+private val PanelOpenEasing = CubicBezierEasing(0.215f, 0.61f, 0.355f, 1f)
+
 /** 输入栏下方的面板容器。输入栏会上移，和选图面板一致。 */
 @Composable
 fun InputPanel(
@@ -90,32 +103,53 @@ fun InputPanel(
         label = "inputPanelShadow",
     )
 
-    AnimatedVisibility(
-        visible = visible,
-        enter = expandVertically() + fadeIn(),
-        exit = shrinkVertically() + fadeOut(),
-        modifier = modifier,
+    /*
+     * 投影挂在 AnimatedVisibility **外面**。
+     *
+     * `expandVertically` / `shrinkVertically` 默认 `clip = true`：面板收起时只会
+     * 保留和当前高度一样大的绘制区域，画在形状外的投影会被一条硬边切掉，
+     * 面板展开时底部那道最明显的影子正好首当其冲。把投影移到外层 Box 后，
+     * 它照常跟着高度动画，但不再受面板裁剪。
+     *
+     * 顶部 10dp 间距也放进 AnimatedVisibility 内部：留在外面的话，
+     * 收起动画结束时整块容器连同间距一起被移除，输入栏会在最后一帧
+     * 突然往下掉 10dp —— 就是"快收完了又顿一下"的来源。
+     */
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .surfaceShadow(
+                shape = shape,
+                spec = AppTheme.tokens.shadow.panel,
+                opacity = surface.alpha * shadowStrength,
+            ),
     ) {
-        GlassForeground(InterfaceControl.INPUT_PANEL) {
-            val colors = LocalChatColors.current
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .surfaceShadow(
-                        shape = shape,
-                        spec = AppTheme.tokens.shadow.panel,
-                        opacity = surface.alpha * shadowStrength,
+        AnimatedVisibility(
+            visible = visible,
+            // 展开是一整块 360dp 高的面板，用转场同档的 300ms；220ms 会显得"啪"地弹出来
+            enter = expandVertically(tween(MotionDurationMs, easing = PanelOpenEasing)) +
+                fadeIn(tween(MotionDurationMs, easing = PanelOpenEasing)),
+            exit = shrinkVertically(tween(FoldAnimMs, easing = MotionEasing)) +
+                fadeOut(tween(FoldAnimMs, easing = MotionEasing)),
+        ) {
+            GlassForeground(InterfaceControl.INPUT_PANEL) {
+                val colors = LocalChatColors.current
+                Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(shape)
+                            // 悬浮玻璃（docs/32 §32.3.3），与输入栏同一个值、同一套下限
+                            .floatingGlassBackground(colors.card, InterfaceControl.INPUT_PANEL, surface)
+                            .border(1.dp, colors.outline, shape)
+                            .heightIn(max = 360.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(16.dp),
+                        content = content,
                     )
-                    .clip(shape)
-                    // 悬浮玻璃（docs/32 §32.3.3），与输入栏同一个值、同一套下限
-                    .floatingGlassBackground(colors.card, InterfaceControl.INPUT_PANEL, surface)
-                    .border(1.dp, colors.outline, shape)
-                    .heightIn(max = 360.dp)
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                content = content,
-            )
+                }
+            }
         }
     }
 }
@@ -701,6 +735,8 @@ internal fun CompactionSection(
                     CapsuleButton(
                         text = stringResource(R.string.action_save),
                         selected = true,
+                        // 空摘要会让覆盖范围内的原文从请求里消失，又没有摘要可发。
+                        enabled = draft.isNotBlank(),
                         onClick = {
                             onUpdateSummary(draft)
                             editing = false

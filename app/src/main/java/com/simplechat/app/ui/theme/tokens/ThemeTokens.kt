@@ -82,29 +82,35 @@ data class SurfaceShadowSpec(
     val contactColor: Color,
 )
 
-/** 阴影（§15.4）：三档全局规格，面板 / 浮层 / 紧贴内容的小控件。 */
+/** 阴影（§15.4）：三档全局规格，大面积表面 / 浮层 / 小控件。 */
 @Immutable
 data class ShadowTokens(
+    /*
+     * 面积越大 -> 影子越大越柔。输入栏 / 输入面板 / 弹出菜单都是大面积表面，
+     * 半径在面积系数之外再给到 16dp，让它们的半影比右下角的小圆钮宽得多。
+     */
     val panel: SurfaceShadowSpec = SurfaceShadowSpec(
-        elevation = 8.dp,
+        elevation = 16.dp,
         ambient = Color.Black.copy(alpha = 0.05f),
         spot = Color.Black.copy(alpha = 0.08f),
         contactElevation = 2.dp,
-        contactColor = Color.Black.copy(alpha = 0.09f),
+        contactColor = Color.Black.copy(alpha = 0.07f),
     ),
+    /** 抽屉 / 消息索引：整块浮在内容之上，需要更实的边界。 */
     val raised: SurfaceShadowSpec = SurfaceShadowSpec(
         elevation = 16.dp,
-        ambient = Color.Black.copy(alpha = 0.18f),
-        spot = Color.Black.copy(alpha = 0.26f),
+        ambient = Color.Black.copy(alpha = 0.14f),
+        spot = Color.Black.copy(alpha = 0.20f),
         contactElevation = 3.dp,
-        contactColor = Color.Black.copy(alpha = 0.10f),
+        contactColor = Color.Black.copy(alpha = 0.08f),
     ),
+    /** 回到底部这类小圆钮：面积小，影子要小、要轻，不能压过大面板。 */
     val floating: SurfaceShadowSpec = SurfaceShadowSpec(
-        elevation = 16.dp,
-        ambient = Color.Black.copy(alpha = 0.22f),
-        spot = Color.Black.copy(alpha = 0.32f),
-        contactElevation = 3.dp,
-        contactColor = Color.Black.copy(alpha = 0.10f),
+        elevation = 8.dp,
+        ambient = Color.Black.copy(alpha = 0.04f),
+        spot = Color.Black.copy(alpha = 0.07f),
+        contactElevation = 2.dp,
+        contactColor = Color.Black.copy(alpha = 0.06f),
     ),
 )
 

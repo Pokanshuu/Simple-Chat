@@ -250,7 +250,7 @@ internal fun InputBar(
                     .border(
                         width = 1.dp,
                         color = if (voiceState.active) Color.Transparent else colors.outline.copy(
-                            alpha = colors.outline.alpha * composerReveal,
+                            alpha = colors.outline.alpha * composerReveal * InputBorderAlpha,
                         ),
                         shape = shape,
                     )
@@ -474,6 +474,9 @@ internal fun InputBar(
 }
 
 private const val ComposerRevealDelayMs = 40
+
+/** 输入框描边比全局 outline 再淡 40%：加了柔和大投影后，1px 实线会显得抢。 */
+private const val InputBorderAlpha = 0.60f
 private const val ExpandAtVisualLines = 4
 
 /** 输入栏第二行的统一控件高度。 */

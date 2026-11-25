@@ -216,6 +216,48 @@ class RequestOrderingTest {
         )
     }
 
+    /**
+     * 空摘要不是压缩：否则覆盖范围内原文被丢掉、摘要又没内容可发，
+     * 模型会静默失去整段上下文。必须退回全量发送。
+     */
+    @Test
+    fun `blank summary never drops the messages it covers`() {
+        val path = chain(6)
+        val blank = compaction("m3").copy(summary = "   ")
+
+        assertEquals(null, validCompaction(path, blank))
+        assertEquals(path.contents(), orderedOutgoingMessages(path, blank).contents())
+    }
+
+    @Test
+    fun `selectCompaction prefers the summary covering the most of the path`() {
+        val path = chain(6)
+        val near = compaction("m2")
+        val far = compaction("m4").copy(id = "c2", updatedAt = 10)
+
+        assertEquals(far, selectCompaction(path, listOf(near, far)))
+    }
+
+    @Test
+    fun `selectCompaction ignores summaries from other branches or with blank bodies`() {
+        val path = chain(6)
+
+        assertEquals(null, selectCompaction(path, listOf(compaction("missing"))))
+        assertEquals(
+            null,
+            selectCompaction(path, listOf(compaction("m3").copy(summary = ""))),
+        )
+    }
+
+    @Test
+    fun `selectCompaction breaks ties by most recently updated`() {
+        val path = chain(6)
+        val older = compaction("m4").copy(id = "old", updatedAt = 1)
+        val newer = compaction("m4").copy(id = "new", updatedAt = 2)
+
+        assertEquals(newer, selectCompaction(path, listOf(older, newer)))
+    }
+
     private fun compaction(throughId: String) = CompactionEntity(
         id = "c1",
         conversationId = "conv",

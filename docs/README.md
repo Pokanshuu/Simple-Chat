@@ -7,7 +7,7 @@
 
 ## 文件地图
 
-当前正式版见 [v1.2.5 发布说明](../release-notes/RELEASE_NOTES_v1.2.5.md)，前一正式版见 [v1.2.4 发布说明](../release-notes/RELEASE_NOTES_v1.2.4.md)。
+当前正式版见 [v1.2.5 发布说明](../release-notes/RELEASE_NOTES_v1.2.5.md)，前一正式版见 [v1.2.4 发布说明](../release-notes/RELEASE_NOTES_v1.2.4.md)；当前预发布为 [v1.2.6-beta.3](../release-notes/RELEASE_NOTES_v1.2.6-beta.3.md)。
 
 欢迎引导及思考强度见[使用说明](25-首次启动引导与思考强度.md)。
 
@@ -39,6 +39,7 @@
 | [`32-个性化外观设计规范.md`](32-个性化外观设计规范.md) | PR #9 审查结论；壁纸 / 玻璃 / 字体 / 回收站 / 第三方声音的约束规范与交互方案 | — |
 | [`33-主题系统与主题文件规范.md`](33-主题系统与主题文件规范.md) | 主题 Token 分层、组件编码规范、主题文件 schema v1、安全兜底与存量迁移计划 | — |
 | [`35-Agent-Harness长期设计方案.md`](35-Agent-Harness长期设计方案.md) | 双工具 Agent Harness、能力快照、工具注册、循环预算、Transcript 与未来 Skill / 角色卡 / 世界书扩展 | — |
+| [`36-字体主题与壁纸设计方案.md`](36-字体主题与壁纸设计方案.md) | 三类字体编辑、字体导入/管理入口、预算与验收 | — |
 
 跨对话记忆的当前行为、关键词与向量混合检索提案及验收场景见[跨对话记忆设计](30-跨对话记忆设计.md)。
 
@@ -64,6 +65,7 @@ v1.2.2 正式版的变更、验证与发布记录见 [v1.2.2 正式版发布记�
 
 ## 发布与验收记录
 
+- [v1.2.6-beta.3 预发布说明](../release-notes/RELEASE_NOTES_v1.2.6-beta.3.md)
 - [v1.2.5 正式版发布说明](../release-notes/RELEASE_NOTES_v1.2.5.md)
 - [v1.2.5-beta.5 预发布说明](../release-notes/RELEASE_NOTES_v1.2.5-beta.5.md)
 - [v1.2.5-beta.4 预发布说明](../release-notes/RELEASE_NOTES_v1.2.5-beta.4.md)

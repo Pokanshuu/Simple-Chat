@@ -31,7 +31,6 @@ import com.simplechat.app.ui.common.AppIcons
 import com.simplechat.app.ui.common.AppMenu
 import com.simplechat.app.ui.common.AppMenuDivider
 import com.simplechat.app.ui.common.AppMenuItem
-import com.simplechat.app.ui.common.IconCircleButton
 import com.simplechat.app.ui.common.Space
 import com.simplechat.app.ui.theme.fontFamilyOf
 
@@ -108,12 +107,5 @@ internal fun TypefacePicker(
                 }
             }
         }
-        IconCircleButton(
-            icon = AppIcons.PlusCircle,
-            contentDescription = stringResource(R.string.fonts_import),
-            onClick = onImport,
-            size = 48.dp,
-            iconSize = 22.dp,
-        )
     }
 }

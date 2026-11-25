@@ -1256,6 +1256,7 @@ fun ChatScreen(
                         MessageList(
                             messages = renderedMessages,
                             rows = messageRows,
+                            compactionBoundaryId = vm.activeCompaction?.throughMessageId,
                             loadingLabelFor = vm::loadingLabelFor,
                             onStopImage = vm::stop,
                             loadingWordsUseThemeColor = vm.loadingWordsUseThemeColor,
@@ -1737,10 +1738,7 @@ fun ChatScreen(
                 // 与下面三个面板**同一个容器**（浮在输入栏上方的卡片），
                 // 不是 Material 的 ModalBottomSheet —— 那个满宽、自带蒙版，
                 // 摆在应用里和输入栏对不齐，是另一套语言。
-                InputPanel(
-                    visible = panel == InputPanelState.ATTACH,
-                    modifier = Modifier.padding(top = 10.dp),
-                ) {
+                InputPanel(visible = panel == InputPanelState.ATTACH) {
                     AttachmentPanelContent(
                         onCapture = {
                             // 先收面板再拉起相机，否则拍完回来它还挂着
@@ -1769,7 +1767,7 @@ fun ChatScreen(
                     )
                 }
 
-                InputPanel(imageMode && panel == InputPanelState.IMAGE_MODELS, Modifier.padding(top = 10.dp)) {
+                InputPanel(imageMode && panel == InputPanelState.IMAGE_MODELS) {
                     ImageOptionRows(
                         title = stringResource(R.string.image_api_pick_model),
                         options = imageModels,
@@ -1784,7 +1782,7 @@ fun ChatScreen(
                         )
                     }
                 }
-                InputPanel(imageMode && panel == InputPanelState.IMAGE_RATIOS, Modifier.padding(top = 10.dp)) {
+                InputPanel(imageMode && panel == InputPanelState.IMAGE_RATIOS) {
                     ImageOptionRows(
                         title = stringResource(R.string.image_aspect_ratio_label),
                         options = listOf("" to stringResource(R.string.image_size_default)) + imageRatios.map { it to it },
@@ -1795,10 +1793,7 @@ fun ChatScreen(
                 }
 
                 // ── 面板一：思考档位 + 模型 ─────────────────────
-                InputPanel(
-                    visible = panel == InputPanelState.THINKING,
-                    modifier = Modifier.padding(top = 10.dp),
-                ) {
+                InputPanel(visible = panel == InputPanelState.THINKING) {
                     ThinkingPanelContent(
                         settings = vm.settings,
                         onSettingsChange = { vm.updateSettings(it) },
@@ -1817,15 +1812,12 @@ fun ChatScreen(
                 }
 
                 // ── 面板二：统计 + 上下文压缩 ───────────────────
-                InputPanel(
-                    visible = panel == InputPanelState.STATS,
-                    modifier = Modifier.padding(top = 10.dp),
-                ) {
+                InputPanel(visible = panel == InputPanelState.STATS) {
                     ContextPanelContent(
                         stats = vm.contextStats,
                         usage = vm.lastUsage,
                         showUsageCost = com.simplechat.app.net.isOfficialDeepSeekEndpoint(vm.attachmentSettings.baseUrl),
-                        compaction = vm.compaction,
+                        compaction = vm.activeCompaction,
                         compacting = vm.compacting,
                         compactionStatus = vm.compactionStatus,
                         onCompact = { vm.compactContext() },
@@ -1836,10 +1828,7 @@ fun ChatScreen(
                 }
 
                 // ── 面板三：对话设置 ────────────────────────────
-                InputPanel(
-                    visible = panel == InputPanelState.SETTINGS,
-                    modifier = Modifier.padding(top = 10.dp),
-                ) {
+                InputPanel(visible = panel == InputPanelState.SETTINGS) {
                     ConversationSettingsPanelContent(
                         settings = vm.settings,
                         officialPro = vm.settings.model.id == com.simplechat.app.net.DEEPSEEK_PRO &&

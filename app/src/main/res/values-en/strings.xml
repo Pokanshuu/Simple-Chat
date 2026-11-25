@@ -607,6 +607,9 @@
     <string name="compact_note">Only affects what is sent to the model; local messages are not affected. Compaction may take several minutes or longer.</string>
     <string name="compact_running">Compacting context…</string>
     <string name="compact_summarized">Earlier conversation summarized</string>
+    <string name="compact_summary_too_long">Your summary is too long to save (maximum %1$d characters).</string>
+    <string name="compact_boundary_marker">Earlier messages are compacted and are not sent to the model</string>
+    <string name="compact_boundary_label">Compacted</string>
     <string name="compact_redo">Compact again</string>
     <string name="compact_discard">Discard</string>
     <string name="compact_start">Compact context</string>
