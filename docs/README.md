@@ -7,7 +7,7 @@
 
 ## 文件地图
 
-当前正式版见 [v1.2.5 发布说明](../release-notes/RELEASE_NOTES_v1.2.5.md)，前一正式版见 [v1.2.4 发布说明](../release-notes/RELEASE_NOTES_v1.2.4.md)；当前预发布为 [v1.2.6-beta.3](../release-notes/RELEASE_NOTES_v1.2.6-beta.3.md)。
+当前正式版见 [v1.2.5 发布说明](../release-notes/RELEASE_NOTES_v1.2.5.md)，前一正式版见 [v1.2.4 发布说明](../release-notes/RELEASE_NOTES_v1.2.4.md)；当前预发布为 [v1.2.6-beta.4](../release-notes/RELEASE_NOTES_v1.2.6-beta.4.md)。
 
 欢迎引导及思考强度见[使用说明](25-首次启动引导与思考强度.md)。
 
@@ -65,6 +65,7 @@ v1.2.2 正式版的变更、验证与发布记录见 [v1.2.2 正式版发布记�
 
 ## 发布与验收记录
 
+- [v1.2.6-beta.4 预发布说明](../release-notes/RELEASE_NOTES_v1.2.6-beta.4.md)
 - [v1.2.6-beta.3 预发布说明](../release-notes/RELEASE_NOTES_v1.2.6-beta.3.md)
 - [v1.2.5 正式版发布说明](../release-notes/RELEASE_NOTES_v1.2.5.md)
 - [v1.2.5-beta.5 预发布说明](../release-notes/RELEASE_NOTES_v1.2.5-beta.5.md)
