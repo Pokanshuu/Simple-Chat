@@ -71,6 +71,19 @@ object AttachmentFiles {
     internal fun storedSize(context: Context, attachment: Attachment): Long =
         attachmentFile(dirOf(context), attachment.path)?.takeIf { it.isFile }?.length() ?: 0L
 
+    /**
+     * 落盘文件的**廉价身份**：路径 + 大小 + 修改时间。
+     *
+     * `ApiImage.prepare` 原本每次都要把整个文件读一遍算 SHA-256 才能查缓存 —— 每轮请求都付一次。
+     * 这三个字段一次 stat 就能拿到，且任何一次真正的内容替换都会让时间戳/大小变化。
+     * 文件不在返回 null（调用方按"原件缺失"处理）。
+     */
+    internal fun storedStamp(context: Context, attachment: Attachment): String? {
+        val file = attachmentFile(dirOf(context), attachment.path) ?: return null
+        if (!file.isFile || file.length() == 0L) return null
+        return "${attachment.path}|${file.length()}|${file.lastModified()}"
+    }
+
     fun open(context: Context, attachment: Attachment): InputStream {
         val file = attachmentFile(dirOf(context), attachment.path) ?: throw IOException("Invalid attachment path")
         if (!file.isFile || file.length() == 0L) throw IOException("Original image is missing")

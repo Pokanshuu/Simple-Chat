@@ -306,6 +306,15 @@ private val geminiPreviewSuffix = Regex("-preview(?:-\\d{2}-\\d{2,4})?$")
 internal fun isOfficialOpenAiEndpoint(baseUrl: String): Boolean =
     baseUrl.trim().toHttpUrlOrNull()?.let { it.isHttps && it.host == "api.openai.com" } == true
 
+/**
+ * 是否需要在请求里打 `cache_control` 断点。
+ *
+ * 只有 `api.anthropic.com` 把提示词缓存做成**显式计费**：不打断点就没有缓存命中。
+ * DeepSeek 的兼容端点走自动上下文缓存，发这个字段既无收益、多一个被网关拒绝的风险。
+ */
+internal fun supportsAnthropicPromptCaching(baseUrl: String): Boolean =
+    baseUrl.trim().toHttpUrlOrNull()?.let { it.isHttps && it.host == "api.anthropic.com" } == true
+
 internal fun normalizedGeminiModel(id: String): String = id.lowercase().removePrefix("google/")
     .removePrefix("models/").replace(geminiPreviewSuffix, "")
 

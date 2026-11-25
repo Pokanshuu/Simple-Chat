@@ -63,9 +63,13 @@ class AppContainer(private val app: Application) {
 
     val httpClient: OkHttpClient by lazy { ChatApi.defaultClient() }
 
-    private val sseClient: SseClient by lazy { SseClient(httpClient, json) }
+    /*
+     * 请求体只序列化一次：落成缓存目录里的临时文件，length 与写 socket 共用同一份字节。
+     * 见 StreamingRequestBody —— 大历史 + 图片时这是首 token 前最大的一段本地耗时。
+     */
+    private val sseClient: SseClient by lazy { SseClient(httpClient, json, app.cacheDir) }
 
-    private val anthropicApi: AnthropicApi by lazy { AnthropicApi(httpClient, json) }
+    private val anthropicApi: AnthropicApi by lazy { AnthropicApi(httpClient, json, app.cacheDir) }
 
     val chatApi: ChatApi by lazy { ChatApi(httpClient, sseClient, anthropicApi, json) }
 

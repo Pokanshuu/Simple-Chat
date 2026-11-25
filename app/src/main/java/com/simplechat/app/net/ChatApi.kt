@@ -111,11 +111,20 @@ class ChatApi(
                 add(serverSearchInstruction)
             }
         }
-        val systemPrefixSize = messages.indexOfFirst { it.role != "system" && it.role != "developer" }
-            .let { if (it < 0) messages.size else it }
-        val requestMessages = messages.take(systemPrefixSize) +
+        /*
+         * 每轮变化的指令（运行时工具状态、联网阶段、生图说明）插在**最新一条 user 消息之前**，
+         * 而不是系统前缀之后。
+         *
+         * 前缀缓存（DeepSeek 上下文缓存 / OpenAI 自动 prompt 缓存）只从第一个 token 开始匹配：
+         * 指令放在头部时，agent 的每一轮（web 结果、阶段切换）和每次拨动搜索开关都会让**整段
+         * 历史**失效、全量重新 prefill。放到尾部后，失效点最多落在最后一条提问上，历史前缀
+         * 仍然命中。
+         */
+        val lastUserIndex = messages.indexOfLast { it.role == "user" }
+        val instructionAt = if (lastUserIndex >= 0) lastUserIndex else messages.size
+        val requestMessages = messages.take(instructionAt) +
             appInstructions.map { OutMessageDto("system", MessageContent.text(it)) } +
-            messages.drop(systemPrefixSize)
+            messages.drop(instructionAt)
         val title = if (flash && requestTitle && messages.sumOf {
             ((it.content as? JsonPrimitive)?.content?.length ?: 8_001).toLong() + 32
         } <= 8_000) DeepSeekTitle() else null
@@ -155,7 +164,13 @@ class ChatApi(
                             it.thinking == ThinkingDto.Disabled -> "required"
                         else -> "auto"
                     },
-                    title = title, temperature = null, topP = null,
+                    title = title,
+                    /*
+                     * 带工具 / 服务端标题时**不发采样参数**：DeepSeek 的思考+工具组合会静默忽略它们，
+                     * 与其发一个不生效的值（用户以为设置生效了），不如按协议直接省略。
+                     * 代价是这一类请求用不了用户设定的 temperature/top_p。
+                     */
+                    temperature = null, topP = null,
                 )
             }
 

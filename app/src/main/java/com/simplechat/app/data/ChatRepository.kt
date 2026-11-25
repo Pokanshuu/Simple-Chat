@@ -1505,7 +1505,15 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             val prepared = attachments.mapNotNull { attachment ->
                 if (!attachment.isImage) return@mapNotNull attachment
                 val image = if (attachment.isStored) {
-                    ApiImage.prepare { AttachmentFiles.open(context, attachment) }
+                    /*
+                     * 落盘图片每轮都要重新进请求。`ApiImage.prepare` 的缓存键原本是内容的 SHA-256，
+                     * 也就是**每轮把整个文件读一遍**才算得出键 —— 历史里几张图就是几百毫秒。
+                     * 这里传 path+size+mtime 的廉价戳：一次 stat 命中缓存，不再读文件。
+                     */
+                    ApiImage.prepare(
+                        open = { AttachmentFiles.open(context, attachment) },
+                        keyHint = AttachmentFiles.storedStamp(context, attachment),
+                    )
                 } else {
                     runCatching { Base64.decode(attachment.data, Base64.NO_WRAP) }.getOrNull()?.let { ApiImage.prepare(it) }
                 }

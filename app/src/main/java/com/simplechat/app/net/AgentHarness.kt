@@ -82,6 +82,11 @@ internal data class AgentRuntimeState(
     val nativeSearchEnabled: Boolean = false,
     val nativeFetchEnabled: Boolean = false,
     val automaticSearchEnabled: Boolean = false,
+    /**
+     * This turn already spent its web budget. Tools are no longer offered, but the capability
+     * exists — reporting it as `unavailable` makes the model tell users it cannot search at all.
+     */
+    val webBudgetExhausted: Boolean = false,
 ) {
     val webEnabled: Boolean get() = clientSearchEnabled || nativeSearchEnabled || automaticSearchEnabled
 
@@ -94,6 +99,7 @@ internal data class AgentRuntimeState(
 
     fun instruction(): String = agentCapabilityInstruction(
         webConfigured, webEnabled, webFetchEnabled || nativeFetchEnabled, imageConfigured, imageExposed, webSwitchOn,
+        webBudgetExhausted,
     )
 }
 
@@ -236,12 +242,15 @@ internal fun agentCapabilityInstruction(
     imageConfigured: Boolean,
     imageExposed: Boolean,
     webSwitchOn: Boolean = webEnabled,
+    webBudgetExhausted: Boolean = false,
 ): String = buildString {
     append("Authoritative runtime tool state for this turn; it overrides earlier assistant claims. ")
     append("Only tools exposed in the current request may be called. ")
     append("web_search=")
     append(when {
         webEnabled -> "enabled"
+        // Tools withdrawn for this turn's budget, not because the app lost the capability.
+        webBudgetExhausted && webConfigured -> "used_this_turn_budget_exhausted"
         webConfigured && !webSwitchOn -> "configured_but_disabled_by_user"
         else -> "unavailable"
     })
@@ -264,15 +273,33 @@ internal fun agentCapabilityInstruction(
     if (!webEnabled) {
         append("Answer using available context and any evidence already returned in this turn. If that evidence does not verify a fresh fact, say what remains unverified. Do not ask the user to wait for a lookup or use image generation as a substitute. ")
     }
+    if (webBudgetExhausted && !webEnabled) {
+        append("The web budget for this turn is spent, not missing: answer from the evidence already returned and say what remains unverified. Do not tell the user the app lacks web access. ")
+    }
     if (imageConfigured && !imageExposed) {
         append("Image generation is configured in the app, but it is not exposed for this non-image request; do not call it. ")
     }
+    append("Mention tool availability only when the user asks about capabilities. ")
     append("If the user asks about capabilities, report this state instead of inferring from previous messages.")
 }
 
+/**
+ * Whether a search-switch flip should abort and resend the in-flight request.
+ *
+ * Only "off → on" matters (turning it off is handled by the executor refusing the call), and only
+ * while nothing visible has been produced: retracting text the user already read is worse than
+ * finishing the turn and letting the next round see the new state.
+ */
+internal fun shouldRestartForSearchSwitch(
+    startedEnabled: Boolean,
+    currentEnabled: Boolean,
+    canSearch: Boolean,
+    bodyCommitted: Boolean,
+    toolCalled: Boolean,
+): Boolean = canSearch && !startedEnabled && currentEnabled && !bodyCommitted && !toolCalled
+
 /** Runtime guard shared by tool exposure and execution. */
-internal class AgentHarness(
-    private val capabilities: AgentCapabilities,
+internal class AgentHarness(    private val capabilities: AgentCapabilities,
     val policy: AgentHarnessPolicy = AgentHarnessPolicy(),
 ) {
     private val registry = AgentToolRegistry.forCapabilities(capabilities)

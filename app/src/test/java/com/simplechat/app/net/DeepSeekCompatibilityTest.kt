@@ -129,7 +129,9 @@ class DeepSeekCompatibilityTest {
         }.toList()
         assertEquals(2, bodies.size)
         assertEquals(setOf(IndependentSearchName, IndependentFetchName), bodies.first()["tools"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content }.toSet())
-        val last = bodies.last()["messages"]!!.jsonArray.last().jsonObject["content"]!!.jsonArray.single().jsonObject
+        val last = bodies.last()["messages"]!!.jsonArray.last().jsonObject["content"]!!.jsonArray
+            .map { it.jsonObject }
+            .first { it["type"]?.jsonPrimitive?.content == "tool_result" }
         assertEquals("c1", last["tool_use_id"]!!.jsonPrimitive.content)
         assertTrue(last["content"]!!.jsonPrimitive.content.contains("Rain tomorrow"))
         assertTrue(events.any { it is StreamEvent.BlockStart && it.block is ReplyBlock.Text })

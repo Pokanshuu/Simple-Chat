@@ -142,12 +142,18 @@ object ApiImage {
     fun legalMediaType(mime: String?): String =
         mime?.trim()?.lowercase()?.takeIf { it in DeclaredMimes } ?: "image/jpeg"
 
-    fun prepare(bytes: ByteArray): Prepared? = prepare { bytes.inputStream() }
+    fun prepare(bytes: ByteArray): Prepared? = prepare(open = { bytes.inputStream() })
 
-    /** Reopenable source keeps large imported originals off the Java heap. */
-    fun prepare(open: () -> java.io.InputStream): Prepared? {
+    /**
+     * Reopenable source keeps large imported originals off the Java heap.
+     *
+     * [keyHint] lets callers pass a cheap change-stamp (path + size + mtime) so a cache hit does
+     * not have to read and hash the whole file first. Without it the key is the SHA-256 of the
+     * bytes — correct but it re-reads the file on every turn.
+     */
+    fun prepare(open: () -> java.io.InputStream, keyHint: String? = null): Prepared? {
         return try {
-            val key = open().use { input ->
+            val key = keyHint ?: open().use { input ->
                 val digest = MessageDigest.getInstance("SHA-256")
                 val buffer = ByteArray(64 * 1024)
                 while (true) {

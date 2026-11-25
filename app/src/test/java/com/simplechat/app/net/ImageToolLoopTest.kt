@@ -226,7 +226,12 @@ class ImageToolLoopTest {
                 val request = history.anthropic(base, offer)
                 assertFalse(offer)
                 assertTrue(request.tools.isEmpty())
-                assertTrue(request.system.contains("web_search=configured_but_disabled_by_user"))
+                /*
+                 * The runtime state rides on the trailing user turn, not on `system`: a system
+                 * string that changes per round/toggle would invalidate the whole prefix cache.
+                 */
+                assertFalse("runtime state must not sit in system", request.system.contains("web_search="))
+                assertTrue(request.messages.last().content.toString().contains("web_search=configured_but_disabled_by_user"))
                 if (requests == 1) {
                     assertTrue(history.imageOffered)
                     // Different gateways either emit a stale call or return no visible body.
@@ -237,7 +242,7 @@ class ImageToolLoopTest {
                 } else {
                     assertTrue(history.textOnlyAnswer)
                     assertFalse(history.imageOffered)
-                    assertTrue(request.system.contains("Answer the latest user message in plain text"))
+                    assertTrue(request.messages.last().content.toString().contains("Answer the latest user message in plain text"))
                     flowOf(StreamEvent.BlockStart(0, ReplyBlock.Text("Search is off. I cannot verify the forecast.")),
                         StreamEvent.Stopped("end_turn"))
                 }

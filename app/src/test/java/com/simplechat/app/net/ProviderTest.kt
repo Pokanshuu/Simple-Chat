@@ -29,6 +29,15 @@ class ProviderTest {
         assertTrue(ProviderKind.CUSTOM.headersFor("session-abc").isEmpty())
     }
 
+    @Test
+    fun `prompt caching is only enabled for the native Anthropic endpoint`() {
+        assertTrue(supportsAnthropicPromptCaching("https://api.anthropic.com"))
+        assertTrue(supportsAnthropicPromptCaching("https://api.anthropic.com/v1"))
+        assertTrue(!supportsAnthropicPromptCaching("https://api.deepseek.com"))
+        assertTrue(!supportsAnthropicPromptCaching("https://gw.example/v1"))
+        assertTrue(!supportsAnthropicPromptCaching("http://api.anthropic.com"))
+    }
+
     // ── 地址拼接 ──────────────────────────────────────────
 
     @Test

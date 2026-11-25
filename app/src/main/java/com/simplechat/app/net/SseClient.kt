@@ -35,6 +35,8 @@ import okhttp3.Request
 class SseClient(
     private val client: OkHttpClient,
     private val json: Json,
+    /** Cache directory for the staged request payload; `null` keeps the two-pass fallback. */
+    private val stageDir: java.io.File? = null,
 ) {
 
     private val parser = SseLineParser(json)
@@ -49,7 +51,7 @@ class SseClient(
         maxOutputTokens: Int? = null,
     ): Flow<StreamEvent> = streamRequest(url, apiKey, extraHeaders, retryBeforeContent) {
         validateRequestBudget(estimatedInputTokens(request), request.maxTokens ?: request.maxCompletionTokens, contextWindow, maxOutputTokens)
-        StreamingJsonRequestBody(json, request)
+        StreamingJsonRequestBody(json, request, stageDir)
     }
 
     internal fun streamResponses(
@@ -64,7 +66,7 @@ class SseClient(
     ): Flow<StreamEvent> = streamRequest(url, apiKey, extraHeaders, retryBeforeContent, responses = true, onOutput = onOutput) {
         val toolHistoryTokens = request.input.asSequence().drop(messages.size).sumOf(::contentTokens)
         validateRequestBudget(estimatedInputTokens(messages) + toolHistoryTokens, request.maxOutputTokens, model.contextWindow, model.maxOutputTokens)
-        StreamingRequestBody(json, ResponsesRequestDto.serializer(), request)
+        StreamingRequestBody(json, ResponsesRequestDto.serializer(), request, stageDir)
     }
 
     private fun streamRequest(
@@ -77,95 +79,99 @@ class SseClient(
         prepareBody: () -> StreamingRequestBody<*>,
     ): Flow<StreamEvent> = flow {
         val body = prepareBody()
-        val largeRequest = body.contentLength() >= LargeRequestBytes
+        try {
+            val largeRequest = body.contentLength() >= LargeRequestBytes
 
-        val builder = Request.Builder()
-            .url(url)
-            .post(body)
-            .header("Content-Type", "application/json")
-            .header("Accept", "text/event-stream")
-        if (apiKey.isNotBlank()) {
-            builder.header("Authorization", "Bearer $apiKey")
-        }
-        extraHeaders.forEach { (name, value) -> builder.header(name, value) }
-        val httpRequest = builder.build()
+            val builder = Request.Builder()
+                .url(url)
+                .post(body)
+                .header("Content-Type", "application/json")
+                .header("Accept", "text/event-stream")
+            if (apiKey.isNotBlank()) {
+                builder.header("Authorization", "Bearer $apiKey")
+            }
+            extraHeaders.forEach { (name, value) -> builder.header(name, value) }
+            val httpRequest = builder.build()
 
-        var attempt = 0
-        var emittedAny = false
-        while (true) {
-            attempt++
-            val call = client.newCall(httpRequest)
-            val handle = call.cancelWithCoroutine()
-            var receivedHeaders = false
-            try {
-                call.execute().use { response ->
-                    receivedHeaders = true
-                    if (!response.isSuccessful) {
-                        val raw = runCatching { response.body.readErrorText() }.getOrNull()
-                        // 已知状态码 → 一句人话；否则用服务端自己给的文案；再否则带状态码兜底
-                        val serverMessage = parser.parseErrorMessage(raw)
-                        android.util.Log.w(ChatStreamLogTag, "HTTP ${response.code}")
-                        emit(
-                            StreamEvent.Error(
-                                message = httpErrorText(response.code, serverMessage, largeRequest),
-                                code = response.code,
-                                retryable = response.code == 429 || response.code >= 500,
-                                rawMessage = serverMessage,
-                            ),
-                        )
-                        return@use
-                    }
+            var attempt = 0
+            var emittedAny = false
+            while (true) {
+                attempt++
+                val call = client.newCall(httpRequest)
+                val handle = call.cancelWithCoroutine()
+                var receivedHeaders = false
+                try {
+                    call.execute().use { response ->
+                        receivedHeaders = true
+                        if (!response.isSuccessful) {
+                            val raw = runCatching { response.body.readErrorText() }.getOrNull()
+                            // 已知状态码 → 一句人话；否则用服务端自己给的文案；再否则带状态码兜底
+                            val serverMessage = parser.parseErrorMessage(raw)
+                            android.util.Log.w(ChatStreamLogTag, "HTTP ${response.code}")
+                            emit(
+                                StreamEvent.Error(
+                                    message = httpErrorText(response.code, serverMessage, largeRequest),
+                                    code = response.code,
+                                    retryable = response.code == 429 || response.code >= 500,
+                                    rawMessage = serverMessage,
+                                ),
+                            )
+                            return@use
+                        }
 
-                    val source = response.body.source()
-                    val responsesParser = if (responses) ResponsesSseLineParser(json, onOutput) else null
-                    var finished = false
-                    var receivedStop = false
-                    while (!finished) {
-                        currentCoroutineContext().ensureActive()
+                        val source = response.body.source()
+                        val responsesParser = if (responses) ResponsesSseLineParser(json, onOutput) else null
+                        var finished = false
+                        var receivedStop = false
+                        while (!finished) {
+                            currentCoroutineContext().ensureActive()
 
-                        val line = source.readUtf8Line()
-                        if (line == null) {
-                            if (!receivedStop) throw java.io.EOFException("Stream ended before completion")
-                            finished = true
-                        } else {
-                            when (val result = responsesParser?.parse(line) ?: parser.parse(line)) {
-                                is SseLineParser.Result.Events -> result.events.forEach {
-                                    emit(it)
-                                    emittedAny = true
-                                    if (it is StreamEvent.Error || (responses && it is StreamEvent.Stopped)) {
-                                        receivedStop = true
-                                        finished = true
-                                    } else if (it is StreamEvent.Stopped) {
-                                        receivedStop = true
+                            val line = source.readUtf8Line()
+                            if (line == null) {
+                                if (!receivedStop) throw java.io.EOFException("Stream ended before completion")
+                                finished = true
+                            } else {
+                                when (val result = responsesParser?.parse(line) ?: parser.parse(line)) {
+                                    is SseLineParser.Result.Events -> result.events.forEach {
+                                        emit(it)
+                                        emittedAny = true
+                                        if (it is StreamEvent.Error || (responses && it is StreamEvent.Stopped)) {
+                                            receivedStop = true
+                                            finished = true
+                                        } else if (it is StreamEvent.Stopped) {
+                                            receivedStop = true
+                                        }
                                     }
-                                }
 
-                                SseLineParser.Result.Done -> finished = true
-                                SseLineParser.Result.Ignore -> Unit
+                                    SseLineParser.Result.Done -> finished = true
+                                    SseLineParser.Result.Ignore -> Unit
+                                }
                             }
                         }
-                    }
 
-                    emit(StreamEvent.Done)
-                    emittedAny = true
+                        emit(StreamEvent.Done)
+                        emittedAny = true
+                    }
+                    return@flow
+                } catch (e: IOException) {
+                    // 用户主动取消造成的 IOException 不应报告为错误
+                    if (!currentCoroutineContext().isActive) return@flow
+                    if (retryBeforeContent && !emittedAny && attempt < StreamMaxAttempts && body.canReplayOnDisconnect()) {
+                        // 一个字都还没发出去 → 重发是安全的（不会出现两份内容）
+                        android.util.Log.w(ChatStreamLogTag, "stream reset before any event; retrying", e)
+                        delay(StreamRetryDelayMs)
+                        continue
+                    }
+                    // 原始异常进日志（排查要用），界面拿到的是"连接被中断、请重试"这类人话
+                    android.util.Log.w(ChatStreamLogTag, "stream interrupted", e)
+                    emit(StreamEvent.Error(e.networkText(largeRequest && !emittedAny, receivedHeaders), retryable = true))
+                    return@flow
+                } finally {
+                    handle.cancel()
                 }
-                return@flow
-            } catch (e: IOException) {
-                // 用户主动取消造成的 IOException 不应报告为错误
-                if (!currentCoroutineContext().isActive) return@flow
-                if (retryBeforeContent && !emittedAny && attempt < StreamMaxAttempts && body.canReplayOnDisconnect()) {
-                    // 一个字都还没发出去 → 重发是安全的（不会出现两份内容）
-                    android.util.Log.w(ChatStreamLogTag, "stream reset before any event; retrying", e)
-                    delay(StreamRetryDelayMs)
-                    continue
-                }
-                // 原始异常进日志（排查要用），界面拿到的是"连接被中断、请重试"这类人话
-                android.util.Log.w(ChatStreamLogTag, "stream interrupted", e)
-                emit(StreamEvent.Error(e.networkText(largeRequest && !emittedAny, receivedHeaders), retryable = true))
-                return@flow
-            } finally {
-                handle.cancel()
             }
+        } finally {
+            body.dispose()
         }
     }.flowOn(Dispatchers.IO)
 
@@ -184,4 +190,5 @@ internal const val StreamRetryDelayMs = 600L
 internal class StreamingJsonRequestBody(
     json: Json,
     request: ChatRequestDto,
-) : StreamingRequestBody<ChatRequestDto>(json, ChatRequestDto.serializer(), request)
+    stageDir: java.io.File? = null,
+) : StreamingRequestBody<ChatRequestDto>(json, ChatRequestDto.serializer(), request, stageDir)

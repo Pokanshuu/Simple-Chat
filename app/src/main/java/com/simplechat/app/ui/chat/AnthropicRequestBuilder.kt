@@ -73,6 +73,14 @@ internal fun buildAnthropicRequest(
     reasoningEffort: String? = null,
     outputLimit: Int? = null,
     generateImageTool: Boolean = false,
+    /**
+     * 是否在最后一条消息上打 `cache_control` 断点（仅原版 Anthropic 官方端点）。
+     *
+     * DeepSeek 的上下文缓存是自动的，发这个字段没有意义；而 `api.anthropic.com` 必须显式打断点
+     * 才会计费成"缓存读"。断点打在稳定历史的末尾：下一轮的前缀（系统 + 工具 + 历史）直接命中，
+     * 只有最新一轮问答需要重新 prefill。
+     */
+    promptCaching: Boolean = false,
 ): AnthropicRequest {
     val flashExtensions = deepSeekExtensions && allowServerTools && model == DEEPSEEK_FLASH
     val messages = mutableListOf<AnthropicMessageParam>()
@@ -189,6 +197,12 @@ internal fun buildAnthropicRequest(
         if (generateImageTool) add(imageToolInstruction)
     }.joinToString("\n\n").let { toolInstructions ->
         listOf(effectiveSystem, toolInstructions).filter { it.isNotBlank() }.joinToString("\n\n")
+    }
+    if (promptCaching && outgoingMessages.isNotEmpty()) {
+        val last = outgoingMessages.lastIndex
+        outgoingMessages[last] = outgoingMessages[last].copy(
+            content = withCacheBreakpoint(outgoingMessages[last].content),
+        )
     }
     return AnthropicRequest(
         model = model,
@@ -485,8 +499,30 @@ internal const val ReadLinkKind = "read_link"
  *
  * 纯函数，有单测。只影响请求，不碰本地数据。
  */
-internal fun sanitizeTurns(messages: List<AnthropicMessageParam>): List<AnthropicMessageParam> {
-    val out = ArrayList<AnthropicMessageParam>(messages.size)
+/** `cache_control` 断点载荷（Anthropic 提示词缓存）。 */
+private val EphemeralCacheControl: JsonObject = buildJsonObject { put("type", "ephemeral") }
+
+/**
+ * 在稳定历史的末尾打断点，让服务端下一轮能复用整段前缀。
+ *
+ * 纯文本内容转成单块数组（协议里 `cache_control` 只能挂在内容块上）；
+ * 块数组则挂在最后一块上。易变的尾部指令（`withTrailingTurnNote` 追加的那段）在断点之后，
+ * 因此不会被缓存，也不会让断点失效。
+ */
+private fun withCacheBreakpoint(content: JsonElement): JsonElement = when (content) {
+    is JsonArray -> JsonArray(content.mapIndexed { index, block ->
+        if (index != content.lastIndex) block
+        else (block as? JsonObject)?.let { JsonObject(it + ("cache_control" to EphemeralCacheControl)) } ?: block
+    })
+    is JsonPrimitive -> JsonArray(listOf(buildJsonObject {
+        put("type", "text")
+        put("text", content.contentOrNull.orEmpty())
+        put("cache_control", EphemeralCacheControl)
+    }))
+    else -> content
+}
+
+internal fun sanitizeTurns(messages: List<AnthropicMessageParam>): List<AnthropicMessageParam> {    val out = ArrayList<AnthropicMessageParam>(messages.size)
     for (message in messages) {
         if (message.role == AnthropicMessageParam.RoleReminder) {
             out += message

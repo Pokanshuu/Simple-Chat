@@ -52,6 +52,15 @@ internal class WebToolHistory {
         internal set
     val transcript = AgentTranscript()
 
+    /**
+     * Project the request for one round.
+     *
+     * The per-round material (web phase instructions, runtime state, image note) used to be
+     * appended to `system`. That changed the prompt prefix on every agent round and on every
+     * switch toggle, so each such round re-prefilled the entire conversation instead of reusing
+     * the cached prefix. It now rides on the trailing user turn, where only the last exchange is
+     * new; the system string stays byte-identical for the whole turn.
+     */
     fun anthropic(request: AnthropicRequest, offer: Boolean, fetch: Boolean = true, search: Boolean = true) = request.copy(
         system = buildString {
             append(request.system)
@@ -60,10 +69,6 @@ internal class WebToolHistory {
                 val index = lastIndexOf(suffix)
                 if (index >= 0) delete(index, index + suffix.length)
             }
-            if (offer) append("\n\n").append(webToolInstruction)
-            else if (webUsed) append("\n\n").append(webAnswerInstruction)
-            if (imageHandled) append("\n\n").append(imageAnswerInstruction)
-            if (runtimeInstruction.isNotBlank()) append("\n\n").append(runtimeInstruction)
         },
         tools = request.tools.filter { tool ->
             !textOnlyAnswer && when (tool.name) {
@@ -74,9 +79,43 @@ internal class WebToolHistory {
             }
         } +
             webTools(offer, fetch, search).map { AnthropicTool(name = it.name, description = it.description, inputSchema = it.parameters) },
-        messages = request.messages + messages,
+        messages = withTrailingTurnNote(request.messages + messages, turnNotes(offer)),
         title = request.title.takeIf { messages.isEmpty() && !textOnlyAnswer },
     )
+
+    private fun turnNotes(offer: Boolean): String = buildList {
+        when {
+            offer -> add(webToolInstruction)
+            webUsed -> add(webAnswerInstruction)
+        }
+        if (imageHandled) add(imageAnswerInstruction)
+        if (runtimeInstruction.isNotBlank()) add(runtimeInstruction)
+    }.joinToString("\n\n")
+}
+
+/**
+ * Attach a note to the latest user turn. For continuation requests, keep the assistant
+ * prefill last so the note does not start a new turn.
+ */
+internal fun withTrailingTurnNote(
+    messages: List<AnthropicMessageParam>,
+    note: String,
+): List<AnthropicMessageParam> {
+    if (note.isBlank()) return messages
+    val userIndex = messages.indexOfLast { it.role == AnthropicMessageParam.RoleUser }
+    if (userIndex < 0) {
+        return listOf(AnthropicMessageParam(AnthropicMessageParam.RoleUser, JsonPrimitive(note))) + messages
+    }
+    return messages.toMutableList().apply {
+        val user = this[userIndex]
+        this[userIndex] = user.copy(content = appendTextBlock(user.content, note))
+    }
+}
+
+private fun appendTextBlock(content: JsonElement, text: String): JsonElement = when (content) {
+    is JsonPrimitive -> JsonPrimitive(content.content + "\n\n" + text)
+    is JsonArray -> JsonArray(content + buildJsonObject { put("type", "text"); put("text", text) })
+    else -> JsonPrimitive(text)
 }
 
 internal enum class AgentRoundPhase { ACT, RECOVER_SEARCH, FINAL_ANSWER }
@@ -92,7 +131,32 @@ private fun AgentToolStatus.webOutcome() = when (this) {
     AgentToolStatus.BUDGET_EXCEEDED -> AgentWebOutcome.BUDGET_EXCEEDED
 }
 
-internal data class AgentToolCallWire(var id: String = "", var name: String = "", val args: StringBuilder = StringBuilder())
+/** Hard protocol limits. Exceeding them degrades the affected call; it never aborts the turn. */
+private const val MaxWireToolCalls = 16
+private const val MaxToolArgumentChars = 8_192
+
+internal data class AgentToolCallWire(
+    var id: String = "",
+    var name: String = "",
+    val args: StringBuilder = StringBuilder(),
+    /** Arguments hit [MaxToolArgumentChars]; the call is answered with `invalid_arguments`. */
+    var truncatedArguments: Boolean = false,
+    /** The gateway reused an id that was already executed; the call is answered with `blocked`. */
+    var replayed: Boolean = false,
+)
+
+/**
+ * Some gateways stream the function name in fragments, others repeat the whole name on every
+ * delta. Appending blindly turns `web_search` into `web_searchweb_search`, so the call is then
+ * treated as an unknown tool and silently dropped.
+ */
+internal fun mergedToolName(current: String, chunk: String): String {
+    if (chunk.isBlank()) return current
+    if (current.isEmpty()) return chunk
+    if (chunk == current || (chunk.length > 1 && current.endsWith(chunk))) return current
+    if (chunk.startsWith(current)) return chunk
+    return current + chunk
+}
 
 internal data class AgentModelTurn(
     val calls: Map<Int, AgentToolCallWire>,
@@ -192,6 +256,9 @@ internal fun agentLoop(
             nativeSearchEnabled = canOfferTools && state.nativeSearchEnabled,
             nativeFetchEnabled = canOfferTools && state.nativeFetchEnabled,
             imageExposed = history.imageOffered,
+            // The tools are withdrawn for budget reasons, not because the app lost the capability.
+            // Saying `unavailable` here is what makes the model tell users it "has no search".
+            webBudgetExhausted = webRounds >= policy.maxWebRounds,
         )
         val harness = AgentHarness(history.requestState.capabilities, policy)
         history.runtimeInstruction = history.requestState.instruction() +
@@ -228,10 +295,23 @@ internal fun agentLoop(
         request(history, offerWeb, if (style == ApiStyle.OPENAI_RESPONSES) ({ i, item -> output[i] = item }) else null).collect { event ->
             when (event) {
                 is StreamEvent.ToolCallDelta -> {
-                    require(event.index in 0..255 && (event.index in calls || calls.size < 16)) { "Too many tool calls" }
-                    val call = calls.getOrPut(event.index) { AgentToolCallWire() }
-                    event.id?.let { call.id = it }; event.name?.let { call.name += it }
-                    event.arguments?.let { require(it.length <= 8192 - call.args.length) { "Tool arguments too large" }; call.args.append(it) }
+                    /*
+                     * Malformed deltas degrade one call instead of aborting the turn. The old
+                     * `require` guards turned a gateway quirk (extra call, oversized arguments,
+                     * out-of-range index) into a failed message even though the answer was fine.
+                     */
+                    if (event.index in 0..255 && (event.index in calls || calls.size < MaxWireToolCalls)) {
+                        val call = calls.getOrPut(event.index) { AgentToolCallWire() }
+                        event.id?.takeIf { it.isNotBlank() }?.let { call.id = it }
+                        event.name?.let { chunk -> call.name = mergedToolName(call.name, chunk) }
+                        event.arguments?.let { chunk ->
+                            if (chunk.length > MaxToolArgumentChars - call.args.length) {
+                                call.truncatedArguments = true
+                            } else {
+                                call.args.append(chunk)
+                            }
+                        }
+                    }
                 }
                 is StreamEvent.Stopped -> stop = event
                 StreamEvent.Done -> done = true
@@ -292,7 +372,14 @@ internal fun agentLoop(
         observe(round, "response stop=${diagnosticToken(stop?.reason)} done=$done streamError=$failed " +
             "clientCalls=${calls.size} nativeOutcome=$nativeOutcome")
         val hasKnownCall = calls.values.any { harness.knownTool(it.name) }
-        if (failed || !hasKnownCall || stop?.reason !in setOf("tool_calls", "tool_use")) {
+        /*
+         * Gateways disagree on the stop reason that accompanies a tool call: `tool_calls`,
+         * `tool_use`, legacy `function_call`, or even `stop`/null. A known, complete call is the
+         * authoritative signal — the old whitelist silently dropped calls on those gateways.
+         * Only refusal/truncation reasons make executing a call unsafe.
+         */
+        val blockedByStopReason = stop?.reason in setOf("refusal", "length", "max_tokens", "content_filter")
+        if (failed || !hasKnownCall || blockedByStopReason) {
             val answer = if (parts.isEmpty()) text.toString() else buildString {
                 append(text)
                 parts.toSortedMap().forEach { (index, part) -> if (index !in signatures) appendLine(part) }
@@ -301,7 +388,7 @@ internal fun agentLoop(
             val current = runtime()
             if (onSearchAnswerRetry != null && !failed && !retriedSearchAnswer && !history.textOnlyAnswer &&
                 round + 1 < policy.maxRounds && !history.imageHandled && webRounds == 0 && nativeOutcome == AgentWebOutcome.NOT_CALLED &&
-                current.webEnabled && (claimsSearchIsOff(answer) || (!state.webEnabled && noAnswer)) &&
+                current.webEnabled && (claimsSearchIsOff(answer) || deniesSearchCapability(answer) || (!state.webEnabled && noAnswer)) &&
                 stop?.reason !in setOf("refusal", "length", "max_tokens", "content_filter")
             ) {
                 retriedSearchAnswer = true
@@ -328,10 +415,20 @@ internal fun agentLoop(
             if (done || offerWeb || history.imageOffered) emit(StreamEvent.Done)
             return@flow
         }
-        require(calls.size <= harness.policy.maxToolCallsPerRound) { "Too many tool calls" }
-        require(calls.values.all { it.id.isNotBlank() && it.id !in executedCallIds } &&
-            calls.values.distinctBy { it.id }.size == calls.size) { "Invalid or replayed tool call IDs" }
-        executedCallIds += calls.values.map { it.id }
+        /*
+         * Repair ids instead of failing the turn. A blank or replayed id would produce an
+         * assistant/tool_result pair the provider rejects — and the user would lose the answer
+         * over a gateway bug. Repaired calls are answered with `blocked` and never executed.
+         */
+        val issuedIds = mutableSetOf<String>()
+        calls.forEach { (index, call) ->
+            if (call.id.isBlank() || call.id in executedCallIds || call.id in issuedIds) {
+                if (call.id.isNotBlank()) call.replayed = true
+                call.id = "call-r$round-i$index"
+            }
+            issuedIds += call.id
+        }
+        executedCallIds += issuedIds
         // Read switches again after the model response: the user may have changed them while it streamed.
         val executor = AgentToolExecutor(
             harness = harness,
@@ -344,6 +441,8 @@ internal fun agentLoop(
             stillEnabled = { name -> harness.toolId(name)?.let { runtime().capabilities.exposes(it) } == true },
         )
         val results = mutableMapOf<Int, AgentToolExecutionResult>()
+        val notExecuted = mutableSetOf<Int>()
+        var executedThisRound = 0
         for ((index, call) in calls.entries.sortedBy { it.value.name == imageToolDefinition.name }) {
             currentCoroutineContext().ensureActive()
             history.transcript.add(AgentTranscriptEvent(
@@ -353,7 +452,33 @@ internal fun agentLoop(
                 callId = call.id,
             ))
             val executionSwitch = runtime().webSwitchOn
-            val outcome = executor.execute(call.name, call.args.toString())
+            val outcome = when {
+                call.replayed -> {
+                    notExecuted += index
+                    AgentToolExecutionResult(
+                        harness.toolId(call.name), AgentToolStatus.BLOCKED,
+                        "Replayed tool call was ignored; no action was taken.",
+                    )
+                }
+                call.truncatedArguments -> {
+                    notExecuted += index
+                    AgentToolExecutionResult(
+                        harness.toolId(call.name), AgentToolStatus.INVALID_ARGUMENTS,
+                        "Tool arguments exceeded the limit and were truncated; no action was taken.",
+                    )
+                }
+                executedThisRound >= harness.policy.maxToolCallsPerRound -> {
+                    notExecuted += index
+                    AgentToolExecutionResult(
+                        harness.toolId(call.name), AgentToolStatus.BUDGET_EXCEEDED,
+                        "Too many tool calls in one round; this call was not executed.",
+                    )
+                }
+                else -> {
+                    executedThisRound++
+                    executor.execute(call.name, call.args.toString())
+                }
+            }
             results[index] = outcome
             observe(round, "tool executionSwitch=$executionSwitch tool=${outcome.toolId ?: "unknown"} index=$index status=${outcome.status}")
             if (results.getValue(index).consumedImageCall) history.imageHandled = true
@@ -365,7 +490,9 @@ internal fun agentLoop(
                 status = results.getValue(index).status.name.lowercase(),
             ))
         }
-        val webResults = results.values.filter { it.toolId == AgentToolId.WEB_SEARCH || it.toolId == AgentToolId.WEB_FETCH }
+        // Only calls that actually reached an executor consume the web budget.
+        val webResults = results.entries.filter { it.key !in notExecuted }.map { it.value }
+            .filter { it.toolId == AgentToolId.WEB_SEARCH || it.toolId == AgentToolId.WEB_FETCH }
         if (webResults.isNotEmpty()) webRounds++
         if (webResults.isNotEmpty() && history.webOutcome != AgentWebOutcome.EVIDENCE) {
             history.webOutcome = if (webResults.any { it.isUsableEvidence() }) AgentWebOutcome.EVIDENCE

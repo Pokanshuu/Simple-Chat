@@ -77,6 +77,7 @@ import kotlinx.coroutines.sync.Mutex
 import com.simplechat.app.net.ImageToolCall
 import com.simplechat.app.net.WebResearchSession
 import com.simplechat.app.net.AgentRuntimeState
+import com.simplechat.app.net.shouldRestartForSearchSwitch
 import com.simplechat.app.net.AgentSearchRoute
 import com.simplechat.app.net.AgentToolOutcome
 import com.simplechat.app.net.AgentToolStatus
@@ -1625,8 +1626,44 @@ class ChatViewModel(
      */
     suspend fun loadDraft(key: String): String? = repository.findDraft(key)
 
-    /** 落草稿。空文本即删行。 */
-    suspend fun saveDraft(key: String, text: String) = repository.saveDraft(key, text)
+    /**
+     * 落草稿。空文本即删行。
+     *
+     * 顺手**预取跨对话记忆**：这条路径本来就是"停手 400ms 才写一次"，
+     * 拿它当防抖边界，把检索藏进打字时间 —— 发送时就不用再等。
+     */
+    suspend fun saveDraft(key: String, text: String) {
+        repository.saveDraft(key, text)
+        scheduleMemoryPrefetch(key, text)
+    }
+
+    private data class MemoryPrefetch(val conversationId: String, val query: String, val text: String)
+
+    private var memoryPrefetchJob: Job? = null
+    private var memoryPrefetch: MemoryPrefetch? = null
+
+    /**
+     * 预取跨对话记忆。
+     *
+     * 检索本身有约 1s 的预算（扫描 + 按会话载入），放在发送链路上就是首 token 前的串行等待；
+     * 改到输入停手时算，等于免费。只认"同一会话 + 同一句话"的快照，换会话或改字都会自然失效。
+     */
+    private fun scheduleMemoryPrefetch(conversationId: String, draft: String) {
+        val query = draft.trim()
+        if (query.isEmpty() || conversationId.isBlank() || !stored.crossChatMemory) return
+        if (memoryPrefetch?.let { it.conversationId == conversationId && it.query == query } == true) return
+        memoryPrefetchJob?.cancel()
+        memoryPrefetchJob = viewModelScope.launch {
+            val route = stored
+            val text = runCatching { crossChatMemoryFor(route, conversationId, query) }.getOrElse { "" }
+            if (text.isNotBlank()) memoryPrefetch = MemoryPrefetch(conversationId, query, text)
+        }
+    }
+
+    private fun prefetchedMemory(conversationId: String, question: String): String? =
+        memoryPrefetch
+            ?.takeIf { it.conversationId == conversationId && it.query == question.trim() }
+            ?.text
 
     suspend fun clearDraft(key: String) = repository.clearDraft(key)
 
@@ -2136,6 +2173,52 @@ class ChatViewModel(
             }
 
             var memorySnapshot: String? = null
+
+            /*
+             * 本轮开始时的输出基线。两件事靠它撤回已经流出去的内容：
+             * 1. "模型声称搜索没开"的恢复重试；
+             * 2. "开关在首 token 前被打开"—— 直接丢掉这一轮请求并用新状态重发。
+             * 放在请求外面而不是每次 attempt 内部：开关翻转发生在请求流之外。
+             */
+            val answerStart = accumulator?.blocks.orEmpty()
+            val plainAnswerStart = contentBuf.length
+            val reasoningStart = reasonBuf.length
+
+            /** 本轮请求开始时的搜索开关。 */
+            var switchBaseline = liveSearchSwitch()
+
+            /** 已经吐出可见正文；此后的开关变化不再重发（撤回已显示内容的代价更大）。 */
+            var bodyCommitted = false
+
+            /** agentLoop 当前轮次的历史：用来判断是否已经执行过工具调用。 */
+            var activeHistory: com.simplechat.app.net.WebToolHistory? = null
+
+            fun searchSwitchFlippedBeforeBody(): Boolean = shouldRestartForSearchSwitch(
+                startedEnabled = switchBaseline,
+                currentEnabled = liveSearchSwitch(),
+                canSearch = searchRoute != AgentSearchRoute.UNAVAILABLE,
+                bodyCommitted = bodyCommitted,
+                toolCalled = activeHistory?.transcript?.events?.any {
+                    it.kind == com.simplechat.app.net.AgentTranscriptKind.TOOL_CALL
+                } == true,
+            )
+
+            fun discardStaleSearchAnswer() {
+                accumulator?.seed(answerStart)
+                contentBuf.setLength(plainAnswerStart)
+                reasonBuf.setLength(reasoningStart)
+                hasReasoningText = reasonBuf.isNotBlank()
+                if (!hasReasoningText && accumulator == null) reasoningText = ""
+                citations.clear()
+                contentChars = 0
+                firstTokenAt = null
+                reasoningStartedAt = null
+                reasoningEndedAt = null
+                refreshBuffered()
+                patch(replyId) { it.copy(content = contentText, reasoning = reasoningText.ifEmpty { null }, timeline = timeline) }
+                dirty = true
+            }
+
             suspend fun streamAttempt(textOnly: Boolean) {
                 val systemContext = buildString {
                     if (searchRoute != AgentSearchRoute.UNAVAILABLE) {
@@ -2279,30 +2362,18 @@ class ChatViewModel(
                         nativeFetchEnabled = switchOn && nativeReadAvailable,
                     )
                 }
-                val answerStart = accumulator?.blocks.orEmpty()
-                val plainAnswerStart = contentBuf.length
-                val reasoningStart = reasonBuf.length
-                fun discardStaleSearchAnswer() {
-                    accumulator?.seed(answerStart)
-                    contentBuf.setLength(plainAnswerStart)
-                    reasonBuf.setLength(reasoningStart)
-                    hasReasoningText = reasonBuf.isNotBlank()
-                    if (!hasReasoningText && accumulator == null) reasoningText = ""
-                    citations.clear()
-                    contentChars = 0
-                    firstTokenAt = null
-                    reasoningStartedAt = null
-                    reasoningEndedAt = null
-                    refreshBuffered()
-                    patch(replyId) { it.copy(content = contentText, reasoning = reasoningText.ifEmpty { null }, timeline = timeline) }
-                    dirty = true
-                }
                 fun resolveSearchAnswerFailure() {
                     discardStaleSearchAnswer()
                     failure = Res.get(R.string.search_answer_unresolved)
                 }
-                val memoryText = memorySnapshot ?: crossChatMemoryFor(route, conversationId, latestQuestion)
-                    .also { memorySnapshot = it }
+                /*
+                 * 记忆检索有约 1s 的预算（扫描 + 载入），放在发送链路上就是首 token 前的串行等待。
+                 * 打字停手时已经预取过同一句话，就直接用那份；否则现算。
+                 */
+                val memoryText = memorySnapshot ?: run {
+                    val prefetched = if (route.crossChatMemory) prefetchedMemory(conversationId, latestQuestion) else null
+                    (prefetched ?: crossChatMemoryFor(route, conversationId, latestQuestion)).also { memorySnapshot = it }
+                }
                 if (accumulator != null) {
                     val request = buildAnthropicRequestNow(
                         prefix, systemContext, route, options, searchRoute == AgentSearchRoute.FLASH_NATIVE && !textOnly, textOnly, memoryText,
@@ -2317,6 +2388,7 @@ class ChatViewModel(
                         runtime = ::runtimeState, onSearchAnswerRetry = ::discardStaleSearchAnswer,
                         onSearchAnswerUnresolved = ::resolveSearchAnswerFailure, observe = ::agentLog,
                     ) { history, offer, _ ->
+                        activeHistory = history
                         val prepared = history.anthropic(request, offer, fetch = history.requestState.webFetchEnabled,
                             search = history.requestState.clientSearchEnabled)
                         optionalFieldsSent = prepared.tools.isNotEmpty() || prepared.title != null || hasAttachments
@@ -2331,11 +2403,23 @@ class ChatViewModel(
                             if (!textOnly && route.supportsFileReferences && (route.filesApi.enabled || messages.any { message -> message.attachments.any { it.fileId != null } }))
                                 mapOf("anthropic-beta" to "files-api-2025-04-14") else emptyMap(),
                         contextWindow = options.model.contextWindow,
+                        /*
+                         * 开搜索的请求**不自动重发**：服务端可能已经真的执行过一次搜索，
+                         * 重发就是重复抓取 / 重复计费。纯文本请求没有副作用，断流重发一次是安全的。
+                         */
                         retryBeforeContent = !history.requestState.webEnabled && !history.requestState.nativeFetchEnabled,
                     ) }.collect { event ->
+                        /*
+                         * 用户在本轮请求还没吐出正文时拨开了搜索开关：丢掉这次请求、按新状态重发。
+                         * 此时没有任何可见正文，重发是免费的；晚一轮生效才是"开关不实时"的来源。
+                         */
+                        if (!bodyCommitted && searchSwitchFlippedBeforeBody()) throw SearchSwitchFlipped()
                         when (event) {
                             is StreamEvent.BlockStart -> {
-                                if (event.block is ReplyBlock.Text) noteBody()
+                                if (event.block is ReplyBlock.Text) {
+                                    bodyCommitted = true
+                                    noteBody()
+                                }
                                 if (event.block is ReplyBlock.Thinking) noteThinking()
                                 accumulator.consume(event, SystemClock.elapsedRealtime())
                                 dirty = true
@@ -2343,6 +2427,7 @@ class ChatViewModel(
 
                             is StreamEvent.TextDelta -> {
                                 if (event.text.isNotEmpty()) {
+                                    bodyCommitted = true
                                     noteBody()
                                     contentChars += event.text.length
                                 }
@@ -2399,6 +2484,7 @@ class ChatViewModel(
                         runtime = ::runtimeState, onSearchAnswerRetry = ::discardStaleSearchAnswer,
                         onSearchAnswerUnresolved = ::resolveSearchAnswerFailure, observe = ::agentLog,
                     ) { history, offer, onOutput ->
+                        activeHistory = history
                         agentTranscript = history.transcript
                         imageCallHandled = imageCallHandled || history.imageHandled
                         chatApi.streamChat(
@@ -2417,6 +2503,7 @@ class ChatViewModel(
                                 history.chat.isEmpty() && history.responses.isEmpty()
                             agentLog(history.round, "wire tools=${tools.joinToString(",")} choice=${choice ?: "-"}")
                         },
+                        /* 同 Anthropic 通道：开搜索/读链的请求不自动重发，避免重复抓取与计费。 */
                         retryBeforeContent = !history.requestState.webEnabled && !history.requestState.nativeFetchEnabled,
                         responseHistory = history.responses,
                         onResponseOutput = onOutput,
@@ -2434,6 +2521,7 @@ class ChatViewModel(
                         topP = options.topP.toDouble(),
                         extraHeaders = routeProvider.headersFor(openCodeSessionId),
                     ) }.collect { event ->
+                        if (!bodyCommitted && searchSwitchFlippedBeforeBody()) throw SearchSwitchFlipped()
                         when (event) {
                             is StreamEvent.Reasoning -> {
                                 // 请求档位控制发送参数，显示以服务端实际返回为准。
@@ -2447,6 +2535,7 @@ class ChatViewModel(
                             }
 
                             is StreamEvent.Content -> {
+                                bodyCommitted = true
                                 noteBody()
                                 contentBuf.append(event.text)
                                 contentChars += event.text.length
@@ -2497,6 +2586,7 @@ class ChatViewModel(
                 }
             }
 
+            var switchRestarts = 0
             suspend fun sendAttempt(textOnly: Boolean) {
                 contextRejection = null
                 try {
@@ -2505,6 +2595,17 @@ class ChatViewModel(
                     if (error.text.resId != R.string.error_context_budget) throw error
                     contextRejection = CompactionRequestFailure(CompactionFailureKind.INPUT_LIMIT)
                     failure = error.userMessage()
+                } catch (flipped: SearchSwitchFlipped) {
+                    /*
+                     * 首 token 前拨开搜索开关：撤回到本轮起点，按新状态重发一次。
+                     * 只重发一次 —— 用户连续乱拨不该让请求无限循环。
+                     */
+                    if (switchRestarts++ > 0) throw flipped
+                    switchBaseline = liveSearchSwitch()
+                    bodyCommitted = false
+                    discardStaleSearchAnswer()
+                    Diagnostics.log("AGENT", "turn=$turnId transition reason=search_switch_flip")
+                    sendAttempt(textOnly)
                 }
             }
 
@@ -2830,6 +2931,7 @@ class ChatViewModel(
             allowServerTools = !omitAttachmentsAndTools,
             includeAttachments = !omitAttachmentsAndTools,
             generateImageTool = generateImageTool,
+            promptCaching = com.simplechat.app.net.supportsAnthropicPromptCaching(route.baseUrl),
             temperature = options.temperature.toDouble(),
             topP = options.topP.toDouble(),
         ).also { request ->
@@ -3273,6 +3375,13 @@ private fun String.toConversationModeSafe(): ConversationMode =
  * `internal` 是为了能单测 —— 取整边界是最容易写错、又最不容易被发现的地方。
  */
 internal fun thinkingSeconds(ms: Long): Long = ((ms + 500) / 1000).coerceAtLeast(1)
+
+/**
+ * 首 token 之前搜索开关被打开 —— 这次请求作废、按新开关重发一次。
+ *
+ * 用异常而不是布尔返回值：抛出点在最深的流收集里，只有抛出去才能同时结束这次 HTTP 流。
+ */
+private class SearchSwitchFlipped : Exception("search switch changed before the answer started")
 
 
 

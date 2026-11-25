@@ -4,6 +4,7 @@ import com.simplechat.app.db.CompactionEntity
 import com.simplechat.app.net.anthropic.StreamingAnthropicRequestBody
 import com.simplechat.app.ui.chat.*
 import okio.Buffer
+import java.io.File
 import java.net.ServerSocket
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -59,6 +60,33 @@ class StreamingRequestTest {
     }
 
     @Test
+    fun `staged request serializes once and reports the same bytes`() {
+        val json = ChatApi.defaultJson()
+        val request = ChatRequestDto(
+            "model",
+            listOf(OutMessageDto("user", MessageContent.text("中文 😀 \"\n\u0000"))),
+            stream = true,
+        )
+        val dir = java.nio.file.Files.createTempDirectory("simplechat-stage").toFile()
+        try {
+            val expected = json.encodeToString(ChatRequestDto.serializer(), request)
+            val body = StreamingJsonRequestBody(json, request, dir)
+            assertEquals(expected.toByteArray(Charsets.UTF_8).size.toLong(), body.contentLength())
+            // Measuring must not re-serialize: the stage file is reused by both calls.
+            assertEquals(1, dir.listFiles()!!.size)
+            assertTrue(body.canReplayOnDisconnect())
+            val buffer = Buffer()
+            body.writeTo(buffer)
+            assertEquals(expected, buffer.readUtf8())
+            assertFalse(body.canReplayOnDisconnect())
+            body.dispose()
+            assertEquals(0, dir.listFiles()!!.size)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `request can replay only before upload starts`() {
         val json = ChatApi.defaultJson()
         for (size in listOf(16, LargeRequestBytes.toInt())) {
@@ -75,6 +103,9 @@ class StreamingRequestTest {
     @Test
     fun `large requests on both protocols send complete fixed length UTF8 and use longer upload timeout`() = runBlocking {
         val json = ChatApi.defaultJson()
+        // Exercise the production staging path (serialize once) and the counting fallback.
+        val stageRoot = java.nio.file.Files.createTempDirectory("simplechat-stage-e2e").toFile()
+        for (stageDir in listOf<File?>(stageRoot, null)) {
         for (anthropic in listOf(false, true)) {
             for (large in listOf(false, true)) {
                 val content = if (large) "文".repeat(300_000) + "\n".repeat(96_000) else "中文 😀 \"\n\u0000"
@@ -130,9 +161,9 @@ class StreamingRequestTest {
                             chain.proceed(chain.request())
                         }.build()
                         val url = "http://127.0.0.1:${server.localPort}/chat"
-                        val stream = if (anthropic) com.simplechat.app.net.anthropic.AnthropicApi(client, json)
+                        val stream = if (anthropic) com.simplechat.app.net.anthropic.AnthropicApi(client, json, stageDir)
                             .streamMessage(url, "", extendedRequest, contextWindow = model.contextWindow)
-                        else SseClient(client, json).stream(url, "", request, contextWindow = model.contextWindow)
+                        else SseClient(client, json, stageDir).stream(url, "", request, contextWindow = model.contextWindow)
                         assertEquals(listOf(StreamEvent.Done), stream.toList())
                         val (headers, body) = received.get(5, TimeUnit.SECONDS)
                         assertEquals(expected, body)
@@ -145,5 +176,8 @@ class StreamingRequestTest {
                 }
             }
         }
+        }
+        stageRoot.deleteRecursively()
+        Unit
     }
 }

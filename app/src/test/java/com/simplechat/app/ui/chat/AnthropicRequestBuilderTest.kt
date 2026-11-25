@@ -625,4 +625,40 @@ class AnthropicRequestBuilderTest {
         val roles = request.messages.map { it.role }
         assertEquals(listOf("user", "assistant", "user", "assistant", "user"), roles)
     }
+
+    // ── 提示词缓存断点（仅原版 Anthropic） ────────────────
+
+    @Test
+    fun `prompt caching marks the end of the stable history`() {
+        val request = buildAnthropicRequest(
+            model = "claude-sonnet", systemPrompt = "", path = listOf(user("hello")),
+            searchEnabled = false, thinkingEnabled = false, requestTitle = false, latestReminder = null,
+            promptCaching = true,
+        )
+        val block = request.messages.single().content.jsonArray.single().jsonObject
+        assertEquals("text", block["type"]!!.jsonPrimitive.content)
+        assertEquals("ephemeral", block["cache_control"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+
+        // Without the flag the wire shape is untouched (DeepSeek / gateways must not see the field).
+        val plain = buildAnthropicRequest(
+            model = "claude-sonnet", systemPrompt = "", path = listOf(user("hello")),
+            searchEnabled = false, thinkingEnabled = false, requestTitle = false, latestReminder = null,
+        )
+        assertEquals(JsonPrimitive("hello"), plain.messages.single().content)
+    }
+
+    @Test
+    fun `prompt caching puts the breakpoint on the last block of an image turn`() {
+        val image = Attachment(Attachment.Kind.IMAGE, "x.png", "image/png", "AAAA", width = 10, height = 10)
+        val request = buildAnthropicRequest(
+            model = "claude-sonnet", systemPrompt = "", path = listOf(user("看图", listOf(image))),
+            searchEnabled = false, thinkingEnabled = false, requestTitle = false, latestReminder = null,
+            promptCaching = true,
+        )
+        val blocks = request.messages.single().content.jsonArray.map { it.jsonObject }
+        assertEquals(2, blocks.size)
+        assertNull(blocks[0]["cache_control"])
+        assertEquals("text", blocks[1]["type"]!!.jsonPrimitive.content)
+        assertEquals("ephemeral", blocks[1]["cache_control"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+    }
 }
