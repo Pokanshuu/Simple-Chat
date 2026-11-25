@@ -1,5 +1,6 @@
 package com.simplechat.app.data
 
+import com.simplechat.app.db.CompactionEntity
 import com.simplechat.app.db.ConversationEntity
 import com.simplechat.app.db.MessageEntity
 import com.simplechat.app.db.PresetEntity
@@ -64,6 +65,14 @@ data class BackupConversation(
     /** 挂载的预设 id，按拼接顺序。 */
     val enabledPresetIds: List<String> = emptyList(),
     val messages: List<BackupMessage> = emptyList(),
+    /**
+     * 上下文压缩摘要。
+     *
+     * 摘要只改"发给模型的内容"，本地消息一条不少，所以它和消息一样是会话状态的一部分。
+     * 不导出的话，恢复备份后会退化成全量发送 —— 用户以为压缩还在，实际 token 已经翻倍。
+     * 旧备份没有这个字段，读进来是空列表；新备份被旧版本读到也只是忽略。
+     */
+    val compactions: List<BackupCompaction> = emptyList(),
     val memoryEnabled: Boolean = true,
 )
 
@@ -121,11 +130,27 @@ data class BackupPreset(
     val updatedAt: Long = 0L,
 )
 
+/**
+ * 一条压缩摘要。
+ *
+ * `throughMessageId` 指向**备份里真实导出**的消息 id：导入时按这个 id 是否落地决定
+ * 摘要还有没有效（被回收站挡在导出范围外的边界会让摘要失效，直接跳过）。
+ */
+@Serializable
+data class BackupCompaction(
+    val id: String,
+    val throughMessageId: String,
+    val summary: String,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
 // ── 实体 ↔ 备份模型 ──────────────────────────────────────
 
 internal fun ConversationEntity.toBackup(
     messages: List<MessageEntity>,
     presetIds: List<String>,
+    compactions: List<CompactionEntity> = emptyList(),
 ): BackupConversation = BackupConversation(
     id = id,
     title = title,
@@ -140,6 +165,7 @@ internal fun ConversationEntity.toBackup(
     enabledPresetIds = presetIds,
     memoryEnabled = memoryEnabled,
     messages = messages.map { it.toBackup() },
+    compactions = compactions.map { it.toBackup() },
 )
 
 internal fun PresetEntity.toBackup(): BackupPreset = BackupPreset(
@@ -198,6 +224,32 @@ internal fun BackupMessage.toEntity(conversationId: String): MessageEntity = Mes
     createdAt = createdAt,
 )
 
+internal fun CompactionEntity.toBackup(): BackupCompaction = BackupCompaction(
+    id = id,
+    throughMessageId = throughMessageId,
+    summary = summary,
+    createdAt = createdAt,
+    updatedAt = updatedAt,
+)
+
+internal fun BackupCompaction.toEntity(conversationId: String): CompactionEntity = CompactionEntity(
+    id = id,
+    conversationId = conversationId,
+    throughMessageId = throughMessageId,
+    summary = summary,
+    createdAt = createdAt,
+    updatedAt = updatedAt,
+)
+
+/**
+ * 只留下能真正生效的摘要：正文非空、不超上限，且边界消息确实落地。
+ *
+ * 抽成纯函数是为了钉死"导入一条永远不生效的摘要"这条退化路径 —— 导入了但
+ * 当前路径上找不到 boundary，界面上不会显示压缩，请求也不会变短。
+ */
+internal fun List<BackupCompaction>.restorable(messageIds: Set<String>): List<BackupCompaction> =
+    filter { it.summary.isNotBlank() && it.summary.length <= MaxCompactionSummaryChars && it.throughMessageId in messageIds }
+
 /**
  * 导入策略。
  *
@@ -251,6 +303,13 @@ internal fun BackupConversation.withFreshIds(newId: String): BackupConversation 
     return copy(
         id = newId,
         messages = messages.map { it.copy(id = remap(it.id), parentId = remap(it.parentId), versionGroup = it.versionGroup?.let(::remap)) },
+        // 摘要主键也必须换：同一个 id 再导入一次会 upsert 到旧会话上，把原摘要搬走。
+        compactions = compactions.map {
+            it.copy(
+                id = remap(it.id),
+                throughMessageId = remap(it.throughMessageId),
+            )
+        },
     )
 }
 

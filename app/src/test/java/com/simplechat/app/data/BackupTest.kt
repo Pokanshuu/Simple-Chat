@@ -1,5 +1,6 @@
 package com.simplechat.app.data
 
+import com.simplechat.app.db.CompactionEntity
 import com.simplechat.app.db.MessageEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -48,6 +49,15 @@ class BackupTest {
                 messages = listOf(
                     sampleMessage("m1", active = false, variant = 0).toBackup(),
                     sampleMessage("m2", active = true, variant = 1).toBackup(),
+                ),
+                compactions = listOf(
+                    BackupCompaction(
+                        id = "cmp1",
+                        throughMessageId = "m2",
+                        summary = "前情提要",
+                        createdAt = 1_699_500_000_000,
+                        updatedAt = 1_699_600_000_000,
+                    ),
                 ),
             ),
         ),
@@ -176,5 +186,54 @@ class BackupTest {
 
         val decoded = backupJson.decodeFromString<BackupFile>(text)
         assertEquals("设定.md", decoded.conversations.single().messages.first().attachments.single().name)
+    }
+
+    @Test
+    fun `compactions are kept as a nested list in the exported json`() {
+        val text = backupJson.encodeToString(sampleFile())
+
+        assertTrue(text.contains("\"compactions\""))
+        assertTrue(text.contains("\"前情提要\""))
+    }
+
+    @Test
+    fun `compaction survives the entity-backup-entity hop`() {
+        val entity = CompactionEntity(
+            id = "cmp9",
+            conversationId = "c1",
+            throughMessageId = "m9",
+            summary = "他们已经在雨夜抵达码头。",
+            createdAt = 1_700_000_000_000,
+            updatedAt = 1_700_000_000_001,
+        )
+
+        val restored = entity.toBackup().toEntity("c1")
+
+        assertEquals(entity, restored)
+    }
+
+    @Test
+    fun `old backups without the compactions field still load`() {
+        // 上一版的备份没有 compactions 字段；缺省必须是空列表，不能连会话一起丢
+        val text = """
+            {"format":"simplechat-backup","version":2,"exportedAt":1,
+             "conversations":[{"id":"c1","title":"t","mode":"CREATIVE",
+             "createdAt":1,"updatedAt":2,"messages":[]}]}
+        """.trimIndent()
+
+        val decoded = backupJson.decodeFromString<BackupFile>(text)
+
+        assertEquals(emptyList<BackupCompaction>(), decoded.conversations.single().compactions)
+    }
+
+    @Test
+    fun `compaction whose boundary did not survive is dropped`() {
+        val compactions = listOf(
+            BackupCompaction("keep", "u", "有效的", 1, 2),
+            BackupCompaction("missing", "gone", "边界没导入", 1, 2),
+            BackupCompaction("blank", "u", "  ", 1, 2),
+        )
+
+        assertEquals(listOf("keep"), compactions.restorable(setOf("u")).map { it.id })
     }
 }

@@ -67,6 +67,15 @@ class ImportModeTest {
                 createdAt = 1_500L,
             ),
         ),
+        compactions = listOf(
+            BackupCompaction(
+                id = "$id-cmp",
+                throughMessageId = "$id-a1",
+                summary = "前情",
+                createdAt = 1_600L,
+                updatedAt = 1_700L,
+            ),
+        ),
     )
 
     @Test
@@ -87,6 +96,18 @@ class ImportModeTest {
         assertEquals(listOf("问题", "回答"), fresh.messages.map { it.content })
         assertEquals(1_000L, fresh.messages[0].createdAt)
         assertEquals(2_000L, fresh.updatedAt)
+    }
+
+    @Test
+    fun `换 id 时压缩摘要的边界跟着消息一起换`() {
+        val fresh = conversation("old").withFreshIds("new")
+
+        val compaction = fresh.compactions.single()
+        assertEquals("new#old-cmp", compaction.id)
+        assertEquals("new#old-a1", compaction.throughMessageId)
+        assertEquals("前情", compaction.summary)
+        // 边界必须落在换过 id 的后一条消息上，否则导入后摘要永远不生效
+        assertTrue(fresh.messages.any { it.id == compaction.throughMessageId })
     }
 
     @Test

@@ -17,18 +17,28 @@ internal object BackupCompatibilityRegression {
         val repository = ChatRepository(db, ctx)
         val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
         try {
-            val original = BackupFile(exportedAt = 1, conversations = listOf(BackupConversation(
-                "native-id", "Compatibility", "CREATIVE", model = "deepseek-flash", systemPrompt = "system",
-                createdAt = 1700000000000, updatedAt = 1700000000500, enabledPresetIds = listOf("preset"), messages = listOf(
-                    BackupMessage("u", role = "user", content = "Long preserved text ".repeat(4000),
-                        attachments = listOf(Attachment(Attachment.Kind.TEXT, "local.txt", data = "local attachment original")), createdAt = 1700000000000),
-                    BackupMessage("a", parentId = "u", role = "assistant", content = "Answer", reasoning = "Reasoning", thinkingMs = 2400,
-                        model = "deepseek-flash", timeline = listOf(ReplyBlock.SearchResult("s", "web_search", listOf(WebSource("https://example.com", "Source"))),
-                            ReplyBlock.Text("Answer", listOf(Citation("https://example.com", "Source")))), createdAt = 1700000000100),
-                    BackupMessage("b", parentId = "u", variantIndex = 1, active = false, role = "assistant", content = "Alternative", createdAt = 1700000000200),
-                ))), presets = listOf(BackupPreset("preset", "Preset", "Preset text", createdAt = 1)))
+            val original = BackupFile(
+                exportedAt = 1,
+                conversations = listOf(
+                    BackupConversation(
+                        "native-id", "Compatibility", "CREATIVE", model = "deepseek-flash", systemPrompt = "system",
+                        createdAt = 1700000000000, updatedAt = 1700000000500, enabledPresetIds = listOf("preset"),
+                        messages = listOf(
+                            BackupMessage("u", role = "user", content = "Long preserved text ".repeat(4000),
+                                attachments = listOf(Attachment(Attachment.Kind.TEXT, "local.txt", data = "local attachment original")), createdAt = 1700000000000),
+                            BackupMessage("a", parentId = "u", role = "assistant", content = "Answer", reasoning = "Reasoning", thinkingMs = 2400,
+                                model = "deepseek-flash", timeline = listOf(ReplyBlock.SearchResult("s", "web_search", listOf(WebSource("https://example.com", "Source"))),
+                                    ReplyBlock.Text("Answer", listOf(Citation("https://example.com", "Source")))), createdAt = 1700000000100),
+                            BackupMessage("b", parentId = "u", variantIndex = 1, active = false, role = "assistant", content = "Alternative", createdAt = 1700000000200),
+                        ),
+                        compactions = listOf(BackupCompaction("cmp", "a", "Summary", 1, 2)),
+                    ),
+                ),
+                presets = listOf(BackupPreset("preset", "Preset", "Preset text", createdAt = 1)),
+            )
             check(repository.importParsed(original, ImportMode.MERGE).messages == 3)
             val baseline = json.decodeFromString<BackupFile>(repository.exportBackup())
+            check(baseline.conversations.single().compactions.single().throughMessageId == "a")
             val deepseek = File(root, "deepseek.zip")
             val legacy = File(root, "legacy.zip")
             repository.exportDeepSeekArchive(deepseek)

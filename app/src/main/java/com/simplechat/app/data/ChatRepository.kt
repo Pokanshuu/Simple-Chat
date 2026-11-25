@@ -1064,7 +1064,8 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             check(onlyConversation == null || rows.isNotEmpty()) { "Conversation no longer exists" }
             val exportIds = rows.associate { it.id to exportableIds(it.id) }
             val total = exportIds.values.sumOf { it.size }
-            val headers = rows.map { it.toBackup(emptyList(), getEnabledPresetIds(it.id)) }
+            val compactions = compactionDao.getAll().groupBy { it.conversationId }
+            val headers = rows.map { it.toBackup(emptyList(), getEnabledPresetIds(it.id), compactions[it.id].orEmpty()) }
             val linkedPresetIds = headers.flatMap { it.enabledPresetIds }.toSet()
             val presetRows = presets.getAll().filter { onlyConversation == null || it.id in linkedPresetIds }.map { it.toBackup() }
             var written = 0
@@ -1129,7 +1130,8 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             val rows = conversations.getAllRaw()
             val exportedAt = System.currentTimeMillis()
             val presetRows = presets.getAll().map { it.toBackup() }
-            val headers = rows.map { row -> row.toBackup(emptyList(), getEnabledPresetIds(row.id)) }
+            val compactions = compactionDao.getAll().groupBy { it.conversationId }
+            val headers = rows.map { row -> row.toBackup(emptyList(), getEnabledPresetIds(row.id), compactions[row.id].orEmpty()) }
             val exportIds = rows.associate { it.id to exportableIds(it.id) }
             val totalMessages = exportIds.values.sumOf { it.size }
             var written = 0
@@ -1197,6 +1199,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         val rows = conversations.getAllRaw()
         val presetByConversation = conversationPresets.getAllRaw()
             .groupBy { it.conversationId }
+        val compactionsByConversation = compactionDao.getAll().groupBy { it.conversationId }
 
         return BackupFile(
             exportedAt = System.currentTimeMillis(),
@@ -1207,6 +1210,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
                         .orEmpty()
                         .sortedBy { it.sortOrder }
                         .map { it.presetId },
+                    compactions = compactionsByConversation[row.id].orEmpty(),
                 )
             },
             presets = presets.getAll().map { it.toBackup() },
@@ -1229,6 +1233,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
                     presetIds = conversationPresets.getFor(conversationId)
                         .sortedBy { it.sortOrder }
                         .map { it.presetId },
+                    compactions = compactionDao.getFor(conversationId),
                 ),
             ),
             // 单会话导出**不带全局预设** —— 导入方的预设库里未必有这些 id，
@@ -1875,6 +1880,13 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         session.expectedMessages?.let { check(received == it && written == it) { "Message count mismatch: $received/$written/$it" } }
         check(messages.countFor(conversation.id) == written) { "Stored message count mismatch" }
 
+        /*
+         * 摘要跟着消息一起恢复。边界必须落在**这次真的写进去的消息**上：
+         * 回收站/永久删除挡在导出范围外的边界，导入后会变成一条永远不生效的摘要，
+         * 不如直接丢掉，让请求回到全量。
+         */
+        writeCompactions(conversation, existing)
+
         // 恢复挂载的预设（顺序有意义：拼接顺序会影响模型对主次的判断）
         writePresetLinks(conversation.id, conversation.enabledPresetIds)
         /*
@@ -1964,6 +1976,18 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         /** 消息 id 重映射（同名新命名时会换 id）；为 null 表示不需要改。 */
         val remapId: ((String) -> String)?,
     )
+
+    /**
+     * 写入随会话恢复的压缩摘要。
+     *
+     * 「同名新命名」时 [BackupConversation.withFreshIds] 已经把摘要 id、边界和消息一起换过，
+     * 这里不再二次重映射。只保留边界真的落地、正文非空且不超上限的摘要。
+     */
+    private suspend fun writeCompactions(conversation: BackupConversation, messageIds: Set<String>) {
+        conversation.compactions.restorable(messageIds).forEach { compaction ->
+            compactionDao.upsert(compaction.toEntity(conversation.id))
+        }
+    }
 
     /**
      * 删掉一条会话及其附属记录 —— 「覆盖同名」用。

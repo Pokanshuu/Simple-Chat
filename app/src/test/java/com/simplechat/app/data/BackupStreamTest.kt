@@ -13,6 +13,15 @@ class BackupStreamTest {
     private val header = BackupConversation(
         id = "c1", title = "中文\"标题", mode = "CREATIVE", createdAt = 123, updatedAt = 456,
         pinned = true, pinnedAt = 456, enabledPresetIds = listOf("preset"),
+        compactions = listOf(
+            BackupCompaction(
+                id = "cmp1",
+                throughMessageId = "u",
+                summary = "前情",
+                createdAt = 200,
+                updatedAt = 300,
+            ),
+        ),
     )
 
     @Test
@@ -32,6 +41,7 @@ class BackupStreamTest {
         }
         val restored = backupJson.decodeFromString<BackupFile>(writer.toString())
         assertEquals(BackupFile(exportedAt = 999, conversations = listOf(header.copy(messages = messages), empty), presets = listOf(preset)), restored)
+        assertEquals("前情", restored.conversations.first().compactions.single().summary)
     }
 
     @Test

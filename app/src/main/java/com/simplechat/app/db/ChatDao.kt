@@ -659,6 +659,10 @@ interface CompactionDao {
     @Query("SELECT * FROM compactions WHERE conversationId = :conversationId ORDER BY updatedAt DESC")
     suspend fun getFor(conversationId: String): List<CompactionEntity>
 
+    /** 导出用：一次取全，避免按会话逐个查。 */
+    @Query("SELECT * FROM compactions")
+    suspend fun getAll(): List<CompactionEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(compaction: CompactionEntity)
 
