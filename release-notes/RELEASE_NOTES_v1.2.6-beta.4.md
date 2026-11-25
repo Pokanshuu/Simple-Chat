@@ -21,7 +21,7 @@
 
 - [下载 APK](https://github.com/Pokanshuu/Simple-Chat/releases/download/v1.2.6-beta.4/SimpleChat-1.2.6-beta.4-release.apk)（5.0 MB）
 - [下载 SHA-256 校验文件](https://github.com/Pokanshuu/Simple-Chat/releases/download/v1.2.6-beta.4/SimpleChat-1.2.6-beta.4-release.apk.sha256)
-- SHA-256 `a7fec3c189a18c91ad7a5b31b771a1027ee4df243786790fe572f968433a0e54`
+- SHA-256 `2a8e7f0ae2db49d898174bfbae1cfc6120a1b1799cc5e9db3854092f5c39c4ac`
 
 ## 验证
 
