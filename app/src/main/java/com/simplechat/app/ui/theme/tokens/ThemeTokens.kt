@@ -66,15 +66,46 @@ data class SpaceTokens(
     val rowPadY: Dp = 12.dp,
 )
 
-/** 阴影（§15.4）：范围（elevation）与浓淡（alpha）分开。 */
+/**
+ * 一层投影的完整规格。
+ *
+ * [elevation] 只描述范围，[ambient] / [spot] 的 alpha 单独描述浓淡；
+ * [contactElevation] / [contactColor] 是贴边那一层。所有带阴影的界面元素
+ * 都通过同一个 [com.simplechat.app.ui.common.surfaceShadow] 绘制，避免各写各的。
+ */
+@Immutable
+data class SurfaceShadowSpec(
+    val elevation: Dp,
+    val ambient: Color,
+    val spot: Color,
+    val contactElevation: Dp,
+    val contactColor: Color,
+)
+
+/** 阴影（§15.4）：三档全局规格，面板 / 浮层 / 紧贴内容的小控件。 */
 @Immutable
 data class ShadowTokens(
-    val panelElevation: Dp = 8.dp,
-    val panelAmbient: Color = Color.Black.copy(alpha = 0.08f),
-    val panelSpot: Color = Color.Black.copy(alpha = 0.14f),
-    val raisedElevation: Dp = 16.dp,
-    val raisedAmbient: Color = Color.Black.copy(alpha = 0.18f),
-    val raisedSpot: Color = Color.Black.copy(alpha = 0.26f),
+    val panel: SurfaceShadowSpec = SurfaceShadowSpec(
+        elevation = 8.dp,
+        ambient = Color.Black.copy(alpha = 0.05f),
+        spot = Color.Black.copy(alpha = 0.08f),
+        contactElevation = 2.dp,
+        contactColor = Color.Black.copy(alpha = 0.09f),
+    ),
+    val raised: SurfaceShadowSpec = SurfaceShadowSpec(
+        elevation = 16.dp,
+        ambient = Color.Black.copy(alpha = 0.18f),
+        spot = Color.Black.copy(alpha = 0.26f),
+        contactElevation = 3.dp,
+        contactColor = Color.Black.copy(alpha = 0.10f),
+    ),
+    val floating: SurfaceShadowSpec = SurfaceShadowSpec(
+        elevation = 16.dp,
+        ambient = Color.Black.copy(alpha = 0.22f),
+        spot = Color.Black.copy(alpha = 0.32f),
+        contactElevation = 3.dp,
+        contactColor = Color.Black.copy(alpha = 0.10f),
+    ),
 )
 
 /**

@@ -1,7 +1,6 @@
 package com.simplechat.app.ui.chat
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
@@ -62,9 +61,9 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.util.lerp
 import com.simplechat.app.R
 import com.simplechat.app.ui.common.ContainerShape
-import com.simplechat.app.ui.common.layeredShadow
+import com.simplechat.app.ui.common.surfaceShadow
 import com.simplechat.app.ui.common.AppIcons
-import com.simplechat.app.ui.common.AppShadow
+import com.simplechat.app.ui.theme.tokens.AppTheme
 import com.simplechat.app.data.TokenEstimate
 import com.simplechat.app.data.Res
 import com.simplechat.app.ui.common.FoldAnimMs
@@ -203,8 +202,8 @@ internal fun InputBar(
     )
 
     // 面板展开 → 投影淡出；收起 → 淡入。否则接缝处会同时压着两条阴影。
-    val shadowElevation by animateDpAsState(
-        targetValue = if (panelExpanded) 0.dp else AppShadow.PanelElevation,
+    val shadowStrength by animateFloatAsState(
+        targetValue = if (panelExpanded) 0f else 1f,
         animationSpec = tween(durationMillis = 180),
         label = "inputBarShadow",
     )
@@ -237,14 +236,10 @@ internal fun InputBar(
                     .fillMaxWidth()
                     // 与菜单同一个投影族：先 shadow 再 clip，投影才不会被自家圆角裁掉。
                     // 双层（宽 + 贴边）—— 单层只有一种扩散，大面板的边缘会发虚。
-                    .layeredShadow(
+                    .surfaceShadow(
                         shape = ContainerShape,
-                        elevation = shadowElevation,
-                        ambient = AppShadow.PanelAmbient,
-                        spot = AppShadow.PanelSpot,
-                        contactElevation = shadowElevation / 4,
-                        contactColor = AppShadow.PanelContactColor,
-                        opacity = background.alpha,
+                        spec = AppTheme.tokens.shadow.panel,
+                        opacity = background.alpha * shadowStrength,
                     )
                     .clip(shape)
                     // 语音态是实心主色 / 错误色，不参与玻璃

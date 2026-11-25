@@ -2,6 +2,7 @@ package com.simplechat.app.ui.theme
 
 import androidx.compose.foundation.background
 import com.simplechat.app.data.ControlEffects
+import com.simplechat.app.data.DefaultPanelOpacity
 import android.os.Build
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -49,8 +50,13 @@ import kotlin.math.ceil
 /** 亚克力强度 0..1；最小值仍有一层柔化及混色。 */
 val LocalFloatingGlass = staticCompositionLocalOf { 0f }
 
-/** 悬浮控件的底色不透明度，不参与亚克力采样或混色。 */
-val LocalFloatingBaseOpacity = staticCompositionLocalOf { 0.72f }
+/**
+ * 悬浮控件的底色不透明度，不参与亚克力采样或混色。
+ *
+ * 静态默认值必须是实色：设置加载完成前、以及没有提供该 CompositionLocal 的
+ * 预览里都不应该先闪一层半透明；透明只在用户主动调低后生效。
+ */
+val LocalFloatingBaseOpacity = staticCompositionLocalOf { DefaultPanelOpacity }
 
 internal val LocalAcrylicEnabled = staticCompositionLocalOf { false }
 internal val LocalControlEffects = staticCompositionLocalOf { ControlEffects() }

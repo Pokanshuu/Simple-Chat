@@ -40,7 +40,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -64,7 +63,9 @@ import com.simplechat.app.R
 import com.simplechat.app.data.InterfaceControl
 import com.simplechat.app.ui.theme.GlassForeground
 import com.simplechat.app.ui.theme.floatingGlassBackground
-import com.simplechat.app.ui.common.AppShadow
+import com.simplechat.app.ui.common.surfaceShadow
+import com.simplechat.app.ui.theme.floatingPanelSurface
+import com.simplechat.app.ui.theme.tokens.AppTheme
 import com.simplechat.app.ui.common.SoftShape
 import com.simplechat.app.ui.common.Space
 import com.simplechat.app.ui.theme.LocalChatColors
@@ -309,6 +310,7 @@ fun MessageIndexOverlay(
 ) {
     val colors = LocalChatColors.current
     val density = LocalDensity.current
+    val surface = floatingPanelSurface(InterfaceControl.MESSAGE_INDEX)
 
     /*
      * 面板自己的滚动位置。
@@ -362,15 +364,13 @@ fun MessageIndexOverlay(
                     .fillMaxWidth(IndexWidthFraction)
                     // 跟手：露出多少就挪进来多少
                     .offset { IntOffset((panelWidthPx - state.revealed).roundToInt(), 0) }
-                    .shadow(
-                        elevation = AppShadow.RaisedElevation,
+                    .surfaceShadow(
                         shape = IndexPanelShape,
-                        clip = false,
-                        ambientColor = AppShadow.RaisedAmbient,
-                        spotColor = AppShadow.RaisedSpot,
+                        spec = AppTheme.tokens.shadow.raised,
+                        opacity = surface.alpha,
                     )
                     .clip(IndexPanelShape)
-                    .floatingGlassBackground(colors.card, InterfaceControl.MESSAGE_INDEX),
+                    .floatingGlassBackground(colors.card, InterfaceControl.MESSAGE_INDEX, surface),
             ) {
                 GlassForeground(InterfaceControl.MESSAGE_INDEX) {
                     if (entries.isEmpty()) {

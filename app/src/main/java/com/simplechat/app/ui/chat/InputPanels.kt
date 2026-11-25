@@ -3,7 +3,7 @@ package com.simplechat.app.ui.chat
 import com.simplechat.app.ui.theme.floatingGlassBackground
 import com.simplechat.app.ui.theme.GlassForeground
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -43,7 +43,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.stringResource
@@ -54,14 +53,14 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import com.simplechat.app.R
 import com.simplechat.app.ui.common.ContainerShape
-import com.simplechat.app.ui.common.layeredShadow
+import com.simplechat.app.ui.common.surfaceShadow
 import com.simplechat.app.data.TokenEstimate
 import com.simplechat.app.db.CompactionEntity
 import com.simplechat.app.net.ModelInfo
 import com.simplechat.app.ui.common.AppIcons
 import com.simplechat.app.ui.common.AppMenu
 import com.simplechat.app.ui.common.AppMenuItem
-import com.simplechat.app.ui.common.AppShadow
+import com.simplechat.app.ui.theme.tokens.AppTheme
 import com.simplechat.app.data.Pricing
 import com.simplechat.app.ui.common.AppSlider
 import com.simplechat.app.ui.common.AppSwitch
@@ -85,8 +84,8 @@ fun InputPanel(
     val surface = floatingPanelSurface(InterfaceControl.INPUT_PANEL)
 
     // 面板自己的投影也做淡入，和输入栏投影的淡出对得上
-    val elevation by animateDpAsState(
-        targetValue = if (visible) AppShadow.PanelElevation else 0.dp,
+    val shadowStrength by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
         animationSpec = tween(durationMillis = 220),
         label = "inputPanelShadow",
     )
@@ -103,18 +102,14 @@ fun InputPanel(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
-                    .layeredShadow(
+                    .surfaceShadow(
                         shape = shape,
-                        elevation = elevation,
-                        ambient = AppShadow.PanelAmbient,
-                        spot = AppShadow.PanelSpot,
-                        contactElevation = elevation / 4,
-                        contactColor = AppShadow.PanelContactColor,
-                        opacity = surface.alpha,
+                        spec = AppTheme.tokens.shadow.panel,
+                        opacity = surface.alpha * shadowStrength,
                     )
                     .clip(shape)
                     // 悬浮玻璃（docs/32 §32.3.3），与输入栏同一个值、同一套下限
-                    .floatingGlassBackground(colors.card, InterfaceControl.INPUT_PANEL)
+                    .floatingGlassBackground(colors.card, InterfaceControl.INPUT_PANEL, surface)
                     .border(1.dp, colors.outline, shape)
                     .heightIn(max = 360.dp)
                     .verticalScroll(rememberScrollState())

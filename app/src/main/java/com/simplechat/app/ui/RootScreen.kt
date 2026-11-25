@@ -62,7 +62,6 @@ import com.simplechat.app.ui.theme.recordBackdrop
 import com.simplechat.app.ui.theme.LocalWallpaper
 import com.simplechat.app.ui.theme.drawWallpaper
 import com.simplechat.app.ui.theme.rememberWallpaperBitmap
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathFillType
@@ -90,7 +89,8 @@ import com.simplechat.app.ui.chat.ChatScreen
 import com.simplechat.app.ui.chat.ChatViewModel
 import com.simplechat.app.ui.chat.HorizontalScrollRegions
 import com.simplechat.app.ui.common.AppConfirmDialog
-import com.simplechat.app.ui.common.AppShadow
+import com.simplechat.app.ui.common.surfaceShadow
+import com.simplechat.app.ui.theme.tokens.AppTheme
 import com.simplechat.app.ui.common.AppTextInputDialog
 import com.simplechat.app.ui.common.MotionDurationMs
 import com.simplechat.app.ui.common.MotionEasing
@@ -355,6 +355,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
     } }
     val sidebarBlur = needsLiveSurface(InterfaceControl.SIDEBAR) && rememberLiveBlurAvailable()
     val drawerSource = rememberBackdropSource(!wideChatLayout && drawerVisible && sidebarBlur)
+    val drawerSurface = floatingPanelSurface(InterfaceControl.SIDEBAR)
 
     ModalNavigationDrawer(
         modifier = Modifier.onGloballyPositioned { drawerOrigin = it.boundsInRoot().topLeft }
@@ -380,12 +381,10 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                     .fillMaxWidth(if (wideChatLayout) 0f else sheetFraction)
                     .fillMaxHeight()
                     // 抽屉自己也要"浮起来"，否则右边缘是一道生硬的白灰交界
-                    .shadow(
-                        elevation = AppShadow.RaisedElevation,
+                    .surfaceShadow(
                         shape = sheetShape,
-                        clip = false,
-                        ambientColor = AppShadow.RaisedAmbient,
-                        spotColor = AppShadow.RaisedSpot,
+                        spec = AppTheme.tokens.shadow.raised,
+                        opacity = drawerSurface.alpha,
                     ),
                 drawerShape = sheetShape,
                 // 面板底色由容器统一绘制一次，抽屉内容沿用这层底色。
@@ -400,16 +399,15 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
             ) {
                 if (!wideChatLayout) {
                     val colors = LocalChatColors.current
-                    val surface = floatingPanelSurface(InterfaceControl.SIDEBAR)
                     val navigationBars = WindowInsets.navigationBars
                     val bottomInset = navigationBars.getBottom(LocalDensity.current)
                     Box(
                         Modifier.fillMaxSize()
                             .floatingGlassBackground(
-                                colors.card, InterfaceControl.SIDEBAR, surface, drawerSource,
+                                colors.card, InterfaceControl.SIDEBAR, drawerSurface, drawerSource,
                                 extendIntoBottomInset = bottomInset,
                             ),
-                    ) { GlassForeground(InterfaceControl.SIDEBAR, surface) { sidebarContent(false) } }
+                    ) { GlassForeground(InterfaceControl.SIDEBAR, drawerSurface) { sidebarContent(false) } }
                 }
             }
         },

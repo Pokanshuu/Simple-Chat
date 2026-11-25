@@ -43,7 +43,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -79,7 +78,9 @@ import kotlin.math.roundToInt
 import kotlin.math.abs
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.ui.theme.LocalChatColors
+import com.simplechat.app.ui.theme.floatingPanelSurface
 import com.simplechat.app.ui.theme.menuGlassBackground
+import com.simplechat.app.ui.theme.tokens.AppTheme
 import com.simplechat.app.ui.theme.GlassForeground
 import com.simplechat.app.data.InterfaceControl
 import androidx.compose.ui.graphics.Shape
@@ -684,84 +685,6 @@ private val MenuGap = 8.dp
 private val MenuShadowBleed = 30.dp
 
 /**
- * 投影规格。**两档，全应用统一**。
- *
- * 关键：`elevation` 只决定**扩散范围**，浓淡由 `ambient/spot` 的 alpha
- * 单独控制 —— 两者拆开才谈得上"范围大但很淡"。
- *
- * 之前就栽在这里：输入栏用框架默认色（偏黑），菜单却用了 4% 的极淡色，
- * 于是「输入栏太浓、菜单看不见」，方向完全反了。
- */
-object AppShadow {
-    /**
-     * 贴底大面板（输入栏、输入面板）。
-     *
-     * 面积大，同样的 alpha 会比小卡片显眼得多，所以两档之间保持一倍以上差距。
-     * 数值是实机来回比对出来的：再低就"没有"，再高就"发脏"。
-     */
-    val PanelElevation = 8.dp
-    val PanelAmbient = Color.Black.copy(alpha = 0.05f)
-    val PanelSpot = Color.Black.copy(alpha = 0.08f)
-
-    /** 浮层（菜单）与抽屉：需要明确"浮起来"。 */
-    val RaisedElevation = 16.dp
-    val RaisedAmbient = Color.Black.copy(alpha = 0.18f)
-    val RaisedSpot = Color.Black.copy(alpha = 0.26f)
-
-    /** 回到底部按钮和长按菜单：保持扩散范围，只加深投影。 */
-    val FloatingAmbient = Color.Black.copy(alpha = 0.22f)
-    val FloatingSpot = Color.Black.copy(alpha = 0.32f)
-
-    /**
-     * 贴边那一层的厚度。
-     *
-     * 单层大投影的问题是**边界发虚**：卡片像悬在半空、边缘糊掉，
-     * 深色背景上尤其明显。再叠一层很薄的窄投影，边缘立刻"落地"，
-     * 而远处那片淡阴影照旧化开 —— 这才是卡片浮起来的样子。
-     */
-    val ContactElevation = 3.dp
-    val ContactColor = Color.Black.copy(alpha = 0.10f)
-
-    /** 输入栏的贴边层更薄：它比菜单大得多，同一厚度会显脏。 */
-    val PanelContactElevation = 2.dp
-    val PanelContactColor = Color.Black.copy(alpha = 0.09f)
-}
-
-/**
- * **双层**投影：远处化开 + 贴边收拢。
- *
- * 为什么要两层：`Modifier.shadow` 一次只能给一种扩散。只给大范围 → 边缘发虚
- * （卡片像飘着）；只给贴边 → 没有"浮起来"的距离感。两层叠起来，
- * 宽的那层负责氛围、窄的那层负责边界。
- *
- * 顺序要紧：**先宽后窄**、且都在 `background` 之前 —— 阴影永远垫在卡片底下。
- * `clip = false` 也是必须的，否则投影会被自家圆角裁掉一圈。
- */
-fun Modifier.layeredShadow(
-    shape: androidx.compose.ui.graphics.Shape,
-    elevation: Dp,
-    ambient: Color,
-    spot: Color,
-    contactElevation: Dp,
-    contactColor: Color,
-    opacity: Float = 1f,
-): Modifier = this
-    .shadow(
-        elevation = elevation,
-        shape = shape,
-        clip = false,
-        ambientColor = ambient.copy(alpha = ambient.alpha * opacity.coerceIn(0f, 1f)),
-        spotColor = spot.copy(alpha = spot.alpha * opacity.coerceIn(0f, 1f)),
-    )
-    .shadow(
-        elevation = contactElevation,
-        shape = shape,
-        clip = false,
-        ambientColor = contactColor.copy(alpha = contactColor.alpha * opacity.coerceIn(0f, 1f)),
-        spotColor = contactColor.copy(alpha = contactColor.alpha * opacity.coerceIn(0f, 1f)),
-    )
-
-/**
  * 菜单定位。两条规则，按触发方式区分：
  *
  * - **点击控件触发**（外观、模型列表…）：贴在锚点下方，且**右边缘对齐锚点右边缘**。
@@ -1023,6 +946,8 @@ fun AppMenu(
     ) {
         GlassForeground(InterfaceControl.MENU) {
             val colors = LocalChatColors.current
+            val surface = floatingPanelSurface(InterfaceControl.MENU)
+            val shadow = if (touchPoint != null) AppTheme.tokens.shadow.floating else AppTheme.tokens.shadow.raised
             Column(
                 modifier = modifier
                     // 淡入时 graphicsLayer 会按自身尺寸合成，所以阴影留白也要包含在该图层内。
@@ -1042,13 +967,10 @@ fun AppMenu(
                     }
                     .padding(MenuShadowBleed)
                     .width(width)
-                    .layeredShadow(
+                    .surfaceShadow(
                         shape = MenuShape,
-                        elevation = AppShadow.RaisedElevation,
-                        ambient = if (touchPoint != null) AppShadow.FloatingAmbient else AppShadow.RaisedAmbient,
-                        spot = if (touchPoint != null) AppShadow.FloatingSpot else AppShadow.RaisedSpot,
-                        contactElevation = AppShadow.ContactElevation,
-                        contactColor = AppShadow.ContactColor,
+                        spec = shadow,
+                        opacity = surface.alpha,
                     )
                     .clip(MenuShape)
                     .menuGlassBackground(colors.menuBackground)

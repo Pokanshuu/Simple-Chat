@@ -77,6 +77,14 @@ internal fun readStoredLanguageSync(context: Context): AppLanguage = runCatching
 internal const val MaxPanelAccentOpacity = 1f
 internal const val MaxWallpaperBlur = 160f
 
+/**
+ * 界面底色不透明度的默认值：1 = 实色。
+ *
+ * 透明是用户主动调低后启用的效果。数据层与 Compose 的静态兜底共用这个常量，
+ * 避免「设置里默认实色、首帧却先闪一层半透明」。
+ */
+internal const val DefaultPanelOpacity = 1f
+
 @kotlinx.serialization.Serializable
 internal data class WallpaperAppearance(
     val opacity: Float,
@@ -236,12 +244,15 @@ data class StoredSettings(
     val wallpaperCustomCrop: Boolean = false,
     /** 壁纸设置页的毛玻璃面板圆角（dp）。 */
     val wallpaperPanelRadius: Float = 18f,
-    /** 壁纸设置页的毛玻璃面板不透明度（0..1，越大越实）。 */
-    val wallpaperPanelAlpha: Float = 0.72f,
+    /**
+     * 界面底色不透明度（0..1，越大越实）。
+     *
+     * 默认 1 = 实色。透明是用户主动调低后才启用的效果，不随更新默认打开。
+     */
+    val wallpaperPanelAlpha: Float = DefaultPanelOpacity,
     val controlEffects: ControlEffects = ControlEffects(),
     val panelAccentEnabled: Boolean = false,
     val panelAccentOpacity: Float = 0.12f,
-    /** 壁纸设置页是否用透明玻璃面板；关掉回到普通卡片。 */
     /**
      * 智能搜索（联网搜索）开关。
      *

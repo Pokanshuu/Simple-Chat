@@ -80,7 +80,6 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -120,7 +119,9 @@ import com.simplechat.app.ui.common.ReadAloudEnabled
 import com.simplechat.app.ui.common.SoftShape
 import com.simplechat.app.ui.common.AppConfirmDialog
 import com.simplechat.app.ui.common.AppIcons
-import com.simplechat.app.ui.common.AppShadow
+import com.simplechat.app.ui.common.surfaceShadow
+import com.simplechat.app.ui.theme.floatingPanelSurface
+import com.simplechat.app.ui.theme.tokens.AppTheme
 import com.simplechat.app.ui.common.IconCircleButton
 import com.simplechat.app.ui.common.LoadingIndicator
 import com.simplechat.app.ui.common.MotionEasing
@@ -2117,6 +2118,7 @@ internal fun BackToBottomButton(
 ) {
     GlassForeground(InterfaceControl.SCROLL_BUTTON) {
         val colors = LocalChatColors.current
+        val surface = floatingPanelSurface(InterfaceControl.SCROLL_BUTTON)
 
         AnimatedVisibility(
             visible = visible,
@@ -2134,15 +2136,13 @@ internal fun BackToBottomButton(
                 Box(
                     modifier = Modifier
                         .matchParentSize()
-                        .shadow(
-                            elevation = AppShadow.RaisedElevation,
+                        .surfaceShadow(
                             shape = CircleShape,
-                            clip = false,
-                            ambientColor = AppShadow.FloatingAmbient,
-                            spotColor = AppShadow.FloatingSpot,
+                            spec = AppTheme.tokens.shadow.floating,
+                            opacity = surface.alpha,
                         )
                         .clip(CircleShape)
-                        .floatingGlassBackground(colors.card, InterfaceControl.SCROLL_BUTTON)
+                        .floatingGlassBackground(colors.card, InterfaceControl.SCROLL_BUTTON, surface)
                         .border(1.dp, colors.outline, CircleShape)
                         .clickable(onClick = onClick),
                     contentAlignment = Alignment.Center,
