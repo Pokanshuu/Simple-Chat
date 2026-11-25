@@ -45,6 +45,7 @@ class DeviceRegression : Instrumentation() {
     private var codeFoldTests = false
     private var historyScrollTests = false
     private var streamConcurrencyTests = false
+    private var agentSwitchTests = false
     private var memoryTests = false
     override fun onCreate(arguments: Bundle?) {
         realArchive = arguments?.getString("source")
@@ -67,6 +68,7 @@ class DeviceRegression : Instrumentation() {
         codeFoldTests = arguments?.getString("codeFold") == "true"
         historyScrollTests = arguments?.getString("historyScroll") == "true"
         streamConcurrencyTests = arguments?.getString("streamConcurrency") == "true"
+        agentSwitchTests = arguments?.getString("agentSwitches") == "true"
         memoryTests = arguments?.getString("crossChatMemory") == "true"
         super.onCreate(arguments)
         start()
@@ -82,6 +84,7 @@ class DeviceRegression : Instrumentation() {
                 }
                 else if (memoryTests) CrossChatMemoryRegression.run(this@DeviceRegression, ::passed)
                 else if (streamConcurrencyTests) StreamConcurrencyRegression.run(this@DeviceRegression, ::passed)
+                else if (agentSwitchTests) AgentSwitchRegression.run(this@DeviceRegression, ::passed)
                 else if (historyScrollTests) HistoryScrollRegression.run(this@DeviceRegression, ::passed)
                 else if (composerTests) ComposerRegression.run(this@DeviceRegression, ::passed)
                 else if (themeInteractionTests) ThemeInteractionRegression.run(this@DeviceRegression, ::passed)

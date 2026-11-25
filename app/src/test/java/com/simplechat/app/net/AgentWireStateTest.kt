@@ -173,6 +173,71 @@ class AgentWireStateTest {
     }
 
 
+    @Test fun liveOfficialModelSearchMatrix() = runBlocking {
+        org.junit.Assume.assumeTrue(System.getenv("SIMPLECHAT_AGENT_LIVE") == "1")
+        val key = System.getenv("DEEPSEEK_API_KEY")?.trim().orEmpty()
+        org.junit.Assume.assumeTrue(key.isNotEmpty())
+        val json = ChatApi.defaultJson()
+        val host = ProviderKind.DEEPSEEK.defaultBaseUrl
+        val independentQueries = mutableListOf<String>()
+        val client = ChatApi.defaultClient().newBuilder().addInterceptor { chain ->
+            val request = chain.request()
+            if (request.url.host != "search.invalid") return@addInterceptor chain.proceed(request)
+            val body = json.parseToJsonElement(Buffer().also(checkNotNull(request.body)::writeTo).readUtf8()).jsonObject
+            independentQueries += body.getValue("query").jsonPrimitive.content
+            Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body("""{"results":[{"url":"https://example.org/release","title":"Synthetic release bulletin","snippet":"The bulletin verification code is MATRIX-PRO-274."}]}""".toResponseBody()).build()
+        }.build()
+        val api = ChatApi(client, SseClient(client, json), AnthropicApi(client, json), json)
+        val conversation = mutableListOf<UiMessage>()
+        val config = com.simplechat.app.data.StoredSettings(modelId = DEEPSEEK_PRO, apiKey = key,
+            searchApi = com.simplechat.app.data.ServiceApiConfig(enabled = true, baseUrl = "https://search.invalid"))
+        val states = listOf(DEEPSEEK_FLASH to false, DEEPSEEK_PRO to true, DEEPSEEK_PRO to false, DEEPSEEK_FLASH to true)
+        val failures = mutableListOf<String>()
+        for ((index, state) in (states + states.reversed()).withIndex()) {
+            val (model, enabled) = state
+            val native = model == DEEPSEEK_FLASH
+            val question = if (!enabled) "For this turn, reply with NO-SEARCH-${index + 1}." else if (native) {
+                "Search the web this turn for the official DeepSeek Chat Completions API documentation. Give its request method and source. Do not reuse earlier turns as evidence."
+            } else {
+                "Use the web search tool this turn to find the Synthetic release bulletin. Report its verification code from the new tool result and give the source. Do not reuse earlier turns as evidence."
+            }
+            conversation += UiMessage("u$index", MessageRole.USER, question)
+            val base = buildAnthropicRequest(model, "Use only evidence from the current turn when asked to search.", conversation,
+                searchEnabled = enabled && native, thinkingEnabled = false, requestTitle = false, latestReminder = null, maxTokens = 512)
+            val queriesBefore = independentQueries.size
+            val wireTools = mutableListOf<Set<String>>()
+            val events = agentLoop(
+                session = if (!native) WebResearchSession(config, question, ServiceApi(client)) else null,
+                style = ApiStyle.ANTHROPIC,
+                runtime = { AgentRuntimeState(webConfigured = true, webSwitchOn = enabled,
+                    clientSearchEnabled = enabled && !native, nativeSearchEnabled = enabled && native) },
+                onSearchAnswerRetry = {},
+            ) { history, offer, _ ->
+                val request = history.anthropic(base, offer)
+                wireTools += request.tools.map { it.name }.toSet()
+                api.streamMessage(host, key, request, retryBeforeContent = false)
+            }.toList()
+            val blocks = events.filterIsInstance<StreamEvent.BlockStart>().map { it.block }
+            val nativeEvidence = blocks.filterIsInstance<ReplyBlock.SearchResult>().any { !it.failed && it.results.isNotEmpty() }
+            val queries = independentQueries.size - queriesBefore
+            val text = blocks.filterIsInstance<ReplyBlock.Text>().joinToString("") { it.text } +
+                events.filterIsInstance<StreamEvent.TextDelta>().joinToString("") { it.text }
+            val errors = events.filterIsInstance<StreamEvent.Error>().map { it.code }
+            val firstTools = wireTools.firstOrNull().orEmpty()
+            val ok = errors.isEmpty() && when {
+                !enabled -> wireTools == listOf(emptySet<String>()) && !nativeEvidence && queries == 0 && text.contains("NO-SEARCH-${index + 1}")
+                native -> "deepseek_web_search" in firstTools && nativeEvidence && queries == 0 && text.contains("POST", ignoreCase = true)
+                else -> IndependentSearchName in firstTools && queries > 0 && text.contains("MATRIX-PRO-274")
+            }
+            val summary = "matrix turn=${index + 1} model=$model search=$enabled ok=$ok requests=${wireTools.size} tools=$firstTools nativeEvidence=$nativeEvidence independentQueries=$queries errors=$errors"
+            println(summary)
+            if (!ok) failures += "$summary answer=${text.take(300)}"
+            conversation += UiMessage("a$index", MessageRole.ASSISTANT, text.ifBlank { "No answer." })
+        }
+        assertTrue(failures.joinToString("\n"), failures.isEmpty())
+    }
+
     @Test fun liveOfficialProUsesIndependentToolAfterToggle() = runBlocking {
         org.junit.Assume.assumeTrue(System.getenv("SIMPLECHAT_AGENT_LIVE") == "1")
         val key = System.getenv("DEEPSEEK_API_KEY")?.trim().orEmpty()
