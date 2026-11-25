@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.layer.CompositingStrategy
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.shadow.Shadow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.roundToIntSize
@@ -118,20 +119,31 @@ internal fun Modifier.surfaceShadow(
     shape: Shape,
     spec: SurfaceShadowSpec,
     opacity: Float = 1f,
+    /**
+     * 形状顶部在绘制区内的缩进。
+     *
+     * 输入面板的 10dp 间距是容器的一部分，却不属于面板本身；不缩进的话，
+     * 投影会从间距顶端开始画，在面板上方多出一截。默认 0，不影响其它控件。
+     */
+    topInset: Dp = 0.dp,
 ): Modifier {
     val strength = opacity.coerceIn(0f, 1f)
     if (strength <= 0f || spec.elevation <= 0.dp) return this
 
     return drawWithCache {
+        val inset = topInset.toPx()
+        val shadowSize = Size(size.width, (size.height - inset).coerceAtLeast(0f))
         val context = obtainShadowContext()
         // 用这个 modifier 实际分到的尺寸测面积：同一档 elevation 下，大面板的影子更宽更柔。
-        val areaScale = shadowAreaScale(size.width / density, size.height / density)
+        val areaScale = shadowAreaScale(shadowSize.width / density, shadowSize.height / density)
         val layers = spec.layerShadows(strength, areaScale)
         val painters = layers.map { context.createDropShadowPainter(shape, it) }
         val clip = Path().apply {
-            addOutline(shape.createOutline(size, layoutDirection, this@drawWithCache))
+            addOutline(shape.createOutline(shadowSize, layoutDirection, this@drawWithCache))
         }
         val margin = layers.maxOf { it.marginPx(this) }
+        // 间距比整个容器还高（收起的第一帧）：没有形状可投影，直接画空。
+        if (shadowSize.height <= 0f) return@drawWithCache onDrawBehind { }
 
         if (Build.VERSION.SDK_INT in 24..28) {
             // API 28 及以下对 clipPath(Difference) 支持不完整：录到离屏图层里再画。
@@ -139,7 +151,7 @@ internal fun Modifier.surfaceShadow(
             layer.compositingStrategy = CompositingStrategy.ModulateAlpha
             val layerSize = Size(size.width + margin * 2f, size.height + margin * 2f).roundToIntSize()
             layer.record(this, layoutDirection, layerSize) {
-                translate(margin, margin) {
+                translate(margin, margin + inset) {
                     /*
                      * 元素顶边以上不画：下移比例是半径的 0.75，模糊本身还会
                      * 往顶上溢出 1/4 半径。参考设计里上缘是干净的，所以在这里
@@ -149,10 +161,10 @@ internal fun Modifier.surfaceShadow(
                         left = -margin,
                         top = 0f,
                         right = size.width + margin,
-                        bottom = size.height + margin,
+                        bottom = shadowSize.height + margin,
                     ) {
                         clipPath(clip, ClipOp.Difference) {
-                            painters.forEach { painter -> painter.run { draw(size) } }
+                            painters.forEach { painter -> painter.run { draw(shadowSize) } }
                         }
                     }
                 }
@@ -165,12 +177,14 @@ internal fun Modifier.surfaceShadow(
                 // 同上：顶边以上不画，避免上缘出现一圈灰晕。
                 clipRect(
                     left = -margin,
-                    top = 0f,
+                    top = inset,
                     right = size.width + margin,
                     bottom = size.height + margin,
                 ) {
-                    clipPath(clip, ClipOp.Difference) {
-                        painters.forEach { painter -> painter.run { draw(size) } }
+                    translate(0f, inset) {
+                        clipPath(clip, ClipOp.Difference) {
+                            painters.forEach { painter -> painter.run { draw(shadowSize) } }
+                        }
                     }
                 }
             }

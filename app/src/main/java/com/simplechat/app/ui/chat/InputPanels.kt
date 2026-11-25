@@ -86,6 +86,9 @@ import kotlin.math.roundToInt
  */
 private val PanelOpenEasing = CubicBezierEasing(0.215f, 0.61f, 0.355f, 1f)
 
+/** 输入栏与面板之间的间距；它属于容器，不属于面板投影。 */
+private val PanelTopGap = 10.dp
+
 /** 输入栏下方的面板容器。输入栏会上移，和选图面板一致。 */
 @Composable
 fun InputPanel(
@@ -123,6 +126,7 @@ fun InputPanel(
                 shape = shape,
                 spec = AppTheme.tokens.shadow.panel,
                 opacity = surface.alpha * shadowStrength,
+                topInset = PanelTopGap,
             ),
     ) {
         AnimatedVisibility(
@@ -135,7 +139,7 @@ fun InputPanel(
         ) {
             GlassForeground(InterfaceControl.INPUT_PANEL) {
                 val colors = LocalChatColors.current
-                Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
+                Column(Modifier.fillMaxWidth().padding(top = PanelTopGap)) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
