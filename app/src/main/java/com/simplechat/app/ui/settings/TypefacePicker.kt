@@ -97,7 +97,11 @@ internal fun TypefacePicker(
                         }
                     }
                     AppMenuDivider()
-                    AppMenuItem(label = stringResource(R.string.settings_custom_fonts), icon = AppIcons.Settings) {
+                    AppMenuItem(label = stringResource(R.string.fonts_add), icon = AppIcons.PlusCircle) {
+                        menuOpen = false
+                        onImport()
+                    }
+                    AppMenuItem(label = stringResource(R.string.fonts_manage), icon = AppIcons.Settings) {
                         menuOpen = false
                         onManage()
                     }

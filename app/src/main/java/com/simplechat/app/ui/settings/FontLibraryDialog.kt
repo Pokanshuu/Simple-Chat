@@ -2,6 +2,7 @@ package com.simplechat.app.ui.settings
 
 import android.content.Context
 import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -28,6 +29,7 @@ import com.simplechat.app.data.ImportedFont
 import com.simplechat.app.data.SettingsStore
 import com.simplechat.app.ui.common.AppConfirmDialog
 import com.simplechat.app.ui.common.AppIcons
+import com.simplechat.app.ui.common.ContainerShape
 import com.simplechat.app.ui.common.IconCircleButton
 import com.simplechat.app.ui.common.Space
 import com.simplechat.app.ui.theme.forgetFontFamily
@@ -42,6 +44,7 @@ internal fun FontLibraryDialog(fonts: List<ImportedFont>, store: SettingsStore, 
     var remove by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ImportedFont?>(null) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(Modifier.fillMaxWidth().padding(horizontal = Space.Screen).heightIn(max = 560.dp)
+            .clip(ContainerShape)
             .background(com.simplechat.app.ui.theme.LocalChatColors.current.card)
             .verticalScroll(rememberScrollState()).padding(Space.Card), verticalArrangement = Arrangement.spacedBy(Space.Gap)) {
             Text(stringResource(R.string.settings_custom_fonts), style = androidx.compose.material3.MaterialTheme.typography.titleMedium)

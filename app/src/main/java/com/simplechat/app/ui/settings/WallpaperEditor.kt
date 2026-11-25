@@ -423,20 +423,22 @@ internal fun ThemeEditorLayout(
                                 horizontalArrangement = Arrangement.spacedBy(Space.Gap),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Row(
-                                    Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(Space.Gap),
-                                ) {
-                                    listOf(EditTab.CROP, EditTab.ADJUST, EditTab.TEXT, EditTab.EFFECTS)
-                                        .filter { showInterfaceTab || it != EditTab.EFFECTS && it != EditTab.TEXT }
-                                        .forEach { item ->
-                                        val label = when (item) {
-                                            EditTab.CROP -> R.string.wallpaper_editor_tab_crop
-                                            EditTab.ADJUST -> R.string.wallpaper_editor_tab_adjust
-                                            EditTab.EFFECTS -> R.string.theme_glass_and_panels
-                                            EditTab.TEXT -> R.string.theme_text_tab
-                                        }
-                                        EditorPill(stringResource(label), selected = item == tab) { onTabChange(item) }
+                                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                                    Row(
+                                        Modifier.horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(Space.Gap),
+                                    ) {
+                                        listOf(EditTab.CROP, EditTab.ADJUST, EditTab.TEXT, EditTab.EFFECTS)
+                                            .filter { showInterfaceTab || it != EditTab.EFFECTS && it != EditTab.TEXT }
+                                            .forEach { item ->
+                                                val label = when (item) {
+                                                    EditTab.CROP -> R.string.wallpaper_editor_tab_crop
+                                                    EditTab.ADJUST -> R.string.wallpaper_editor_tab_adjust
+                                                    EditTab.EFFECTS -> R.string.theme_glass_and_panels
+                                                    EditTab.TEXT -> R.string.theme_text_tab
+                                                }
+                                                EditorPill(stringResource(label), selected = item == tab) { onTabChange(item) }
+                                            }
                                     }
                                 }
                                 if (showInterfaceTab && textEditor != null) {

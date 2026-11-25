@@ -157,6 +157,8 @@
     <string name="fonts_empty">No fonts yet</string>
     <string name="fonts_empty_hint">TTF / OTF, multiple files allowed</string>
     <string name="fonts_import">Import font</string>
+    <string name="fonts_add">Add font</string>
+    <string name="fonts_manage">Manage fonts</string>
     <string name="fonts_import_hint">Pick one or more files from local storage</string>
     <string name="fonts_remove">Remove</string>
     <string name="fonts_import_failed">Import failed: not a valid font file</string>

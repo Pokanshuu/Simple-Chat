@@ -63,13 +63,17 @@ internal enum class TextPane(val label: Int, val slot: FontSlot? = null) {
 
 @Composable
 internal fun ThemeTextSubtabs(pane: TextPane, onPaneChange: (TextPane) -> Unit, modifier: Modifier = Modifier) {
-    Row(
-        modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-            .padding(horizontal = Space.Inline, vertical = Space.Gap),
-        horizontalArrangement = Arrangement.spacedBy(Space.Gap, Alignment.CenterHorizontally),
+    Box(
+        modifier.fillMaxWidth().padding(horizontal = Space.Inline, vertical = Space.Gap),
+        contentAlignment = Alignment.Center,
     ) {
-        TextPane.entries.forEach { item ->
-            CapsuleButton(stringResource(item.label), onClick = { onPaneChange(item) }, selected = pane == item)
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(Space.Gap),
+        ) {
+            TextPane.entries.forEach { item ->
+                CapsuleButton(stringResource(item.label), onClick = { onPaneChange(item) }, selected = pane == item)
+            }
         }
     }
 }
@@ -121,28 +125,30 @@ internal fun ThemeTextEditor(
                 val initialized = if (enabled && storedColor == null) setColor(initialColor.toArgb()) else category
                 update(initialized.copy(customColorEnabled = enabled))
             }
-            var colorMenu by remember(slot, dark, category.customColorEnabled) { mutableStateOf(false) }
-            val colors = LocalChatColors.current
-            Row(
-                Modifier.fillMaxWidth().heightIn(min = Space.Row).padding(horizontal = Space.Screen),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(stringResource(R.string.theme_text_color_value), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                val swatch = if (category.customColorEnabled) storedColor?.let(::Color) ?: initialColor else initialColor
-                Box {
-                    // A value swatch, not a control: keep it at the 28dp swatch size on the
-                    // Space grid instead of a 40dp icon button.
-                    Box(
-                        Modifier.size(28.dp).clip(CircleShape)
-                            .background(swatch)
-                            .border(1.dp, colors.outline, CircleShape)
-                            .clickable(enabled = category.customColorEnabled) { colorMenu = true },
-                    )
-                    AppMenu(expanded = colorMenu, onDismissRequest = { colorMenu = false }, alignEnd = true, width = 320.dp) {
-                        Column(Modifier.padding(horizontal = Space.Gap, vertical = Space.Gap), verticalArrangement = Arrangement.spacedBy(Space.Gap)) {
-                            ColorPicker(swatch) { selected ->
-                                update(setColor(selected.toArgb()))
-                                colorMenu = false
+            if (category.customColorEnabled) {
+                var colorMenu by remember(slot, dark) { mutableStateOf(false) }
+                val colors = LocalChatColors.current
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = Space.Row).padding(horizontal = Space.Screen),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(stringResource(R.string.theme_text_color_value), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    val swatch = storedColor?.let(::Color) ?: initialColor
+                    Box {
+                        // A value swatch, not a control: keep it at the 28dp swatch size on the
+                        // Space grid instead of a 40dp icon button.
+                        Box(
+                            Modifier.size(28.dp).clip(CircleShape)
+                                .background(swatch)
+                                .border(1.dp, colors.outline, CircleShape)
+                                .clickable { colorMenu = true },
+                        )
+                        AppMenu(expanded = colorMenu, onDismissRequest = { colorMenu = false }, alignEnd = true, width = 320.dp) {
+                            Column(Modifier.padding(horizontal = Space.Gap, vertical = Space.Gap), verticalArrangement = Arrangement.spacedBy(Space.Gap)) {
+                                ColorPicker(swatch) { selected ->
+                                    update(setColor(selected.toArgb()))
+                                    colorMenu = false
+                                }
                             }
                         }
                     }

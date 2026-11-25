@@ -159,6 +159,8 @@
     <string name="fonts_empty">还没有导入字体</string>
     <string name="fonts_empty_hint">支持 TTF / OTF，可一次导入多个</string>
     <string name="fonts_import">导入字体</string>
+    <string name="fonts_add">添加字体</string>
+    <string name="fonts_manage">管理字体</string>
     <string name="fonts_import_hint">从本地文件选择，可多选</string>
     <string name="fonts_remove">移除</string>
     <string name="fonts_import_failed">导入失败：不是有效的字体文件</string>
