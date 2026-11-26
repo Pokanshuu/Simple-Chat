@@ -5,6 +5,8 @@ import com.simplechat.app.data.AppTextException
 import com.simplechat.app.data.Attachment
 import com.simplechat.app.data.CompactionCheckpoint
 import com.simplechat.app.data.TokenEstimate
+import com.simplechat.app.db.CompactionEntity
+import androidx.annotation.StringRes
 import java.io.IOException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -12,7 +14,33 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /** Reserve room for the summary while keeping recent turns verbatim. */
 internal fun compactionRecentTokenBudget(modelWindow: Int, requestWindow: Int?): Int =
-    minOf(modelWindow, requestWindow ?: modelWindow).div(8).coerceIn(1, 32_000)
+    if (modelWindow <= 0) 0
+    else minOf(modelWindow, requestWindow ?: modelWindow).div(8).coerceIn(1, 32_000)
+
+/** Messages that are still eligible to be folded into the summary. */
+internal fun compactionCandidates(
+    path: List<UiMessage>,
+    compaction: CompactionEntity?,
+): List<UiMessage> {
+    val covered = compaction
+        ?.takeIf { it.summary.isNotBlank() }
+        ?.let { summary -> path.indexOfFirst { it.id == summary.throughMessageId } }
+        ?: -1
+    return path.asSequence()
+        .drop(covered + 1)
+        .filter { !it.streaming && (it.content.isNotBlank() || it.attachments.isNotEmpty()) }
+        .toList()
+}
+
+internal fun hasCompactableHistory(
+    path: List<UiMessage>,
+    compaction: CompactionEntity?,
+    modelWindow: Int,
+): Boolean {
+    if (modelWindow <= 0) return false
+    val candidates = compactionCandidates(path, compaction)
+    return compactionCutIndex(candidates, compactionRecentTokenBudget(modelWindow, null)) > 0
+}
 
 /** Keep six messages when practical, but allow recovery even when a few messages fill the window. */
 internal fun compactionCutIndex(messages: List<UiMessage>, recentTokenBudget: Int): Int {
@@ -20,9 +48,7 @@ internal fun compactionCutIndex(messages: List<UiMessage>, recentTokenBudget: In
     while (cut > 0 && messages[cut].role != MessageRole.USER) cut--
     val costs = messages.map { message ->
         TokenEstimate.of(message.content).toLong() + 8L +
-            message.attachments.sumOf {
-                if (it.isImage) 1024L else TokenEstimate.of(it.data).toLong()
-            }
+            attachmentTokenSummary(message.attachments).tokens
     }
     var recentTokens = costs.drop(cut).sum()
     while (recentTokens > recentTokenBudget) {
@@ -41,9 +67,22 @@ internal data class CompactionPrompts(
     val assistant: String,
     val image: String,
     val unreadableAttachment: String,
+    val remoteAttachmentSupplement: String = "",
 )
 
 internal enum class CompactionStyle { GENERAL, CREATIVE, TECHNICAL }
+
+/** 手动压缩的摘要详细程度；自动压缩固定使用 [BALANCED]。 */
+enum class CompactionDetailLevel(
+    @StringRes val labelRes: Int,
+    @StringRes val instructionRes: Int,
+    val targetDivisor: Int,
+    val targetMaxChars: Int,
+) {
+    CONCISE(R.string.compact_detail_concise, R.string.prompt_compact_detail_concise, 5, 600),
+    BALANCED(R.string.compact_detail_balanced, R.string.prompt_compact_detail_balanced, 3, 1_200),
+    DETAILED(R.string.compact_detail_detailed, R.string.prompt_compact_detail_detailed, 2, 2_000),
+}
 
 private val creativeCues = listOf(
     "角色扮演", "跑团", "小说", "故事", "剧情", "角色", "人物", "世界观", "伏笔", "创作", "续写角色",
@@ -88,9 +127,12 @@ internal fun compactionSegments(
         yield(message.content)
         var skippedAttachment = false
         for (attachment in message.attachments) {
-            if (attachment.kind == Attachment.Kind.TEXT) {
-                // A remote file ID is not its contents; keep the message without inventing the document.
+            if (attachment.kind == Attachment.Kind.TEXT && !attachment.remoteImage) {
                 if (attachment.data.isBlank()) {
+                    if (attachment.fileId != null) {
+                        yield("\n<<<远程附件：${attachment.name}（file_id:${attachment.fileId}）>>>\n")
+                        continue
+                    }
                     skippedAttachment = true
                     continue
                 }
@@ -100,7 +142,7 @@ internal fun compactionSegments(
             }
         }
         if (skippedAttachment) yield("\n${prompts.unreadableAttachment}\n")
-        if (message.attachments.any { it.isImage }) yield(prompts.image)
+        if (message.attachments.any { it.isImage || it.remoteImage }) yield(prompts.image)
         yield("\n\n")
     }
 }

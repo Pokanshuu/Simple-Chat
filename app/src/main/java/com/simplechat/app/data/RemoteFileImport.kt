@@ -51,6 +51,8 @@ object RemoteFileImport {
                 Result.success(AttachmentImport.DocumentImport(listOf(Attachment(
                     kind = Attachment.Kind.TEXT, name = name, mime = mime, data = localText,
                     fileId = id, fileEndpoint = endpoint, fileAccount = FileApiTextCache.fingerprint(key),
+                    originalTextChars = localText.length,
+                    originalBytes = file.length(),
                     remoteImage = purpose == "user_data" && mime.startsWith("image/"),
                 ))))
             } catch (cancelled: CancellationException) { throw cancelled }

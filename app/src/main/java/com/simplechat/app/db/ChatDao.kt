@@ -499,6 +499,10 @@ interface MessageDao {
     )
     suspend fun editContent(id: String, content: String, attachments: String?, timeline: String?)
 
+    /** 只回填附件元数据，不触碰正文、时间线或流式状态。 */
+    @Query("UPDATE messages SET attachments = :attachments WHERE id = :id")
+    suspend fun updateAttachments(id: String, attachments: String?)
+
     /**
      * 把卡在 `STREAMING` 的消息判为中断。
      *

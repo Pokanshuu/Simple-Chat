@@ -27,22 +27,36 @@ class ContextCompactionTest {
     @Test fun `unreadable attachments do not block compaction of the remaining history`() = runBlocking {
         val available = UiMessage("text", MessageRole.USER, "Earlier conversation")
         val missing = UiMessage("files", MessageRole.USER, "read attachments", attachments = listOf(
-            Attachment(Attachment.Kind.TEXT, "report.pdf", data = "", fileId = "file-api-1"),
+            Attachment(Attachment.Kind.TEXT, "report.pdf", data = ""),
             Attachment(Attachment.Kind.TEXT, "local.txt", data = "Complete local text"),
-            Attachment(Attachment.Kind.TEXT, "slides.pptx", data = " \n", fileId = "file-api-2")))
+            Attachment(Attachment.Kind.TEXT, "slides.pptx", data = " \n")))
         val later = UiMessage("later", MessageRole.ASSISTANT, "Later answer")
         val source = compactionSegments(listOf(available, missing, later), "old summary", prompts)
         val result = compactInBatches(source, prompts, 128_000) { input, _, _ ->
             listOf("old summary", "Earlier conversation", "read attachments", "Complete local text",
                 prompts.unreadableAttachment, "Later answer").forEach { assertTrue(input.contains(it)) }
-            assertFalse(input.contains("file-api-"))
             assertFalse(input.contains("report.pdf"))
             assertFalse(input.contains("slides.pptx"))
             "new summary"
         }
         assertEquals("new summary", result)
-        assertEquals("file-api-1", missing.attachments.first().fileId)
     }
+
+    @Test fun `remote file references stay attached to the compacted message`() {
+        val remote = UiMessage(
+            id = "remote",
+            role = MessageRole.USER,
+            content = "Use the attached backup",
+            attachments = listOf(
+                Attachment(Attachment.Kind.TEXT, "oc.json", data = "", fileId = "file-oc"),
+            ),
+        )
+        val material = compactionSegments(listOf(remote), null, prompts).joinToString("")
+        assertTrue(material.contains("file-oc"))
+        assertTrue(material.contains("oc.json"))
+        assertFalse(material.contains(prompts.unreadableAttachment))
+    }
+
     private val prompts = CompactionPrompts("Summarize", "[Summary]\n", "\n[New]\n", "User: ", "AI: ", "[Image]", "[Unreadable attachment omitted]")
     private fun messages(count: Int, content: String = "short") = (0 until count).map {
         UiMessage("$it", if (it % 2 == 0) MessageRole.USER else MessageRole.ASSISTANT, content)

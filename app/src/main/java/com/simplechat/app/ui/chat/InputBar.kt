@@ -602,14 +602,14 @@ private fun ContextMeterPill(
 ) {
     val colors = LocalChatColors.current
     val accent = when {
-        stats.ratio >= 0.9f -> colors.danger
-        stats.ratio >= 0.7f -> colors.warning
+        stats.ratio >= ContextDangerRatio -> colors.danger
+        stats.ratio >= ContextWarningRatio -> colors.warning
         else -> MaterialTheme.colorScheme.primary
     }
     val content = when {
         expanded -> MaterialTheme.colorScheme.primary
         // 接近阈值 / 逼近上限：数字跟着变色。这个信号只留在环上太容易被忽略
-        stats.ratio >= 0.7f -> accent
+        stats.ratio >= ContextWarningRatio -> accent
         // 常规态也画**黑**（原来是灰的），与旁边几个按钮统一
         else -> MaterialTheme.colorScheme.onSurface
     }

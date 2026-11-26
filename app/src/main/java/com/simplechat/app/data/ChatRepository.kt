@@ -882,6 +882,11 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         }
     }
 
+    /** 回填远程附件大小；附件是 JSON 列，不触发数据库迁移。 */
+    suspend fun updateMessageAttachments(id: String, attachments: List<Attachment>) {
+        messages.updateAttachments(id, Attachments.encode(attachments))
+    }
+
     /** 串行读取某个父亲下当前激活的版本。 */
     suspend fun activeMessageAt(conversationId: String, parentId: String): UiMessage? {
         // 同样走兜底：这条路径也在"点开会话"的链路上，超大行一样会崩

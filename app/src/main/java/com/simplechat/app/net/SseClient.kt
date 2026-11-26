@@ -49,8 +49,14 @@ class SseClient(
         contextWindow: Int? = null,
         retryBeforeContent: Boolean = true,
         maxOutputTokens: Int? = null,
+        extraInputTokens: Long = 0,
     ): Flow<StreamEvent> = streamRequest(url, apiKey, extraHeaders, retryBeforeContent) {
-        validateRequestBudget(estimatedInputTokens(request), request.maxTokens ?: request.maxCompletionTokens, contextWindow, maxOutputTokens)
+        validateRequestBudget(
+            estimatedInputTokens(request) + extraInputTokens,
+            request.maxTokens ?: request.maxCompletionTokens,
+            contextWindow,
+            maxOutputTokens,
+        )
         StreamingJsonRequestBody(json, request, stageDir)
     }
 
@@ -63,9 +69,15 @@ class SseClient(
         extraHeaders: Map<String, String>,
         retryBeforeContent: Boolean,
         onOutput: ((Int, kotlinx.serialization.json.JsonObject) -> Unit)? = null,
+        extraInputTokens: Long = 0,
     ): Flow<StreamEvent> = streamRequest(url, apiKey, extraHeaders, retryBeforeContent, responses = true, onOutput = onOutput) {
         val toolHistoryTokens = request.input.asSequence().drop(messages.size).sumOf(::contentTokens)
-        validateRequestBudget(estimatedInputTokens(messages) + toolHistoryTokens, request.maxOutputTokens, model.contextWindow, model.maxOutputTokens)
+        validateRequestBudget(
+            estimatedInputTokens(messages) + toolHistoryTokens + extraInputTokens,
+            request.maxOutputTokens,
+            model.contextWindow,
+            model.maxOutputTokens,
+        )
         StreamingRequestBody(json, ResponsesRequestDto.serializer(), request, stageDir)
     }
 

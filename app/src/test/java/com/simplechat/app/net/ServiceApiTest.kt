@@ -162,6 +162,29 @@ class ServiceApiTest {
         assertEquals("image", imageRequest.messages.single().content.jsonArray.first().jsonObject["type"]!!.jsonPrimitive.content)
     }
 
+    @Test fun `file metadata lookup accepts both size fields and adds anthropic beta header`() = runBlocking {
+        val requests = mutableListOf<Request>()
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            requests += request
+            val payload = if (request.url.encodedPath.endsWith("openai-file")) {
+                """{"id":"openai-file","bytes":3180000}"""
+            } else {
+                """{"id":"anthropic-file","size_bytes":42}"""
+            }
+            Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(payload.toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val api = ServiceApi(client)
+
+        assertEquals(3_180_000L, api.retrieveFile("https://files.invalid/files", "key", "openai-file", anthropic = false))
+        assertEquals(42L, api.retrieveFile("https://files.invalid/files", "key", "anthropic-file", anthropic = true))
+        assertEquals("/files/openai-file", requests[0].url.encodedPath)
+        assertEquals("Bearer key", requests[0].header("Authorization"))
+        assertNull(requests[0].header("anthropic-beta"))
+        assertEquals("files-api-2025-04-14", requests[1].header("anthropic-beta"))
+    }
+
     @Test fun `old profiles decode and ciphertext is excluded from debug output`() {
         val legacy = decodeApiProfiles("[{\"id\":\"a\",\"name\":\"a\",\"providerId\":\"CUSTOM\",\"baseUrl\":\"https://a.invalid\",\"modelId\":\"m\"}]").single()
         assertEquals("m", legacy.modelId)

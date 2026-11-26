@@ -213,7 +213,7 @@
     <string name="settings_data_summary">Import · Export · Clear</string>
     <string name="settings_appearance">Appearance</string>
     <string name="settings_accent">Theme</string>
-    <string name="settings_custom_theme">Fonts, theme and wallpaper</string>
+    <string name="settings_custom_theme">Theme, fonts and wallpaper</string>
     <string name="theme_text_tab">Text</string>
     <string name="theme_text_size">Text size</string>
     <string name="theme_text_user">Bubble text</string>
@@ -581,6 +581,22 @@
     <!-- Panel 2: context usage + chat statistics -->
     <string name="stats_context_usage">Context usage</string>
     <string name="stats_tokens_estimate">%1$s / %2$s tokens (estimated)</string>
+    <string name="context_legend_title">Context composition</string>
+    <string name="context_legend_expand">Expand context composition</string>
+    <string name="context_legend_collapse">Collapse context composition</string>
+    <string name="context_segment_presets">Presets</string>
+    <string name="context_segment_compacted">Compacted history</string>
+    <string name="context_segment_messages">Messages</string>
+    <string name="context_segment_attachments">Attachments</string>
+    <string name="context_segment_tools">Tool calls</string>
+    <string name="context_segment_memory_reserve">Memory reserve</string>
+    <string name="context_segment_auto_reserve">Auto-compact reserve</string>
+    <string name="context_segment_free">Free space</string>
+    <string name="context_unknown_attachments">%1$d more document attachment(s) have an unknown size (server-parsed)</string>
+    <string name="message_unknown_attachments">%1$d attachment(s) size unknown</string>
+    <string name="auto_compact_remaining">%1$s until auto-compact</string>
+    <string name="auto_compact_threshold_reached">Auto-compact point reached</string>
+    <string name="auto_compacting">Auto-compacting</string>
     <string name="stats_compacted_saving">Compaction saved about %1$s tokens</string>
     <string name="stats_title">Conversation statistics</string>
     <string name="stats_total_tokens">Total local content</string>
@@ -618,7 +634,7 @@
     <string name="compact_interrupted">The connection was interrupted or the service is temporarily unavailable. Compaction has stopped. Retry to resume saved progress. Your previous summary and local messages have not changed.</string>
     <string name="compact_incomplete">A complete summary could not be generated. Retry to resume saved progress. Your previous summary and local messages have not changed.</string>
     <string name="compact_no_progress">The summaries could not be reduced to a usable size. Retry or choose another model. Your previous summary and local messages have not changed.</string>
-    <string name="prompt_compact_attachment_skipped">(This message contains attachments omitted from compaction because their text could not be read. Do not infer their contents.)</string>
+    <string name="prompt_compact_attachment_skipped">(This message contains attachments omitted from compaction because their text could not be read.)</string>
 
     <!-- Panel 4: chat settings -->
     <string name="input_conversation_name">Conversation name</string>

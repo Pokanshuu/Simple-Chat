@@ -197,6 +197,14 @@ data class ContextStats(
     val usageCompletionTokens: Int = 0,
     /** 输入里命中缓存的部分。 */
     val usageCacheHitTokens: Int = 0,
+    /** 下一次请求中，按实际发送顺序拆出的已占用类别。 */
+    val breakdown: List<ContextSegment> = emptyList(),
+    /** 记忆机制若开始预留容量，从这里显示；当前未预留时为 0。 */
+    val memoryReserveTokens: Int = 0,
+    /** 自动压缩预留。它不计入已用量，但会显示在进度条尾部。 */
+    val autoCompactReserveTokens: Int = 0,
+    /** 无法可靠折算 token 的远程二进制附件数；不进入已用量。 */
+    val unknownAttachmentCount: Int = 0,
 ) {
     /** 占用比例，0f..1f。 */
     val ratio: Float
@@ -204,6 +212,38 @@ data class ContextStats(
 
     /** 占用百分比，整数。 */
     val percent: Int get() = (ratio * 100).toInt()
+
+    /** 自动压缩触发点：保留区开始的位置。 */
+    val autoCompactThresholdTokens: Int
+        get() = autoCompactThresholdTokens(windowTokens, autoCompactReserveTokens + memoryReserveTokens)
+
+    /** 距离自动压缩还剩多少 token；达到触发点后固定为 0。 */
+    val autoCompactRemainingTokens: Int
+        get() = autoCompactRemainingTokens(usedTokens, autoCompactThresholdTokens)
+
+    /** 已用量之外的可用空间；预留区不算已用，也不等于空闲。 */
+    val freeTokens: Int
+        get() = (windowTokens - usedTokens - autoCompactReserveTokens - memoryReserveTokens)
+            .coerceAtLeast(0)
+
+    /**
+     * 进度条完整分段：已用类别按请求顺序在前，灰色预留和可用空间在后。
+     *
+     * 这里的预留项只用于绘制，[usedTokens] / [ratio] / [percent] 均不包含它们。
+     */
+    val segments: List<ContextSegment>
+        get() = buildList {
+            addAll(breakdown.filter { it.isUsed && it.tokens > 0 })
+            if (memoryReserveTokens > 0) {
+                add(ContextSegment(ContextSegmentKind.MEMORY_RESERVE, memoryReserveTokens))
+            }
+            if (autoCompactReserveTokens > 0) {
+                add(ContextSegment(ContextSegmentKind.AUTO_COMPACT_RESERVE, autoCompactReserveTokens))
+            }
+            if (freeTokens > 0) {
+                add(ContextSegment(ContextSegmentKind.FREE_SPACE, freeTokens))
+            }
+        }
 
     /** 本会话累计用量的估算费用（元）。 */
     val usageCost: Double

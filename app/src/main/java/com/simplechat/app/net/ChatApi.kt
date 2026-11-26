@@ -44,6 +44,7 @@ class ChatApi(
         extraHeaders: Map<String, String> = emptyMap(),
         contextWindow: Int? = null,
         retryBeforeContent: Boolean = true,
+        extraInputTokens: Long = 0,
     ): Flow<StreamEvent> = anthropicApi.streamMessage(
         url = anthropicMessagesUrl(baseUrl),
         apiKey = apiKey,
@@ -51,6 +52,7 @@ class ChatApi(
         extraHeaders = extraHeaders,
         contextWindow = contextWindow,
         retryBeforeContent = retryBeforeContent,
+        extraInputTokens = extraInputTokens,
     )
 
     /**
@@ -90,6 +92,7 @@ class ChatApi(
         agentStateInstruction: String = "",
         automaticWebSearchAllowed: Boolean = true,
         onRequestMetadata: ((List<String>, String?) -> Unit)? = null,
+        extraInputTokens: Long = 0,
     ): Flow<StreamEvent> {
         val flash = isOfficialDeepSeekEndpoint(baseUrl) && model.id == DEEPSEEK_FLASH
         val tools = if (flash) buildList {
@@ -150,6 +153,7 @@ class ChatApi(
                 },
                 messages = requestMessages, model = model, extraHeaders = extraHeaders, retryBeforeContent = retryBeforeContent,
                 onOutput = onResponseOutput,
+                extraInputTokens = extraInputTokens,
             )
         }
         val imageTool = if (generateImageTool) DeepSeekTool("function", imageToolDefinition) else null
@@ -186,6 +190,7 @@ class ChatApi(
             contextWindow = model.contextWindow,
             retryBeforeContent = retryBeforeContent,
             maxOutputTokens = model.maxOutputTokens,
+            extraInputTokens = extraInputTokens,
         )
     }
 

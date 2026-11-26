@@ -1,6 +1,7 @@
 package com.simplechat.app.ui.chat
 
 import com.simplechat.app.data.Attachment
+import com.simplechat.app.data.TokenEstimate
 import com.simplechat.app.net.ImageInput
 import com.simplechat.app.net.MessageContent
 import kotlinx.serialization.json.JsonElement
@@ -93,20 +94,44 @@ fun userContent(text: String, attachments: List<Attachment>): JsonElement {
  */
 const val ImageDetail = "high"
 
+internal data class AttachmentTokenSummary(
+    val tokens: Int,
+    val unknownCount: Int,
+)
+
 /**
- * 附件折算的 token 估算，喂给上下文占用圆环。
+ * 附件 token 的**唯一估算入口**。上下文圆环、附件分类、消息标签和压缩切点都必须走这里。
  *
- * - 文本附件：按正文一样的规则估
- * - 图片：按官方给的**上限 1024/张** 记。实际通常低于这个数，
- *   但占用圆环宁可高估 —— 它要提示的是"快满了"，低估会让人措手不及。
+ * 兜底顺序：本地正文 → 原文字符数 → 纯文本字节数 → 未知。
+ * 二进制文档的字节数与服务端解析结果没有可靠换算，因此只增加 [unknownCount]，
+ * 不编造 token 数；有原文字符数时仍可按字符量级估算。
  */
-fun attachmentTokenEstimate(attachments: List<Attachment>): Int {
-    if (attachments.isEmpty()) return 0
-    return attachments.sumOf { attachment ->
-        if (attachment.isImage) ImageTokenUpperBound
-        else com.simplechat.app.data.TokenEstimate.of(attachment.data)
+internal fun attachmentTokenSummary(attachments: List<Attachment>): AttachmentTokenSummary {
+    var tokens = 0L
+    var unknown = 0
+    attachments.forEach { attachment ->
+        val estimate = when {
+            attachment.isImage || attachment.remoteImage -> ImageTokenUpperBound.toLong()
+            attachment.data.isNotBlank() -> TokenEstimate.of(attachment.data).toLong()
+            attachment.originalTextChars > 0 -> estimateTextChars(attachment.originalTextChars)
+            attachment.originalBytes > 0 && attachment.isPlainTextLike() -> estimateTextBytes(attachment.originalBytes)
+            attachment.fileId != null -> null
+            else -> 0L
+        }
+        if (estimate == null) unknown++ else tokens += estimate
     }
+    return AttachmentTokenSummary(
+        tokens = tokens.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+        unknownCount = unknown,
+    )
 }
+
+fun attachmentTokenEstimate(attachments: List<Attachment>): Int =
+    attachmentTokenSummary(attachments).tokens
+
+/** File blocks carry only the ID; the referenced content still consumes input tokens. */
+internal fun referencedAttachmentTokenEstimate(attachments: List<Attachment>): Int =
+    attachmentTokenSummary(attachments.filter { it.fileId != null }).tokens
 
 /**
  * 这条历史消息值不值得发出去（OpenAI 兼容通道）。
@@ -131,3 +156,34 @@ internal fun isSendableOutgoing(message: UiMessage): Boolean =
 
 /** 官方 Vision 指南给出的单图 token 上限。 */
 const val ImageTokenUpperBound = 1024
+
+private fun estimateTextChars(chars: Int): Long =
+    ((chars + 3L) / 4L).coerceAtLeast(1L)
+
+private fun estimateTextBytes(bytes: Long): Long =
+    ((bytes + 3L) / 4L).coerceAtLeast(1L)
+
+private val PlainTextMimes = setOf(
+    "application/json",
+    "application/xml",
+    "application/yaml",
+    "application/x-yaml",
+    "application/javascript",
+    "application/x-javascript",
+    "application/sql",
+)
+
+private val PlainTextExtensions = setOf(
+    "txt", "text", "md", "markdown", "json", "jsonl", "ndjson", "csv", "tsv",
+    "log", "xml", "yaml", "yml", "toml", "ini", "properties", "conf",
+    "kt", "kts", "java", "py", "js", "mjs", "cjs", "ts", "tsx", "jsx",
+    "html", "htm", "css", "scss", "less", "sh", "bash", "zsh", "ps1",
+    "sql", "c", "cc", "cpp", "h", "hpp", "rs", "go", "rb", "php",
+    "swift", "r", "lua", "tex", "ipynb",
+)
+
+private fun Attachment.isPlainTextLike(): Boolean {
+    val normalizedMime = mime.substringBefore(';').trim().lowercase()
+    if (normalizedMime.startsWith("text/") || normalizedMime in PlainTextMimes) return true
+    return name.substringAfterLast('.', "").lowercase() in PlainTextExtensions
+}

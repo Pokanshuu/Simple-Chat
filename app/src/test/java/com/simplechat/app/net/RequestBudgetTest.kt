@@ -60,4 +60,33 @@ class RequestBudgetTest {
     @Test fun `large sums cannot overflow past context validation`() {
         assertThrows(AppTextException::class.java) { validateRequestBudget(Int.MAX_VALUE.toLong(), Int.MAX_VALUE, 128_000) }
     }
+
+    @Test fun `file reference attachment budget is applied before network IO`() = runBlocking {
+        val client = OkHttpClient.Builder().addInterceptor { error("Must not open a connection") }.build()
+        val json = ChatApi.defaultJson()
+        val streams = listOf(
+            SseClient(client, json).stream(
+                "https://test.invalid",
+                "",
+                ChatRequestDto("model", listOf(OutMessageDto("user", MessageContent.text("short"))), true),
+                contextWindow = 4_096,
+                extraInputTokens = 4_000,
+            ),
+            AnthropicApi(client, json).streamMessage(
+                "https://test.invalid",
+                "",
+                AnthropicRequest("model", "", listOf(AnthropicMessageParam("user", MessageContent.text("short")))),
+                contextWindow = 4_096,
+                extraInputTokens = 4_000,
+            ),
+        )
+        for (stream in streams) {
+            try {
+                stream.collect()
+                fail("Expected a local context error")
+            } catch (error: AppTextException) {
+                assertEquals(R.string.error_context_budget, error.text.resId)
+            }
+        }
+    }
 }

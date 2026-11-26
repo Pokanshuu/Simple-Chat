@@ -54,9 +54,10 @@ class AnthropicApi(
         extraHeaders: Map<String, String> = emptyMap(),
         contextWindow: Int? = null,
         retryBeforeContent: Boolean = true,
+        extraInputTokens: Long = 0,
     ): Flow<StreamEvent> = flow {
         val parser = AnthropicStreamParser(json, request.tools.any { it.type == null })
-        validateRequestBudget(estimatedInputTokens(request), request.maxTokens, contextWindow)
+        validateRequestBudget(estimatedInputTokens(request) + extraInputTokens, request.maxTokens, contextWindow)
         val nativeVersion = claudeVersionFor(url)
         val wireRequest = if (nativeVersion != null) request.copy(temperature = null, topP = null) else request
         val body = StreamingAnthropicRequestBody(json, wireRequest, stageDir)

@@ -42,7 +42,8 @@ internal class FileApiTextCache(private val context: Context, private val api: S
                     } finally { staged.delete() }
                 }
                 return Attachment(Attachment.Kind.TEXT, name, "text/plain", "", fileId = id, fileEndpoint = endpoint, fileAccount = account,
-                    originalTextChars = content.length)
+                    originalTextChars = content.length,
+                    originalBytes = content.toByteArray(Charsets.UTF_8).size.toLong())
             }
             val prepared = attachments.map { attachment ->
                 if (attachment.kind == Attachment.Kind.TEXT && attachment.fileId == null && attachment.data.length >= config.longTextChars)

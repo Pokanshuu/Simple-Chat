@@ -215,7 +215,7 @@
     <string name="settings_data_summary">导入 / 导出 / 清空</string>
     <string name="settings_appearance">外观</string>
     <string name="settings_accent">主题</string>
-    <string name="settings_custom_theme">字体主题与壁纸</string>
+    <string name="settings_custom_theme">主题、字体与壁纸</string>
     <string name="theme_text_tab">文字</string>
     <string name="theme_text_size">文字大小</string>
     <string name="theme_text_user">气泡文字</string>
@@ -587,6 +587,22 @@
     <!-- 面板二：上下文占用 + 对话统计 -->
     <string name="stats_context_usage">上下文占用</string>
     <string name="stats_tokens_estimate">%1$s / %2$s tokens（估算）</string>
+    <string name="context_legend_title">上下文构成</string>
+    <string name="context_legend_expand">展开上下文构成</string>
+    <string name="context_legend_collapse">收起上下文构成</string>
+    <string name="context_segment_presets">预设</string>
+    <string name="context_segment_compacted">已压缩对话</string>
+    <string name="context_segment_messages">消息</string>
+    <string name="context_segment_attachments">附件</string>
+    <string name="context_segment_tools">工具调用</string>
+    <string name="context_segment_memory_reserve">记忆预留</string>
+    <string name="context_segment_auto_reserve">自动压缩预留</string>
+    <string name="context_segment_free">可用空间</string>
+    <string name="context_unknown_attachments">另有 %1$d 个文档附件大小未知（服务端解析）</string>
+    <string name="message_unknown_attachments">另有 %1$d 个附件大小未知</string>
+    <string name="auto_compact_remaining">距自动压缩还剩 %1$s</string>
+    <string name="auto_compact_threshold_reached">已到自动压缩点</string>
+    <string name="auto_compacting">自动压缩中</string>
     <string name="stats_compacted_saving">压缩已省下约 %1$s tokens</string>
     <string name="stats_title">对话统计</string>
     <string name="stats_total_tokens">本地内容合计</string>
@@ -624,7 +640,7 @@
     <string name="compact_interrupted">连接中断或服务暂时不可用，本次压缩已停止。请重试以继续已保存的进度。原摘要和本地消息未更改。</string>
     <string name="compact_incomplete">未能生成完整摘要。请重试以继续已保存的进度。原摘要和本地消息未更改。</string>
     <string name="compact_no_progress">摘要未能收敛到可用大小。请重试或更换模型。原摘要和本地消息未更改。</string>
-    <string name="prompt_compact_attachment_skipped">（本条有附件因无法读取正文而未纳入压缩，不要推测附件内容。）</string>
+    <string name="prompt_compact_attachment_skipped">（本条有附件因无法读取正文而未纳入压缩。）</string>
 
     <!-- 面板四：对话设置 -->
     <string name="input_conversation_name">对话名称</string>

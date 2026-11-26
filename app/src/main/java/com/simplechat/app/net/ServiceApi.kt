@@ -11,6 +11,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 
@@ -59,6 +60,34 @@ class ServiceApi(private val client: OkHttpClient = ChatApi.defaultClient().newB
         val result = execute(Request.Builder().url(url).header("Authorization", "Bearer $key").post(body).build())
         return result["id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
             ?: throw AppTextException(R.string.service_bad_response)
+    }
+
+    /**
+     * 查询已上传文件的大小元数据。
+     *
+     * DeepSeek OpenAI 兼容 Files 返回 `bytes`，Anthropic 兼容 Files 返回 `size_bytes`，
+     * 两种字段都接受。文件内容不可下载，这个元数据是修复旧附件估算的唯一可靠来源。
+     */
+    suspend fun retrieveFile(
+        endpoint: String,
+        key: String,
+        fileId: String,
+        anthropic: Boolean,
+    ): Long? {
+        require(fileId.isNotBlank())
+        val base = endpoint.toHttpUrlOrNull() ?: throw AppTextException(R.string.service_invalid_url)
+        val url = base.newBuilder().addPathSegment(fileId).build()
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $key")
+            .apply { if (anthropic) header("anthropic-beta", "files-api-2025-04-14") }
+            .get()
+            .build()
+        val result = execute(request)
+        return (result["bytes"] ?: result["size_bytes"])
+            ?.jsonPrimitive
+            ?.longOrNull
+            ?.takeIf { it >= 0 }
     }
 
     companion object {

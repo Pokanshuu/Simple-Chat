@@ -49,6 +49,8 @@ data class Attachment(
     val fileEndpoint: String? = null,
     val fileAccount: String? = null,
     val originalTextChars: Int = 0,
+    /** Uploaded byte count, used only when no local body is available for estimation. */
+    val originalBytes: Long = 0,
     val remoteImage: Boolean = false,
 ) {
     enum class Kind { IMAGE, TEXT }

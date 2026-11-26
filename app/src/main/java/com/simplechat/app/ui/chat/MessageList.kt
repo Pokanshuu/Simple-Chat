@@ -1389,13 +1389,17 @@ private const val SelectionMenuDismissDelayMs = 160L
 @Composable
 private fun MessageMeta(message: UiMessage, modifier: Modifier = Modifier) {
     val colors = LocalChatColors.current
-    val tokens = TokenEstimate.of(message.content) +
-        attachmentTokenEstimate(message.attachments)
+    val attachmentSummary = attachmentTokenSummary(message.attachments)
+    val tokens = TokenEstimate.of(message.content) + attachmentSummary.tokens
+    val unknown = attachmentSummary.unknownCount.takeIf { it > 0 }?.let {
+        stringResource(R.string.message_unknown_attachments, it)
+    }
 
     // 老数据（v3 以前）没有 model 这一列 → 只显示 token 数，不猜一个模型填上去
     val label = listOfNotNull(
         message.model?.takeIf { it.isNotBlank() },
         "$tokens tokens",
+        unknown,
     ).joinToString(" · ")
 
     Text(

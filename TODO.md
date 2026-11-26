@@ -171,16 +171,16 @@
 
 **修法（待做）**：
 
-- [ ] `Attachment` 增加持久化字段 `originalBytes: Long = 0`（附件是 JSON 列，带默认值，**不需要 DB 迁移**）。
+- [x] `Attachment` 增加持久化字段 `originalBytes: Long = 0`（附件是 JSON 列，带默认值，**不需要 DB 迁移**）。
       上传时写入：`RemoteFileImport` 记 `file.length()`，`FileApiTextCache` 记内容字节数；
       能解出正文的场合同时写 `originalTextChars`。
-- [ ] 把估算收成**一个**函数：图片（含 `remoteImage` 的文件 API 图片 —— 它按 `image` block 发送）按张 1024；
+- [x] 把估算收成**一个**函数：图片（含 `remoteImage` 的文件 API 图片 —— 它按 `image` block 发送）按张 1024；
       有正文 → `TokenEstimate.of(data)`；只有引用 → 先用 `originalTextChars`，否则用 `originalBytes` 折算，
       二进制文档按「未知」处理（分类口径与存量回填见下一节），**任何情况下都不再是 0**。
-- [ ] `ContextStats` 增加「大小未知」的附件计数，供面板单列一行。
-- [ ] `ContextStats.usedTokens`（[累加处](app/src/main/java/com/simplechat/app/ui/chat/ChatViewModel.kt#L1351)）、
+- [x] `ContextStats` 增加「大小未知」的附件计数，供面板单列一行。
+- [x] `ContextStats.usedTokens`（[累加处](app/src/main/java/com/simplechat/app/ui/chat/ChatViewModel.kt#L1351)）、
       面板的附件一行、`MessageMeta`、`compactionCutIndex` 全部调同一个函数，杜绝口径漂移。
-- [ ] 单测五种情况：`file_id` + 只有 `originalTextChars`、`file_id` + 只有字节数、`remoteImage`、
+- [x] 单测五种情况：`file_id` + 只有 `originalTextChars`、`file_id` + 只有字节数、`remoteImage`、
       本地文本附件、空附件列表。
 
 **存量消息怎么补（已经上传过的附件没有 `originalBytes`）**：
@@ -196,12 +196,12 @@
 - 文件不可变 → 回查成功后**永久缓存**；失败（404 已过期 / 403 换账号 / 网络 / 文件 API 已关闭）
   存 10 分钟负缓存，避免每次开面板都打一遍。
 
-- [ ] `ServiceApi` 补一个 `retrieveFile(endpoint, key, fileId)`（GET，兼容 `bytes` / `size_bytes`），
+- [x] `ServiceApi` 补一个 `retrieveFile(endpoint, key, fileId)`（GET，兼容 `bytes` / `size_bytes`），
       以及按 `fileEndpoint + fileAccount` 分组的批量回填（并发 ≤ 2）。
-- [ ] **打开会话时懒回填**：统计计算前对「`file_id` 附件且没有 `originalBytes`」的条目发一次回填，
+- [x] **打开会话时懒回填**：统计计算前对「`file_id` 附件且没有 `originalBytes`」的条目发一次回填，
       把结果写回附件 JSON（这类附件 `data` 为空，行很小）→ `snapshotFlow` 自然重算圆环。
       这样用户不必先发一条消息才看到正确数字。
-- [ ] **发送时顺手回填**：`outgoingAttachments` 本来就要校验 `fileEndpoint` / `fileAccount`，
+- [x] **发送时顺手回填**：`outgoingAttachments` 本来就要校验 `fileEndpoint` / `fileAccount`，
       在同一段 IO 里带上回查，失败只记日志、**不阻塞也不失败发送**。
 
 回填到 `bytes` 之后的估算口径（按类型分开，不要一刀切）：
@@ -212,8 +212,8 @@
 | 纯文本类（txt / md / json / csv / 代码 / 日志，按 mime + 扩展名判） | `bytes / 4` | UTF-8 下 ASCII 正好 4 B/token，CJK ≈ 4.5 B/token，两种都落在 ~12% 内 |
 | 二进制文档（pdf / doc(x) / ppt(x) / xls(x) / epub / mobi） | **不折算，标「未知」** | 3 MB 的 xlsx 与服务端解析出的 token 没有可靠换算；编一个数会把圆环彻底带偏 |
 
-- [ ] 兜底顺序固定为：`originalTextChars` → `originalBytes` → 回查 `bytes` → **未知（显式标注，永不 0）**。
-- [ ] 二进制文档未回填/不可估时，面板写「另有 N 个文档附件大小未知（服务端解析）」，不要塞进总数。
+- [x] 兜底顺序固定为：`originalTextChars` → `originalBytes` → 回查 `bytes` → **未知（显式标注，永不 0）**。
+- [x] 二进制文档未回填/不可估时，面板写「另有 N 个文档附件大小未知（服务端解析）」，不要塞进总数。
 - [ ] 不建议用服务端 `tokensIn` 反推残留值：它只代表最近一次请求，还混入记忆、工具声明与逐轮指令，
       误差不可控 —— 最多进诊断日志，不进 UI。
 

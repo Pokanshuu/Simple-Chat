@@ -169,6 +169,82 @@ class RequestContentTest {
     }
 
     @Test
+    fun `remote image without inline data still costs one image estimate`() {
+        val remote = Attachment(
+            kind = Attachment.Kind.TEXT,
+            name = "scan.png",
+            mime = "image/png",
+            data = "",
+            fileId = "file-image",
+            remoteImage = true,
+        )
+
+        assertEquals(ImageTokenUpperBound, attachmentTokenEstimate(listOf(remote)))
+    }
+
+    @Test
+    fun `file reference budget includes remote images but not inline images`() {
+        val remote = Attachment(
+            kind = Attachment.Kind.TEXT,
+            name = "scan.png",
+            mime = "image/png",
+            data = "",
+            fileId = "file-image",
+            remoteImage = true,
+        )
+        val inline = image()
+
+        assertEquals(
+            ImageTokenUpperBound,
+            referencedAttachmentTokenEstimate(listOf(remote, inline)),
+        )
+    }
+
+    @Test
+    fun `remote document can use original character count before byte size`() {
+        val attachment = Attachment(
+            kind = Attachment.Kind.TEXT,
+            name = "report.pdf",
+            data = "",
+            fileId = "file-report",
+            originalTextChars = 1_000,
+            originalBytes = 80_000,
+        )
+
+        assertEquals(250, attachmentTokenEstimate(listOf(attachment)))
+    }
+
+    @Test
+    fun `plain text remote document uses byte size when characters are unavailable`() {
+        val attachment = Attachment(
+            kind = Attachment.Kind.TEXT,
+            name = "data.json",
+            mime = "application/json",
+            data = "",
+            fileId = "file-json",
+            originalBytes = 3_180_000,
+        )
+
+        assertEquals(795_000, attachmentTokenEstimate(listOf(attachment)))
+    }
+
+    @Test
+    fun `binary remote document is reported as unknown instead of guessed`() {
+        val attachment = Attachment(
+            kind = Attachment.Kind.TEXT,
+            name = "report.pdf",
+            mime = "application/pdf",
+            data = "",
+            fileId = "file-pdf",
+            originalBytes = 3_180_000,
+        )
+        val summary = attachmentTokenSummary(listOf(attachment))
+
+        assertEquals(0, summary.tokens)
+        assertEquals(1, summary.unknownCount)
+    }
+
+    @Test
     fun `no attachments cost nothing`() {
         assertEquals(0, attachmentTokenEstimate(emptyList()))
     }
@@ -217,7 +293,8 @@ class AttachmentsCodecTest {
     @Test
     fun `round trip keeps every field`() {
         val list = listOf(
-            Attachment(Attachment.Kind.IMAGE, "a.png", "image/jpeg", "AAAA", 10, 20),
+            Attachment(Attachment.Kind.IMAGE, "a.png", "image/jpeg", "AAAA", 10, 20,
+                originalBytes = 3_180_000, originalTextChars = 0),
             Attachment(Attachment.Kind.TEXT, "b.md", "text/plain", "# hi"),
         )
 

@@ -16,6 +16,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.simplechat.app.R
 import com.simplechat.app.data.ApiKey
+import com.simplechat.app.data.AppTextException
 import com.simplechat.app.data.BackgroundGeneration
 import com.simplechat.app.data.ImageRequest
 import com.simplechat.app.data.Attachment
@@ -43,6 +44,7 @@ import com.simplechat.app.data.userMessage
 import com.simplechat.app.db.CompactionEntity
 import com.simplechat.app.db.DraftEntity
 import com.simplechat.app.net.ChatApi
+import com.simplechat.app.net.DEEPSEEK_FLASH
 import com.simplechat.app.net.ImageGenerationApi
 import com.simplechat.app.net.RemoteModelMetadata
 import com.simplechat.app.net.ModelCapabilityOverride
@@ -56,11 +58,16 @@ import com.simplechat.app.net.OutMessageDto
 import com.simplechat.app.net.ProviderKind
 import com.simplechat.app.net.ReplyBlock
 import com.simplechat.app.net.StreamEvent
+import com.simplechat.app.net.ServiceApi
 import com.simplechat.app.net.anthropic.AnthropicRequest
 import com.simplechat.app.net.headersFor
 import com.simplechat.app.net.isOfficialDeepSeekEndpoint
 import com.simplechat.app.net.serverErrorText
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -73,6 +80,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import com.simplechat.app.net.ImageToolCall
 import com.simplechat.app.net.WebResearchSession
@@ -221,6 +229,11 @@ class ChatViewModel(
 
     private var compactJob: Job? = null
     private var compactGeneration = 0L
+    /** 自动压缩每次越过阈值只尝试一次；用户主动取消或清空后也保持解除状态。 */
+    private var autoCompactArmed = true
+    private val serviceApi = ServiceApi()
+    private val attachmentSizeCache = ConcurrentHashMap<String, Long>()
+    private val attachmentSizeNegativeUntil = ConcurrentHashMap<String, Long>()
 
     var presets by mutableStateOf<List<Preset>>(emptyList())
         private set
@@ -476,7 +489,15 @@ class ChatViewModel(
          */
         viewModelScope.launch {
             var weights = emptyMap<String, MessageWeight>()
-            snapshotFlow { StatsInput(messages.toList(), settings, presets, compaction) }
+            snapshotFlow {
+                StatsInput(
+                    messages = messages.toList(),
+                    settings = settings,
+                    presets = presets,
+                    compaction = compaction,
+                    toolHistoryModelId = toolHistoryModelId(),
+                )
+            }
                 .collectLatest { input ->
                     delay(ContextStatsDebounceMs)
                     val (stats, currentWeights) = withContext(Dispatchers.Default) { computeContextStats(input, weights) }
@@ -484,6 +505,71 @@ class ChatViewModel(
                     contextStats = stats
                 }
         }
+    }
+
+    /**
+     * 发送前自动压缩。
+     *
+     * 在真实请求发出前执行，这样新回复气泡已经存在，加载词可以明确显示“自动压缩中”。
+     * 条件里包含“确实有可压缩的历史”，摘要本身很大或只剩最近几条时不会发起必败请求。
+     */
+    private suspend fun autoCompactBeforeStream(
+        conversationId: String,
+        replyId: String,
+        generation: Int,
+    ): Boolean {
+        val input = StatsInput(
+            messages = messages.toList(),
+            settings = settings,
+            presets = presets,
+            compaction = compaction,
+            toolHistoryModelId = toolHistoryModelId(),
+        )
+        val stats = withContext(Dispatchers.Default) {
+            computeContextStats(input, emptyMap()).first
+        }
+        if (stats.usedTokens < stats.autoCompactThresholdTokens) {
+            autoCompactArmed = true
+            return false
+        }
+        if (!autoCompactArmed || compacting || switching) return false
+        if (currentConversationId != conversationId || generation != switchGeneration) return false
+        if (!stored.hasKey && providerKind != ProviderKind.OPENCODE_GO) return false
+        if (!hasCompactableHistory(input.messages, validCompaction(input.messages, input.compaction), stats.windowTokens)) {
+            return false
+        }
+        autoCompactArmed = false
+        loadingLabel = replyId to Res.get(R.string.auto_compacting)
+        startCompaction(CompactionDetailLevel.BALANCED, automatic = true)
+        if (compactJob == null) {
+            loadingLabel = null
+            return false
+        }
+        isStreaming = true
+        compactJob?.join()
+        isStreaming = false
+        return true
+    }
+
+    /** DeepSeek Flash 的官方扩展通道才会回传 read_link 工具历史。 */
+    private fun toolHistoryModelId(): String? {
+        val baseUrl = stored.baseUrl.ifBlank { providerKind.defaultBaseUrl }
+        if (apiStyle != ApiStyle.ANTHROPIC || !isOfficialDeepSeekEndpoint(baseUrl)) return null
+        return effectiveModelId(baseUrl, settings.model.id).takeIf { it == DEEPSEEK_FLASH }
+    }
+
+    /**
+     * 发送前预算补上文件引用的正文成本。
+     *
+     * 内联附件已经由 payload 估算覆盖；`file_id` 在 payload 里只有引用，
+     * 因此这里补文档正文或远程图片的视觉成本。仅限有 `file_id` 的附件，避免重复计算。
+     */
+    private fun outgoingAttachmentBudgetTokens(): Long {
+        val active = validCompaction(messages, compaction)
+        return referencedAttachmentTokenEstimate(
+            orderedOutgoingMessages(messages, active)
+                .flatMap { it.attachments },
+        ).toLong()
     }
 
     private fun applyStored(value: StoredSettings) {
@@ -640,6 +726,7 @@ class ChatViewModel(
         observeTitle(id)
         switching = true
         compaction = null
+        autoCompactArmed = true
         currentConversationTitle = null
 
         switchJob = viewModelScope.launch {
@@ -654,7 +741,15 @@ class ChatViewModel(
             repository.resolveDanglingStreams(id)
             if (targetMessageId != null) repository.revealSearchMessage(id, targetMessageId)
 
-            val loaded = repository.loadActivePath(id)
+            val loadedRaw = repository.loadActivePath(id)
+            // The previous conversation is still visible here. Persist the metadata, but do not
+            // patch that visible list by message ID before this conversation is published.
+            val loaded = backfillAttachmentSizes(
+                loadedRaw,
+                stored,
+                timeoutMillis = 5_000,
+                syncVisible = false,
+            )
 
             /*
              * 只认当前路径上生效的那份摘要。多份摘要可能来自不同分支，
@@ -738,6 +833,7 @@ class ChatViewModel(
         // 「新对话」的待用标题还在（与草稿一样，不因为点了新建就被吞掉）
         currentConversationTitle = pendingTitle
         compaction = null
+        autoCompactArmed = true
         messages.clear()
         banner = null
         imageSkipNotice = null
@@ -908,6 +1004,21 @@ class ChatViewModel(
                     model = model,
                 )
 
+                stoppedByUser = false
+                autoCompactBeforeStream(conversationId, assistantId, generation)
+                if (stoppedByUser) {
+                    patch(assistantId) { it.copy(status = MessageStatus.STOPPED) }
+                    runCatching {
+                        repository.finishMessage(
+                            id = assistantId,
+                            content = "",
+                            reasoning = null,
+                            status = MessageStatus.STOPPED,
+                        )
+                    }
+                    return@launch
+                }
+                if (generation != switchGeneration || conversationId != currentConversationId) return@launch
                 startStream(conversationId, assistantId)
             } catch (error: kotlinx.coroutines.CancellationException) {
                 throw error
@@ -1006,6 +1117,14 @@ class ChatViewModel(
      * - **摘要可读可改** —— AI 记错人名地名时用户能直接修正（见 [updateCompactionSummary]）
      */
     fun compactContext() {
+        compactContext(CompactionDetailLevel.BALANCED)
+    }
+
+    fun compactContext(detail: CompactionDetailLevel) {
+        startCompaction(detail, automatic = false)
+    }
+
+    private fun startCompaction(detail: CompactionDetailLevel, automatic: Boolean) {
         if (compacting || isStreaming || switching) return
         val conversationId = currentConversationId ?: return
         val model = settings.model
@@ -1017,14 +1136,229 @@ class ChatViewModel(
         imageSkipNotice = null
         compactJob = viewModelScope.launch {
             try {
-                compactHistory(conversationId, model, baseUrl, apiKey, headers, selectedApiStyle)
+                compactHistory(conversationId, model, baseUrl, apiKey, headers, selectedApiStyle, detail = detail)
             } catch (error: kotlinx.coroutines.CancellationException) {
                 throw error
             } catch (error: Exception) {
-                if (currentConversationId == conversationId) banner = compactionErrorText(error)
+                val noNewHistory = (error as? com.simplechat.app.data.AppTextException)?.text?.resId in
+                    setOf(R.string.compact_no_new_history, R.string.compact_too_few)
+                if (currentConversationId == conversationId && !(automatic && noNewHistory)) {
+                    banner = compactionErrorText(error)
+                }
             } finally {
                 if (!compacting && currentConversationId == conversationId) compactJob = null
             }
+        }
+    }
+
+    /**
+     * 远程文档在聊天请求里能通过 `file_id` 被模型读取，但旧压缩路径只拼接文本。
+     * 这里先单独把这些文件再次作为 file block 发给当前模型，产出可放入摘要输入的
+     * 内容提要；失败时在创建任何 checkpoint 之前终止，原摘要和消息保持不变。
+     */
+    private suspend fun readRemoteAttachmentsForCompaction(
+        attachments: List<Attachment>,
+        model: ModelInfo,
+        baseUrl: String,
+        apiKey: String,
+        headers: Map<String, String>,
+        selectedApiStyle: ApiStyle,
+        contextWindow: Int,
+    ): Map<String, String> {
+        if (attachments.isEmpty()) return emptyMap()
+        val result = linkedMapOf<String, String>()
+        var skipped = 0
+
+        attachments.forEachIndexed { index, attachment ->
+            val fileId = attachment.fileId ?: return@forEachIndexed
+            withContext(Dispatchers.Main) {
+                compactionStatus = Res.get(R.string.compact_reading_attachment, index + 1, attachments.size)
+            }
+            val digest = try {
+                summarizeRemoteAttachmentForCompaction(
+                    attachment = attachment,
+                    model = model,
+                    baseUrl = baseUrl,
+                    apiKey = apiKey,
+                    headers = headers,
+                    selectedApiStyle = selectedApiStyle,
+                    contextWindow = contextWindow,
+                )
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                skipped++
+                Diagnostics.log(
+                    "FILES",
+                    "skip compaction attachment id=${diagnosticToken(fileId)} " +
+                        "error=${error.javaClass.simpleName}",
+                )
+                null
+            }
+            if (digest.isNullOrBlank()) {
+                if (!digest.isNullOrEmpty()) skipped++
+                return@forEachIndexed
+            }
+            result[fileId] = digest
+        }
+        if (skipped > 0) {
+            withContext(Dispatchers.Main) {
+                compactionStatus = Res.get(R.string.compact_attachments_skipped, skipped)
+            }
+        }
+        return result
+    }
+
+    private suspend fun summarizeRemoteAttachmentForCompaction(
+        attachment: Attachment,
+        model: ModelInfo,
+        baseUrl: String,
+        apiKey: String,
+        headers: Map<String, String>,
+        selectedApiStyle: ApiStyle,
+        contextWindow: Int,
+    ): String {
+        val system = Res.get(R.string.prompt_compact_attachment_system)
+        val requestText = Res.get(R.string.prompt_compact_attachment_request)
+        val maxTokens = minOf(4096, model.maxOutputTokens ?: 4096, (contextWindow / 8).coerceAtLeast(256))
+        val extraInputTokens = attachmentTokenSummary(listOf(attachment)).tokens.toLong()
+        val stream = if (selectedApiStyle == ApiStyle.ANTHROPIC) {
+            chatApi.streamMessage(
+                baseUrl = baseUrl,
+                apiKey = apiKey,
+                request = buildAnthropicRequest(
+                    model = model.id,
+                    systemPrompt = system,
+                    path = listOf(UiMessage(
+                        id = "compact-attachment",
+                        role = MessageRole.USER,
+                        content = requestText,
+                        attachments = listOf(attachment),
+                    )),
+                    searchEnabled = false,
+                    thinkingEnabled = false,
+                    requestTitle = false,
+                    latestReminder = null,
+                    maxTokens = maxTokens,
+                    outputLimit = model.maxOutputTokens,
+                    deepSeekExtensions = isOfficialDeepSeekEndpoint(baseUrl),
+                    allowServerTools = false,
+                    temperature = 0.2,
+                ).copy(tools = emptyList()),
+                extraHeaders = headers + mapOf("anthropic-beta" to "files-api-2025-04-14"),
+                contextWindow = contextWindow,
+                retryBeforeContent = false,
+                extraInputTokens = extraInputTokens,
+            )
+        } else {
+            chatApi.streamChat(
+                apiStyle = selectedApiStyle,
+                baseUrl = baseUrl,
+                apiKey = apiKey,
+                model = model,
+                messages = listOf(
+                    OutMessageDto("system", MessageContent.text(system)),
+                    OutMessageDto("user", userContent(requestText, listOf(attachment))),
+                ),
+                thinkingEnabled = false,
+                maxTokens = maxTokens,
+                temperature = 0.2,
+                extraHeaders = headers,
+                retryBeforeContent = false,
+                extraInputTokens = extraInputTokens,
+            )
+        }
+        val output = StringBuilder()
+        val completed = withTimeoutOrNull(90_000) {
+            stream.collect { event ->
+                when (event) {
+                    is StreamEvent.Content -> output.append(event.text)
+                    is StreamEvent.Error -> throw AppTextException(
+                        R.string.compact_attachment_unreadable,
+                        attachment.name,
+                    )
+                    else -> Unit
+                }
+            }
+            true
+        } ?: false
+        if (!completed) throw AppTextException(R.string.compact_attachment_unreadable, attachment.name)
+        return output.toString().trim().take(MaxCompactionAttachmentDigestChars)
+    }
+
+    private suspend fun executeCompactionSummaryRequest(
+        material: String,
+        attachments: List<Attachment>,
+        maxTokens: Int,
+        systemPrompt: String,
+        supplement: String,
+        model: ModelInfo,
+        baseUrl: String,
+        apiKey: String,
+        headers: Map<String, String>,
+        selectedApiStyle: ApiStyle,
+    ): String {
+        val body = if (attachments.isNotEmpty() && supplement.isNotBlank()) {
+            material + "\n\n" + supplement
+        } else {
+            material
+        }
+        val extraInputTokens = attachmentTokenSummary(attachments).tokens.toLong()
+        val stream = if (selectedApiStyle == ApiStyle.ANTHROPIC) {
+            chatApi.streamMessage(
+                baseUrl = baseUrl,
+                apiKey = apiKey,
+                request = buildAnthropicRequest(
+                    model = model.id,
+                    systemPrompt = systemPrompt,
+                    path = listOf(UiMessage(
+                        id = "compact",
+                        role = MessageRole.USER,
+                        content = body,
+                        attachments = attachments,
+                    )),
+                    searchEnabled = false,
+                    thinkingEnabled = false,
+                    requestTitle = false,
+                    latestReminder = null,
+                    maxTokens = maxTokens,
+                    outputLimit = model.maxOutputTokens,
+                    deepSeekExtensions = isOfficialDeepSeekEndpoint(baseUrl),
+                    temperature = 0.3,
+                ).copy(tools = emptyList()),
+                extraHeaders = headers +
+                    if (attachments.isNotEmpty()) mapOf("anthropic-beta" to "files-api-2025-04-14") else emptyMap(),
+                contextWindow = model.contextWindow,
+                retryBeforeContent = false,
+                extraInputTokens = extraInputTokens,
+            )
+        } else {
+            chatApi.streamChat(
+                apiStyle = selectedApiStyle,
+                baseUrl = baseUrl,
+                apiKey = apiKey,
+                model = model,
+                messages = listOf(
+                    OutMessageDto("system", MessageContent.text(systemPrompt)),
+                    OutMessageDto("user", userContent(body, attachments)),
+                ),
+                thinkingEnabled = false,
+                maxTokens = maxTokens,
+                temperature = 0.3,
+                extraHeaders = headers,
+                retryBeforeContent = false,
+                extraInputTokens = extraInputTokens,
+            )
+        }
+        return collectCompactionSummary(
+            stream,
+            maxChars = com.simplechat.app.data.MaxCompactionSummaryChars,
+        ) { reason, chars, thinking ->
+            android.util.Log.i(
+                "SimpleChat/Compaction",
+                "protocol=$selectedApiStyle end=$reason textChars=$chars " +
+                    "thinkingChars=$thinking maxTokens=$maxTokens files=${attachments.size}",
+            )
         }
     }
 
@@ -1036,6 +1370,7 @@ class ChatViewModel(
         headers: Map<String, String>,
         selectedApiStyle: ApiStyle,
         requestWindow: Int? = null,
+        detail: CompactionDetailLevel = CompactionDetailLevel.BALANCED,
     ): Boolean {
         val generation = switchGeneration
         val revision = pathRevision
@@ -1043,7 +1378,6 @@ class ChatViewModel(
         val savedCompaction = compaction
         val sourceMessages = messages.toList()
         val existing = validCompaction(sourceMessages, savedCompaction)
-        val extended = selectedApiStyle == ApiStyle.ANTHROPIC
         val promptsByStyle = CompactionStyle.entries.associateWith { style -> Res.get(when (style) {
             CompactionStyle.CREATIVE -> R.string.prompt_compact_creative
             CompactionStyle.TECHNICAL -> R.string.prompt_compact_technical
@@ -1057,6 +1391,7 @@ class ChatViewModel(
             assistant = Res.get(R.string.prompt_ai_prefix),
             image = Res.get(R.string.prompt_has_image),
             unreadableAttachment = Res.get(R.string.prompt_compact_attachment_skipped),
+            remoteAttachmentSupplement = Res.get(R.string.prompt_compact_attachment_supplement),
         )
 
         compacting = true
@@ -1064,9 +1399,7 @@ class ChatViewModel(
 
         try {
             val result = withContext(Dispatchers.Default) {
-                val alreadyCovered = existing?.let { c -> sourceMessages.indexOfFirst { it.id == c.throughMessageId } } ?: -1
-                val candidates = sourceMessages.asSequence().drop(alreadyCovered + 1)
-                    .filter { !it.streaming && (it.content.isNotBlank() || it.attachments.isNotEmpty()) }.toList()
+                val candidates = compactionCandidates(sourceMessages, existing)
                 val recentBudget = compactionRecentTokenBudget(model.contextWindow, requestWindow)
                 val cutIndex = compactionCutIndex(candidates, recentBudget)
                 if (cutIndex <= 0) throw com.simplechat.app.data.AppTextException(
@@ -1074,7 +1407,19 @@ class ChatViewModel(
                 )
                 val toSummarize = candidates.take(cutIndex)
                 val style = classifyCompaction(toSummarize, existing?.summary)
-                val prompts = basePrompts.copy(system = promptsByStyle.getValue(style))
+                val prompts = basePrompts.copy(
+                    system = promptsByStyle.getValue(style) + "\n\n" + Res.get(detail.instructionRes),
+                )
+                val remoteFiles = toSummarize.asSequence()
+                    .flatMap { it.attachments.asSequence() }
+                    .filter {
+                        it.fileId != null &&
+                            it.kind == Attachment.Kind.TEXT &&
+                            it.data.isBlank() &&
+                            !it.remoteImage
+                    }
+                    .distinctBy { it.fileId }
+                    .toList()
                 val segments = compactionSegments(toSummarize, existing?.summary, prompts)
                 val fingerprint = compactionFingerprint(sequenceOf(
                     "hierarchical-compaction-v1", conversationId, model.id, model.contextWindow.toString(),
@@ -1106,35 +1451,44 @@ class ChatViewModel(
                         }
                     },
                 ) { transcript, maxTokens, _ ->
-                    val brief = Res.get(R.string.compact_output_target, (maxTokens / 3).coerceIn(32, 1200))
+                    val brief = Res.get(
+                        R.string.compact_output_target,
+                        (maxTokens / detail.targetDivisor).coerceIn(32, detail.targetMaxChars),
+                    )
                     // Finish with the active summarization task, after the quoted history.
                     val material = transcript + "\n\n" + brief
-                    val stream = if (extended) {
-                        chatApi.streamMessage(
-                            baseUrl = baseUrl, apiKey = apiKey,
-                            request = buildAnthropicRequest(
-                                model = model.id, systemPrompt = prompts.system,
-                                path = listOf(UiMessage("compact", MessageRole.USER, material)),
-                                searchEnabled = false, thinkingEnabled = false, requestTitle = false,
-                                latestReminder = null, maxTokens = maxTokens, outputLimit = model.maxOutputTokens, temperature = 0.3,
-                                deepSeekExtensions = isOfficialDeepSeekEndpoint(baseUrl),
-                            ).copy(tools = emptyList()),
-                            extraHeaders = headers, contextWindow = model.contextWindow, retryBeforeContent = false,
-                        )
-                    } else {
-                        chatApi.streamChat(
-                            apiStyle = selectedApiStyle,
-                            baseUrl = baseUrl, apiKey = apiKey, model = model,
-                            messages = listOf(
-                                OutMessageDto("system", MessageContent.text(prompts.system)),
-                                OutMessageDto("user", MessageContent.text(material)),
-                            ),
-                            thinkingEnabled = false, maxTokens = maxTokens,
-                            temperature = 0.3, extraHeaders = headers, retryBeforeContent = false,
-                        )
+                    val filesForBatch = remoteFiles.filter { file ->
+                        val fileId = file.fileId ?: return@filter false
+                        transcript.contains("file_id:$fileId")
                     }
-                    collectCompactionSummary(stream, maxChars = com.simplechat.app.data.MaxCompactionSummaryChars) { reason, chars, thinking ->
-                        android.util.Log.i("SimpleChat/Compaction", "protocol=$apiStyle end=$reason textChars=$chars thinkingChars=$thinking maxTokens=$maxTokens")
+                    try {
+                        executeCompactionSummaryRequest(
+                            material = material,
+                            attachments = filesForBatch,
+                            maxTokens = maxTokens,
+                            systemPrompt = prompts.system,
+                            supplement = prompts.remoteAttachmentSupplement,
+                            model = model,
+                            baseUrl = baseUrl,
+                            apiKey = apiKey,
+                            headers = headers,
+                            selectedApiStyle = selectedApiStyle,
+                        )
+                    } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException || filesForBatch.isEmpty()) throw error
+                        // A file reference rejected by the endpoint must not block text-only compaction.
+                        executeCompactionSummaryRequest(
+                            material = material + "\n\n" + prompts.unreadableAttachment,
+                            attachments = emptyList(),
+                            maxTokens = maxTokens,
+                            systemPrompt = prompts.system,
+                            supplement = "",
+                            model = model,
+                            baseUrl = baseUrl,
+                            apiKey = apiKey,
+                            headers = headers,
+                            selectedApiStyle = selectedApiStyle,
+                        )
                     }
                 }
                 (toSummarize.lastOrNull()?.id ?: checkNotNull(existing).throughMessageId) to summary
@@ -1187,6 +1541,7 @@ class ChatViewModel(
         val active = activeCompaction ?: return
         val path = messages.toList()
         cancelCompaction()
+        autoCompactArmed = false
         compaction = null
         viewModelScope.launch {
             /*
@@ -1253,6 +1608,7 @@ class ChatViewModel(
     }
 
     fun cancelCompaction() {
+        if (compacting) autoCompactArmed = false
         compactGeneration++
         compactJob?.cancel()
         compactJob = null
@@ -1314,6 +1670,7 @@ class ChatViewModel(
         avgTps = null,
         totalThinkingSeconds = null,
         hasCompaction = validCompaction(messages, compaction) != null,
+        autoCompactReserveTokens = compactionRecentTokenBudget(settings.model.contextWindow, null),
     )
 
     /**
@@ -1329,6 +1686,7 @@ class ChatViewModel(
         val settings: ConversationSettings,
         val presets: List<Preset>,
         val compaction: CompactionEntity?,
+        val toolHistoryModelId: String?,
     )
 
     private data class MessageWeight(val text: String, val weight: Long)
@@ -1347,8 +1705,20 @@ class ChatViewModel(
             message.id to (cached ?: MessageWeight(message.content, TokenEstimate.weight(message.content)))
         }
         val summaryWeight = active?.let { TokenEstimate.weight(it.summary) } ?: 0L
-        val usedWeight = TokenEstimate.weight(system) + summaryWeight + outgoing.sumOf { weights.getValue(it.id).weight }
-        val attachmentTokens = outgoing.sumOf { attachmentTokenEstimate(it.attachments) }
+        val messageWeight = outgoing.sumOf { weights.getValue(it.id).weight }
+        val attachmentSummary = attachmentTokenSummary(outgoing.flatMap { it.attachments })
+        val attachmentTokens = attachmentSummary.tokens
+        val toolTokens = input.toolHistoryModelId
+            ?.let { outgoingToolHistoryTokens(outgoing, it) }
+            ?: 0
+        val breakdown = usedContextSegments(
+            presetTokens = TokenEstimate.fromWeight(TokenEstimate.weight(system)),
+            compactedTokens = TokenEstimate.fromWeight(summaryWeight),
+            messageTokens = TokenEstimate.fromWeight(messageWeight) + outgoing.size * 8,
+            attachmentTokens = attachmentTokens,
+            toolTokens = toolTokens,
+        )
+        val usedTokens = breakdown.sumOf { it.tokens }
 
         val ttfts = messages.mapNotNull { it.ttftMs }
         val tpsList = messages.mapNotNull { it.tps }
@@ -1361,15 +1731,18 @@ class ChatViewModel(
         val usageMessages = messages.filter { it.role == MessageRole.ASSISTANT && it.tokensIn != null }
 
         return ContextStats(
-            usedTokens = TokenEstimate.fromWeight(usedWeight) + attachmentTokens,
+            usedTokens = usedTokens,
             windowTokens = settings.model.contextWindow,
             messageCount = messages.size,
-            totalTokens = TokenEstimate.fromWeight(weights.values.sumOf { it.weight }),
+            totalTokens = TokenEstimate.fromWeight(weights.values.sumOf { it.weight }) +
+                locallyStoredAttachmentTokens(messages),
             compactedTokenSaving = run {
                 if (active == null) return@run 0
                 val cut = messages.indexOfFirst { it.id == active.throughMessageId }
                 if (cut < 0) return@run 0
-                TokenEstimate.fromWeight(messages.take(cut + 1).sumOf { weights[it.id]?.weight ?: TokenEstimate.weight(it.content) }) -
+                val covered = messages.take(cut + 1)
+                TokenEstimate.fromWeight(covered.sumOf { weights[it.id]?.weight ?: TokenEstimate.weight(it.content) }) +
+                    attachmentTokenSummary(covered.flatMap { it.attachments }).tokens -
                     TokenEstimate.fromWeight(summaryWeight)
             },
             avgTtftMs = ttfts.takeIf { it.isNotEmpty() }?.average()?.toLong(),
@@ -1380,6 +1753,9 @@ class ChatViewModel(
             usagePromptTokens = usageMessages.sumOf { it.tokensIn ?: 0 },
             usageCompletionTokens = usageMessages.sumOf { it.tokensOut ?: 0 },
             usageCacheHitTokens = usageMessages.sumOf { it.cacheHitTokens ?: 0 },
+            breakdown = breakdown,
+            autoCompactReserveTokens = compactionRecentTokenBudget(settings.model.contextWindow, null),
+            unknownAttachmentCount = attachmentSummary.unknownCount,
         ) to weights
     }
 
@@ -1774,6 +2150,7 @@ class ChatViewModel(
 
     fun stop() {
         if (!isStreaming) return
+        if (compacting) cancelCompaction()
         stoppedByUser = true
         ++streamGeneration
         isStreaming = false
@@ -2403,6 +2780,7 @@ class ChatViewModel(
                             if (!textOnly && route.supportsFileReferences && (route.filesApi.enabled || messages.any { message -> message.attachments.any { it.fileId != null } }))
                                 mapOf("anthropic-beta" to "files-api-2025-04-14") else emptyMap(),
                         contextWindow = options.model.contextWindow,
+                        extraInputTokens = outgoingAttachmentBudgetTokens(),
                         /*
                          * 开搜索的请求**不自动重发**：服务端可能已经真的执行过一次搜索，
                          * 重发就是重复抓取 / 重复计费。纯文本请求没有副作用，断流重发一次是安全的。
@@ -2520,6 +2898,7 @@ class ChatViewModel(
                         temperature = options.temperature.toDouble(),
                         topP = options.topP.toDouble(),
                         extraHeaders = routeProvider.headersFor(openCodeSessionId),
+                        extraInputTokens = outgoingAttachmentBudgetTokens(),
                     ) }.collect { event ->
                         if (!bodyCommitted && searchSwitchFlippedBeforeBody()) throw SearchSwitchFlipped()
                         when (event) {
@@ -2872,7 +3251,11 @@ class ChatViewModel(
          * 续写时把这条 assistant 从历史里摘出去：它要以**末尾前缀**的身份出现，
          * 留在历史里就是同一轮回答发了两遍，服务端会把它当成两个不同的回答。
          */
-        val outgoingMessages = orderedOutgoingMessages(messages, active)
+        val outgoingMessages = backfillAttachmentSizes(
+            orderedOutgoingMessages(messages, active),
+            route,
+            timeoutMillis = 4_000,
+        )
         val lastUserId = outgoingMessages.lastOrNull { it.role == MessageRole.USER }?.id
         val preparedPath = outgoingMessages
             .filter { it.id != prefix?.id }
@@ -3130,6 +3513,123 @@ class ChatViewModel(
         return prepared
     }
 
+    private data class AttachmentMetadataTarget(
+        val endpoint: String,
+        val account: String,
+        val fileId: String,
+    )
+
+    private fun attachmentMetadataKey(target: AttachmentMetadataTarget): String =
+        "${target.endpoint}\u0000${target.account}\u0000${target.fileId}"
+
+    /**
+     * 旧附件只存了 `file_id`，没有本地大小。打开会话 / 发送前按端点与账号分组回查元数据，
+     * 并发最多 2 个；成功结果永久写回附件 JSON，失败做 10 分钟负缓存。
+     *
+     * 失败、超时、端点或账号不匹配都只意味着“大小未知”，不能阻塞会话打开，也不能让发送失败。
+     */
+    private suspend fun backfillAttachmentSizes(
+        source: List<UiMessage>,
+        route: StoredSettings,
+        timeoutMillis: Long,
+        syncVisible: Boolean = true,
+    ): List<UiMessage> {
+        val endpoint = runCatching {
+            route.filesApi.endpoint(route.baseUrl, route.filesApi.filesPath)
+        }.getOrNull() ?: return source
+        val key = runCatching { route.filesApi.key(route.apiKey) }.getOrNull()
+            ?.takeIf { it.isNotBlank() } ?: return source
+        val account = com.simplechat.app.data.FileApiTextCache.fingerprint(key)
+        val targets = source.asSequence()
+            .flatMap { message -> message.attachments.asSequence() }
+            .filter {
+                it.fileId != null &&
+                    !it.isImage &&
+                    !it.remoteImage &&
+                    it.originalBytes <= 0
+            }
+            .map { AttachmentMetadataTarget(endpoint, account, checkNotNull(it.fileId)) }
+            .distinctBy(::attachmentMetadataKey)
+            .toList()
+        if (targets.isEmpty()) return source
+
+        val now = SystemClock.elapsedRealtime()
+        val pending = targets.filter { target ->
+            val key = attachmentMetadataKey(target)
+            attachmentSizeCache[key] == null &&
+                (attachmentSizeNegativeUntil[key] ?: 0L) <= now
+        }
+        if (pending.isNotEmpty()) {
+            withTimeoutOrNull(timeoutMillis) {
+                coroutineScope {
+                    pending.chunked(2).forEach { chunk ->
+                        chunk.map { target ->
+                            async {
+                                val result = try {
+                                    Result.success(
+                                        serviceApi.retrieveFile(
+                                            endpoint = target.endpoint,
+                                            key = key,
+                                            fileId = target.fileId,
+                                            anthropic = route.resolvedApiStyle == ApiStyle.ANTHROPIC,
+                                        )
+                                    )
+                                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                    throw cancelled
+                                } catch (error: Exception) {
+                                    Result.failure(error)
+                                }
+                                target to result
+                            }
+                        }.awaitAll().forEach { (target, result) ->
+                            val cacheKey = attachmentMetadataKey(target)
+                            val bytes = result.getOrNull()
+                            if (bytes != null) {
+                                attachmentSizeCache[cacheKey] = bytes
+                                attachmentSizeNegativeUntil.remove(cacheKey)
+                            } else {
+                                attachmentSizeNegativeUntil[cacheKey] =
+                                    SystemClock.elapsedRealtime() + AttachmentSizeFailureTtlMs
+                                if (result.isFailure) {
+                                    Diagnostics.log(
+                                        "FILES",
+                                        "size lookup failed id=${diagnosticToken(target.fileId)} " +
+                                            "error=${result.exceptionOrNull()?.javaClass?.simpleName}",
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        val sizes = targets.mapNotNull { target ->
+            attachmentSizeCache[attachmentMetadataKey(target)]?.let { attachmentMetadataKey(target) to it }
+        }.toMap()
+        if (sizes.isEmpty()) return source
+
+        var changed = 0
+        val updated = source.map sourceMap@ { message ->
+            var messageChanged = false
+            val attachments = message.attachments.map attachmentMap@ { attachment ->
+                val fileId = attachment.fileId ?: return@attachmentMap attachment
+                val cacheKey = attachmentMetadataKey(AttachmentMetadataTarget(endpoint, account, fileId))
+                val bytes = sizes[cacheKey] ?: return@attachmentMap attachment
+                if (bytes == attachment.originalBytes) return@attachmentMap attachment
+                messageChanged = true
+                attachment.copy(originalBytes = bytes)
+            }
+            if (!messageChanged) return@sourceMap message
+            changed++
+            repository.updateMessageAttachments(message.id, attachments)
+            if (syncVisible) patch(message.id) { it.copy(attachments = attachments) }
+            message.copy(attachments = attachments)
+        }
+        if (changed > 0) Diagnostics.log("FILES", "size metadata backfilled messages=$changed files=${sizes.size}")
+        return updated
+    }
+
     private suspend fun prepareOutgoingUser(message: UiMessage, route: StoredSettings, model: ModelInfo): UiMessage {
         val (text, attachments) = repository.prepareLongTextForRequest(message.content, message.attachments, route)
         return message.copy(content = text, attachments = outgoingAttachments(attachments, route, model))
@@ -3246,7 +3746,11 @@ class ChatViewModel(
         }
 
         // 顺序规则见 `orderedOutgoingMessages`（纯函数，有单测钉死）
-        val outgoingMessages = orderedOutgoingMessages(messages, active)
+        val outgoingMessages = backfillAttachmentSizes(
+            orderedOutgoingMessages(messages, active),
+            route,
+            timeoutMillis = 4_000,
+        )
         val lastUser = outgoingMessages.lastOrNull { it.role == MessageRole.USER }
         val lastUserId = lastUser?.id
         outgoingMessages.forEach { message ->
@@ -3339,6 +3843,8 @@ class ChatViewModel(
          * 吃穿。输入栏上那行数字晚 250ms 更新，用户完全感知不到。
          */
         private const val ContextStatsDebounceMs = 250L
+        private const val AttachmentSizeFailureTtlMs = 10 * 60 * 1000L
+        private const val MaxCompactionAttachmentDigestChars = 12_000
 
         /**
          * 压缩用的系统提示词见 `prompt_compact_system`（`strings.xml`，随界面语言）。

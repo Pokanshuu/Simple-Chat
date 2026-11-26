@@ -179,7 +179,7 @@ private enum class SettingsPage(private val parentName: String?) {
     /** 朗读音色（系统 TTS）。 */
     VOICE("ROOT"),
     /** 第三方声音模型（朗读 → 第三方声音 API 二级页）。 */
-    VOICE_API("API_PROFILES"),
+    VOICE_API("VOICE"),
     /** 回收站（数据管理 → 二级）。 */
     TRASH("DATA"),
     /** 用量与余额：账户余额 + 全部会话累计消耗。 */

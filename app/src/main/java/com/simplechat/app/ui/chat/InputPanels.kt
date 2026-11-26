@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -46,10 +47,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import com.simplechat.app.R
@@ -440,6 +446,7 @@ fun ContextPanelContent(
     compaction: CompactionEntity?,
     compacting: Boolean,
     onCompact: () -> Unit,
+    onCompactWithDetail: (CompactionDetailLevel) -> Unit = { onCompact() },
     onCancelCompact: () -> Unit,
     onClearCompaction: () -> Unit,
     onUpdateSummary: (String) -> Unit,
@@ -450,51 +457,103 @@ fun ContextPanelContent(
     compactionStatus: String? = null,
 ) {
     val colors = LocalChatColors.current
+    var legendExpanded by remember { mutableStateOf(false) }
+    val expandLabel = stringResource(R.string.context_legend_expand)
+    val collapseLabel = stringResource(R.string.context_legend_collapse)
 
     Column(modifier = modifier.fillMaxWidth()) {
 
         // ── 占用 ──────────────────────────────────────────
-        PanelSectionTitle(
-            text = stringResource(R.string.stats_context_usage),
-            trailing = {
-                Text(
-                    text = "${stats.percent}%",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = when {
-                        stats.ratio >= 0.9f -> colors.danger
-                        stats.ratio >= 0.7f -> colors.warning
-                        else -> MaterialTheme.colorScheme.primary
-                    },
-                )
-            },
-        )
-
-        Spacer(Modifier.size(8.dp))
-
-        UsageBar(ratio = stats.ratio)
-
-        Spacer(Modifier.size(8.dp))
-
-        Text(
-            text = stringResource(
-                R.string.stats_tokens_estimate,
-                TokenEstimate.format(stats.usedTokens),
-                TokenEstimate.format(stats.windowTokens),
-            ),
-            style = MaterialTheme.typography.labelSmall,
-            color = colors.placeholder,
-        )
-
-        if (stats.compactedTokenSaving > 0) {
-            Spacer(Modifier.size(6.dp))
-            Text(
-                text = stringResource(
-                    R.string.stats_compacted_saving,
-                    TokenEstimate.format(stats.compactedTokenSaving),
-                ),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(SoftShape)
+                .clickable { legendExpanded = !legendExpanded }
+                .semantics {
+                    contentDescription = if (legendExpanded) collapseLabel else expandLabel
+                    stateDescription = if (legendExpanded) collapseLabel else expandLabel
+                    role = Role.Button
+                }
+                .padding(vertical = 3.dp),
+        ) {
+            PanelSectionTitle(
+                text = stringResource(R.string.stats_context_usage),
+                trailing = {
+                    Text(
+                        text = "${stats.percent}%",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = when {
+                            stats.ratio >= ContextDangerRatio -> colors.danger
+                            stats.ratio >= ContextWarningRatio -> colors.warning
+                            else -> MaterialTheme.colorScheme.primary
+                        },
+                    )
+                },
             )
+
+            Spacer(Modifier.size(8.dp))
+
+            SegmentedUsageBar(stats = stats)
+
+            Spacer(Modifier.size(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(
+                            R.string.stats_tokens_estimate,
+                            TokenEstimate.format(stats.usedTokens),
+                            TokenEstimate.format(stats.windowTokens),
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.placeholder,
+                    )
+
+                    if (stats.unknownAttachmentCount > 0) {
+                        Spacer(Modifier.size(4.dp))
+                        Text(
+                            text = stringResource(
+                                R.string.context_unknown_attachments,
+                                stats.unknownAttachmentCount,
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.placeholder,
+                        )
+                    }
+
+                    if (stats.compactedTokenSaving > 0) {
+                        Spacer(Modifier.size(6.dp))
+                        Text(
+                            text = stringResource(
+                                R.string.stats_compacted_saving,
+                                TokenEstimate.format(stats.compactedTokenSaving),
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+                Spacer(Modifier.size(8.dp))
+                Icon(
+                    imageVector = if (legendExpanded) AppIcons.ChevronUp else AppIcons.ChevronDown,
+                    contentDescription = null,
+                    tint = if (legendExpanded) MaterialTheme.colorScheme.primary else colors.placeholder,
+                    modifier = Modifier
+                        .padding(bottom = 1.dp)
+                        .size(16.dp),
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = legendExpanded,
+            enter = fadeIn(tween(160)) + expandVertically(tween(180, easing = MotionEasing)),
+            exit = fadeOut(tween(120)) + shrinkVertically(tween(160, easing = MotionEasing)),
+        ) {
+            ContextLegend(stats)
         }
 
         Spacer(Modifier.size(16.dp))
@@ -588,38 +647,125 @@ fun ContextPanelContent(
             compaction = compaction,
             compacting = compacting,
             onCompact = onCompact,
+            onCompactWithDetail = onCompactWithDetail,
             onCancelCompact = onCancelCompact,
             onClearCompaction = onClearCompaction,
             onUpdateSummary = onUpdateSummary,
             compactionStatus = compactionStatus,
+            autoCompactRemainingTokens = stats.autoCompactRemainingTokens,
+            autoCompactThresholdReached = stats.usedTokens >= stats.autoCompactThresholdTokens,
         )
     }
 }
 
-/** 线性占用条。只读，不可拖。 */
+/**
+ * 分段占用条。
+ *
+ * 已占用类别按请求顺序排列，灰色预留和空闲空间排在后面。点击整条进度条展开图例；
+ * 圆环与 `usedTokens` 仍然只看实际占用，不把预留算进去。
+ */
 @Composable
-private fun UsageBar(ratio: Float) {
+private fun SegmentedUsageBar(
+    stats: ContextStats,
+) {
     val colors = LocalChatColors.current
-    val accent = when {
-        ratio >= 0.9f -> colors.danger
-        ratio >= 0.7f -> colors.warning
-        else -> MaterialTheme.colorScheme.primary
-    }
+    val segments = stats.segments.filter { it.tokens > 0 }
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(6.dp)
-            .clip(PillShape)
-            .background(colors.outline),
+            .height(6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(PillShape)
+                .background(colors.outline),
+        ) {
+            segments.forEach { segment ->
+                val color = contextSegmentColor(segment.kind)
+                Box(
+                    modifier = Modifier
+                        .weight(segment.tokens.toFloat())
+                        .fillMaxHeight()
+                        .background(color),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContextLegend(stats: ContextStats) {
+    val colors = LocalChatColors.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.context_legend_title),
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.placeholder,
+        )
+        Spacer(Modifier.size(4.dp))
+        stats.segments.filter { it.tokens > 0 }.forEach { segment ->
+            ContextLegendRow(
+                segment = segment,
+                windowTokens = stats.windowTokens,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ContextLegendRow(segment: ContextSegment, windowTokens: Int) {
+    val colors = LocalChatColors.current
+    val percent = if (windowTokens <= 0) 0f else segment.tokens.toFloat() / windowTokens * 100f
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .fillMaxWidth(ratio.coerceIn(0f, 1f))
-                .height(6.dp)
-                .clip(PillShape)
-                .background(accent),
+                .size(8.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(contextSegmentColor(segment.kind)),
+        )
+        Spacer(Modifier.size(9.dp))
+        Text(
+            text = contextSegmentLabel(segment.kind),
+            style = MaterialTheme.typography.labelMedium,
+            color = if (segment.isUsed) MaterialTheme.colorScheme.onSurface else colors.placeholder,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = TokenEstimate.format(segment.tokens),
+            style = MaterialTheme.typography.labelMedium,
+            color = if (segment.isUsed) MaterialTheme.colorScheme.onSurface else colors.placeholder,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(58.dp),
+        )
+        Text(
+            text = formatContextPercent(percent),
+            style = MaterialTheme.typography.labelMedium,
+            color = if (segment.isUsed) MaterialTheme.colorScheme.onSurface else colors.placeholder,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(58.dp),
         )
     }
+}
+
+private fun formatContextPercent(percent: Float): String = when {
+    percent <= 0f -> "0%"
+    percent < 0.1f -> "<0.1%"
+    percent >= 10f -> "${percent.roundToInt()}%"
+    else -> "${(percent * 10f).roundToInt() / 10f}%"
 }
 
 @Composable
@@ -654,6 +800,9 @@ internal fun CompactionSection(
     onClearCompaction: () -> Unit,
     onUpdateSummary: (String) -> Unit,
     compactionStatus: String? = null,
+    autoCompactRemainingTokens: Int? = null,
+    autoCompactThresholdReached: Boolean = false,
+    onCompactWithDetail: (CompactionDetailLevel) -> Unit = { onCompact() },
 ) {
     val colors = LocalChatColors.current
     var editing by remember { mutableStateOf(false) }
@@ -755,6 +904,23 @@ internal fun CompactionSection(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    CompactionChoiceButton(
+                        text = stringResource(R.string.compact_redo),
+                        leadingIcon = AppIcons.Refresh,
+                        onSelect = onCompactWithDetail,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    AutoCompactHint(
+                        remainingTokens = autoCompactRemainingTokens,
+                        thresholdReached = autoCompactThresholdReached,
+                    )
+                }
+                Spacer(Modifier.size(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     CapsuleButton(
                         text = stringResource(R.string.action_edit),
                         leadingIcon = AppIcons.Edit,
@@ -762,11 +928,6 @@ internal fun CompactionSection(
                             draft = compaction.summary
                             editing = true
                         },
-                    )
-                    CapsuleButton(
-                        text = stringResource(R.string.compact_redo),
-                        leadingIcon = AppIcons.Refresh,
-                        onClick = onCompact,
                     )
                     CapsuleButton(
                         text = stringResource(R.string.compact_discard),
@@ -779,21 +940,31 @@ internal fun CompactionSection(
 
         // ── 尚未压缩 ─────────────────────────────────────
         else -> {
-            CapsuleButton(
-                text = stringResource(R.string.compact_start),
-                leadingIcon = AppIcons.Collapse,
-                /*
-                 * ⚠️ 这里**不要** `selected = true`。
-                 *
-                 * `selected` 的语义是"这个选项当前是开着的"，而这个分支的前提恰恰是
-                 * **还没压缩** —— 顶着一个选中态等于告诉用户"已经压过了"。
-                 * 之前它的底色是淡蓝、不扎眼；换成别的主题色之后一眼就是错的。
-                 *
-                 * 这一屏只有它一个按钮、下面还跟着说明，本来就是视觉重心，
-                 * 不需要再借选中态来强调。
-                 */
-                onClick = onCompact,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CompactionChoiceButton(
+                    text = stringResource(R.string.compact_start),
+                    leadingIcon = AppIcons.Collapse,
+                    /*
+                     * ⚠️ 这里**不要** `selected = true`。
+                     *
+                     * `selected` 的语义是"这个选项当前是开着的"，而这个分支的前提恰恰是
+                     * **还没压缩** —— 顶着一个选中态等于告诉用户"已经压过了"。
+                     * 之前它的底色是淡蓝、不扎眼；换成别的主题色之后一眼就是错的。
+                     *
+                     * 这一屏只有它一个按钮、下面还跟着说明，本来就是视觉重心，
+                     * 不需要再借选中态来强调。
+                     */
+                    onSelect = onCompactWithDetail,
+                )
+                Spacer(Modifier.weight(1f))
+                AutoCompactHint(
+                    remainingTokens = autoCompactRemainingTokens,
+                    thresholdReached = autoCompactThresholdReached,
+                )
+            }
             Spacer(Modifier.size(8.dp))
             Text(
                 text = stringResource(R.string.compact_desc),
@@ -802,6 +973,56 @@ internal fun CompactionSection(
             )
         }
     }
+}
+
+@Composable
+private fun CompactionChoiceButton(
+    text: String,
+    leadingIcon: ImageVector,
+    onSelect: (CompactionDetailLevel) -> Unit,
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    Box {
+        CapsuleButton(
+            text = text,
+            leadingIcon = leadingIcon,
+            trailingIcon = AppIcons.ChevronDown,
+            onClick = { menuOpen = true },
+        )
+        AppMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+            alignEnd = false,
+        ) {
+            CompactionDetailLevel.entries.forEach { detail ->
+                AppMenuItem(
+                    label = stringResource(detail.labelRes),
+                ) {
+                    menuOpen = false
+                    onSelect(detail)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AutoCompactHint(
+    remainingTokens: Int?,
+    thresholdReached: Boolean,
+) {
+    val text = when {
+        remainingTokens == null -> null
+        thresholdReached || remainingTokens <= 0 -> stringResource(R.string.auto_compact_threshold_reached)
+        else -> stringResource(R.string.auto_compact_remaining, TokenEstimate.format(remainingTokens))
+    } ?: return
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = LocalChatColors.current.placeholder,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
 }
 
 @Composable
