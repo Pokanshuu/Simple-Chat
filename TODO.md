@@ -138,6 +138,94 @@
 
 ## 🐛 已知问题
 
+### 2026-11-26：`file_id` 附件在上下文统计里几乎不计入
+
+**现象**：开启文件 API 后附一个 3.18 MB 的 JSON（附件卡片显示「已上传到文件 API」），统计面板的
+「上下文占用」仍只有 5.8k，其中的附件部分 4.1k / 0.4%。按 `TokenEstimate` 的规则（非 CJK
+4 字符 ≈ 1 token），3.18 MB 的 JSON 应约 **79 万 token**，占 1M 窗口约 79% —— 差两个数量级。
+
+> 这组数字来自真机统计面板截图（该版本把附件单列一行）。仓库当前 `main` 的面板没有这一行，
+> 但**同一处估算缺陷在 `usedTokens` 里一模一样**，可直接用「带一个 `file_id` 附件的会话」
+> 复现：圆环与「本地内容合计」都不涨。
+
+**根因**：附件折算只读 `Attachment.data`（[附件估算](app/src/main/java/com/simplechat/app/ui/chat/RequestContent.kt#L103)）：
+
+- 图片按每张 `ImageTokenUpperBound`（1024）计 —— 没问题；
+- 非图片一律 `TokenEstimate.of(attachment.data)`，而走文件 API 的附件 `data` 是空串
+  （字节在服务端，本地只有 `file_id`）→ 估算塌成 0。
+
+`originalTextChars` 在上传时写进去了（[上传](app/src/main/java/com/simplechat/app/data/FileApiTextCache.kt#L45)），
+但**全仓库没有任何地方读它**；「选文件即上传」那条路连字符数都没记
+（[RemoteFileImport](app/src/main/java/com/simplechat/app/data/RemoteFileImport.kt#L46)）。
+`Attachment.sizeBytes` 对这类附件同样是 0（`data` 为空，见
+[Attachment](app/src/main/java/com/simplechat/app/data/Attachment.kt#L92)）。
+
+**影响**：
+
+- 圆环与面板低估上下文，用户看不到「这个文件已经吃掉大半窗口」；
+- 与 v1.2.0 的约定矛盾 —— release notes 写明「文件引用可减少请求体积。**文件正文仍计入模型上下文和输入 token**」；
+- 压缩切点（[compactionCutIndex](app/src/main/java/com/simplechat/app/ui/chat/ContextCompaction.kt#L24)）与
+  单条消息的 token 标签（[MessageMeta](app/src/main/java/com/simplechat/app/ui/chat/MessageList.kt#L1390)）
+  是同一套口径，所以「该压缩了」的提示会迟到；而发送前的预算校验按真实 payload 算，
+  于是会出现「统计说没满、一发送就被拒」。
+
+**修法（待做）**：
+
+- [ ] `Attachment` 增加持久化字段 `originalBytes: Long = 0`（附件是 JSON 列，带默认值，**不需要 DB 迁移**）。
+      上传时写入：`RemoteFileImport` 记 `file.length()`，`FileApiTextCache` 记内容字节数；
+      能解出正文的场合同时写 `originalTextChars`。
+- [ ] 把估算收成**一个**函数：图片（含 `remoteImage` 的文件 API 图片 —— 它按 `image` block 发送）按张 1024；
+      有正文 → `TokenEstimate.of(data)`；只有引用 → 先用 `originalTextChars`，否则用 `originalBytes` 折算，
+      二进制文档按「未知」处理（分类口径与存量回填见下一节），**任何情况下都不再是 0**。
+- [ ] `ContextStats` 增加「大小未知」的附件计数，供面板单列一行。
+- [ ] `ContextStats.usedTokens`（[累加处](app/src/main/java/com/simplechat/app/ui/chat/ChatViewModel.kt#L1351)）、
+      面板的附件一行、`MessageMeta`、`compactionCutIndex` 全部调同一个函数，杜绝口径漂移。
+- [ ] 单测五种情况：`file_id` + 只有 `originalTextChars`、`file_id` + 只有字节数、`remoteImage`、
+      本地文本附件、空附件列表。
+
+**存量消息怎么补（已经上传过的附件没有 `originalBytes`）**：
+
+先说结论：**不能靠「按 `file_id` 重新下载」修正**。官方文档写明「上传的原始文件和解析结果都不支持
+下载」，所以拿不到正文、也拿不到解析结果，唯一可靠的来源是**元数据回查**：
+
+- OpenAI 兼容：`GET {filesEndpoint}/{file_id}` → 文件对象里 `bytes` 必有
+  （[查询文件](https://api-docs.deepseek.com/zh-cn/api/retrieve-file/)）。
+- Anthropic 兼容：`GET /anthropic/v1/files/{file_id}` → 大小字段叫 `size_bytes`，且必须带
+  `anthropic-beta: files-api-2025-04-14`（[Files API](https://api-docs.deepseek.com/zh-cn/guides/files_api/)）。
+  解析时两种字段名都要认。
+- 文件不可变 → 回查成功后**永久缓存**；失败（404 已过期 / 403 换账号 / 网络 / 文件 API 已关闭）
+  存 10 分钟负缓存，避免每次开面板都打一遍。
+
+- [ ] `ServiceApi` 补一个 `retrieveFile(endpoint, key, fileId)`（GET，兼容 `bytes` / `size_bytes`），
+      以及按 `fileEndpoint + fileAccount` 分组的批量回填（并发 ≤ 2）。
+- [ ] **打开会话时懒回填**：统计计算前对「`file_id` 附件且没有 `originalBytes`」的条目发一次回填，
+      把结果写回附件 JSON（这类附件 `data` 为空，行很小）→ `snapshotFlow` 自然重算圆环。
+      这样用户不必先发一条消息才看到正确数字。
+- [ ] **发送时顺手回填**：`outgoingAttachments` 本来就要校验 `fileEndpoint` / `fileAccount`，
+      在同一段 IO 里带上回查，失败只记日志、**不阻塞也不失败发送**。
+
+回填到 `bytes` 之后的估算口径（按类型分开，不要一刀切）：
+
+| 附件 | 估算 | 理由 |
+|---|---|---|
+| 图片（含 `remoteImage`） | 按张 1024 | 与字节数无关，回查对图片没用，可跳过 |
+| 纯文本类（txt / md / json / csv / 代码 / 日志，按 mime + 扩展名判） | `bytes / 4` | UTF-8 下 ASCII 正好 4 B/token，CJK ≈ 4.5 B/token，两种都落在 ~12% 内 |
+| 二进制文档（pdf / doc(x) / ppt(x) / xls(x) / epub / mobi） | **不折算，标「未知」** | 3 MB 的 xlsx 与服务端解析出的 token 没有可靠换算；编一个数会把圆环彻底带偏 |
+
+- [ ] 兜底顺序固定为：`originalTextChars` → `originalBytes` → 回查 `bytes` → **未知（显式标注，永不 0）**。
+- [ ] 二进制文档未回填/不可估时，面板写「另有 N 个文档附件大小未知（服务端解析）」，不要塞进总数。
+- [ ] 不建议用服务端 `tokensIn` 反推残留值：它只代表最近一次请求，还混入记忆、工具声明与逐轮指令，
+      误差不可控 —— 最多进诊断日志，不进 UI。
+
+**验收**：同一个 3.18 MB JSON，统计里的附件部分应显示约 790k（1M 窗口的 ~79%），圆环随之变色；
+面板数字与发送前预算校验的输入估算一致。**老会话**（本次修复前上传的附件）在打开会话后，不发送新消息
+也应显示同样的数字；断网 / 文件过期时退化为「大小未知」标注，而不是 0。
+
+**待确认**：截图来自一台机器上**未提交**的本地构建（`上下文构成` / `自动压缩预留` / `可用空间`
+这些文案在 `main`、全部远端分支、以及 v1.2.6-beta.4 的 release APK 里都不存在 —— 已按
+UTF-8 / UTF-16LE 两种编码逐字节搜过 `resources.arsc` 与 `classes.dex`）。那部分改动推上来之后，
+面板的附件一行要改成调用同一个函数，否则修完估算面板仍是错的。
+
 ### 2026-11-15 新增
 
 | 问题 | 影响 | 计划 |
