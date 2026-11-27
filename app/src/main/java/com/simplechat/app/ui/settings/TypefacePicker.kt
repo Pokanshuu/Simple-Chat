@@ -50,60 +50,55 @@ internal fun TypefacePicker(
     val selectedFamily = remember(context, selectedFont) { selectedFont?.let { fontFamilyOf(context, it) } }
     val defaultLabel = stringResource(R.string.fonts_system_default)
 
-    Row(
-        modifier = modifier.fillMaxWidth().padding(end = Space.Screen),
-        horizontalArrangement = Arrangement.spacedBy(Space.Gap),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.weight(1f)) {
-            Row(
-                modifier = Modifier.fillMaxWidth()
-                    .clickable { menuOpen = true }
-                    .heightIn(min = Space.Row)
-                    .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
-                horizontalArrangement = Arrangement.spacedBy(Space.IconGap),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(AppIcons.FontSize, contentDescription = null, modifier = Modifier.size(Space.Icon))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        selectedFont?.displayName ?: defaultLabel,
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    val previewStyle = MaterialTheme.typography.labelSmall
-                    Text(
-                        stringResource(R.string.fonts_preview_line),
-                        style = previewStyle.copy(fontFamily = selectedFamily ?: previewStyle.fontFamily),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                Icon(AppIcons.ChevronRight, contentDescription = null, modifier = Modifier.size(16.dp))
+    Box(modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { menuOpen = true }
+                .heightIn(min = Space.Row)
+                .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+            horizontalArrangement = Arrangement.spacedBy(Space.IconGap),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(AppIcons.FontSize, contentDescription = null, modifier = Modifier.size(Space.Icon))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    selectedFont?.displayName ?: defaultLabel,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val previewStyle = MaterialTheme.typography.labelSmall
+                Text(
+                    stringResource(R.string.fonts_preview_line),
+                    style = previewStyle.copy(fontFamily = selectedFamily ?: previewStyle.fontFamily),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-            AppMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                Column(Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState())) {
-                    AppMenuItem(label = defaultLabel, selected = selectedFont == null) {
+            Icon(AppIcons.ChevronRight, contentDescription = null, modifier = Modifier.size(16.dp))
+        }
+        AppMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            Column(Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState())) {
+                AppMenuItem(label = defaultLabel, selected = selectedFont == null) {
+                    menuOpen = false
+                    onSelect(null)
+                }
+                fonts.forEach { font ->
+                    AppMenuItem(label = font.displayName, selected = selectedFont?.id == font.id) {
                         menuOpen = false
-                        onSelect(null)
+                        onSelect(font.id)
                     }
-                    fonts.forEach { font ->
-                        AppMenuItem(label = font.displayName, selected = selectedFont?.id == font.id) {
-                            menuOpen = false
-                            onSelect(font.id)
-                        }
-                    }
-                    AppMenuDivider()
-                    AppMenuItem(label = stringResource(R.string.fonts_add), icon = AppIcons.PlusCircle) {
-                        menuOpen = false
-                        onImport()
-                    }
-                    AppMenuItem(label = stringResource(R.string.fonts_manage), icon = AppIcons.Settings) {
-                        menuOpen = false
-                        onManage()
-                    }
+                }
+                AppMenuDivider()
+                AppMenuItem(label = stringResource(R.string.fonts_add), icon = AppIcons.PlusCircle) {
+                    menuOpen = false
+                    onImport()
+                }
+                AppMenuItem(label = stringResource(R.string.fonts_manage), icon = AppIcons.Settings) {
+                    menuOpen = false
+                    onManage()
                 }
             }
         }
