@@ -380,11 +380,15 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                     .onSizeChanged { sheetWidth = it.width }
                     .fillMaxWidth(if (wideChatLayout) 0f else sheetFraction)
                     .fillMaxHeight()
-                    // 抽屉自己也要"浮起来"，否则右边缘是一道生硬的白灰交界
+                    // 抽屉自己也要"浮起来"，否则右边缘是一道生硬的白灰交界。
+                    //
+                    // 但关闭后必须停画：抽屉收在屏幕外时，它的**右边缘**正好落在 x = 0，
+                    // 投影的右半侧会越过窗口边缘漏进屏幕，表现为所有页面左缘的一条竖影。
+                    // 只有抽屉真正被拖出/打开时才需要这层投影。
                     .surfaceShadow(
                         shape = sheetShape,
                         spec = AppTheme.tokens.shadow.raised,
-                        opacity = drawerSurface.alpha,
+                        opacity = if (drawerVisible) drawerSurface.alpha else 0f,
                     ),
                 drawerShape = sheetShape,
                 // 面板底色由容器统一绘制一次，抽屉内容沿用这层底色。
