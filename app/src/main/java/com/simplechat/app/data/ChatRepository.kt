@@ -1266,10 +1266,15 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             val headers = rows.map { it.toBackup(emptyList(), getEnabledPresetIds(it.id), compactions[it.id].orEmpty()) }
             val linkedPresetIds = headers.flatMap { it.enabledPresetIds }.toSet()
             val presetRows = presets.getAll().filter { onlyConversation == null || it.id in linkedPresetIds }.map { it.toBackup() }
+            val favoriteData = if (onlyConversation == null) favoriteBackupData() else emptyList<BackupFavoriteFolder>() to emptyList<BackupFavorite>()
             var written = 0
             file.outputStream().buffered().writer(Charsets.UTF_8).use { writer ->
-                writeBackupStream(writer, System.currentTimeMillis(), headers, presetRows,
-                    attachmentSource = { AttachmentFiles.open(context, it) }) { id, sink ->
+                writeBackupStream(
+                    writer, System.currentTimeMillis(), headers, presetRows,
+                    favoriteFolders = favoriteData.first,
+                    favorites = favoriteData.second,
+                    attachmentSource = { AttachmentFiles.open(context, it) },
+                ) { id, sink ->
                     for (messageId in exportIds.getValue(id)) {
                         currentCoroutineContext().ensureActive()
                         val message = readMessageForExport(messageId).toBackup()
@@ -1334,6 +1339,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             val totalMessages = exportIds.values.sumOf { it.size }
             var written = 0
             var documentsWritten = 0
+            val favoriteData = favoriteBackupData()
             val documents = rows.mapIndexed { index, row ->
                 ChatArchive.StreamDocument(ChatArchive.documentName(index + 1, row.title)) { output ->
                     val ids = visiblePathIds(row.id)
@@ -1351,8 +1357,12 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
                     presetCount = presetRows.size,
                     documents = documents,
                 ) { backupOutput ->
-                    writeBackupStream(backupOutput.writer(Charsets.UTF_8).buffered(), exportedAt, headers, presetRows,
-                        attachmentSource = { AttachmentFiles.open(context, it) }) { id, sink ->
+                    writeBackupStream(
+                        backupOutput.writer(Charsets.UTF_8).buffered(), exportedAt, headers, presetRows,
+                        favoriteFolders = favoriteData.first,
+                        favorites = favoriteData.second,
+                        attachmentSource = { AttachmentFiles.open(context, it) },
+                    ) { id, sink ->
                         for (messageId in exportIds.getValue(id)) {
                             currentCoroutineContext().ensureActive()
                             val message = readMessageForExport(messageId).toBackup()
@@ -1398,9 +1408,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         val presetByConversation = conversationPresets.getAllRaw()
             .groupBy { it.conversationId }
         val compactionsByConversation = compactionDao.getAll().groupBy { it.conversationId }
-        val favoriteRows = favorites.all()
-        val favoriteFolderRows = favoriteFolders.all()
-        val membershipsByFavorite = favoriteMemberships.all().groupBy { it.favoriteId }
+        val (favoriteFolders, favorites) = favoriteBackupData()
 
         return BackupFile(
             exportedAt = System.currentTimeMillis(),
@@ -1415,38 +1423,48 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
                 )
             },
             presets = presets.getAll().map { it.toBackup() },
-            favoriteFolders = favoriteFolderRows.map {
-                BackupFavoriteFolder(it.id, it.name, it.sortOrder, it.createdAt, it.updatedAt)
-            },
-            favorites = favoriteRows.map { favorite ->
-                val images = Attachments.decode(favorite.attachments).mapNotNull { attachment ->
-                    if (!attachment.isImage) return@mapNotNull null
-                    val bytes = if (attachment.isStored) {
-                        AttachmentFiles.read(context, attachment.path)
-                    } else {
-                        runCatching { Base64.decode(attachment.data, Base64.NO_WRAP) }.getOrNull()
-                    }
-                    if (bytes == null) null
-                    else attachment.copy(data = Base64.encodeToString(bytes, Base64.NO_WRAP), path = null)
-                }
-                BackupFavorite(
-                    id = favorite.id,
-                    messageId = favorite.messageId,
-                    conversationId = favorite.conversationId,
-                    conversationTitle = favorite.conversationTitle,
-                    role = favorite.role,
-                    content = favorite.content,
-                    preview = favorite.preview,
-                    note = favorite.note,
-                    attachments = images,
-                    attachmentNames = FavoriteContent.decodeNames(favorite.attachmentNames),
-                    imageCount = favorite.imageCount,
-                    messageCreatedAt = favorite.messageCreatedAt,
-                    createdAt = favorite.createdAt,
-                    folderIds = membershipsByFavorite[favorite.id].orEmpty().map { it.folderId },
-                )
-            },
+            favoriteFolders = favoriteFolders,
+            favorites = favorites,
         )
+    }
+
+    /** 收藏快照与夹，供完整 JSON / ZIP 导出共用。图片在这里内联成 base64。 */
+    private suspend fun favoriteBackupData(): Pair<List<BackupFavoriteFolder>, List<BackupFavorite>> {
+        val favoriteRows = favorites.all()
+        val favoriteFolderRows = favoriteFolders.all()
+        val membershipsByFavorite = favoriteMemberships.all().groupBy { it.favoriteId }
+        val folders = favoriteFolderRows.map {
+            BackupFavoriteFolder(it.id, it.name, it.sortOrder, it.createdAt, it.updatedAt)
+        }
+        val items = favoriteRows.map { favorite ->
+            val images = Attachments.decode(favorite.attachments).mapNotNull { attachment ->
+                if (!attachment.isImage) return@mapNotNull null
+                val bytes = if (attachment.isStored) {
+                    AttachmentFiles.read(context, attachment.path)
+                } else {
+                    runCatching { Base64.decode(attachment.data, Base64.NO_WRAP) }.getOrNull()
+                }
+                if (bytes == null) null
+                else attachment.copy(data = Base64.encodeToString(bytes, Base64.NO_WRAP), path = null)
+            }
+            BackupFavorite(
+                id = favorite.id,
+                messageId = favorite.messageId,
+                conversationId = favorite.conversationId,
+                conversationTitle = favorite.conversationTitle,
+                role = favorite.role,
+                content = favorite.content,
+                preview = favorite.preview,
+                note = favorite.note,
+                attachments = images,
+                attachmentNames = FavoriteContent.decodeNames(favorite.attachmentNames),
+                imageCount = favorite.imageCount,
+                messageCreatedAt = favorite.messageCreatedAt,
+                createdAt = favorite.createdAt,
+                folderIds = membershipsByFavorite[favorite.id].orEmpty().map { it.folderId },
+            )
+        }
+        return folders to items
     }
 
     /**
@@ -1796,6 +1814,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             failures = parsed.failures,
             droppedImages = parsed.droppedImages,
         )
+        importFavorites(parsed.file.favoriteFolders, parsed.file.favorites)
         return report to importSummary(
             sourceName = Res.get(parsed.source.nameRes),
             report = report,
@@ -2092,6 +2111,8 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
                 }
             }
         }
+
+        importFavorites(stream.favoriteFolders, stream.favorites)
 
         return ImportReport(
             conversations = importedConversations,

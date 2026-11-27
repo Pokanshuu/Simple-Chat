@@ -67,6 +67,7 @@ v1.2.2 正式版的变更、验证与发布记录见 [v1.2.2 正式版发布记�
 
 ## 发布与验收记录
 
+- [收藏夹与分享截图验收（2026-11-27）](39-收藏夹与分享截图验收-2026-11-27.md)
 - [v1.2.6-beta.5 预发布说明](../release-notes/RELEASE_NOTES_v1.2.6-beta.5.md)
 - [v1.2.6-beta.4 预发布说明](../release-notes/RELEASE_NOTES_v1.2.6-beta.4.md)
 - [v1.2.6-beta.3 预发布说明](../release-notes/RELEASE_NOTES_v1.2.6-beta.3.md)

@@ -1301,6 +1301,7 @@ private fun MessageActions(
                 iconSize = ActionIconSize,
                 tint = if (favorited) MaterialTheme.colorScheme.primary else colors.processText,
                 onLongClick = onFavoriteLongPress,
+                onLongClickLabel = stringResource(R.string.favorites_choose),
             )
         }
 

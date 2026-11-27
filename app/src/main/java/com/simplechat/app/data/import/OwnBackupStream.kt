@@ -21,6 +21,8 @@ internal class OwnBackupStream private constructor(
     private val scratch: File,
     override val expected: Int,
     override val presets: List<BackupPreset>,
+    override val favoriteFolders: List<com.simplechat.app.data.BackupFavoriteFolder>,
+    override val favorites: List<com.simplechat.app.data.BackupFavorite>,
     private val onFailure: (ImportFailure) -> Unit,
     private val naming: ExternalBackup.ImportNaming,
     private val onProgress: (Float) -> Unit,
@@ -152,6 +154,8 @@ internal class OwnBackupStream private constructor(
             var version = BackupFile.VERSION
             var count = 0
             val presets = mutableListOf<BackupPreset>()
+            val favoriteFolders = mutableListOf<com.simplechat.app.data.BackupFavoriteFolder>()
+            val favorites = mutableListOf<com.simplechat.app.data.BackupFavorite>()
             openReader().buffered().use { reader ->
                 val stream = JsonStream(reader)
                 stream.beginObject()
@@ -167,13 +171,29 @@ internal class OwnBackupStream private constructor(
                             stream.beginArray()
                             while (stream.hasNextArrayElement()) presets += backupJson.decodeFromString<BackupPreset>(stream.captureValue())
                         }
+                        "favoriteFolders" -> {
+                            stream.beginArray()
+                            while (stream.hasNextArrayElement()) {
+                                favoriteFolders += backupJson.decodeFromString<com.simplechat.app.data.BackupFavoriteFolder>(
+                                    stream.captureValue(),
+                                )
+                            }
+                        }
+                        "favorites" -> {
+                            stream.beginArray()
+                            while (stream.hasNextArrayElement()) {
+                                favorites += backupJson.decodeFromString<com.simplechat.app.data.BackupFavorite>(
+                                    stream.captureValue(),
+                                )
+                            }
+                        }
                         else -> stream.skipValue()
                     }
                 }
             }
             check(format == BackupFile.FORMAT) { "Unrecognized backup format" }
             check(version == BackupFile.VERSION) { "Unsupported backup version $version (expected ${BackupFile.VERSION})" }
-            return OwnBackupStream(openReader, scratch, count, presets, onFailure, naming, onProgress)
+            return OwnBackupStream(openReader, scratch, count, presets, favoriteFolders, favorites, onFailure, naming, onProgress)
         }
     }
 }

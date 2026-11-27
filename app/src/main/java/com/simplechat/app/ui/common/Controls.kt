@@ -528,6 +528,8 @@ fun IconCircleButton(
     animateIcon: Boolean = false,
     /** 长按动作；非空时与单击共存（收藏按钮用它选收藏夹）。 */
     onLongClick: (() -> Unit)? = null,
+    /** 长按动作的无障碍描述。 */
+    onLongClickLabel: String? = null,
 ) {
     val colors = LocalChatColors.current
     val resolvedTint = tint ?: when {
@@ -553,7 +555,12 @@ fun IconCircleButton(
             )
             .then(
                 if (onLongClick != null) {
-                    Modifier.combinedClickable(enabled = enabled, onClick = onClick, onLongClick = onLongClick)
+                    Modifier.combinedClickable(
+                        enabled = enabled,
+                        onClick = onClick,
+                        onLongClick = onLongClick,
+                        onLongClickLabel = onLongClickLabel,
+                    )
                 } else {
                     Modifier.clickable(enabled = enabled, onClick = onClick)
                 },

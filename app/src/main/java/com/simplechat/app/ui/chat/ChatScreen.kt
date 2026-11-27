@@ -119,6 +119,7 @@ import com.simplechat.app.ui.common.ReadAloudEnabled
 import com.simplechat.app.ui.common.SoftShape
 import com.simplechat.app.ui.common.AppConfirmDialog
 import com.simplechat.app.ui.common.AppIcons
+import android.widget.Toast
 import com.simplechat.app.ui.common.surfaceShadow
 import com.simplechat.app.ui.favorites.FavoriteFolderSheet
 import com.simplechat.app.ui.theme.floatingPanelSurface
@@ -1267,7 +1268,17 @@ fun ChatScreen(
                             onStopImage = vm::stop,
                             loadingWordsUseThemeColor = vm.loadingWordsUseThemeColor,
                             favoriteIds = favoriteIds,
-                            onFavorite = { vm.toggleFavorite(it.id) },
+                            onFavorite = { message ->
+                                val wasFavorite = message.id in favoriteIds
+                                vm.toggleFavorite(message.id)
+                                Toast.makeText(
+                                    context,
+                                    context.getString(
+                                        if (wasFavorite) R.string.favorites_removed else R.string.favorites_added,
+                                    ),
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            },
                             onFavoriteLongPress = { favoriteSheetMessage = it },
                             textSelection = textSelection,
                             shareSelection = shareSelection,
@@ -2107,6 +2118,7 @@ fun ChatScreen(
         FavoriteFolderSheet(
             folders = favoriteFolders,
             selected = selectedFolders,
+            counts = favoriteMemberships.groupingBy { it.folderId }.eachCount(),
             onDismiss = { favoriteSheetMessage = null },
             onApply = { folderIds ->
                 vm.setFavoriteFolders(message.id, folderIds)

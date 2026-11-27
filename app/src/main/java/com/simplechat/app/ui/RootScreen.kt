@@ -171,7 +171,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
         factory = HistoryViewModel.factory(container.chatRepository, container.settingsStore),
     )
     val favoritesViewModel: FavoritesViewModel = viewModel(
-        factory = FavoritesViewModel.factory(container.chatRepository),
+        factory = FavoritesViewModel.factory(container.chatRepository, container.settingsStore),
     )
 
     val conversations by historyViewModel.conversations.collectAsStateWithLifecycle()
@@ -582,6 +582,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                             onBack = { route = Route.CHAT }, startAtImageApi = target == Route.IMAGE_SETTINGS,
                             startAtApiProfiles = target == Route.API_SETTINGS,
                             onMessagesRestored = chatViewModel::refreshRestoredMessages,
+                            onOpenFavorites = { route = Route.FAVORITES },
                         )
                     }
                 }

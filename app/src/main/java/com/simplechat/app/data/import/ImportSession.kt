@@ -8,6 +8,9 @@ internal interface ImportSessionSource {
     val expected: Int?
     val indexVerified: Boolean?
     val presets: List<BackupPreset> get() = emptyList()
+    /** 收藏与收藏夹；流式格式在扫顶层字段时捕获。 */
+    val favoriteFolders: List<com.simplechat.app.data.BackupFavoriteFolder> get() = emptyList()
+    val favorites: List<com.simplechat.app.data.BackupFavorite> get() = emptyList()
     suspend fun forEachSession(block: suspend (ImportSession) -> Unit)
 }
 

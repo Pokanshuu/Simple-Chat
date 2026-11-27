@@ -213,6 +213,9 @@ internal fun MessageShareTools(
                     )
                 }
             },
+            personalizedHint = if (personalized && wallpaper.file != null) {
+                stringResource(R.string.share_image_personalized_wallpaper_hint)
+            } else null,
             wallpaperHint = if (personalized && wallpaper.file?.exists() == false) {
                 stringResource(R.string.share_image_wallpaper_missing)
             } else null,

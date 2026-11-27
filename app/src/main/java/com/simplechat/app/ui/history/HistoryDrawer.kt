@@ -234,7 +234,7 @@ private fun DrawerFooterAction(
 ) {
     Row(
         modifier = modifier
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClickLabel = label, onClick = onClick)
             .heightIn(min = Space.Row)
             .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
         verticalAlignment = Alignment.CenterVertically,

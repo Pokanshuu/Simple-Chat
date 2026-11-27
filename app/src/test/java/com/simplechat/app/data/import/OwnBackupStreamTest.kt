@@ -69,6 +69,41 @@ class OwnBackupStreamTest {
     }
 
     @Test
+    fun `stream carries favorite folders and favorites`() = runBlocking {
+        val dir = java.nio.file.Files.createTempDirectory("own-stream-favorites-").toFile()
+        val file = File(dir, "backup.json")
+        val folders = listOf(BackupFavoriteFolder("default", "收藏", 0, 1, 2))
+        val favorite = BackupFavorite(
+            id = "fav",
+            messageId = "m",
+            conversationId = "c",
+            conversationTitle = "会话",
+            role = "user",
+            content = "正文",
+            preview = "正文",
+            note = "备注",
+            messageCreatedAt = 3,
+            createdAt = 4,
+            folderIds = listOf("default"),
+        )
+        try {
+            file.writer().buffered().use { writer ->
+                writeBackupStream(
+                    writer, 5, emptyList(), emptyList(),
+                    favoriteFolders = folders,
+                    favorites = listOf(favorite),
+                ) { _, _ -> }
+            }
+            val stream = OwnBackupStream.open({ file.reader() }, dir) { error("unexpected scan failure") }
+            assertEquals(folders, stream.favoriteFolders)
+            assertEquals(listOf(favorite), stream.favorites)
+        } finally {
+            dir.listFiles()?.forEach { it.delete() }
+            dir.delete()
+        }
+    }
+
+    @Test
     fun `wrong backup version fails instead of importing an empty history`() {
         val raw = """{"format":"simplechat-backup","version":1,"conversations":[],"presets":[]}"""
         assertTrue(runCatching { OwnBackupStream.open({ StringReader(raw) }, File(System.getProperty("java.io.tmpdir"))) { } }.isFailure)

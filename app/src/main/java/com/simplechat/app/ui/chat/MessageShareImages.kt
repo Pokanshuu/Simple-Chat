@@ -28,6 +28,7 @@ import com.simplechat.app.data.AttachmentFiles
 import com.simplechat.app.ui.markdown.*
 import com.simplechat.app.ui.theme.LocalChatColors
 import com.simplechat.app.ui.theme.AccentColor
+import com.simplechat.app.ui.theme.primary
 import com.simplechat.app.ui.theme.TypographyFonts
 import com.simplechat.app.data.TypographySettings
 import com.simplechat.app.data.FontSlot
@@ -82,10 +83,10 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
     }
         catch (error: Throwable) { directory.deleteRecursively(); throw error }
     val memoryClass = (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).memoryClass
-    val brandBitmap = if (hideBranding) null else run {
+    val brandBitmap = if (hideBranding) null else runCatching {
         renderer.measure { ShareBrandRow() }
-        renderer.capture(0, 40)
-    }
+        renderer.capture(0, 60)
+    }.getOrNull()
     val writer = ShareImageWriter(context, directory, document.title, shareImagePageHeight(mode, memoryClass), mode == ShareImageMode.LONG, hideBranding, document.excerptFooter, dark, effectiveAccent, wallpaperImage, wallpaper, uiTypeface, brandBitmap)
     val result = try {
         suspend fun render(block: ShareRenderBlock, user: Boolean = false, reasoning: Boolean = false,
@@ -202,7 +203,10 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
         writer.dispose()
         directory.deleteRecursively()
         throw error
-    } finally { renderer.close() }
+    } finally {
+        renderer.close()
+        brandBitmap?.recycle()
+    }
     // Rerender at the ordinary page size so row boundaries and repeated headers remain correct.
     result ?: exportSharedImages(context, document, ShareImageMode.PAGES, accent, hideBranding, hideReasoning,
         typography, typographyFonts, fontScale, systemFontScale, style)
@@ -263,7 +267,18 @@ private class ShareImageWriter(private val context: Context, private val directo
         val pageBackground = com.simplechat.app.ui.theme.themePageBackground(dark, accent)
         canvas.drawColor(pageBackground.toArgb())
         drawWallpaper(pageBackground)
-        brandBitmap?.let { canvas.drawBitmap(it, margin.toFloat(), 20f, null) }
+        if (!hideBranding) {
+            if (brandBitmap != null) {
+                canvas.drawBitmap(brandBitmap, margin.toFloat(), 30f, null)
+            } else {
+                // 组合捕获失败时退回纯文字品牌行，导出不因此中断。
+                paint.typeface = uiTypeface ?: Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                paint.alpha = 255
+                paint.textSize = 26f
+                paint.color = accent.primary(dark).toArgb()
+                canvas.drawText("SimpleChat", margin.toFloat(), 60f, paint)
+            }
+        }
         paint.typeface = uiTypeface ?: Typeface.create("sans-serif-medium", Typeface.NORMAL)
         paint.alpha = 255
         paint.textSize = 32f

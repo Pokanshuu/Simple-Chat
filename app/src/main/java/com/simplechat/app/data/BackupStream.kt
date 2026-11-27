@@ -16,6 +16,8 @@ internal suspend fun writeBackupStream(
     exportedAt: Long,
     headers: List<BackupConversation>,
     presets: List<BackupPreset>,
+    favoriteFolders: List<BackupFavoriteFolder> = emptyList(),
+    favorites: List<BackupFavorite> = emptyList(),
     attachmentSource: ((Attachment) -> InputStream)? = null,
     forEachMessage: suspend (String, suspend (BackupMessage) -> Unit) -> Unit,
 ) {
@@ -40,6 +42,16 @@ internal suspend fun writeBackupStream(
     presets.forEachIndexed { index, preset ->
         if (index > 0) writer.write(",")
         writer.write(backupJson.encodeToString(BackupPreset.serializer(), preset))
+    }
+    writer.write("],\"favoriteFolders\":[")
+    favoriteFolders.forEachIndexed { index, folder ->
+        if (index > 0) writer.write(",")
+        writer.write(backupJson.encodeToString(BackupFavoriteFolder.serializer(), folder))
+    }
+    writer.write("],\"favorites\":[")
+    favorites.forEachIndexed { index, favorite ->
+        if (index > 0) writer.write(",")
+        writer.write(backupJson.encodeToString(BackupFavorite.serializer(), favorite))
     }
     writer.write("]}")
     writer.flush()

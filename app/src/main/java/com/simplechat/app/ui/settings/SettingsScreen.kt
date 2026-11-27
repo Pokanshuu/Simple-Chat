@@ -267,13 +267,25 @@ fun SettingsScreen(
     startAtImageApi: Boolean = false,
     startAtApiProfiles: Boolean = false,
     onMessagesRestored: (String) -> Unit = {},
+    onOpenFavorites: () -> Unit = {},
 ) {
     val context = LocalContext.current
-    SettingsScreen(onBack, modifier, (context.applicationContext as App).container.settingsStore, startAtImageApi, startAtApiProfiles, onMessagesRestored)
+    SettingsScreen(
+        onBack, modifier, (context.applicationContext as App).container.settingsStore,
+        startAtImageApi, startAtApiProfiles, onMessagesRestored, onOpenFavorites,
+    )
 }
 
 @Composable
-internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: SettingsStore, startAtImageApi: Boolean = false, startAtApiProfiles: Boolean = false, onMessagesRestored: (String) -> Unit = {}) {
+internal fun SettingsScreen(
+    onBack: () -> Unit,
+    modifier: Modifier,
+    store: SettingsStore,
+    startAtImageApi: Boolean = false,
+    startAtApiProfiles: Boolean = false,
+    onMessagesRestored: (String) -> Unit = {},
+    onOpenFavorites: () -> Unit = {},
+) {
     val colors = LocalChatColors.current
     val context = LocalContext.current
     val container = (context.applicationContext as App).container
@@ -833,6 +845,7 @@ internal fun SettingsScreen(onBack: () -> Unit, modifier: Modifier, store: Setti
                             onImportDeepSeekShare = { dialog = SettingsDialog.DeepSeekShareLink },
                             onDeleteAll = { dialog = SettingsDialog.DeleteAll },
                             onOpenTrash = { page = SettingsPage.TRASH },
+                            onOpenFavorites = onOpenFavorites,
                         )
 
                         SettingsPage.API_PROFILE -> if (editingProfile != null && editingSettings != null) ApiPage(
@@ -2163,6 +2176,7 @@ private fun DataPage(
     onImportDeepSeekShare: () -> Unit,
     onDeleteAll: () -> Unit,
     onOpenTrash: () -> Unit,
+    onOpenFavorites: () -> Unit,
 ) {
     SettingsSectionLabel(stringResource(R.string.settings_group_backup))
 
@@ -2205,6 +2219,16 @@ private fun DataPage(
             onClick = onImportDeepSeekShare,
             icon = AppIcons.Link,
             enabled = !reading && progress == null && exportProgress == null,
+        )
+    }
+
+    SettingsSectionLabel(stringResource(R.string.favorites_title))
+    SettingsCard {
+        SettingsActionRow(
+            label = stringResource(R.string.favorites_title),
+            hint = stringResource(R.string.favorites_settings_hint),
+            onClick = onOpenFavorites,
+            icon = AppIcons.Bookmark,
         )
     }
 

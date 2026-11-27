@@ -2,6 +2,18 @@ package com.simplechat.app.data
 
 import kotlinx.serialization.json.Json
 
+/** 收藏页的分组方式：按原会话，或按收藏夹。 */
+enum class FavoriteGroupMode(val id: String) {
+    CONVERSATION("CONVERSATION"),
+    FOLDER("FOLDER"),
+    ;
+
+    companion object {
+        fun fromId(raw: String?): FavoriteGroupMode =
+            entries.firstOrNull { it.id == raw } ?: CONVERSATION
+    }
+}
+
 object FavoriteFolders {
     const val DefaultId = "default"
     const val MaxFolders = 50

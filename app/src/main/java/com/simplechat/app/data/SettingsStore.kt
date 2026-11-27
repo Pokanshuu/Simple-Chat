@@ -213,6 +213,8 @@ data class StoredSettings(
     val typography: TypographySettings = TypographySettings(),
     /** 分享图片是否跟随当前外观（主题色、字体、字号、深浅色、壁纸）。 */
     val shareImage: ShareImageSettings = ShareImageSettings(),
+    /** 收藏页分组：CONVERSATION / FOLDER。 */
+    val favoritesGroupModeId: String = "CONVERSATION",
     /** 聊天背景壁纸：`filesDir/wallpaper/` 下的文件名；null = 不使用。 */
     val wallpaperPath: String? = null,
     /** 壁纸叠在背景色上的不透明度（0..1）。太实会盖住气泡对比度，默认偏淡。 */
@@ -387,6 +389,8 @@ class SettingsStore(
             shareImage = prefs[Keys.SHARE_IMAGE]?.let { raw ->
                 runCatching { apiProfileJson.decodeFromString<ShareImageSettings>(raw) }.getOrNull()
             } ?: ShareImageSettings(),
+            favoritesGroupModeId = prefs[Keys.FAVORITES_GROUP_MODE]
+                ?: StoredSettings().favoritesGroupModeId,
             wallpaperPath = prefs[Keys.WALLPAPER],
             wallpaperOpacity = prefs[Keys.WALLPAPER_OPACITY] ?: StoredSettings().wallpaperOpacity,
             acrylicEnabled = prefs[Keys.ACRYLIC_ENABLED] ?: false,
@@ -551,6 +555,10 @@ class SettingsStore(
 
     suspend fun setShareImageSettings(settings: ShareImageSettings) {
         preferences.edit { it[Keys.SHARE_IMAGE] = apiProfileJson.encodeToString(settings) }
+    }
+
+    suspend fun setFavoritesGroupMode(modeId: String) {
+        preferences.edit { it[Keys.FAVORITES_GROUP_MODE] = modeId }
     }
 
     suspend fun setFollowSystemFont(follow: Boolean) {
@@ -1044,6 +1052,9 @@ class SettingsStore(
         val TYPOGRAPHY = stringPreferencesKey("typography_settings")
         /** 分享图片外观选项。 */
         val SHARE_IMAGE = stringPreferencesKey("share_image_settings")
+
+        /** 收藏页分组方式。 */
+        val FAVORITES_GROUP_MODE = stringPreferencesKey("favorites_group_mode")
 
         /** 壁纸文件名（filesDir/wallpaper 下）；空 = 不使用。 */
         val WALLPAPER = stringPreferencesKey("wallpaper")
