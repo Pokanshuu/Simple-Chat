@@ -37,6 +37,9 @@ data class BackupFile(
     val exportedAt: Long,
     val conversations: List<BackupConversation> = emptyList(),
     val presets: List<BackupPreset> = emptyList(),
+    /** 收藏夹与收藏。旧版读到会忽略；不因此升版本号。 */
+    val favoriteFolders: List<BackupFavoriteFolder> = emptyList(),
+    val favorites: List<BackupFavorite> = emptyList(),
 ) {
     companion object {
         const val FORMAT = "simplechat-backup"
@@ -48,6 +51,34 @@ data class BackupFile(
         const val VERSION = 2
     }
 }
+
+@Serializable
+data class BackupFavoriteFolder(
+    val id: String,
+    val name: String,
+    val sortOrder: Int = 0,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
+@Serializable
+data class BackupFavorite(
+    val id: String,
+    val messageId: String? = null,
+    val conversationId: String,
+    val conversationTitle: String,
+    val role: String,
+    val content: String,
+    val preview: String,
+    val note: String? = null,
+    /** 图片在这里内联 base64；文本附件只有名字。 */
+    val attachments: List<Attachment> = emptyList(),
+    val attachmentNames: List<String> = emptyList(),
+    val imageCount: Int = 0,
+    val messageCreatedAt: Long,
+    val createdAt: Long,
+    val folderIds: List<String> = emptyList(),
+)
 
 @Serializable
 data class BackupConversation(

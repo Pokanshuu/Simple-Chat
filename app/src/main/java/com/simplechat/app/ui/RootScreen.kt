@@ -97,6 +97,8 @@ import com.simplechat.app.ui.common.MotionEasing
 import com.simplechat.app.ui.common.screenTransform
 import com.simplechat.app.ui.history.ConversationSearchPage
 import com.simplechat.app.ui.history.HistoryDrawerContent
+import com.simplechat.app.ui.favorites.FavoritesScreen
+import com.simplechat.app.ui.favorites.FavoritesViewModel
 import com.simplechat.app.ui.history.HistoryViewModel
 import com.simplechat.app.ui.history.searchResultKey
 import com.simplechat.app.ui.settings.SettingsScreen
@@ -116,7 +118,7 @@ import kotlinx.coroutines.launch
  */
 private enum class Route(val depth: Int) {
     CHAT(0),
-    SETTINGS(1), IMAGE_SETTINGS(1), API_SETTINGS(1),
+    FAVORITES(1), SETTINGS(1), IMAGE_SETTINGS(1), API_SETTINGS(1),
 }
 
 /** 抽屉平时的宽度。 */
@@ -167,6 +169,9 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
     )
     val historyViewModel: HistoryViewModel = history ?: viewModel(
         factory = HistoryViewModel.factory(container.chatRepository, container.settingsStore),
+    )
+    val favoritesViewModel: FavoritesViewModel = viewModel(
+        factory = FavoritesViewModel.factory(container.chatRepository),
     )
 
     val conversations by historyViewModel.conversations.collectAsStateWithLifecycle()
@@ -234,6 +239,7 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
         searchWasDocked = false
     }
 
+    BackHandler(enabled = route == Route.FAVORITES) { route = Route.CHAT }
     BackHandler(enabled = !wideChatLayout && route == Route.CHAT && readingSearchResult && !drawerState.isOpen) {
         scope.launch { drawerState.open() }
     }
@@ -312,6 +318,10 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                     onExitSelection = historyViewModel::exitSelection,
                     onPinSelected = historyViewModel::pinSelected,
                     onDeleteSelected = { confirmBatchDelete = true },
+                    onOpenFavorites = {
+                        if (!docked) closeDrawer()
+                        route = Route.FAVORITES
+                    },
                     onOpenSettings = {
                         closeDrawer()
                         route = Route.SETTINGS
@@ -558,6 +568,15 @@ fun RootScreen(chat: ChatViewModel? = null, history: HistoryViewModel? = null) {
                                 )
                             }
                         }
+
+                        Route.FAVORITES -> FavoritesScreen(
+                            vm = favoritesViewModel,
+                            onBack = { route = Route.CHAT },
+                            onOpen = { favorite ->
+                                route = Route.CHAT
+                                chatViewModel.openConversation(favorite.conversationId, favorite.messageId)
+                            },
+                        )
 
                         Route.SETTINGS, Route.IMAGE_SETTINGS, Route.API_SETTINGS -> SettingsScreen(
                             onBack = { route = Route.CHAT }, startAtImageApi = target == Route.IMAGE_SETTINGS,

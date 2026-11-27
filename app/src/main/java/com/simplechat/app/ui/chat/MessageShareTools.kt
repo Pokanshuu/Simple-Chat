@@ -72,6 +72,7 @@ internal fun MessageShareTools(
     var markdownFile by remember { mutableStateOf<File?>(null) }
     var images by remember { mutableStateOf<List<File>>(emptyList()) }
     var preview by remember { mutableStateOf(false) }
+    var generatedWallpaper by remember { mutableStateOf(false) }
     var imageDocument by remember { mutableStateOf<MessageShareDocument?>(null) }
     var imageMode by rememberSaveable { mutableStateOf(ShareImageMode.LONG) }
     var hideBranding by rememberSaveable { mutableStateOf(false) }
@@ -145,6 +146,7 @@ internal fun MessageShareTools(
                 images = exportSharedImages(context, excerpt, ShareImageMode.LONG, accent,
                     typography = typography, typographyFonts = typographyFonts,
                     fontScale = globalFontScale, systemFontScale = systemFontScale, style = shareStyle())
+                generatedWallpaper = shareStyle()?.wallpaper != null
                 preview = true
             }
         }
@@ -211,11 +213,15 @@ internal fun MessageShareTools(
                     )
                 }
             },
+            wallpaperHint = if (personalized && wallpaper.file?.exists() == false) {
+                stringResource(R.string.share_image_wallpaper_missing)
+            } else null,
             onDismiss = { imageDocument = null },
             onGenerate = { hideReasoning ->
                 val mode = imageMode
                 val branding = hideBranding
                 val style = shareStyle()
+                generatedWallpaper = style?.wallpaper != null
                 imageDocument = null
                 runExport {
                     images = exportSharedImages(context, snapshot, mode, accent, hideBranding = branding,
@@ -241,7 +247,13 @@ internal fun MessageShareTools(
         }
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).systemBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.share_image_preview, images.size), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                Text(
+                    stringResource(R.string.share_image_preview, images.size) +
+                        if (generatedWallpaper) " · " + stringResource(R.string.share_image_contains_wallpaper) else "",
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
                 IconCircleButton(AppIcons.Close, stringResource(R.string.action_close), { if (!busy) closePreview() })
             }
             // Decode visible regions only: previewing a long screenshot must not allocate it again.

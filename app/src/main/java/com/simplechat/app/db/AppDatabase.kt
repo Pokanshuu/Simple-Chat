@@ -16,6 +16,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CompactionEntity::class,
         DraftEntity::class,
         AttachmentRefEntity::class,
+        FavoriteFolderEntity::class,
+        FavoriteEntity::class,
+        FavoriteMembershipEntity::class,
+        FavoriteMediaEntity::class,
     ],
     // v2：messages 从「槽位」改成「树」（slotIndex → parentId）
     // v3：messages 增加 attachments（图片 / 纯文本附件）
@@ -26,7 +30,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     // v8：新增 attachment_refs（落盘图片的引用，删会话时据此清理文件）
     // v9：附件可被多个会话引用（分叉后删除原会话不能丢图）
     // v10：消息记录 prompt 缓存命中量（用量与余额页按命中/未命中分别计价）
-    version = 17,
+    // v18：收藏夹（favorites / favorite_folders / favorite_memberships / favorite_media）
+    version = 18,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -44,6 +49,14 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun draftDao(): DraftDao
 
     abstract fun attachmentRefDao(): AttachmentRefDao
+
+    abstract fun favoriteDao(): FavoriteDao
+
+    abstract fun favoriteFolderDao(): FavoriteFolderDao
+
+    abstract fun favoriteMembershipDao(): FavoriteMembershipDao
+
+    abstract fun favoriteMediaDao(): FavoriteMediaDao
 
     companion object {
 
@@ -220,6 +233,49 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `favorite_folders` (" +
+                        "`id` TEXT NOT NULL, `name` TEXT NOT NULL, `sortOrder` INTEGER NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `favorites` (" +
+                        "`id` TEXT NOT NULL, `messageId` TEXT, `conversationId` TEXT NOT NULL, " +
+                        "`conversationTitle` TEXT NOT NULL, `role` TEXT NOT NULL, `content` TEXT NOT NULL, " +
+                        "`preview` TEXT NOT NULL, `note` TEXT, `attachments` TEXT, `coverImage` TEXT, " +
+                        "`imageCount` INTEGER NOT NULL, `attachmentNames` TEXT, " +
+                        "`messageCreatedAt` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `favorite_memberships` (" +
+                        "`favoriteId` TEXT NOT NULL, `folderId` TEXT NOT NULL, `addedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`favoriteId`, `folderId`))",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `favorite_media` (" +
+                        "`path` TEXT NOT NULL, `favoriteId` TEXT NOT NULL, " +
+                        "PRIMARY KEY(`path`, `favoriteId`))",
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_favorites_messageId` ON `favorites` (`messageId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_favorites_createdAt` ON `favorites` (`createdAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_favorites_conversationId` ON `favorites` (`conversationId`)")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_favorite_memberships_folderId_addedAt` " +
+                        "ON `favorite_memberships` (`folderId`, `addedAt`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_favorite_media_favoriteId` " +
+                        "ON `favorite_media` (`favoriteId`)",
+                )
+                db.execSQL(
+                    "INSERT OR IGNORE INTO `favorite_folders` (`id`, `name`, `sortOrder`, `createdAt`, `updatedAt`) " +
+                        "VALUES ('default', 'Default', 0, 0, 0)",
+                )
+            }
+        }
+
         fun build(context: Context, name: String = "simplechat.db"): AppDatabase =
             Room.databaseBuilder(
                 context.applicationContext,
@@ -242,6 +298,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_14_15,
                     MIGRATION_15_16,
                     MIGRATION_16_17,
+                    MIGRATION_17_18,
                 )
                 .build()
     }

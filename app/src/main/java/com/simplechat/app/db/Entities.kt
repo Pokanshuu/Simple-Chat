@@ -295,3 +295,72 @@ data class AttachmentRefEntity(
     val path: String,
     val conversationId: String,
 )
+
+/**
+ * 收藏夹（文件夹）。默认夹 id = [FavoriteFolders.DefaultId]，不可删除。
+ *
+ * 收藏本身是一份副本；夹只是归类，多对多关系见 [FavoriteMembershipEntity]。
+ */
+@Entity(tableName = "favorite_folders")
+data class FavoriteFolderEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val sortOrder: Int = 0,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
+/**
+ * 收藏的消息副本。
+ *
+ * `messageId` 唯一：一条消息只有一份副本；原消息删除后置空，保留快照。
+ * `attachments` 是附件清单 JSON（图片只留 path，文本只留文件名），
+ * `coverImage` 是第一张图的 JSON，列表只读这两列。
+ */
+@Entity(
+    tableName = "favorites",
+    indices = [
+        Index(value = ["messageId"], unique = true),
+        Index(value = ["createdAt"]),
+        Index(value = ["conversationId"]),
+    ],
+)
+data class FavoriteEntity(
+    @PrimaryKey val id: String,
+    val messageId: String?,
+    val conversationId: String,
+    val conversationTitle: String,
+    val role: String,
+    val content: String,
+    val preview: String,
+    val note: String? = null,
+    val attachments: String? = null,
+    val coverImage: String? = null,
+    val imageCount: Int = 0,
+    val attachmentNames: String? = null,
+    val messageCreatedAt: Long,
+    val createdAt: Long,
+)
+
+/** 收藏与夹的多对多关系；删夹只删关系，不删收藏。 */
+@Entity(
+    tableName = "favorite_memberships",
+    primaryKeys = ["favoriteId", "folderId"],
+    indices = [Index(value = ["folderId", "addedAt"])],
+)
+data class FavoriteMembershipEntity(
+    val favoriteId: String,
+    val folderId: String,
+    val addedAt: Long,
+)
+
+/** 收藏图片的引用登记；删会话时据此保留文件。 */
+@Entity(
+    tableName = "favorite_media",
+    primaryKeys = ["path", "favoriteId"],
+    indices = [Index(value = ["favoriteId"])],
+)
+data class FavoriteMediaEntity(
+    val path: String,
+    val favoriteId: String,
+)

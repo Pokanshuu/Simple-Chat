@@ -10,6 +10,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -525,6 +526,8 @@ fun IconCircleButton(
     /** 宽。默认与 [size] 相同（正方形/圆）；胶囊形要显式给一个更宽的值。 */
     width: Dp = size,
     animateIcon: Boolean = false,
+    /** 长按动作；非空时与单击共存（收藏按钮用它选收藏夹）。 */
+    onLongClick: (() -> Unit)? = null,
 ) {
     val colors = LocalChatColors.current
     val resolvedTint = tint ?: when {
@@ -548,7 +551,13 @@ fun IconCircleButton(
                     Modifier
                 },
             )
-            .clickable(enabled = enabled, onClick = onClick),
+            .then(
+                if (onLongClick != null) {
+                    Modifier.combinedClickable(enabled = enabled, onClick = onClick, onLongClick = onLongClick)
+                } else {
+                    Modifier.clickable(enabled = enabled, onClick = onClick)
+                },
+            ),
         contentAlignment = Alignment.Center,
     ) {
         if (animateIcon) {

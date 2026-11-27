@@ -207,6 +207,9 @@ fun MessageList(
     onShareExcerpt: ((UiMessage, String) -> Unit)? = null,
     loadingLabelFor: (String) -> String? = { null },
     loadingWordsUseThemeColor: Boolean = true,
+    favoriteIds: Set<String> = emptySet(),
+    onFavorite: ((UiMessage) -> Unit)? = null,
+    onFavoriteLongPress: ((UiMessage) -> Unit)? = null,
 ) {
     /*
      * 「谁被碰过」。
@@ -317,6 +320,9 @@ fun MessageList(
                         { onCopy(message) }, { onRegenerate(message) }, { onContinue(message) },
                         { onSpeak(message) }, { onEdit(message) }, onDelete?.let { delete -> { delete(message) } },
                         onVariantChange = { onVariantChange(message, it) },
+                        favorited = message.id in favoriteIds,
+                        onFavorite = onFavorite?.let { { it(message) } },
+                        onFavoriteLongPress = onFavoriteLongPress?.let { { it(message) } },
                     )
                 } else if (message.variantCount > 1 && shareSelection?.active != true) {
                     Row(
@@ -383,6 +389,9 @@ fun MessageList(
                 onEdit = { onEdit(message) },
                 onFork = { onFork(message) },
                 onDelete = onDelete?.let { delete -> { delete(message) } },
+                favorited = message.id in favoriteIds,
+                onFavorite = onFavorite?.let { favorite -> { favorite(message) } },
+                onFavoriteLongPress = onFavoriteLongPress?.let { pick -> { pick(message) } },
                 onOpenImage = { onOpenImage(message, it) },
                 onRetry = { onRetry(message) },
                 onStopImage = onStopImage,
@@ -471,6 +480,9 @@ private fun MessageRow(
     onEdit: () -> Unit,
     onFork: () -> Unit,
     onDelete: (() -> Unit)?,
+    favorited: Boolean,
+    onFavorite: (() -> Unit)?,
+    onFavoriteLongPress: (() -> Unit)? = null,
     onOpenImage: (Attachment) -> Unit,
     onRetry: () -> Unit,
     onStopImage: () -> Unit,
@@ -552,6 +564,20 @@ private fun MessageRow(
                 menuOpen = false
                 selectionFromMenu = true
                 onSelectingChange(selectionState)
+            }
+            if (onFavorite != null) AppMenuItem(
+                stringResource(if (favorited) R.string.favorites_remove else R.string.favorites_add),
+                if (favorited) AppIcons.BookmarkCheck else AppIcons.Bookmark,
+            ) {
+                menuOpen = false
+                onFavorite()
+            }
+            if (favorited && onFavoriteLongPress != null) AppMenuItem(
+                stringResource(R.string.favorites_choose),
+                AppIcons.Folder,
+            ) {
+                menuOpen = false
+                onFavoriteLongPress()
             }
             if (onShare != null) AppMenuItem(stringResource(R.string.action_share), AppIcons.Share) {
                 menuOpen = false
@@ -663,6 +689,9 @@ private fun MessageRow(
                 onSpeak = onSpeak,
                 onEdit = onEdit,
                 onDelete = onDelete,
+                favorited = favorited,
+                onFavorite = onFavorite,
+                onFavoriteLongPress = onFavoriteLongPress,
             )
         }
     }
@@ -1217,6 +1246,9 @@ private fun MessageActions(
     onEdit: () -> Unit,
     onDelete: (() -> Unit)?,
     onVariantChange: ((Int) -> Unit)? = null,
+    favorited: Boolean = false,
+    onFavorite: (() -> Unit)? = null,
+    onFavoriteLongPress: (() -> Unit)? = null,
 ) {
     val colors = LocalChatColors.current
 
@@ -1258,6 +1290,19 @@ private fun MessageActions(
         }
         ActionIcon(AppIcons.Edit, stringResource(R.string.action_edit), onEdit, colors)
         if (onDelete != null) ActionIcon(AppIcons.Trash, stringResource(R.string.action_delete), onDelete, colors)
+        if (onFavorite != null) {
+            IconCircleButton(
+                icon = if (favorited) AppIcons.BookmarkCheck else AppIcons.Bookmark,
+                contentDescription = stringResource(
+                    if (favorited) R.string.favorites_remove else R.string.favorites_add,
+                ),
+                onClick = onFavorite,
+                size = ActionButtonSize,
+                iconSize = ActionIconSize,
+                tint = if (favorited) MaterialTheme.colorScheme.primary else colors.processText,
+                onLongClick = onFavoriteLongPress,
+            )
+        }
 
         /*
          * 中间这块是**弹性空白**：碰一下消息时模型名 · token 数出现在这，

@@ -120,6 +120,7 @@ import com.simplechat.app.ui.common.SoftShape
 import com.simplechat.app.ui.common.AppConfirmDialog
 import com.simplechat.app.ui.common.AppIcons
 import com.simplechat.app.ui.common.surfaceShadow
+import com.simplechat.app.ui.favorites.FavoriteFolderSheet
 import com.simplechat.app.ui.theme.floatingPanelSurface
 import com.simplechat.app.ui.theme.tokens.AppTheme
 import com.simplechat.app.ui.common.IconCircleButton
@@ -277,6 +278,11 @@ fun ChatScreen(
 
     LaunchedEffect(readAloudAvailable) { if (!readAloudAvailable) speaker.stop() }
     AutoReadAloudEffect(vm, readAloudAvailable, speaker::read, speaker::stop)
+    val favoriteIds by vm.favoriteMessageIds.collectAsStateWithLifecycle()
+    val favoriteIdByMessage by vm.favoriteIdByMessage.collectAsStateWithLifecycle()
+    val favoriteFolders by vm.favoriteFolders.collectAsStateWithLifecycle()
+    val favoriteMemberships by vm.favoriteMemberships.collectAsStateWithLifecycle()
+    var favoriteSheetMessage by remember { mutableStateOf<UiMessage?>(null) }
 
     val microphonePermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -1260,6 +1266,9 @@ fun ChatScreen(
                             loadingLabelFor = vm::loadingLabelFor,
                             onStopImage = vm::stop,
                             loadingWordsUseThemeColor = vm.loadingWordsUseThemeColor,
+                            favoriteIds = favoriteIds,
+                            onFavorite = { vm.toggleFavorite(it.id) },
+                            onFavoriteLongPress = { favoriteSheetMessage = it },
                             textSelection = textSelection,
                             shareSelection = shareSelection,
                             onShareExcerpt = { message, selectedText ->
@@ -2087,6 +2096,21 @@ fun ChatScreen(
                 vm.deleteSelectedVersions(messageIds, selectedGroups.size) {
                     selectedGroups.firstOrNull()?.messages?.firstOrNull()?.let { anchorOnPathChange(it, null, messageIds.toSet()) }
                 }
+            },
+        )
+    }
+    favoriteSheetMessage?.let { message ->
+        val favoriteId = favoriteIdByMessage[message.id]
+        val selectedFolders = favoriteMemberships
+            .filter { it.favoriteId == favoriteId }
+            .map { it.folderId }
+        FavoriteFolderSheet(
+            folders = favoriteFolders,
+            selected = selectedFolders,
+            onDismiss = { favoriteSheetMessage = null },
+            onApply = { folderIds ->
+                vm.setFavoriteFolders(message.id, folderIds)
+                favoriteSheetMessage = null
             },
         )
     }

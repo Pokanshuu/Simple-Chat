@@ -6,6 +6,10 @@ import android.graphics.*
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.util.Base64
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontSynthesis
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.createFontFamilyResolver
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Box
@@ -24,7 +28,6 @@ import com.simplechat.app.data.AttachmentFiles
 import com.simplechat.app.ui.markdown.*
 import com.simplechat.app.ui.theme.LocalChatColors
 import com.simplechat.app.ui.theme.AccentColor
-import com.simplechat.app.ui.theme.primary
 import com.simplechat.app.ui.theme.TypographyFonts
 import com.simplechat.app.data.TypographySettings
 import com.simplechat.app.data.FontSlot
@@ -59,6 +62,13 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
     val dark = style?.dark ?: false
     val wallpaper = style?.wallpaper
     val wallpaperImage = wallpaper?.file?.let { com.simplechat.app.ui.theme.WallpaperImageCache.load(it) }
+    val uiTypeface = style?.typographyFonts?.ui?.let { family ->
+        runCatching {
+            createFontFamilyResolver(context)
+                .resolve(family, FontWeight.Normal, FontStyle.Normal, FontSynthesis.All)
+                .value as? Typeface
+        }.getOrNull()
+    }
     val characterCount = document.messages.sumOf { message ->
         shareImageText(message, hideReasoning).sumOf { it.text.length.toLong() } +
             message.attachments.filterNot { it.isImage }.sumOf { it.data.length.toLong() }
@@ -72,7 +82,11 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
     }
         catch (error: Throwable) { directory.deleteRecursively(); throw error }
     val memoryClass = (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).memoryClass
-    val writer = ShareImageWriter(context, directory, document.title, shareImagePageHeight(mode, memoryClass), mode == ShareImageMode.LONG, hideBranding, document.excerptFooter, dark, effectiveAccent, wallpaperImage, wallpaper)
+    val brandBitmap = if (hideBranding) null else run {
+        renderer.measure { ShareBrandRow() }
+        renderer.capture(0, 40)
+    }
+    val writer = ShareImageWriter(context, directory, document.title, shareImagePageHeight(mode, memoryClass), mode == ShareImageMode.LONG, hideBranding, document.excerptFooter, dark, effectiveAccent, wallpaperImage, wallpaper, uiTypeface, brandBitmap)
     val result = try {
         suspend fun render(block: ShareRenderBlock, user: Boolean = false, reasoning: Boolean = false,
             reasoningContinues: Boolean = false) {
@@ -224,6 +238,8 @@ private class ShareImageWriter(private val context: Context, private val directo
     private val accent: AccentColor,
     private val wallpaperImage: com.simplechat.app.ui.theme.WallpaperImage?,
     private val wallpaper: com.simplechat.app.ui.theme.WallpaperState?,
+    private val uiTypeface: Typeface?,
+    private val brandBitmap: Bitmap?,
 ) {
     private val width = 1080
     private val margin = 64
@@ -247,11 +263,9 @@ private class ShareImageWriter(private val context: Context, private val directo
         val pageBackground = com.simplechat.app.ui.theme.themePageBackground(dark, accent)
         canvas.drawColor(pageBackground.toArgb())
         drawWallpaper(pageBackground)
-        paint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        if (!hideBranding) {
-            paint.textSize = 26f; paint.color = accent.primary(dark).toArgb()
-            canvas.drawText("SimpleChat", margin.toFloat(), 60f, paint)
-        }
+        brandBitmap?.let { canvas.drawBitmap(it, margin.toFloat(), 20f, null) }
+        paint.typeface = uiTypeface ?: Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        paint.alpha = 255
         paint.textSize = 32f
         paint.color = (if (dark) com.simplechat.app.ui.theme.TextPrimaryDark
             else com.simplechat.app.ui.theme.TextPrimaryLight).toArgb()
@@ -343,7 +357,7 @@ private class ShareImageWriter(private val context: Context, private val directo
             paint.color = (if (dark) com.simplechat.app.ui.theme.TextPrimaryDark
                 else com.simplechat.app.ui.theme.TextPrimaryLight).toArgb()
             paint.alpha = 158
-            paint.textSize = 23f; paint.typeface = Typeface.DEFAULT
+            paint.textSize = 23f; paint.typeface = uiTypeface ?: Typeface.DEFAULT
             if (excerptFooter.isEmpty()) {
                 canvas.drawText("SimpleChat · ${files.size + 1}", margin.toFloat(), actualHeight - 35f, paint)
             } else {

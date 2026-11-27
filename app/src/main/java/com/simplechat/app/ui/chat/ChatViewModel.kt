@@ -77,6 +77,10 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -127,6 +131,40 @@ class ChatViewModel(
 
     internal suspend fun saveConversationWallpaper(id: String, wallpaper: com.simplechat.app.data.ConversationWallpaper?) =
         repository.saveConversationWallpaper(id, wallpaper)
+
+    /** 当前已收藏消息 id；操作栏据此切换书签图标。 */
+    val favoriteMessageIds: StateFlow<Set<String>> = repository.observeFavorites()
+        .map { list -> list.mapNotNull { it.messageId }.toSet() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
+    /** messageId → favoriteId，供长按选夹时查当前归属。 */
+    val favoriteIdByMessage: StateFlow<Map<String, String>> = repository.observeFavorites()
+        .map { list -> list.mapNotNull { favorite -> favorite.messageId?.let { it to favorite.id } }.toMap() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    val favoriteFolders: StateFlow<List<com.simplechat.app.db.FavoriteFolderEntity>> =
+        repository.observeFavoriteFolders()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val favoriteMemberships: StateFlow<List<com.simplechat.app.db.FavoriteMembershipEntity>> =
+        repository.observeFavoriteMemberships()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun toggleFavorite(messageId: String, folderIds: List<String> = emptyList()) {
+        viewModelScope.launch {
+            val existing = repository.favoriteForMessage(messageId)
+            if (existing != null) repository.removeFavorite(existing.id)
+            else repository.favoriteMessage(messageId, folderIds)
+        }
+    }
+
+    fun setFavoriteFolders(messageId: String, folderIds: List<String>) {
+        viewModelScope.launch {
+            val existing = repository.favoriteForMessage(messageId)
+            if (existing == null) repository.favoriteMessage(messageId, folderIds)
+            else repository.setFavoriteFolders(existing.id, folderIds)
+        }
+    }
 
     val messages = mutableStateListOf<UiMessage>()
     internal val imageDrafts = mutableMapOf<String, String>()
@@ -182,6 +220,7 @@ class ChatViewModel(
         viewModelScope.launch {
             pendingMemoryEnabled = repository.findNewConversationMemoryEnabled()
         }
+        viewModelScope.launch { repository.ensureDefaultFavoriteFolder() }
     }
 
     /**
@@ -739,7 +778,10 @@ class ChatViewModel(
             }
             // 先清扫上次被中断的流式消息，否则它会以 STREAMING 状态卡在界面上
             repository.resolveDanglingStreams(id)
-            if (targetMessageId != null) repository.revealSearchMessage(id, targetMessageId)
+            if (targetMessageId != null && !repository.revealSearchMessage(id, targetMessageId)) {
+                // 收藏指向的消息已彻底删除 / 不在可导航树里：打开会话即可，不把定位失败当加载失败。
+                searchTarget = null
+            }
 
             val loadedRaw = repository.loadActivePath(id)
             // The previous conversation is still visible here. Persist the metadata, but do not

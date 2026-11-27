@@ -17,6 +17,10 @@ import com.simplechat.app.db.ConversationSearchHit
 import com.simplechat.app.db.DraftEntity
 import com.simplechat.app.db.MemoryMessage
 import com.simplechat.app.db.MemorySession
+import com.simplechat.app.db.FavoriteEntity
+import com.simplechat.app.db.FavoriteFolderEntity
+import com.simplechat.app.db.FavoriteMediaEntity
+import com.simplechat.app.db.FavoriteMembershipEntity
 import com.simplechat.app.db.MessageEntity
 import com.simplechat.app.db.MessageTree
 import com.simplechat.app.db.PresetEntity
@@ -82,6 +86,10 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     private val compactionDao = db.compactionDao()
     private val drafts = db.draftDao()
     private val attachmentRefs = db.attachmentRefDao()
+    private val favorites = db.favoriteDao()
+    private val favoriteFolders = db.favoriteFolderDao()
+    private val favoriteMemberships = db.favoriteMembershipDao()
+    private val favoriteMedia = db.favoriteMediaDao()
     private val compactionCheckpoints = CompactionCheckpointStore(File(context.noBackupFilesDir, "compaction"))
 
     // ── 会话列表 ──────────────────────────────────────────
@@ -197,10 +205,13 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     internal suspend fun setConversationMemoryEnabled(id: String, enabled: Boolean) =
         conversations.setMemoryEnabled(id, enabled)
 
-    suspend fun revealSearchMessage(conversationId: String, messageId: String) = db.withTransaction {
+    suspend fun revealSearchMessage(conversationId: String, messageId: String): Boolean = db.withTransaction {
         val path = MessageTree.ancestry(MessageTree.navigable(messages.getLightFor(conversationId)), messageId)
-        check(path.lastOrNull()?.let { it.id == messageId && it.visible } == true) { "Search message is no longer available" }
+        if (path.lastOrNull()?.let { it.id == messageId && it.visible } != true) {
+            return@withTransaction false
+        }
         path.forEach { messages.activate(it.id, conversationId, it.parentId) }
+        true
     }
 
     suspend fun renameConversation(id: String, title: String) =
@@ -250,6 +261,182 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         return expired.size
     }
 
+    // ── 收藏夹（§48）──────────────────────────────────────
+
+    fun observeFavorites(): Flow<List<FavoriteEntity>> = favorites.observeAll()
+
+    fun observeFavoriteFolders(): Flow<List<FavoriteFolderEntity>> = favoriteFolders.observeAll()
+
+    fun observeFavoriteMemberships(): Flow<List<FavoriteMembershipEntity>> = favoriteMemberships.observeAll()
+
+    suspend fun favoriteForMessage(messageId: String): FavoriteEntity? = favorites.byMessage(messageId)
+
+    suspend fun favoriteFolderIds(favoriteId: String): List<String> =
+        favoriteMemberships.ofFavorite(favoriteId).map { it.folderId }
+
+    /** 默认夹不存在时补一行；[localizedName] 用于把迁移时的英文 Default 换成本地名称。 */
+    suspend fun ensureDefaultFavoriteFolder(localizedName: String? = null): String {
+        val id = FavoriteFolders.DefaultId
+        val existing = favoriteFolders.byId(id)
+        if (existing == null) {
+            favoriteFolders.insertIgnore(FavoriteFolderEntity(id, localizedName ?: "Default", 0, 0, 0))
+        } else if (localizedName != null && existing.name == "Default" && existing.name != localizedName) {
+            favoriteFolders.rename(id, localizedName, System.currentTimeMillis())
+        }
+        return id
+    }
+
+    /**
+     * 收藏一条消息；已收藏时只补归属，不覆盖第一次保存的快照、备注和夹。
+     * 返回收藏 id，消息不存在时返回 null。
+     */
+    suspend fun favoriteMessage(messageId: String, folderIds: List<String> = emptyList()): String? {
+        favorites.byMessage(messageId)?.let { existing ->
+            attachFavoriteFolders(existing.id, folderIds)
+            return existing.id
+        }
+        val message = messages.findById(messageId) ?: return null
+        val conversation = conversations.findById(message.conversationId)
+        val raw = Attachments.decode(message.attachments)
+        val images = raw.filter { it.isImage }.map { attachment ->
+            if (attachment.isStored) {
+                attachment.copy(data = "")
+            } else {
+                val path = runCatching {
+                    AttachmentFiles.save(
+                        context,
+                        Base64.decode(attachment.data, Base64.NO_WRAP).inputStream(),
+                        attachment.mime,
+                    )
+                }.getOrNull()
+                if (path != null) attachment.copy(data = "", path = path) else attachment
+            }
+        }
+        val names = raw.filterNot { it.isImage }.map { it.name }
+        val id = UUID.randomUUID().toString()
+        val favorite = FavoriteEntity(
+            id = id,
+            messageId = messageId,
+            conversationId = message.conversationId,
+            conversationTitle = conversation?.title.orEmpty(),
+            role = message.role,
+            content = message.content,
+            preview = FavoriteContent.preview(message.content),
+            attachments = Attachments.encode(images),
+            coverImage = FavoriteContent.coverJson(images),
+            imageCount = images.size,
+            attachmentNames = FavoriteContent.encodeNames(names),
+            messageCreatedAt = message.createdAt,
+            createdAt = System.currentTimeMillis(),
+        )
+        return db.withTransaction {
+            if (favorites.insertIgnore(favorite) == -1L) {
+                favorites.byMessage(messageId)?.id
+            } else {
+                attachFavoriteFolders(id, folderIds)
+                images.mapNotNull { it.path }.forEach { favoriteMedia.insertIgnore(FavoriteMediaEntity(it, id)) }
+                id
+            }
+        }
+    }
+
+    private suspend fun attachFavoriteFolders(favoriteId: String, folderIds: List<String>) {
+        val default = ensureDefaultFavoriteFolder()
+        val ids = folderIds.ifEmpty { listOf(default) }.distinct()
+        val now = System.currentTimeMillis()
+        ids.forEach { favoriteMemberships.insertIgnore(FavoriteMembershipEntity(favoriteId, it, now)) }
+        if (favoriteMemberships.ofFavorite(favoriteId).isEmpty()) {
+            favoriteMemberships.insertIgnore(FavoriteMembershipEntity(favoriteId, default, now))
+        }
+    }
+
+    /** 只撕掉一个夹归属；最后一个归属被撕掉时保留收藏本身，由 UI 决定是否彻底取消。 */
+    suspend fun removeFavoriteFolder(favoriteId: String, folderId: String) {
+        favoriteMemberships.remove(favoriteId, folderId)
+        if (favoriteMemberships.ofFavorite(favoriteId).isEmpty()) {
+            favoriteMemberships.insertIgnore(
+                FavoriteMembershipEntity(favoriteId, FavoriteFolders.DefaultId, System.currentTimeMillis()),
+            )
+        }
+    }
+
+    suspend fun setFavoriteFolders(favoriteId: String, folderIds: List<String>) {
+        val default = ensureDefaultFavoriteFolder()
+        val ids = folderIds.distinct().ifEmpty { listOf(default) }
+        val now = System.currentTimeMillis()
+        db.withTransaction {
+            favoriteMemberships.clear(favoriteId)
+            ids.forEach { favoriteMemberships.insertIgnore(FavoriteMembershipEntity(favoriteId, it, now)) }
+        }
+    }
+
+    suspend fun updateFavorite(favoriteId: String, note: String?) {
+        favorites.byId(favoriteId)?.let { favorites.update(it.copy(note = note)) }
+    }
+
+    suspend fun removeFavorite(favoriteId: String) {
+        val paths = favoriteMedia.pathsOf(favoriteId)
+        db.withTransaction {
+            favoriteMemberships.clear(favoriteId)
+            favoriteMedia.clear(favoriteId)
+            favorites.delete(favoriteId)
+        }
+        withContext(Dispatchers.IO) {
+            paths.forEach { path ->
+                if (!attachmentRefs.containsPath(path) &&
+                    favoriteMedia.references(path) == 0 &&
+                    !messages.referencesAttachment(path)
+                ) {
+                    AttachmentFiles.delete(context, path)
+                }
+            }
+        }
+    }
+
+    suspend fun createFavoriteFolder(rawName: String): String? {
+        val name = FavoriteFolders.normalizeName(rawName) ?: return null
+        val existing = favoriteFolders.all()
+        if (existing.size >= FavoriteFolders.MaxFolders || existing.any { it.name == name }) return null
+        val id = UUID.randomUUID().toString()
+        val now = System.currentTimeMillis()
+        favoriteFolders.insertIgnore(
+            FavoriteFolderEntity(id, name, (existing.maxOfOrNull { it.sortOrder } ?: 0) + 1, now, now),
+        )
+        return id
+    }
+
+    suspend fun renameFavoriteFolder(id: String, rawName: String): Boolean {
+        val name = FavoriteFolders.normalizeName(rawName) ?: return false
+        val all = favoriteFolders.all()
+        if (all.any { it.id != id && it.name == name }) return false
+        favoriteFolders.rename(id, name, System.currentTimeMillis())
+        return true
+    }
+
+    /** 删夹只删关系；只属于它的收藏补到默认夹，其余只少一个归属。 */
+    suspend fun deleteFavoriteFolder(id: String): Boolean {
+        if (id == FavoriteFolders.DefaultId) return false
+        val default = ensureDefaultFavoriteFolder()
+        val now = System.currentTimeMillis()
+        db.withTransaction {
+            favoriteMemberships.ofFolder(id).forEach { membership ->
+                if (favoriteMemberships.ofFavorite(membership.favoriteId).size <= 1) {
+                    favoriteMemberships.insertIgnore(
+                        FavoriteMembershipEntity(membership.favoriteId, default, now),
+                    )
+                }
+            }
+            favoriteMemberships.clearFolder(id)
+            favoriteFolders.delete(id)
+        }
+        return true
+    }
+
+    suspend fun searchFavorites(query: String): List<FavoriteEntity> =
+        if (query.isBlank()) emptyList() else favorites.search(query)
+
+    suspend fun favoriteCount(): Int = favorites.count()
+
     suspend fun deleteConversations(ids: List<String>) {
         /*
          * 落盘图片的路径从**引用表**查，不读 `messages.attachments` ——
@@ -264,11 +451,17 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             // 会话没了草稿就没人读 —— 同步清掉，别留死数据
             drafts.clearAll(ids)
             attachmentRefs.clearAll(ids)
+            // 收藏保留正文快照；只断开指向已删消息的指针。
+            favorites.detachConversations(ids)
             removed
         }
         withContext(Dispatchers.IO) { wallpapers.forEach { WallpaperFiles.deleteWallpaper(context, it.fileName) } }
         files.distinct().forEach { path ->
-            if (!attachmentRefs.containsPath(path) && !messages.referencesAttachment(path)) AttachmentFiles.delete(context, path)
+            if (!attachmentRefs.containsPath(path) && favoriteMedia.references(path) == 0 &&
+                !messages.referencesAttachment(path)
+            ) {
+                AttachmentFiles.delete(context, path)
+            }
         }
         ids.forEach { deleteCompactionCheckpoint(it) }
     }
@@ -1205,6 +1398,9 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         val presetByConversation = conversationPresets.getAllRaw()
             .groupBy { it.conversationId }
         val compactionsByConversation = compactionDao.getAll().groupBy { it.conversationId }
+        val favoriteRows = favorites.all()
+        val favoriteFolderRows = favoriteFolders.all()
+        val membershipsByFavorite = favoriteMemberships.all().groupBy { it.favoriteId }
 
         return BackupFile(
             exportedAt = System.currentTimeMillis(),
@@ -1219,6 +1415,37 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
                 )
             },
             presets = presets.getAll().map { it.toBackup() },
+            favoriteFolders = favoriteFolderRows.map {
+                BackupFavoriteFolder(it.id, it.name, it.sortOrder, it.createdAt, it.updatedAt)
+            },
+            favorites = favoriteRows.map { favorite ->
+                val images = Attachments.decode(favorite.attachments).mapNotNull { attachment ->
+                    if (!attachment.isImage) return@mapNotNull null
+                    val bytes = if (attachment.isStored) {
+                        AttachmentFiles.read(context, attachment.path)
+                    } else {
+                        runCatching { Base64.decode(attachment.data, Base64.NO_WRAP) }.getOrNull()
+                    }
+                    if (bytes == null) null
+                    else attachment.copy(data = Base64.encodeToString(bytes, Base64.NO_WRAP), path = null)
+                }
+                BackupFavorite(
+                    id = favorite.id,
+                    messageId = favorite.messageId,
+                    conversationId = favorite.conversationId,
+                    conversationTitle = favorite.conversationTitle,
+                    role = favorite.role,
+                    content = favorite.content,
+                    preview = favorite.preview,
+                    note = favorite.note,
+                    attachments = images,
+                    attachmentNames = FavoriteContent.decodeNames(favorite.attachmentNames),
+                    imageCount = favorite.imageCount,
+                    messageCreatedAt = favorite.messageCreatedAt,
+                    createdAt = favorite.createdAt,
+                    folderIds = membershipsByFavorite[favorite.id].orEmpty().map { it.folderId },
+                )
+            },
         )
     }
 
@@ -1585,8 +1812,61 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
      * 预设**各模式都不删本地已有项**，只按 id 覆盖 —— 预设是用户长期积累的资产，
      * 不该因为恢复一份旧备份就被清掉。
      */
-    suspend fun importParsed(file: BackupFile, mode: ImportMode): ImportReport =
-        importStream(file.conversations.asSequence(), file.presets, mode, expected = file.conversations.size)
+    suspend fun importParsed(file: BackupFile, mode: ImportMode): ImportReport {
+        val report = importStream(file.conversations.asSequence(), file.presets, mode, expected = file.conversations.size)
+        importFavorites(file.favoriteFolders, file.favorites)
+        return report
+    }
+
+    private suspend fun importFavorites(
+        folders: List<BackupFavoriteFolder>,
+        favoritesToImport: List<BackupFavorite>,
+    ) {
+        if (folders.isEmpty() && favoritesToImport.isEmpty()) return
+        val default = ensureDefaultFavoriteFolder()
+        folders.forEach { folder ->
+            favoriteFolders.insertIgnore(
+                FavoriteFolderEntity(folder.id, folder.name, folder.sortOrder, folder.createdAt, folder.updatedAt),
+            )
+        }
+        favoritesToImport.forEach { backup ->
+            val images = backup.attachments.mapNotNull { attachment ->
+                if (!attachment.isImage) return@mapNotNull null
+                val bytes = runCatching { Base64.decode(attachment.data, Base64.NO_WRAP) }.getOrNull()
+                val path = bytes?.let {
+                    runCatching { AttachmentFiles.save(context, it.inputStream(), attachment.mime) }.getOrNull()
+                }
+                if (path == null) attachment.copy(data = "") else attachment.copy(data = "", path = path)
+            }
+            val entity = FavoriteEntity(
+                id = backup.id,
+                messageId = backup.messageId,
+                conversationId = backup.conversationId,
+                conversationTitle = backup.conversationTitle,
+                role = backup.role,
+                content = backup.content,
+                preview = backup.preview,
+                note = backup.note,
+                attachments = Attachments.encode(images),
+                coverImage = FavoriteContent.coverJson(images),
+                imageCount = backup.imageCount.coerceAtLeast(images.size),
+                attachmentNames = FavoriteContent.encodeNames(backup.attachmentNames),
+                messageCreatedAt = backup.messageCreatedAt,
+                createdAt = backup.createdAt,
+            )
+            db.withTransaction {
+                if (favorites.insertIgnore(entity) != -1L) {
+                    val ids = backup.folderIds.ifEmpty { listOf(default) }
+                    ids.forEach {
+                        favoriteMemberships.insertIgnore(FavoriteMembershipEntity(entity.id, it, entity.createdAt))
+                    }
+                    images.mapNotNull { it.path }.forEach {
+                        favoriteMedia.insertIgnore(FavoriteMediaEntity(it, entity.id))
+                    }
+                }
+            }
+        }
+    }
 
     internal suspend fun previewDeepSeekShare(file: File, shareId: String, fallbackTitle: String): DeepSeekShare.Preview =
         DeepSeekShare.preview(file, shareId, fallbackTitle)

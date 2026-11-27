@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -101,6 +102,7 @@ fun HistoryDrawerContent(
     onExitSelection: () -> Unit,
     onPinSelected: (Boolean) -> Unit,
     onDeleteSelected: () -> Unit,
+    onOpenFavorites: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -197,25 +199,20 @@ fun HistoryDrawerContent(
                 onCancel = onExitSelection,
             )
         } else {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onOpenSettings)
-                    .heightIn(min = Space.Row)
-                    .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Space.IconGap),
-            ) {
-                Icon(
-                    imageVector = AppIcons.Settings,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(Space.Icon),
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                DrawerFooterAction(
+                    icon = AppIcons.Bookmark,
+                    label = stringResource(R.string.favorites_title),
+                    onClick = onOpenFavorites,
+                    modifier = Modifier.weight(1f),
                 )
-                Text(
-                    text = stringResource(R.string.settings_title),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
+                Box(
+                    Modifier.width(1.dp).height(Space.Icon).background(colors.divider),
+                )
+                DrawerFooterAction(
+                    icon = AppIcons.Settings,
+                    label = stringResource(R.string.settings_title),
+                    onClick = onOpenSettings,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -224,6 +221,38 @@ fun HistoryDrawerContent(
         // 手势条（"小白条"）不遮挡设置入口 —— 抽屉自己铺满整屏，底部必须自己让位
         Spacer(Modifier.navigationBarsPadding())
         Spacer(Modifier.height(2.dp))
+    }
+}
+
+/** 多选模式下的底部操作栏。 */
+@Composable
+private fun DrawerFooterAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clickable(onClick = onClick)
+            .heightIn(min = Space.Row)
+            .padding(horizontal = Space.Screen, vertical = Space.RowPadY),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.IconGap),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(Space.Icon),
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
     }
 }
 

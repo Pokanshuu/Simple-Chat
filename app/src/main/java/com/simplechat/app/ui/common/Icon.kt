@@ -240,6 +240,87 @@ object AppIcons {
         }
     }
 
+    /** 收藏（Lucide: bookmark） */
+    val Bookmark: ImageVector by lazy {
+        vector("Bookmark") {
+            stroke {
+                moveTo(19f, 21f)
+                lineToRelative(-7f, -5f)
+                lineToRelative(-7f, 5f)
+                verticalLineTo(5f)
+                arcToRelative(2f, 2f, 0f, false, true, 2f, -2f)
+                horizontalLineToRelative(10f)
+                arcToRelative(2f, 2f, 0f, false, true, 2f, 2f)
+                close()
+            }
+        }
+    }
+
+    /** 已收藏（Lucide: bookmark-check） */
+    val BookmarkCheck: ImageVector by lazy {
+        vector("BookmarkCheck") {
+            stroke {
+                moveTo(19f, 21f)
+                lineToRelative(-7f, -5f)
+                lineToRelative(-7f, 5f)
+                verticalLineTo(5f)
+                arcToRelative(2f, 2f, 0f, false, true, 2f, -2f)
+                horizontalLineToRelative(10f)
+                arcToRelative(2f, 2f, 0f, false, true, 2f, 2f)
+                close()
+                moveTo(9f, 10f)
+                lineToRelative(2f, 2f)
+                lineToRelative(4f, -4f)
+            }
+        }
+    }
+
+    /** 收藏夹（Lucide: folder） */
+    val Folder: ImageVector by lazy {
+        vector("Folder") {
+            stroke {
+                moveTo(20f, 20f)
+                arcToRelative(2f, 2f, 0f, false, false, 2f, -2f)
+                verticalLineTo(8f)
+                arcToRelative(2f, 2f, 0f, false, false, -2f, -2f)
+                horizontalLineToRelative(-7.9f)
+                arcToRelative(2f, 2f, 0f, false, true, -1.69f, -0.9f)
+                lineToRelative(-0.81f, -1.2f)
+                arcToRelative(2f, 2f, 0f, false, false, -1.67f, -0.9f)
+                horizontalLineTo(4f)
+                arcToRelative(2f, 2f, 0f, false, false, -2f, 2f)
+                verticalLineToRelative(13f)
+                arcToRelative(2f, 2f, 0f, false, false, 2f, 2f)
+                close()
+            }
+        }
+    }
+
+    /** 新建收藏夹（Lucide: folder-plus） */
+    val FolderPlus: ImageVector by lazy {
+        vector("FolderPlus") {
+            stroke {
+                moveTo(20f, 20f)
+                arcToRelative(2f, 2f, 0f, false, false, 2f, -2f)
+                verticalLineTo(8f)
+                arcToRelative(2f, 2f, 0f, false, false, -2f, -2f)
+                horizontalLineToRelative(-7.9f)
+                arcToRelative(2f, 2f, 0f, false, true, -1.69f, -0.9f)
+                lineToRelative(-0.81f, -1.2f)
+                arcToRelative(2f, 2f, 0f, false, false, -1.67f, -0.9f)
+                horizontalLineTo(4f)
+                arcToRelative(2f, 2f, 0f, false, false, -2f, 2f)
+                verticalLineToRelative(13f)
+                arcToRelative(2f, 2f, 0f, false, false, 2f, 2f)
+                close()
+                moveTo(12f, 10f)
+                verticalLineToRelative(6f)
+                moveTo(9f, 13f)
+                horizontalLineToRelative(6f)
+            }
+        }
+    }
+
     /** 更多（Lucide: ellipsis） */
     val More: ImageVector by lazy {
         vector("More") {
