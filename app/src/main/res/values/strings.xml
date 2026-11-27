@@ -943,6 +943,7 @@
     <string name="share_image_pages">分页图片</string>
     <string name="share_image_pages_hint">分成适合手机阅读的多张图片</string>
     <string name="share_image_generate">生成</string>
+    <string name="share_image_use_personalized">使用个性化样式</string>
     <string name="share_image_hide_branding">隐藏 SimpleChat 名称</string>
     <string name="onboarding_welcome">欢迎使用 SimpleChat！</string>
     <string name="onboarding_key_title">输入您的 DeepSeek API Key</string>

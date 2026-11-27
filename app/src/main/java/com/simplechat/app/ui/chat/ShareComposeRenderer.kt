@@ -40,7 +40,8 @@ import kotlin.coroutines.resumeWithException
 /** A one-pixel, non-interactive host. Only records into a private graphics layer; draws no UI. */
 internal class ShareComposeRenderer private constructor(context: Context, private val parent: ViewGroup,
     private val accent: AccentColor, private val typography: TypographySettings?, private val fonts: TypographyFonts,
-    private val globalScale: Float, private val systemScale: Float) {
+    private val globalScale: Float, private val systemScale: Float, private val dark: Boolean,
+    private val wallpaper: com.simplechat.app.ui.theme.WallpaperState?) {
     private class Content(val body: @Composable () -> Unit) {
         var size by mutableStateOf(IntSize.Zero)
     }
@@ -66,9 +67,14 @@ internal class ShareComposeRenderer private constructor(context: Context, privat
         host.addView(compose)
         parent.addView(host, ViewGroup.LayoutParams(1, 1))
         compose.setContent {
-            CompositionLocalProvider(LocalDensity provides Density(2f, systemScale)) {
-                SimpleChatTheme(themeMode = ThemeMode.LIGHT, accent = accent, typographySettings = typography,
-                    typographyFonts = fonts, fontScale = globalScale / systemScale) {
+            CompositionLocalProvider(
+                LocalDensity provides Density(2f, systemScale),
+                com.simplechat.app.ui.theme.LocalWallpaper provides
+                    (wallpaper ?: com.simplechat.app.ui.theme.WallpaperState()),
+            ) {
+                SimpleChatTheme(themeMode = if (dark) ThemeMode.DARK else ThemeMode.LIGHT, accent = accent,
+                    typographySettings = typography, typographyFonts = fonts,
+                    fontScale = globalScale / systemScale) {
                     val layer = rememberGraphicsLayer()
                     val item = content
                     key(item) {
@@ -134,6 +140,8 @@ internal class ShareComposeRenderer private constructor(context: Context, privat
             fonts: TypographyFonts = TypographyFonts(),
             globalScale: Float = 1f,
             systemScale: Float = 1f,
+            dark: Boolean = false,
+            wallpaper: com.simplechat.app.ui.theme.WallpaperState? = null,
         ): ShareComposeRenderer = suspendCancellableCoroutine { continuation ->
             val handler = Handler(Looper.getMainLooper())
             val create = Runnable {
@@ -142,7 +150,7 @@ internal class ShareComposeRenderer private constructor(context: Context, privat
                         var owner = context
                         while (owner is ContextWrapper && owner !is Activity) owner = owner.baseContext
                         val activity = owner as? Activity ?: error("Image export requires a visible activity")
-                        val renderer = ShareComposeRenderer(activity, activity.window.decorView as ViewGroup, accent, typography, fonts, globalScale, systemScale)
+                        val renderer = ShareComposeRenderer(activity, activity.window.decorView as ViewGroup, accent, typography, fonts, globalScale, systemScale, dark, wallpaper)
                         continuation.resume(renderer, onCancellation = { _, resource, _ -> handler.post { resource.closeNow() } })
                     } catch (error: Exception) { continuation.resumeWithException(error) }
                 }

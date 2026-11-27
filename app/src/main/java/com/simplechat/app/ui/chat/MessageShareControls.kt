@@ -156,6 +156,8 @@ internal fun MessageShareImageOptions(
     onModeChange: (ShareImageMode) -> Unit,
     hideBranding: Boolean,
     onHideBrandingChange: (Boolean) -> Unit,
+    usePersonalizedStyle: Boolean,
+    onUsePersonalizedStyleChange: (Boolean) -> Unit,
     onDismiss: () -> Unit,
     onGenerate: (hideReasoning: Boolean) -> Unit,
 ) {
@@ -194,6 +196,8 @@ internal fun MessageShareImageOptions(
                 }
             }
             HorizontalDivider(Modifier.padding(vertical = 8.dp), color = colors.divider)
+            ShareImageCheckbox(stringResource(R.string.share_image_use_personalized), usePersonalizedStyle,
+                onUsePersonalizedStyleChange)
             ShareImageCheckbox(stringResource(R.string.share_image_hide_branding), hideBranding, onHideBrandingChange)
             ShareImageCheckbox(stringResource(R.string.share_image_hide_reasoning), hideReasoning) { hideReasoning = it }
             Spacer(Modifier.height(14.dp))

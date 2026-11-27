@@ -32,7 +32,10 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.simplechat.app.App
 import com.simplechat.app.R
+import com.simplechat.app.data.ShareImageSettings
 import com.simplechat.app.data.copyExportFile
 import com.simplechat.app.data.userMessage
 import com.simplechat.app.ui.common.AppIcons
@@ -43,6 +46,7 @@ import com.simplechat.app.ui.theme.LocalTypographySettings
 import com.simplechat.app.ui.theme.LocalTypographyFonts
 import com.simplechat.app.ui.theme.LocalTypographyGlobalScale
 import com.simplechat.app.ui.theme.LocalSystemTextScale
+import com.simplechat.app.ui.theme.LocalWallpaper
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -71,6 +75,21 @@ internal fun MessageShareTools(
     var imageDocument by remember { mutableStateOf<MessageShareDocument?>(null) }
     var imageMode by rememberSaveable { mutableStateOf(ShareImageMode.LONG) }
     var hideBranding by rememberSaveable { mutableStateOf(false) }
+    val app = context.applicationContext as App
+    val stored by app.container.settingsStore.flow.collectAsStateWithLifecycle(initialValue = null)
+    var personalizedChoice by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    val personalized = personalizedChoice ?: stored?.shareImage?.usePersonalizedStyle ?: true
+    val dark = LocalIsDarkTheme.current
+    val wallpaper = LocalWallpaper.current
+    fun shareStyle(): ShareImageStyle? = if (!personalized) null else ShareImageStyle(
+        dark = dark,
+        accent = accent,
+        typography = typography,
+        typographyFonts = typographyFonts,
+        fontScale = globalFontScale,
+        systemFontScale = systemFontScale,
+        wallpaper = wallpaper.takeIf { it.active },
+    )
 
     fun runExport(block: suspend () -> Unit) {
         if (busy) return
@@ -125,7 +144,7 @@ internal fun MessageShareTools(
             runExport {
                 images = exportSharedImages(context, excerpt, ShareImageMode.LONG, accent,
                     typography = typography, typographyFonts = typographyFonts,
-                    fontScale = globalFontScale, systemFontScale = systemFontScale)
+                    fontScale = globalFontScale, systemFontScale = systemFontScale, style = shareStyle())
                 preview = true
             }
         }
@@ -183,15 +202,25 @@ internal fun MessageShareTools(
             onModeChange = { imageMode = it },
             hideBranding = hideBranding,
             onHideBrandingChange = { hideBranding = it },
+            usePersonalizedStyle = personalized,
+            onUsePersonalizedStyleChange = { enabled ->
+                personalizedChoice = enabled
+                scope.launch {
+                    app.container.settingsStore.setShareImageSettings(
+                        ShareImageSettings(usePersonalizedStyle = enabled),
+                    )
+                }
+            },
             onDismiss = { imageDocument = null },
             onGenerate = { hideReasoning ->
                 val mode = imageMode
                 val branding = hideBranding
+                val style = shareStyle()
                 imageDocument = null
                 runExport {
                     images = exportSharedImages(context, snapshot, mode, accent, hideBranding = branding,
                         hideReasoning = hideReasoning, typography = typography, typographyFonts = typographyFonts,
-                        fontScale = globalFontScale, systemFontScale = systemFontScale)
+                        fontScale = globalFontScale, systemFontScale = systemFontScale, style = style)
                     preview = true
                 }
             },

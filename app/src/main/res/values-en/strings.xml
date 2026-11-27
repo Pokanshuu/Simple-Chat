@@ -933,6 +933,7 @@
     <string name="share_image_pages">Paged images</string>
     <string name="share_image_pages_hint">Multiple images sized for reading on a phone</string>
     <string name="share_image_generate">Generate</string>
+    <string name="share_image_use_personalized">Use personalized style</string>
     <string name="share_image_hide_branding">Hide SimpleChat name</string>
     <string name="onboarding_welcome">Welcome to SimpleChat!</string>
     <string name="onboarding_key_title">Enter your DeepSeek API key</string>

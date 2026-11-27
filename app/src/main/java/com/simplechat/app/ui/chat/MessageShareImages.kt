@@ -16,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.R
 import com.simplechat.app.data.Attachment
@@ -23,6 +24,7 @@ import com.simplechat.app.data.AttachmentFiles
 import com.simplechat.app.ui.markdown.*
 import com.simplechat.app.ui.theme.LocalChatColors
 import com.simplechat.app.ui.theme.AccentColor
+import com.simplechat.app.ui.theme.primary
 import com.simplechat.app.ui.theme.TypographyFonts
 import com.simplechat.app.data.TypographySettings
 import com.simplechat.app.data.FontSlot
@@ -46,7 +48,17 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
     typographyFonts: TypographyFonts = TypographyFonts(),
     fontScale: Float = 1f,
     systemFontScale: Float = 1f,
+    /** null = 旧版浅色纯底外观；非 null 时覆盖上面的 accent / 字体 / 字号并注入壁纸。 */
+    style: ShareImageStyle? = null,
 ): List<File> = withContext(Dispatchers.Default) {
+    val effectiveAccent = style?.accent ?: accent
+    val effectiveTypography = style?.typography ?: typography
+    val effectiveFonts = style?.typographyFonts ?: typographyFonts
+    val effectiveFontScale = style?.fontScale ?: fontScale
+    val effectiveSystemScale = style?.systemFontScale ?: systemFontScale
+    val dark = style?.dark ?: false
+    val wallpaper = style?.wallpaper
+    val wallpaperImage = wallpaper?.file?.let { com.simplechat.app.ui.theme.WallpaperImageCache.load(it) }
     val characterCount = document.messages.sumOf { message ->
         shareImageText(message, hideReasoning).sumOf { it.text.length.toLong() } +
             message.attachments.filterNot { it.isImage }.sumOf { it.data.length.toLong() }
@@ -55,11 +67,12 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
     val fonts = loadExportFonts(context)
     val directory = shareDirectory(context)
     val renderer = try {
-        ShareComposeRenderer.create(context, accent, typography, typographyFonts, fontScale, systemFontScale)
+        ShareComposeRenderer.create(context, effectiveAccent, effectiveTypography, effectiveFonts, effectiveFontScale,
+            effectiveSystemScale, dark = dark, wallpaper = wallpaper)
     }
         catch (error: Throwable) { directory.deleteRecursively(); throw error }
     val memoryClass = (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).memoryClass
-    val writer = ShareImageWriter(context, directory, document.title, shareImagePageHeight(mode, memoryClass), mode == ShareImageMode.LONG, hideBranding, document.excerptFooter)
+    val writer = ShareImageWriter(context, directory, document.title, shareImagePageHeight(mode, memoryClass), mode == ShareImageMode.LONG, hideBranding, document.excerptFooter, dark, effectiveAccent, wallpaperImage, wallpaper)
     val result = try {
         suspend fun render(block: ShareRenderBlock, user: Boolean = false, reasoning: Boolean = false,
             reasoningContinues: Boolean = false) {
@@ -178,7 +191,7 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
     } finally { renderer.close() }
     // Rerender at the ordinary page size so row boundaries and repeated headers remain correct.
     result ?: exportSharedImages(context, document, ShareImageMode.PAGES, accent, hideBranding, hideReasoning,
-        typography, typographyFonts, fontScale, systemFontScale)
+        typography, typographyFonts, fontScale, systemFontScale, style)
 }
 
 /** Cut only in a blank horizontal band between native text lines, never through glyph ink. */
@@ -207,6 +220,10 @@ private class ShareLongImageOverflow : RuntimeException()
 private class ShareImageWriter(private val context: Context, private val directory: File, private val title: String,
     private val height: Int, private val longScreenshot: Boolean, private val hideBranding: Boolean,
     private val excerptFooter: List<String>,
+    private val dark: Boolean,
+    private val accent: AccentColor,
+    private val wallpaperImage: com.simplechat.app.ui.theme.WallpaperImage?,
+    private val wallpaper: com.simplechat.app.ui.theme.WallpaperState?,
 ) {
     private val width = 1080
     private val margin = 64
@@ -227,19 +244,66 @@ private class ShareImageWriter(private val context: Context, private val directo
         check(files.size < 80) { context.getString(R.string.share_image_too_long) }
         bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         canvas = Canvas(bitmap!!)
-        canvas.drawColor(Color.WHITE)
+        val pageBackground = com.simplechat.app.ui.theme.themePageBackground(dark, accent)
+        canvas.drawColor(pageBackground.toArgb())
+        drawWallpaper(pageBackground)
         paint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         if (!hideBranding) {
-            paint.textSize = 26f; paint.color = Color.rgb(77, 107, 254)
+            paint.textSize = 26f; paint.color = accent.primary(dark).toArgb()
             canvas.drawText("SimpleChat", margin.toFloat(), 60f, paint)
         }
-        paint.textSize = 32f; paint.color = Color.rgb(32, 34, 40)
+        paint.textSize = 32f
+        paint.color = (if (dark) com.simplechat.app.ui.theme.TextPrimaryDark
+            else com.simplechat.app.ui.theme.TextPrimaryLight).toArgb()
         val heading = StaticLayout.Builder.obtain(title, 0, title.length, paint, width - margin * 2)
             .setMaxLines(2).setEllipsize(android.text.TextUtils.TruncateAt.END).setIncludePad(false).build()
         val titleTop = if (hideBranding) 48 else 85
         canvas.save(); canvas.translate(margin.toFloat(), titleTop.toFloat()); heading.draw(canvas); canvas.restore()
         y = titleTop + heading.height + 36
         bodyTop = y
+    }
+
+    /**
+     * 壁纸按 1080 × 2400 的参考画幅铺在页画布上；长图每隔 2400 px 重复一段，
+     * 与设计稿 §49.6.4 的取景一致。模糊档位直接复用聊天页的 [WallpaperImage.levels]。
+     */
+    private fun drawWallpaper(base: androidx.compose.ui.graphics.Color) {
+        val image = wallpaperImage ?: return
+        val state = wallpaper ?: return
+        val level = com.simplechat.app.ui.theme.wallpaperBlurLevel(state.blur).toInt()
+            .coerceIn(0, image.levels.lastIndex)
+        val source = image.levels[level]
+        val band = if (longScreenshot) 2400f else height.toFloat()
+        var top = 0f
+        while (top < height) {
+            val (scaleX, scaleY) = when (state.fit) {
+                "STRETCH" -> width / source.width.toFloat() to band / source.height.toFloat()
+                "FILL" -> {
+                    val scale = minOf(width / source.width.toFloat(), band / source.height.toFloat())
+                    scale to scale
+                }
+                "CENTER" -> 1f to 1f
+                else -> {
+                    val scale = maxOf(width / source.width.toFloat(), band / source.height.toFloat())
+                    scale to scale
+                }
+            }
+            val drawWidth = source.width * scaleX * state.scale
+            val drawHeight = source.height * scaleY * state.scale
+            val left = (width - drawWidth) * state.offsetX
+            val bandTop = top + (band - drawHeight) * state.offsetY
+            canvas.save()
+            canvas.clipRect(0f, top, width.toFloat(), minOf(top + band, height.toFloat()))
+            canvas.drawBitmap(source, null, RectF(left, bandTop, left + drawWidth, bandTop + drawHeight), imagePaint)
+            canvas.restore()
+            top += band
+        }
+        val veil = ((1f - state.opacity.coerceIn(0f, 1f)) * 255).toInt()
+        if (veil > 0) {
+            val argb = base.toArgb()
+            canvas.drawColor(Color.argb(veil, Color.red(argb), Color.green(argb), Color.blue(argb)))
+        }
+        if (state.dim > 0f) canvas.drawColor(Color.argb((state.dim.coerceIn(0f, 1f) * 255).toInt(), 0, 0, 0))
     }
     fun space(amount: Int) { y += amount }
     fun ensureRoom(required: Int) { if (remaining < required) nextPage() }
@@ -276,7 +340,10 @@ private class ShareImageWriter(private val context: Context, private val directo
         val current = bitmap ?: return
         val actualHeight = minOf(height, y + if (hideBranding) 48 else footerHeight).coerceAtLeast(300)
         if (!hideBranding) {
-            paint.color = Color.GRAY; paint.textSize = 23f; paint.typeface = Typeface.DEFAULT
+            paint.color = (if (dark) com.simplechat.app.ui.theme.TextPrimaryDark
+                else com.simplechat.app.ui.theme.TextPrimaryLight).toArgb()
+            paint.alpha = 158
+            paint.textSize = 23f; paint.typeface = Typeface.DEFAULT
             if (excerptFooter.isEmpty()) {
                 canvas.drawText("SimpleChat · ${files.size + 1}", margin.toFloat(), actualHeight - 35f, paint)
             } else {
