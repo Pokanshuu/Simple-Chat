@@ -18,6 +18,13 @@
 
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!--
+        「设置 → 关于 → 检查更新」在应用内下载并安装新版本。
+        Android 8+ 这个权限不会弹运行时授权，而是每个应用单独的「安装未知应用」开关
+        （见 UpdateInstaller）。不声明的话 ACTION_VIEW 会被系统静默拒绝。
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <queries>
         <intent>
             <action android:name="android.speech.RecognitionService" />

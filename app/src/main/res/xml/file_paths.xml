@@ -5,9 +5,11 @@
     `cacheDir/captures` 是「拍照」的中转站：
     相机把照片写进来，我们读完转成 base64 落库，然后立刻删掉。
     `cacheDir/shares` 保存主动生成的分享文件，仅授予接收方临时读取权限。
+    `cacheDir/updates` 放下载好的更新包，交给系统安装器后即可删除。
     不暴露整个 cacheDir 或私有数据库。
 -->
 <paths>
     <cache-path name="captures" path="captures/" />
     <cache-path name="shares" path="shares/" />
+    <cache-path name="updates" path="updates/" />
 </paths>

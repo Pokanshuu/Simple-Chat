@@ -1,5 +1,6 @@
 package com.simplechat.app.net
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -45,5 +46,26 @@ class UpdateCheckerTest {
     @Test
     fun `大小写 v 与空白都不影响`() {
         assertTrue(isNewerVersion(" V1.1.6 ", "1.1.5"))
+    }
+
+    /**
+     * 镜像前缀是「整段拼在 GitHub 链接前面」。
+     *
+     * 拼错了就是 404 —— 用户只会看到"下载失败"，根本不知道是链接构造错了。
+     */
+    @Test
+    fun `镜像前缀按约定拼接`() {
+        val url = "https://github.com/o/r/releases/download/v1/x.apk"
+        assertEquals(url, UpdateChecker.Mirror.GITHUB.apply(url))
+        assertEquals("https://gh-proxy.org/$url", UpdateChecker.Mirror.GH_PROXY.apply(url))
+        assertEquals("https://ghfast.top/$url", UpdateChecker.Mirror.GHFAST.apply(url))
+    }
+
+    /** 直连的 prefix 必须为空，否则会拼出 `nullhttps://…` 这种东西。 */
+    @Test
+    fun `直连不加前缀`() {
+        assertEquals("", UpdateChecker.Mirror.GITHUB.prefix)
+        assertTrue(UpdateChecker.Mirror.GH_PROXY.prefix.endsWith("/"))
+        assertTrue(UpdateChecker.Mirror.GHFAST.prefix.endsWith("/"))
     }
 }
