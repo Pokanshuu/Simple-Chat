@@ -56,7 +56,9 @@ internal open class StreamingRequestBody<T>(
         writeStarted = true
         val file = stagedFile()
         if (file != null) {
-            sink.writeAll(file.source())
+            // 关掉 source 再返回：Windows 上仍打开的文件无法删除，`dispose()` 会静默失败，
+            // 请求缓存文件就留在临时目录里（单测也会卡在“dispose 后目录为空”）。
+            file.source().use { source -> sink.writeAll(source) }
             return
         }
         json.encodeToStream(serializer, value, sink.outputStream())
