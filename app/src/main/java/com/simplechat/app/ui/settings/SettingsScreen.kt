@@ -99,6 +99,8 @@ import com.simplechat.app.App
 import com.simplechat.app.R
 import com.simplechat.app.data.ApiKey
 import com.simplechat.app.net.UpdateChecker
+import com.simplechat.app.net.UpdateDownloader
+import com.simplechat.app.net.UpdateInstaller
 import com.simplechat.app.net.DeepSeekBalance
 import com.simplechat.app.net.isOfficialDeepSeekEndpoint
 import com.simplechat.app.data.AppLanguage
@@ -150,6 +152,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -2735,9 +2738,68 @@ private fun AboutPage(
 ) {
     val colors = LocalChatColors.current
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var showProjectLicense by rememberSaveable { mutableStateOf(false) }
     var checking by remember { mutableStateOf(false) }
-    var checkResult by remember { mutableStateOf<UpdateChecker.Result?>(null) }
+    /*
+     * 更新流程的状态机（都是"没有就 null"的三个变量，不值得为它建 sealed class）：
+     * - updateRelease 非空 = 「发现新版本」对话框开着；
+     * - downloadProgress 非空 = 正在下载（0..1）；
+     * - updateMessage = 一行结果提示（已是最新 / 检查失败 / 下载失败 / 需要授权）。
+     */
+    var updateRelease by remember { mutableStateOf<UpdateChecker.ReleaseInfo?>(null) }
+    var downloadProgress by remember { mutableStateOf<Float?>(null) }
+    var updateMessage by remember { mutableStateOf<String?>(null) }
+    var downloadJob by remember { mutableStateOf<Job?>(null) }
+    /*
+     * 已下载安装包的大小：决定「清理」那行是否可点。
+     * 下载完成 / 清理之后要重新算 —— 用户下过又装了，这里不该还显示 4.8 MB。
+     */
+    var cachedBytes by remember { mutableStateOf(UpdateDownloader.downloadedBytes(context)) }
+    val cachedBytesText = remember(cachedBytes) {
+        if (cachedBytes > 0L) formatSize(cachedBytes) else null
+    }
+
+    val upToDateText = stringResource(R.string.update_up_to_date)
+    val installPermissionText = stringResource(R.string.update_install_permission)
+    val installFailedText = stringResource(R.string.update_install_failed)
+
+    /**
+     * 下载并安装。
+     *
+     * 取消走协程取消：`UpdateDownloader` 每个块 `ensureActive()`，点了取消立刻停写盘。
+     * 装完不主动删包 —— 系统安装器要读它；下次下载同名文件会复用/覆盖。
+     */
+    fun startDownload(mirror: UpdateChecker.Mirror) {
+        val asset = updateRelease?.asset ?: return
+        updateRelease = null
+        downloadProgress = 0f
+        downloadJob = scope.launch {
+            try {
+                val file = UpdateDownloader.download(context, asset, mirror) { progress ->
+                    downloadProgress = progress.fraction
+                }
+                downloadProgress = null
+                cachedBytes = UpdateDownloader.downloadedBytes(context)
+                if (!UpdateInstaller.install(context, file)) {
+                    updateMessage = if (UpdateInstaller.canInstall(context)) {
+                        installFailedText
+                    } else {
+                        installPermissionText
+                    }
+                }
+            } catch (cancel: CancellationException) {
+                downloadProgress = null
+                throw cancel
+            } catch (error: Throwable) {
+                downloadProgress = null
+                updateMessage = context.getString(
+                    R.string.update_download_failed,
+                    error.message.orEmpty(),
+                )
+            }
+        }
+    }
 
     SettingsSectionLabel(stringResource(R.string.about_version))
 
@@ -2752,13 +2814,55 @@ private fun AboutPage(
             onClick = {
                 if (checking) return@SettingsActionRow
                 checking = true
-                checkResult = null
+                updateMessage = null
                 scope.launch {
-                    checkResult = UpdateChecker.check(BuildConfig.VERSION_NAME)
+                    updateMessage = when (val result = UpdateChecker.check(BuildConfig.VERSION_NAME)) {
+                        is UpdateChecker.Result.Newer -> {
+                            updateRelease = result.release
+                            null
+                        }
+                        UpdateChecker.Result.UpToDate -> upToDateText
+                        is UpdateChecker.Result.Failed ->
+                            context.getString(R.string.update_failed) + "：" + result.reason
+                    }
                     checking = false
                 }
             },
             enabled = !checking,
+        )
+        RowDivider()
+        /*
+         * 清理已下载的安装包。
+         *
+         * 装完之后那个 APK 还躺在 cache 里（系统安装器要读它，所以我们不主动删）——
+         * 一个 5 MB 的包留着没什么意义，但也不该悄悄删掉用户"下载好了待装"的文件。
+         * 所以做成显式一行：有就显示大小、点了才清。
+         */
+        SettingsActionRow(
+            label = stringResource(R.string.update_clear_cached),
+            hint = cachedBytesText ?: stringResource(R.string.update_cache_empty),
+            enabled = cachedBytes > 0L,
+            onClick = {
+                val freed = UpdateDownloader.clear(context)
+                cachedBytes = 0L
+                updateMessage = context.getString(
+                    R.string.update_cache_cleared,
+                    formatSize(freed),
+                )
+            },
+        )
+    }
+
+    /*
+     * 检查结果就地显示一行：不弹 toast 也不弹对话框 —— 点完立刻能在同一张卡片下面
+     * 看到答案，比"弹窗要点掉"少一步。
+     */
+    updateMessage?.let { message ->
+        Text(
+            text = message,
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.placeholder,
+            modifier = Modifier.padding(start = 4.dp, top = 8.dp),
         )
     }
 
@@ -2823,77 +2927,34 @@ private fun AboutPage(
         modifier = Modifier.padding(horizontal = 4.dp),
     )
 
-    checkResult?.let { result ->
-        val context = LocalContext.current
-        UpdateResultDialog(
-            result = result,
-            onDismiss = { checkResult = null },
-            onOpen = { url ->
-                checkResult = null
-                openInBrowser(context, url)
+    updateRelease?.let { release ->
+        UpdateAvailableDialog(
+            release = release,
+            currentVersion = BuildConfig.VERSION_NAME,
+            onDismiss = { updateRelease = null },
+            onDownload = { mirror -> startDownload(mirror) },
+            onOpenPage = {
+                updateRelease = null
+                openInBrowser(context, release.pageUrl)
+            },
+        )
+    }
+
+    downloadProgress?.let { progress ->
+        UpdateDownloadingDialog(
+            progress = progress,
+            onCancel = {
+                downloadJob?.cancel()
+                downloadJob = null
+                downloadProgress = null
             },
         )
     }
 }
 
 /**
- * 检查更新的结果。
- *
- * 三种结果一句话说清：有新版本 → 给一个「前往下载」；没有 → 「已是最新版」；
- * 查不出来 → 「检查失败」（不猜原因，也不催用户重试 —— 网络的事他比我们清楚）。
+ * 用浏览器打开链接；没有浏览器时静默失败（不值得为一步跳转崩掉整个设置页）。
  */
-@Composable
-private fun UpdateResultDialog(
-    result: UpdateChecker.Result,
-    onDismiss: () -> Unit,
-    onOpen: (String) -> Unit,
-) {
-    val colors = LocalChatColors.current
-    Dialog(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(ContainerShape)
-                .background(colors.card)
-                .padding(20.dp),
-        ) {
-            Text(
-                text = when (result) {
-                    is UpdateChecker.Result.Newer -> stringResource(R.string.update_new_title, result.release.tag)
-                    UpdateChecker.Result.UpToDate -> stringResource(R.string.update_up_to_date)
-                    is UpdateChecker.Result.Failed -> stringResource(R.string.update_failed)
-                },
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            if (result is UpdateChecker.Result.Newer) {
-                Spacer(Modifier.size(8.dp))
-                Text(
-                    text = stringResource(R.string.about_current_version, BuildConfig.VERSION_NAME),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = colors.placeholder,
-                )
-            }
-            Spacer(Modifier.size(18.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                TextAction(stringResource(R.string.action_close), onClick = onDismiss)
-                if (result is UpdateChecker.Result.Newer) {
-                    Spacer(Modifier.size(8.dp))
-                    TextAction(
-                        stringResource(R.string.update_open),
-                        primary = true,
-                        onClick = { onOpen(result.release.url) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-/** 用浏览器打开链接；没有浏览器时静默失败（不值得为一步跳转崩掉整个设置页）。 */
 private fun openInBrowser(context: android.content.Context, url: String) {
     runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
 }
@@ -3856,7 +3917,7 @@ internal fun TextInputDialog(
 }
 
 @Composable
-private fun TextAction(
+internal fun TextAction(
     text: String,
     onClick: () -> Unit,
     primary: Boolean = false,
