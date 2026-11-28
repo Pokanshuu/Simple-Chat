@@ -9,6 +9,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.unit.dp
+import com.simplechat.app.ui.theme.ChatColors
 import com.simplechat.app.ui.theme.LocalChatColors
 
 /**
@@ -39,8 +40,26 @@ internal val ThinkingContentInset = ThinkingGutterWidth + ThinkingGutterGap
 
 private val ThinkingDotSize = 7.dp
 private val ThinkingDotTop = 6.dp
-private val ThinkingLineWidth = 2.dp
+
+/**
+ * 思考竖线宽度（docs/42 §52.8.1）。
+ *
+ * 2dp → 1.5dp：3x 屏 4.5px、2x 屏 3px，仍是一条清晰细线；取 1dp 的话
+ * mdpi 只有 1px，低 DPI 设备上会时隐时现。只缩线宽、**不动槽位**，
+ * 所以正文左缘/换行结果与改动前逐字一致。
+ */
+private val ThinkingLineWidth = 1.5.dp
 private val ThinkingLineGap = 4.dp
+
+/**
+ * OpenAI 通道（无圆点）的思考竖线颜色。
+ *
+ * 线宽从 3dp 减到 1.5dp 后，同一份 `processBar` 会淡到几乎看不见，
+ * 因此按"宽度 × alpha 守恒"把 alpha 翻倍（上限 0.6 防止自定义主题过实），
+ * 跟随浅/深色与主题文件自动变化。
+ */
+internal fun thinkingRailColor(colors: ChatColors): Color =
+    colors.processBar.copy(alpha = (colors.processBar.alpha * 2f).coerceAtMost(0.6f))
 
 /**
  * 画一列「圆点 + 竖线」。

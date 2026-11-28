@@ -247,6 +247,13 @@
     <string name="theme_panel_accent_opacity">Theme color intensity</string>
     <string name="theme_wallpaper_options">Wallpaper options</string>
     <string name="settings_auto_collapse">Auto-collapse thinking</string>
+    <string name="settings_thinking_expand">Show thinking</string>
+    <string name="settings_thinking_during">While generating</string>
+    <string name="settings_thinking_after">After the reply starts</string>
+    <string name="settings_thinking_during_full">Show all</string>
+    <string name="settings_thinking_during_partial">Show the last few lines</string>
+    <string name="settings_thinking_after_expand">Keep expanded</string>
+    <string name="settings_thinking_after_collapse">Collapse</string>
     <string name="settings_hold_to_talk">Hold input to talk</string>
     <string name="settings_search_inactive_branches">Search inactive branches</string>
     <string name="generation_channel">Generation progress</string>
@@ -812,6 +819,7 @@
     <string name="thinking_done">Finished thinking</string>
     <string name="thinking_done_seconds">Thought for %1$d sec</string>
     <string name="thinking_stopped">Stopped</string>
+    <string name="thinking_expand_all">Show all</string>
 
     <!-- Safety refusal -->
 

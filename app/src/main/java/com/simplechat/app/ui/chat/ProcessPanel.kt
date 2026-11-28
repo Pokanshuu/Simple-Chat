@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -34,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
@@ -44,7 +46,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.R
 import com.simplechat.app.data.Res
@@ -84,6 +88,10 @@ fun ProcessPanel(
     expanded: Boolean,
     onToggleExpand: () -> Unit,
     modifier: Modifier = Modifier,
+    /** 生成中只显示尾巴时，溢出是否显示「展开全部」胶囊（docs/42 组合 B/C）。 */
+    allowExpandAll: Boolean = false,
+    /** 用户点了「展开全部」—— 写入手动覆盖，本轮不再自动折叠。 */
+    onExpandAll: () -> Unit = {},
 ) {
     val colors = LocalChatColors.current
 
@@ -92,10 +100,10 @@ fun ProcessPanel(
             .fillMaxWidth()
             // 思考尾部流式期间禁用尺寸动画：animateContentSize 追不上每几十毫秒一次的
             // 增量，会让高度持续滞后，把最新的那行裁掉。
-            // 折叠 / 展开 / 思维链结束时的收缩都走动画 —— **时长与气泡同一档**，
-            // 两处都是"折叠"，节奏不一致会很明显。
+            // 折叠 / 展开 / 思维链结束时的收缩都走动画 —— **时长与气泡同一档**；
+            // 长文本展开瞬时（逐帧重排长思考必然掉帧，docs/42 §52.7.3）。
             .then(
-                if (reasoningStreaming) {
+                if (reasoningStreaming || (expanded && reasoning.length >= 4000)) {
                     Modifier
                 } else {
                     Modifier.animateContentSize(tween(FoldAnimMs, easing = MotionEasing))
@@ -114,10 +122,16 @@ fun ProcessPanel(
         Spacer(Modifier.size(8.dp))
 
         when {
-            reasoningStreaming -> TailContent(reasoning)
-            expanded && reasoning.length > LARGE_MESSAGE_CHARS -> LargeMessageBody(reasoning, null)
-            expanded -> FullContent(reasoning)
-            else -> Unit
+            // 设置里选了「生成中全部展开」：全文可见、随流增长（分段渲染，见 StreamingFullContent）
+            reasoningStreaming && expanded -> StreamingFullContent(reasoning)
+            reasoningStreaming -> TailContent(
+                reasoning,
+                allowExpandAll = allowExpandAll,
+                onExpandAll = onExpandAll,
+            )
+            !expanded -> Unit
+            reasoning.length > LARGE_MESSAGE_CHARS -> LargeMessageBody(reasoning, null)
+            else -> FullContent(reasoning)
         }
     }
 }
@@ -135,9 +149,16 @@ fun ProcessPanel(
  *   OpenAI 通道保持默认的 3dp 竖线 —— 它的展开态也是 3dp，两态自洽。
  */
 @Composable
-internal fun TailContent(reasoning: String, gutter: Boolean = false) {
+internal fun TailContent(
+    reasoning: String,
+    gutter: Boolean = false,
+    /** 溢出时是否显示「展开全部」胶囊（仅"打开 + 显示部分"档）。 */
+    allowExpandAll: Boolean = false,
+    onExpandAll: () -> Unit = {},
+) {
     val colors = LocalChatColors.current
     val density = LocalDensity.current
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val maxPx = with(density) { TailHeight.toPx() }
 
     /*
@@ -182,9 +203,11 @@ internal fun TailContent(reasoning: String, gutter: Boolean = false) {
                     // 左侧竖线用绘制实现：内容高度是动态的，用 fillMaxHeight 会拿不到约束
                     .drawBehind {
                         if (gutter) return@drawBehind
-                        val barWidth = 3.dp.toPx()
+                        // 1.5dp 细线（原 3dp）；RTL 下贴物理右缘，与镜像后的文字内缩对齐。
+                        val barWidth = 1.5.dp.toPx()
                         drawRoundRect(
-                            color = colors.processBar,
+                            color = thinkingRailColor(colors),
+                            topLeft = Offset(if (rtl) size.width - barWidth else 0f, 0f),
                             size = Size(barWidth, size.height),
                             cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f),
                         )
@@ -207,6 +230,39 @@ internal fun TailContent(reasoning: String, gutter: Boolean = false) {
         if (gutter) {
             ThinkingGutter(modifier = Modifier.matchParentSize())
         }
+
+        // B/C 档：只显示尾巴且内容溢出时，给一枚「展开全部」胶囊 —— 流式中唯一的逐条入口。
+        if (allowExpandAll && overflowing) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .minimumInteractiveComponentSize(),
+                contentAlignment = Alignment.BottomEnd,
+            ) {
+                ExpandAllPill(onClick = onExpandAll)
+            }
+        }
+    }
+}
+
+/** 「展开全部」胶囊：视觉 24dp、整块 48dp 触控（docs/42 §52.6.4）。 */
+@Composable
+private fun ExpandAllPill(onClick: () -> Unit) {
+    val colors = LocalChatColors.current
+    Row(
+        modifier = Modifier
+            .clip(PillShape)
+            .background(colors.card.copy(alpha = 0.72f))
+            .clickable(onClick = onClick)
+            .heightIn(min = 24.dp)
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(R.string.thinking_expand_all),
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.processText,
+        )
     }
 }
 
@@ -223,12 +279,13 @@ private fun FullContent(reasoning: String) {
     ) {
         Box(
             modifier = Modifier
-                .width(3.dp)
+                .width(1.5.dp)
                 .fillMaxHeight()
-                .clip(RoundedCornerShape(2.dp))
-                .background(colors.processBar),
+                .clip(RoundedCornerShape(0.75.dp))
+                .background(thinkingRailColor(colors)),
         )
-        Spacer(Modifier.width(12.dp))
+        // 12dp → 13.5dp：线宽减掉的一半补回间距，正文左缘零位移。
+        Spacer(Modifier.width(13.5.dp))
         Text(
             text = reasoning,
             style = ProcessTextStyle,
@@ -236,6 +293,42 @@ private fun FullContent(reasoning: String) {
             modifier = Modifier.weight(1f).then(searchDecoration),
             onTextLayout = onTextLayout,
         )
+    }
+}
+
+/**
+ * 生成中「全部展开」：全文可见、随流增长。
+ *
+ * 不直接把整段塞进一个 `Text`：单 `Text` 长文本每帧重排会掉帧，且超过约 5 屏后
+ * 命中测试失效。按块切分后只有最后一块随流变化，前面块字符串稳定即跳过重排
+ * （docs/42 §52.10.2）。
+ */
+@Composable
+private fun StreamingFullContent(reasoning: String) {
+    val colors = LocalChatColors.current
+    val revealed = rememberSmoothReveal(streaming = true, value = reasoning)
+    val chunks = remember(revealed) { textChunks(revealed) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min),
+    ) {
+        Box(
+            modifier = Modifier
+                .width(1.5.dp)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(0.75.dp))
+                .background(thinkingRailColor(colors)),
+        )
+        Spacer(Modifier.width(13.5.dp))
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
+        ) {
+            chunks.forEach { chunk ->
+                Text(text = chunk, style = ProcessTextStyle, color = colors.processText)
+            }
+        }
     }
 }
 

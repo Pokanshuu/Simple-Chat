@@ -1350,7 +1350,9 @@ fun ChatScreen(
                             },
                             speakingId = if (readAloudAvailable) speaker.speakingId else null,
                             readAloudAvailable = readAloudAvailable,
-                            autoCollapseThinking = vm.autoCollapseThinking,
+                            thinkingDisplay = vm.thinkingDisplay,
+                            thinkingOverrides = vm.thinkingOverrides,
+                            onSetThinkingExpanded = vm::setThinkingExpanded,
                             onSpeak = { message ->
                                 // 朗读正文（不是时间线里的过程文字）：用户要听的是回答本身
                                 if (readAloudAvailable) speaker.toggle(message.id, message.content)

@@ -249,6 +249,13 @@
     <string name="theme_panel_accent_opacity">主题色浓度</string>
     <string name="theme_wallpaper_options">壁纸选项</string>
     <string name="settings_auto_collapse">自动折叠思考内容</string>
+    <string name="settings_thinking_expand">展开思考过程</string>
+    <string name="settings_thinking_during">生成中</string>
+    <string name="settings_thinking_after">生成结束</string>
+    <string name="settings_thinking_during_full">全部展开</string>
+    <string name="settings_thinking_during_partial">显示部分（最后约 4 行）</string>
+    <string name="settings_thinking_after_expand">保持展开</string>
+    <string name="settings_thinking_after_collapse">自动折叠</string>
     <string name="settings_hold_to_talk">长按输入框说话</string>
     <string name="settings_search_inactive_branches">搜索非当前分支</string>
     <string name="generation_channel">生成进度</string>
@@ -825,6 +832,7 @@
     <string name="thinking_done">已思考</string>
     <string name="thinking_done_seconds">已思考（用时 %1$d 秒）</string>
     <string name="thinking_stopped">已停止</string>
+    <string name="thinking_expand_all">展开全部</string>
 
     <!-- 安全拒绝 -->
 

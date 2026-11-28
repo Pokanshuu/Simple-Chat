@@ -178,8 +178,10 @@ data class StoredSettings(
     val fontScale: Float = 1.0f,
     /** 字号是否跟随系统辅助功能设置。 */
     val followSystemFont: Boolean = true,
-    /** 思考内容是否自动折叠（关闭则默认展开，需手动收起）。 */
+    /** 思考内容是否自动折叠（关闭则默认展开，需手动收起）。旧键，只用于迁移与降级镜像。 */
     val autoCollapseThinking: Boolean = true,
+    /** 思考过程展示策略：总开关 + 生成中 / 生成结束两阶段。 */
+    val thinkingDisplay: ThinkingDisplaySettings = ThinkingDisplaySettings(),
     /** 长按输入框开始语音输入（关闭后长按不再触发）。 */
     val holdToTalk: Boolean = true,
     /**
@@ -344,6 +346,10 @@ class SettingsStore(
 ) {
 
     val flow: Flow<StoredSettings> = preferences.data.map { prefs ->
+        // 思考策略：新键优先；没有新键时按旧键折算一次（老用户升级后行为必须与旧版一致）。
+        val thinkingDisplay = prefs[Keys.THINKING_DISPLAY]?.let { raw ->
+            runCatching { apiProfileJson.decodeFromString<ThinkingDisplaySettings>(raw) }.getOrNull()
+        } ?: ThinkingDisplaySettings.fromLegacyAutoCollapse(prefs[Keys.AUTO_COLLAPSE_THINKING])
         StoredSettings(
             providerId = prefs[Keys.PROVIDER] ?: StoredSettings().providerId,
             baseUrl = prefs[Keys.BASE_URL] ?: StoredSettings().baseUrl,
@@ -370,8 +376,8 @@ class SettingsStore(
             fontScale = prefs[Keys.FONT_SCALE] ?: StoredSettings().fontScale,
             followSystemFont = prefs[Keys.FOLLOW_SYSTEM_FONT]
                 ?: StoredSettings().followSystemFont,
-            autoCollapseThinking = prefs[Keys.AUTO_COLLAPSE_THINKING]
-                ?: StoredSettings().autoCollapseThinking,
+            autoCollapseThinking = thinkingDisplay.effectiveAfter() == ThinkingAfter.COLLAPSE,
+            thinkingDisplay = thinkingDisplay,
             holdToTalk = prefs[Keys.HOLD_TO_TALK] ?: StoredSettings().holdToTalk,
             crossChatMemory = prefs[Keys.CROSS_CHAT_MEMORY] ?: StoredSettings().crossChatMemory,
             crossChatMemoryLimit = prefs[Keys.CROSS_CHAT_MEMORY_LIMIT]
@@ -588,7 +594,24 @@ class SettingsStore(
     }
 
     suspend fun setAutoCollapseThinking(enabled: Boolean) {
-        preferences.edit { it[Keys.AUTO_COLLAPSE_THINKING] = enabled }
+        // 旧入口：等价于"生成结束是否折叠"这一半策略，保留给旧调用方。
+        setThinkingDisplay(StoredSettings().thinkingDisplay.copy(
+            expand = !enabled,
+            during = if (enabled) ThinkingDuring.FULL else ThinkingDuring.PARTIAL,
+            after = if (enabled) ThinkingAfter.COLLAPSE else ThinkingAfter.EXPAND,
+        ))
+    }
+
+    /**
+     * 写入思考展示策略，并把旧键镜像成"结束后是否折叠"。
+     *
+     * 镜像让用户降级回旧版本时，至少这一半行为仍然合理；新版本读取时新键优先。
+     */
+    suspend fun setThinkingDisplay(settings: ThinkingDisplaySettings) {
+        preferences.edit {
+            it[Keys.THINKING_DISPLAY] = apiProfileJson.encodeToString(settings)
+            it[Keys.AUTO_COLLAPSE_THINKING] = settings.effectiveAfter() == ThinkingAfter.COLLAPSE
+        }
     }
 
     suspend fun setHoldToTalk(enabled: Boolean) {
@@ -1023,6 +1046,9 @@ class SettingsStore(
         val FONT_SCALE = floatPreferencesKey("font_scale")
         val FOLLOW_SYSTEM_FONT = booleanPreferencesKey("follow_system_font")
         val AUTO_COLLAPSE_THINKING = booleanPreferencesKey("auto_collapse_thinking")
+
+        /** 思考展示策略（JSON blob：总开关 + 生成中 / 生成结束）。 */
+        val THINKING_DISPLAY = stringPreferencesKey("thinking_display")
         val HOLD_TO_TALK = booleanPreferencesKey("hold_to_talk")
         val CROSS_CHAT_MEMORY = booleanPreferencesKey("cross_chat_memory")
         val CROSS_CHAT_MEMORY_LIMIT = intPreferencesKey("cross_chat_memory_limit")

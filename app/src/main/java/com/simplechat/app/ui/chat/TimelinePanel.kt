@@ -2,6 +2,7 @@ package com.simplechat.app.ui.chat
 
 import androidx.compose.animation.AnimatedContent
 import com.simplechat.app.ui.markdown.rememberSearchTextDecoration
+import com.simplechat.app.ui.markdown.rememberSmoothReveal
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -73,6 +74,11 @@ fun TimelinePanel(
     onOpenSources: (List<SourceRef>) -> Unit,
     modifier: Modifier = Modifier,
     hasGeneratedImage: Boolean = false,
+    /** 生成中是否也全文展开思考段（设置里「生成中 → 全部展开」）。 */
+    duringFull: Boolean = false,
+    /** 生成中只显示尾巴时，溢出是否显示「展开全部」胶囊。 */
+    allowExpandAll: Boolean = false,
+    onExpandAll: () -> Unit = {},
 ) {
     val colors = LocalChatColors.current
     val hasAnswer = view.hasAnswer || hasGeneratedImage
@@ -106,7 +112,12 @@ fun TimelinePanel(
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 view.steps.forEach { step ->
                     when (step) {
-                        is TimelineStep.Thinking -> ThinkingStep(step)
+                        is TimelineStep.Thinking -> ThinkingStep(
+                            step = step,
+                            duringFull = duringFull,
+                            allowExpandAll = allowExpandAll,
+                            onExpandAll = onExpandAll,
+                        )
                         is TimelineStep.Preamble -> AnimatedContent(
                             targetState = step.markdown,
                             transitionSpec = {
@@ -185,9 +196,18 @@ private fun timelineHeader(view: TimelineView, streaming: Boolean, hasAnswer: Bo
  * 左缘、线宽、线色、圆点位置完全一致，切换时不会跳版。
  */
 @Composable
-private fun ThinkingStep(step: TimelineStep.Thinking) {
-    if (step.active) {
-        TailContent(step.text, gutter = true)
+private fun ThinkingStep(
+    step: TimelineStep.Thinking,
+    duringFull: Boolean = false,
+    allowExpandAll: Boolean = false,
+    onExpandAll: () -> Unit = {},
+) {
+    if (step.active && !duringFull) {
+        TailContent(step.text, gutter = true, allowExpandAll = allowExpandAll, onExpandAll = onExpandAll)
+        return
+    }
+    if (step.active && duringFull) {
+        StreamingThinkingFull(step.text)
         return
     }
     val colors = LocalChatColors.current
@@ -208,6 +228,30 @@ private fun ThinkingStep(step: TimelineStep.Thinking) {
             modifier = Modifier.weight(1f).then(searchDecoration),
             onTextLayout = onTextLayout,
         )
+    }
+}
+
+/**
+ * 生成中「全部展开」的思考段（扩展通道）。
+ *
+ * 与 OpenAI 通道同样的分段策略：只有最后一块随流变化，前面块一旦稳定就跳过重排。
+ */
+@Composable
+private fun StreamingThinkingFull(text: String) {
+    val colors = LocalChatColors.current
+    val revealed = rememberSmoothReveal(streaming = true, value = text)
+    val chunks = remember(revealed) { textChunks(revealed) }
+    Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+        ThinkingGutter(Modifier.width(ThinkingGutterWidth).fillMaxHeight())
+        Spacer(Modifier.width(ThinkingGutterGap))
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
+        ) {
+            chunks.forEach { chunk ->
+                Text(text = chunk, style = ProcessTextStyle, color = colors.processText)
+            }
+        }
     }
 }
 

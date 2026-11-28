@@ -32,6 +32,8 @@ import com.simplechat.app.data.imageAspectRatios
 import com.simplechat.app.data.imageSizeForRatio
 import com.simplechat.app.data.SettingsStore
 import com.simplechat.app.data.StoredSettings
+import com.simplechat.app.data.ThinkingDisplaySettings
+import com.simplechat.app.data.ThinkingOverrideLimit
 import com.simplechat.app.data.TITLE_MATERIAL_CHARS
 import com.simplechat.app.data.TITLE_MAX_TOKENS
 import com.simplechat.app.data.isAutoTitle
@@ -413,14 +415,39 @@ class ChatViewModel(
         ?.takeIf { it.profileId == stored.activeApiProfileId }?.enabled ?: stored.webSearch
 
     /**
-     * 思考内容是否在**正文开始时自动收起**（全局显示设置）。
+     * 思考过程展示策略（设置页「对话行为」）。
      *
-     * 语义定案见 `TODO.md`：开着 → 正文一出现就收成一行「已深度思考 · N 秒」；
-     * 关掉 → 全文保持展开，想收自己点。**只影响定稿后的初态与自动收起**，
-     * 流式期间的尾巴模式（只看最后几行）与它无关。
+     * 只影响展示：生成中看 [ThinkingDisplaySettings.effectiveDuring]，
+     * 思维链收口后看 [ThinkingDisplaySettings.effectiveAfter]。
      */
-    var autoCollapseThinking by mutableStateOf(true)
+    var thinkingDisplay by mutableStateOf(ThinkingDisplaySettings())
         private set
+
+    /**
+     * 逐条手动展开状态：`messageId -> 是否展开`。
+     *
+     * 纯 UI 瞬态，只活在进程内：滑出屏幕、切换会话、旋转都不丢；
+     * 进程重建后回到全局策略（与流式状态不落库同一哲学，见 docs/42 §52.9）。
+     */
+    var thinkingOverrides by mutableStateOf<Map<String, Boolean>>(emptyMap())
+        private set
+
+    /** 用户手动展开 / 折叠某条消息的思考面板。 */
+    fun setThinkingExpanded(messageId: String, expanded: Boolean) {
+        if (thinkingOverrides.size >= ThinkingOverrideLimit && messageId !in thinkingOverrides) {
+            // 超出上限时按写入顺序淘汰最旧的一条，防止长会话无限增长。
+            val kept = thinkingOverrides.entries.drop(thinkingOverrides.size - ThinkingOverrideLimit + 1)
+                .associate { it.key to it.value }
+            thinkingOverrides = kept + (messageId to expanded)
+        } else {
+            thinkingOverrides = thinkingOverrides + (messageId to expanded)
+        }
+    }
+
+    /** 丢弃某条消息的手动状态（重试同 id 重来时调用）。 */
+    fun clearThinkingOverride(messageId: String) {
+        if (messageId in thinkingOverrides) thinkingOverrides = thinkingOverrides - messageId
+    }
 
     /** 长按输入框开始语音输入（设置页可关）。 */
     var holdToTalk by mutableStateOf(true)
@@ -642,7 +669,7 @@ class ChatViewModel(
                 pendingSwitch.writeId == value.webSearchWriteId)) {
             pendingSearchSwitch = null
         }
-        autoCollapseThinking = value.autoCollapseThinking
+        thinkingDisplay = value.thinkingDisplay
         holdToTalk = value.holdToTalk
         loadingWordsUseThemeColor = value.loadingWordsUseThemeColor
         ttsVoiceName = value.ttsVoiceName
@@ -1826,6 +1853,8 @@ class ChatViewModel(
                  */
                 invalidateCompactionCovering(conversationId, target.id)
                 repository.resetForRetry(target.id, settings.model.id)
+                // 同 id 重来：上一轮的手动展开状态不能继承到新一轮。
+                clearThinkingOverride(target.id)
                 reloadPath(conversationId)
                 startStream(conversationId, target.id, omitAttachmentsAndTools = omitAttachmentsAndTools)
             } finally {

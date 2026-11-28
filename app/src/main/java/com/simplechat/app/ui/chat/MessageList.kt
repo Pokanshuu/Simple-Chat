@@ -85,6 +85,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.simplechat.app.R
 import com.simplechat.app.data.Attachment
+import com.simplechat.app.data.ThinkingDisplaySettings
+import com.simplechat.app.data.ThinkingDuring
+import com.simplechat.app.data.resolveThinkingExpanded
 import com.simplechat.app.data.TokenEstimate
 import com.simplechat.app.ui.common.ReadAloudEnabled
 import com.simplechat.app.ui.common.FoldAnimMs
@@ -189,13 +192,16 @@ fun MessageList(
      */
     onFoldToggle: () -> Unit = {},
     /**
-     * 思考内容是否在正文开始时自动收起（全局显示设置）。
+     * 思考过程展示策略（设置页「对话行为」）。
      *
-     * 只决定**初态**：开着 → 收成一行摘要；关掉 → 保持展开。
-     * 它并进 [AssistantBlock] 里 `remember` 的 key，所以设置一改，
-     * 连历史消息的初态也跟着变（用户在设置里刚改完，回头看旧会话该是新行为）。
+     * 只决定**没有手动覆盖时**的展开状态：生成中看 `effectiveDuring()`，
+     * 思维链收口后看 `effectiveAfter()`。
      */
-    autoCollapseThinking: Boolean = true,
+    thinkingDisplay: ThinkingDisplaySettings = ThinkingDisplaySettings(),
+    /** 逐条手动展开状态：`messageId -> 是否展开`，由 ViewModel 持有（滑走再滑回不丢）。 */
+    thinkingOverrides: Map<String, Boolean> = emptyMap(),
+    /** 用户手动展开 / 折叠某条消息的思考面板（写回 ViewModel 的覆盖表）。 */
+    onSetThinkingExpanded: (String, Boolean) -> Unit = { _, _ -> },
     searchTarget: SearchTarget? = null,
     onDismissSearch: () -> Unit = {},
     searchBottomObstructionPx: () -> Int = { 0 },
@@ -366,7 +372,9 @@ fun MessageList(
                 canContinue = supportsContinuation && canContinueReply(message, isLastOnPath = entry.lastOnPath),
                 speakingId = speakingId,
                 readAloudAvailable = readAloudAvailable,
-                autoCollapseThinking = autoCollapseThinking,
+                thinkingDisplay = thinkingDisplay,
+                thinkingOverrides = thinkingOverrides,
+                onSetThinkingExpanded = onSetThinkingExpanded,
                 /*
                  * 折叠/展开**不需要任何视口补偿**（顶部为原点）。
                  *
@@ -471,7 +479,9 @@ private fun MessageRow(
     canContinue: Boolean,
     speakingId: String?,
     readAloudAvailable: Boolean,
-    autoCollapseThinking: Boolean,
+    thinkingDisplay: ThinkingDisplaySettings,
+    thinkingOverrides: Map<String, Boolean>,
+    onSetThinkingExpanded: (String, Boolean) -> Unit,
     onTogglePeek: () -> Unit,
     onCopy: () -> Unit,
     onRegenerate: () -> Unit,
@@ -654,7 +664,9 @@ private fun MessageRow(
                 interactive = actionable && !selectionActive,
                 selecting = selecting,
                 selectionState = selectionState,
-                autoCollapseThinking = autoCollapseThinking,
+                thinkingDisplay = thinkingDisplay,
+                thinkingOverrides = thinkingOverrides,
+                onSetThinkingExpanded = onSetThinkingExpanded,
                 reasoningSearchRequest = search?.takeIf { it.reasoningMatch }?.request,
                 // 点一下 = 看这条是谁写的、占多少 token（再点收起）
                 onClick = onTogglePeek,
@@ -984,25 +996,36 @@ fun AssistantBlock(
      * 用户展开 / 收起思考面板时调用 —— 原样转达给 `ChatScreen`（见 `MessageList` 的同名参数）。
      */
     onFoldToggle: () -> Unit = {},
-    /** 思考内容是否自动收起；见 `MessageList` 的同名参数。 */
-    autoCollapseThinking: Boolean = true,
+    /** 思考过程展示策略；见 `MessageList` 的同名参数。 */
+    thinkingDisplay: ThinkingDisplaySettings = ThinkingDisplaySettings(),
+    /** 逐条手动展开状态；见 `MessageList` 的同名参数。 */
+    thinkingOverrides: Map<String, Boolean> = emptyMap(),
+    /** 写回某条消息的手动展开状态；见 `MessageList` 的同名参数。 */
+    onSetThinkingExpanded: (String, Boolean) -> Unit = { _, _ -> },
     loadingLabel: String? = null,
     loadingWordsUseThemeColor: Boolean = true,
     reasoningSearchRequest: Long? = null,
 ) {
     /*
-     * 初态由设置决定（`TODO.md` 里那条"只写不读"的开关就是这里接上的）：
-     * 开 = 收起（一行的摘要），关 = 展开（全文可见，想收自己点）。
+     * 展开状态 = 手动覆盖优先，否则跟随全局策略（docs/42 §52.5.3）。
      *
-     * 设置并进 `remember` 的 key：用户刚改完设置回头看旧会话，看到的就是新行为。
-     * 代价是切换设置会把手动展开/收起的状态重置一次 —— 可接受，
-     * 因为那一刻用户要看的正是"这个开关到底有没有用"。
+     * 状态放在 ViewModel 的覆盖表里而不是 `remember`：LazyColumn 的条目离开组合即销毁，
+     * `remember` 会让"滑走再滑回"丢掉用户刚点的展开态。
+     *
+     * 生成中 / 收口后的默认值由策略算：`reasoningStreaming` 一翻转，派生值自动重算，
+     * `ProcessPanel` / `TimelinePanel` 的 `animateContentSize` 就会在那 220ms 里收起或展开 ——
+     * 与"正文出现 = 思考结束"的产品语义同一帧发生，不需要额外的定时器。
      */
-    var reasoningExpanded by remember(autoCollapseThinking) {
-        androidx.compose.runtime.mutableStateOf(!autoCollapseThinking)
-    }
+    val reasoningExpanded = resolveThinkingExpanded(
+        override = thinkingOverrides[message.id],
+        reasoningStreaming = message.reasoningStreaming,
+        policy = thinkingDisplay,
+    )
+    // B/C 档：生成中只显示尾巴时，溢出才给「展开全部」胶囊。
+    val thinkingExpandAll = thinkingDisplay.expand &&
+        thinkingDisplay.effectiveDuring() == ThinkingDuring.PARTIAL
     LaunchedEffect(reasoningSearchRequest) {
-        if (reasoningSearchRequest != null) reasoningExpanded = true
+        if (reasoningSearchRequest != null) onSetThinkingExpanded(message.id, true)
     }
     val hasReasoning = message.hasReasoning
     // 只在等待中的消息首次收到思考文本时渐入，已载入的历史消息直接显示。
@@ -1093,9 +1116,12 @@ fun AssistantBlock(
                         streaming = message.streaming,
                         expanded = reasoningExpanded,
                         onToggleExpand = {
-                            reasoningExpanded = !reasoningExpanded
+                            onSetThinkingExpanded(message.id, !reasoningExpanded)
                             onFoldToggle()
                         },
+                        allowExpandAll = thinkingExpandAll,
+                        onExpandAll = { onSetThinkingExpanded(message.id, true) },
+                        duringFull = thinkingDisplay.effectiveDuring() == ThinkingDuring.FULL,
                         onOpenSources = { sourceSheet = it },
                     )
                     Spacer(Modifier.size(MessageGap))
@@ -1112,9 +1138,11 @@ fun AssistantBlock(
                             reasoningStreaming = message.reasoningStreaming,
                             reasoningSeconds = message.reasoningSeconds,
                             expanded = reasoningExpanded,
+                            allowExpandAll = thinkingExpandAll,
+                            onExpandAll = { onSetThinkingExpanded(message.id, true) },
                             // 点开后先停跟底，避免展开的内容把标题推到屏幕外。
                             onToggleExpand = {
-                                reasoningExpanded = !reasoningExpanded
+                                onSetThinkingExpanded(message.id, !reasoningExpanded)
                                 onFoldToggle()
                             },
                         )

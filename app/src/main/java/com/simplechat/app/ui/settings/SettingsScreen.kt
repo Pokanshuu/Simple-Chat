@@ -108,6 +108,9 @@ import com.simplechat.app.data.ImportMode
 import com.simplechat.app.data.import.DeepSeekShare
 import com.simplechat.app.data.Res
 import com.simplechat.app.data.StoredSettings
+import com.simplechat.app.data.ThinkingAfter
+import com.simplechat.app.data.ThinkingDisplaySettings
+import com.simplechat.app.data.ThinkingDuring
 import com.simplechat.app.data.TokenEstimate
 import com.simplechat.app.data.Diagnostics
 import com.simplechat.app.data.SettingsStore
@@ -817,8 +820,8 @@ internal fun SettingsScreen(
 
                         SettingsPage.CHAT -> ChatBehaviorPage(
                             stored = stored,
-                            onToggleAutoCollapse = {
-                                scope.launch { store.setAutoCollapseThinking(it) }
+                            onSetThinkingDisplay = { display ->
+                                scope.launch { store.setThinkingDisplay(display) }
                             },
                             onOpenSearch = { page = SettingsPage.SEARCH_SETTINGS },
                             onToggleHoldToTalk = {
@@ -1725,20 +1728,21 @@ private fun AppearancePage(
 @Composable
 private fun ChatBehaviorPage(
     stored: StoredSettings,
-    onToggleAutoCollapse: (Boolean) -> Unit,
+    onSetThinkingDisplay: (ThinkingDisplaySettings) -> Unit,
     onOpenSearch: () -> Unit,
     onToggleHoldToTalk: (Boolean) -> Unit,
     onOpenLoadingWords: () -> Unit,
 ) {
+    val thinking = stored.thinkingDisplay
 
     SettingsSectionLabel(stringResource(R.string.settings_group_display))
 
     SettingsCard {
         SettingsSwitchRow(
-            icon = AppIcons.Collapse,
-            label = stringResource(R.string.settings_auto_collapse),
-            checked = stored.autoCollapseThinking,
-            onCheckedChange = onToggleAutoCollapse,
+            icon = AppIcons.Sparkles,
+            label = stringResource(R.string.settings_thinking_expand),
+            checked = thinking.expand,
+            onCheckedChange = { onSetThinkingDisplay(thinking.copy(expand = it)) },
         )
         RowDivider()
         SettingsSwitchRow(
@@ -1755,6 +1759,46 @@ private fun ChatBehaviorPage(
                 else stringResource(R.string.loading_words_count, stored.loadingWords.size),
             onClick = onOpenLoadingWords,
         )
+    }
+
+    /*
+     * 子选项只在总开关打开时出现（不是置灰）：关闭时这一页只有一行，与旧版观感一致；
+     * 打开后两阶段策略各自独立，结构本身说明白了"生成中"和"生成结束"两段。
+     */
+    if (thinking.expand) {
+        SettingsSectionLabel(stringResource(R.string.settings_thinking_during))
+        SettingsCard {
+            SettingsChoiceRow(
+                icon = null,
+                label = stringResource(R.string.settings_thinking_during_full),
+                selected = thinking.during == ThinkingDuring.FULL,
+                onClick = { onSetThinkingDisplay(thinking.copy(during = ThinkingDuring.FULL)) },
+            )
+            RowDivider()
+            SettingsChoiceRow(
+                icon = null,
+                label = stringResource(R.string.settings_thinking_during_partial),
+                selected = thinking.during == ThinkingDuring.PARTIAL,
+                onClick = { onSetThinkingDisplay(thinking.copy(during = ThinkingDuring.PARTIAL)) },
+            )
+        }
+
+        SettingsSectionLabel(stringResource(R.string.settings_thinking_after))
+        SettingsCard {
+            SettingsChoiceRow(
+                icon = null,
+                label = stringResource(R.string.settings_thinking_after_expand),
+                selected = thinking.after == ThinkingAfter.EXPAND,
+                onClick = { onSetThinkingDisplay(thinking.copy(after = ThinkingAfter.EXPAND)) },
+            )
+            RowDivider()
+            SettingsChoiceRow(
+                icon = null,
+                label = stringResource(R.string.settings_thinking_after_collapse),
+                selected = thinking.after == ThinkingAfter.COLLAPSE,
+                onClick = { onSetThinkingDisplay(thinking.copy(after = ThinkingAfter.COLLAPSE)) },
+            )
+        }
     }
 
     SettingsSectionLabel(stringResource(R.string.settings_group_search))
