@@ -7,7 +7,7 @@
 
 ## 文件地图
 
-当前正式版见 [v1.2.5 发布说明](../release-notes/RELEASE_NOTES_v1.2.5.md)，前一正式版见 [v1.2.4 发布说明](../release-notes/RELEASE_NOTES_v1.2.4.md)；当前预发布为 [v1.2.6-beta.5](../release-notes/RELEASE_NOTES_v1.2.6-beta.5.md)。
+当前正式版见 [v1.2.5 发布说明](../release-notes/RELEASE_NOTES_v1.2.5.md)，前一正式版见 [v1.2.4 发布说明](../release-notes/RELEASE_NOTES_v1.2.4.md)；当前预发布为 [v1.2.6-beta.6](../release-notes/RELEASE_NOTES_v1.2.6-beta.6.md)。
 
 欢迎引导及思考强度见[使用说明](25-首次启动引导与思考强度.md)。
 
@@ -76,7 +76,9 @@ v1.2.2 正式版的变更、验证与发布记录见 [v1.2.2 正式版发布记�
 ## 发布与验收记录
 
 - [最新合并审查与修复报告（2026-11-29）](44-最新合并审查与修复报告-2026-11-29.md)：`4f534cf..8a1aa0f` 审查结论、已修复项、验证证据与遗留项。
+- [beta.6 施工审查与验收（2026-11-29）](45-beta6施工审查与验收-2026-11-29.md)：设计规范逐项自检、审查后修复、验收证据与保留偏差。
 - [收藏夹与分享截图验收（2026-11-27）](39-收藏夹与分享截图验收-2026-11-27.md)
+- [v1.2.6-beta.6 预发布说明](../release-notes/RELEASE_NOTES_v1.2.6-beta.6.md)
 - [v1.2.6-beta.5 预发布说明](../release-notes/RELEASE_NOTES_v1.2.6-beta.5.md)
 - [v1.2.6-beta.4 预发布说明](../release-notes/RELEASE_NOTES_v1.2.6-beta.4.md)
 - [v1.2.6-beta.3 预发布说明](../release-notes/RELEASE_NOTES_v1.2.6-beta.3.md)

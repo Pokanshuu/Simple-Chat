@@ -7,7 +7,7 @@
 [![Version](https://img.shields.io/badge/version-1.2.5-blue)](https://github.com/Pokanshuu/Simple-Chat/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-查看 [v1.2.5 正式版发布说明](release-notes/RELEASE_NOTES_v1.2.5.md)，了解主题、壁纸、第三方朗读、回收站和聊天工具。
+查看 [v1.2.5 正式版发布说明](release-notes/RELEASE_NOTES_v1.2.5.md)，了解主题、壁纸、第三方朗读、回收站和聊天工具。当前预发布见 [v1.2.6-beta.6](release-notes/RELEASE_NOTES_v1.2.6-beta.6.md)（早期测试版，请勿日常使用）。
 
 ## 简介
 
