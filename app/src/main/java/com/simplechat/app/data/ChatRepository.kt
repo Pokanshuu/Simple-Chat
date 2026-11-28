@@ -1310,7 +1310,16 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     suspend fun exportBackup(): String = backupJson.encodeToString(fullBackup())
 
     /** File-backed JSON export uses the same bounded message pipeline as ZIP. */
-    suspend fun exportBackup(file: File, onProgress: (Float) -> Unit = {}, onlyConversation: String? = null) = withContext(Dispatchers.IO) {
+    suspend fun exportBackup(
+        file: File,
+        onProgress: (Float) -> Unit = {},
+        onlyConversation: String? = null,
+        /**
+         * 备份里的 `exportedAt`。普通导出用当前时间；**同步分片必须传固定值**，
+         * 否则同一份内容每次导出字节都不同，内容哈希失去"判变化"的意义。
+         */
+        exportedAt: Long = System.currentTimeMillis(),
+    ) = withContext(Dispatchers.IO) {
         db.withTransaction {
             onProgress(0f)
             val rows = if (onlyConversation == null) conversations.getAllRaw()
@@ -1326,7 +1335,7 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             var written = 0
             file.outputStream().buffered().writer(Charsets.UTF_8).use { writer ->
                 writeBackupStream(
-                    writer, System.currentTimeMillis(), headers, presetRows,
+                    writer, exportedAt, headers, presetRows,
                     favoriteFolders = favoriteData.first,
                     favorites = favoriteData.second,
                     attachmentSource = { AttachmentFiles.open(context, it) },
@@ -1343,6 +1352,43 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
             check(written == total) { "Export count mismatch" }
             onProgress(1f)
         }
+    }
+
+    // ── 多端同步分片（docs/40 §50.8）──────────────────────
+
+    /** 同步候选：活动会话参与同步；回收站里的会话既不上传也不传播删除。 */
+    data class SyncConversationInfo(
+        val id: String,
+        val updatedAtMillis: Long,
+        val trashed: Boolean,
+    )
+
+    suspend fun syncConversationInfo(): List<SyncConversationInfo> = withContext(Dispatchers.IO) {
+        conversations.getAllRaw().map { SyncConversationInfo(it.id, it.updatedAt, it.deletedAt != null) }
+    }
+
+    /**
+     * 导出单个会话的同步分片。
+     *
+     * `exportedAt` 固定为 0：同一份内容每次导出的字节必须完全一致，否则内容哈希
+     * 会把"没改过"判成"改过"，每轮同步都变成全量上传。
+     */
+    suspend fun exportSyncShard(conversationId: String, file: File, onProgress: (Float) -> Unit = {}) {
+        val row = withContext(Dispatchers.IO) { conversations.findById(conversationId) }
+            ?: throw AppTextException(R.string.sync_shard_missing)
+        if (row.deletedAt != null) throw AppTextException(R.string.sync_shard_trashed)
+        exportBackup(file, onProgress = onProgress, onlyConversation = conversationId, exportedAt = 0L)
+    }
+
+    /** 导入一个同步分片：按 id 原地替换/新增（[ImportMode.SYNC_APPLY]）。 */
+    suspend fun importSyncShard(
+        file: File,
+        scratchDir: File,
+        mode: ImportMode = ImportMode.SYNC_APPLY,
+        onProgress: (Float) -> Unit = {},
+    ): ImportReport {
+        val (report, _) = importExternal(file, scratchDir, mode, onProgress)
+        return report
     }
 
     suspend fun exportMarkdown(file: File, conversationId: String) = withContext(Dispatchers.IO) {
@@ -2319,6 +2365,21 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
                     conversation = conversation.copy(title = title).withFreshIds(newId)
                     // 与 withFreshIds 的 id 规则保持一致（消息 id 与父子引用一起换）
                     remapId = { old -> if (old.isBlank()) "" else "$newId#$old" }
+                }
+            }
+
+            ImportMode.SYNC_APPLY -> {
+                // 同步：只按 id 定位，同一条会话用远端分片原地替换。
+                // 消息 id 保持不变 → 跨设备收藏/引用还能对得上。
+                val existing = conversations.findExistingId(conversation.id)
+                if (existing != null && existing !in protectedIds) {
+                    // 消息 / 预设挂载 / 压缩摘要靠外键级联；附件引用表不级联，手动清。
+                    conversations.delete(existing)
+                    attachmentRefs.clearAll(listOf(existing))
+                    deleteCompactionCheckpoint(existing)
+                    // 草稿故意保留：用户可能正在这个会话里写东西，同步不该把它清掉。
+                    // 收藏也不 detach：消息 id 未变，重新写入后指针仍然有效。
+                    titles.remove(conversation.title)
                 }
             }
         }

@@ -121,9 +121,11 @@ class ImportModeTest {
     // ── 策略枚举 ────────────────────────────────────────────
 
     @Test
-    fun `导入策略就是菜单里的三项`() {
+    fun `导入菜单三项之外多一个同步专用的按 id 更新模式`() {
+        // 前三个是用户可见的导入菜单；SYNC_APPLY 只给多端同步用（按 id 原地更新），
+        // 不暴露在菜单里 —— 它的身份判定（id）和 REPLACE_SAME（标题）是安全边界。
         assertEquals(
-            listOf("MERGE", "REPLACE_SAME", "RENAME"),
+            listOf("MERGE", "REPLACE_SAME", "RENAME", "SYNC_APPLY"),
             ImportMode.entries.map { it.name },
         )
     }

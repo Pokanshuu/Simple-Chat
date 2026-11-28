@@ -550,6 +550,8 @@
     <string name="err_not_chatbox">Not a Chatbox backup (format=%1$s)</string>
     <string name="err_no_sessions">No importable conversations in this backup</string>
     <string name="err_not_our_backup">Not a backup from this app (format=%1$s)</string>
+    <string name="sync_shard_missing">This conversation no longer exists and cannot be synced</string>
+    <string name="sync_shard_trashed">This conversation is in the trash and is not synced</string>
     <string name="warn_dropped_images">%1$d image(s) could not be retrieved (missing from the archive)</string>
     <string name="warn_single_branch">Chatbox: only the branch in view was imported (its fork semantics differ, so forks were not expanded)</string>
     <string name="import_image_name">Image %1$d×%2$d</string>

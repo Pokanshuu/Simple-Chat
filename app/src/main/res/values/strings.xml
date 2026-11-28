@@ -555,6 +555,8 @@
     <string name="err_not_chatbox">不是 Chatbox 的备份（format=%1$s）</string>
     <string name="err_no_sessions">这份备份里没有可导入的会话</string>
     <string name="err_not_our_backup">不是本应用的备份文件（format=%1$s）</string>
+    <string name="sync_shard_missing">会话已不存在，无法同步</string>
+    <string name="sync_shard_trashed">会话在回收站中，暂不同步</string>
     <string name="warn_dropped_images">有 %1$d 张图片没能取回（归档里没有原件）</string>
     <string name="warn_single_branch">Chatbox 只导入了当时正在看的那条分支（它的分支语义与本地不同，未展开）</string>
     <string name="import_image_name">图片 %1$d×%2$d</string>
