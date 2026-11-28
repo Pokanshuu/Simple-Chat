@@ -526,6 +526,14 @@
     <string name="msg_index_image">(image)</string>
     <string name="msg_index_file">(file · %1$s)</string>
 
+    <!-- ── Scrollbar drag preview ───────────────────────── -->
+    <string name="scroll_preview_thinking">Thinking…</string>
+    <string name="scroll_preview_streaming">Generating…</string>
+    <string name="scroll_preview_failed">Failed to send</string>
+    <string name="scroll_preview_stopped">Stopped</string>
+    <string name="scroll_preview_image_generating">Generating image…</string>
+    <string name="scroll_preview_deleted_branch">(deleted branch)</string>
+
     <!-- ── Backup: sources & import feedback ────────────── -->
     <string name="backup_source_simplechat">SimpleChat backup</string>
     <string name="backup_source_chatbox">Chatbox backup</string>

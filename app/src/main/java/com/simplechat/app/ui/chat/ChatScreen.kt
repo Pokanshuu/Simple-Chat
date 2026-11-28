@@ -759,6 +759,9 @@ fun ChatScreen(
     // Keep the row indices and the messages they index in the same immutable snapshot.
     val renderedMessages = vm.messages.toList()
     val messageRows = messageListEntries(renderedMessages, shareSelection.active)
+    // 可拖拽滚动条 + 跟随胶囊（docs/41）：状态在绘制期读，拖动时不逐帧重组。
+    val scrollBarState = remember { ChatScrollBarState() }
+    val scrollBarPreviewLabels = remember { ScrollBarPreviewLabels() }
     var pathAnchor by remember(listState) { mutableStateOf<MessagePathAnchor?>(null) }
 
     /** 换会话期间列表还没就位 —— 用来决定要不要显示转圈。 */
@@ -1425,15 +1428,15 @@ fun ChatScreen(
                 }
 
                 /*
-                 * 安卓原生的那种细滚动条：滚动时出现、停手淡出。
+                 * 可拖拽的对话滚动条 + 跟随胶囊（docs/41 §51）。
                  *
-                 * 放在消息区这一层、贴右缘；输入栏浮在它上面，淡出后也不碍事。
+                 * 滚动时先细后粗；粗态右侧 32dp 是拖动命中带，拖动时跟一枚显示目标消息
+                 * 首行的胶囊。这一层只画不拦事件 —— 手势挂在下方 Layout 父节点上。
                  */
-                VerticalScrollBar(
-                    state = listState,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .fillMaxHeight(),
+                ChatScrollBar(
+                    state = scrollBarState,
+                    listState = listState,
+                    modifier = Modifier.align(Alignment.CenterEnd),
                 )
 
                 /*
@@ -1973,6 +1976,23 @@ fun ChatScreen(
         Layout(
             modifier = contentWidth
                 .weight(1f)
+                /*
+                 * 滚动条拖动挂在父节点、且在索引手势**之前**：Initial 遍从外到内，
+                 * 滚动条先看到事件并消费；索引手势看到 `isConsumed` 会直接 break。
+                 * 选择文本 / 分享多选 / 索引面板打开时禁用，避免抢掉它们的手势。
+                 */
+                .scrollBarDrag(
+                    state = scrollBarState,
+                    listState = listState,
+                    rowsProvider = { messageRows },
+                    previewProvider = { entry -> scrollBarPreview(entry.message, scrollBarPreviewLabels) },
+                    onDetach = { detached = true },
+                    onResume = {
+                        // 拖到底且没有搜索定位时恢复跟底（与 DragInteraction.Stop 同一语义）。
+                        if (listState.isAtBottom() && vm.searchTarget == null) resumeFollowing()
+                    },
+                    enabled = !shareSelection.active && !textSelection.isActive && !messageIndex.isOpen,
+                )
                 .then(if (shareSelection.active) Modifier else Modifier.messageIndexDrag(messageIndex)),
             contents = listOf(backdrop, backToBottom, composer, overlay),
         ) { (backdrop, backToBottom, composer, overlay), constraints ->

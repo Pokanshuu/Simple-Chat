@@ -531,6 +531,14 @@
     <string name="msg_index_image">（图片）</string>
     <string name="msg_index_file">（文件·%1$s）</string>
 
+    <!-- ── 滚动条拖动胶囊 ───────────────────────────────── -->
+    <string name="scroll_preview_thinking">思考中…</string>
+    <string name="scroll_preview_streaming">生成中…</string>
+    <string name="scroll_preview_failed">发送失败</string>
+    <string name="scroll_preview_stopped">已停止</string>
+    <string name="scroll_preview_image_generating">正在生成图片…</string>
+    <string name="scroll_preview_deleted_branch">（分支已删除）</string>
+
     <!-- ── 备份：来源与导入反馈 ─────────────────────────── -->
     <string name="backup_source_simplechat">SimpleChat 备份</string>
     <string name="backup_source_chatbox">Chatbox 备份</string>
