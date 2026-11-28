@@ -16,6 +16,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -184,6 +185,21 @@ data class StoredSettings(
     val thinkingDisplay: ThinkingDisplaySettings = ThinkingDisplaySettings(),
     /** 时间感知：每轮在请求尾部注入当前时间上下文（docs/43）。 */
     val timeAwareness: Boolean = true,
+    /** 云同步：是否已启用（保存配置即启用）。 */
+    val syncEnabled: Boolean = false,
+    /** WebDAV 服务器地址，如 `https://dav.jianguoyun.com/dav/`。 */
+    val syncBaseUrl: String = "",
+    val syncUsername: String = "",
+    /** 是否已保存应用密码（密文存在与否；明文永远不在这里）。 */
+    val syncHasPassword: Boolean = false,
+    /** 同步根目录（服务器上的子目录）。 */
+    val syncRootDir: String = "SimpleChat",
+    /** 本机设备 id（首次同步生成，退出同步不删）。 */
+    val syncDeviceId: String = "",
+    /** 设备显示名（默认厂商+型号，用户可改）。 */
+    val syncDeviceName: String = "",
+    val syncWifiOnly: Boolean = true,
+    val syncLastAtMillis: Long = 0L,
     /** 长按输入框开始语音输入（关闭后长按不再触发）。 */
     val holdToTalk: Boolean = true,
     /**
@@ -381,6 +397,15 @@ class SettingsStore(
             autoCollapseThinking = thinkingDisplay.effectiveAfter() == ThinkingAfter.COLLAPSE,
             thinkingDisplay = thinkingDisplay,
             timeAwareness = prefs[Keys.TIME_AWARENESS] ?: StoredSettings().timeAwareness,
+            syncEnabled = prefs[Keys.SYNC_ENABLED] ?: false,
+            syncBaseUrl = prefs[Keys.SYNC_BASE_URL].orEmpty(),
+            syncUsername = prefs[Keys.SYNC_USERNAME].orEmpty(),
+            syncHasPassword = !prefs[Keys.SYNC_PASSWORD_ENC].isNullOrBlank(),
+            syncRootDir = prefs[Keys.SYNC_ROOT_DIR] ?: StoredSettings().syncRootDir,
+            syncDeviceId = prefs[Keys.SYNC_DEVICE_ID].orEmpty(),
+            syncDeviceName = prefs[Keys.SYNC_DEVICE_NAME].orEmpty(),
+            syncWifiOnly = prefs[Keys.SYNC_WIFI_ONLY] ?: true,
+            syncLastAtMillis = prefs[Keys.SYNC_LAST_AT] ?: 0L,
             holdToTalk = prefs[Keys.HOLD_TO_TALK] ?: StoredSettings().holdToTalk,
             crossChatMemory = prefs[Keys.CROSS_CHAT_MEMORY] ?: StoredSettings().crossChatMemory,
             crossChatMemoryLimit = prefs[Keys.CROSS_CHAT_MEMORY_LIMIT]
@@ -620,6 +645,91 @@ class SettingsStore(
     /** 时间感知开关（docs/43 §53.13）。 */
     suspend fun setTimeAwareness(enabled: Boolean) {
         preferences.edit { it[Keys.TIME_AWARENESS] = enabled }
+    }
+
+    // ── 云同步配置（docs/40 §50.8.5）──────────────────────
+
+    suspend fun setSyncBaseUrl(url: String) {
+        preferences.edit { it[Keys.SYNC_BASE_URL] = url.trim().trimEnd('/') }
+    }
+
+    suspend fun setSyncUsername(username: String) {
+        preferences.edit { it[Keys.SYNC_USERNAME] = username.trim() }
+    }
+
+    /**
+     * 保存应用密码（只存密文）。
+     *
+     * 空串 = 清除已保存的密码。加密失败时**抛错**而不是回落明文 ——
+     * 同步凭据明文落盘比"同步失败"严重得多。
+     */
+    suspend fun setSyncPassword(password: String) {
+        val trimmed = password.trim()
+        if (trimmed.isEmpty()) {
+            preferences.edit { it.remove(Keys.SYNC_PASSWORD_ENC) }
+            return
+        }
+        val encrypted = SecretBox.encrypt(trimmed)
+            ?: throw AppTextException(com.simplechat.app.R.string.sync_save_failed)
+        preferences.edit { it[Keys.SYNC_PASSWORD_ENC] = encrypted }
+    }
+
+    /** 读回应用密码明文（仅供同步网络层使用，不写日志、不进备份）。 */
+    suspend fun readSyncPassword(): String {
+        val encrypted = preferences.data.first()[Keys.SYNC_PASSWORD_ENC] ?: return ""
+        return runCatching { SecretBox.decrypt(encrypted) }.getOrDefault("")
+    }
+
+    suspend fun setSyncRootDir(dir: String) {
+        val normalized = dir.trim().trim('/').ifEmpty { "SimpleChat" }
+        preferences.edit { it[Keys.SYNC_ROOT_DIR] = normalized }
+    }
+
+    suspend fun setSyncWifiOnly(enabled: Boolean) {
+        preferences.edit { it[Keys.SYNC_WIFI_ONLY] = enabled }
+    }
+
+    suspend fun setSyncEnabled(enabled: Boolean) {
+        preferences.edit { it[Keys.SYNC_ENABLED] = enabled }
+    }
+
+    suspend fun setSyncLastAt(millis: Long) {
+        preferences.edit { it[Keys.SYNC_LAST_AT] = millis }
+    }
+
+    /** 首次同步时生成并记住设备身份；[defaultName] 一般是「厂商 型号」。 */
+    suspend fun ensureSyncDevice(defaultName: String): Pair<String, String> {
+        val snapshot = preferences.data.first()
+        val existingId = snapshot[Keys.SYNC_DEVICE_ID]
+        val existingName = snapshot[Keys.SYNC_DEVICE_NAME]
+        if (!existingId.isNullOrBlank()) {
+            return existingId to (existingName?.takeIf { it.isNotBlank() } ?: defaultName)
+        }
+        val id = java.util.UUID.randomUUID().toString()
+        val name = existingName?.takeIf { it.isNotBlank() } ?: defaultName
+        preferences.edit {
+            it[Keys.SYNC_DEVICE_ID] = id
+            it[Keys.SYNC_DEVICE_NAME] = name
+        }
+        return id to name
+    }
+
+    suspend fun setSyncDeviceName(name: String) {
+        preferences.edit { it[Keys.SYNC_DEVICE_NAME] = name.trim() }
+    }
+
+    /**
+     * 退出同步：清除账号、密码与启用标记；**保留设备 id**，也**不删本地聊天数据**。
+     * 同步状态文件由协调器清空。
+     */
+    suspend fun clearSyncConfig() {
+        preferences.edit {
+            it.remove(Keys.SYNC_BASE_URL)
+            it.remove(Keys.SYNC_USERNAME)
+            it.remove(Keys.SYNC_PASSWORD_ENC)
+            it.remove(Keys.SYNC_LAST_AT)
+            it[Keys.SYNC_ENABLED] = false
+        }
     }
 
     suspend fun setHoldToTalk(enabled: Boolean) {
@@ -1057,6 +1167,19 @@ class SettingsStore(
 
         /** 时间感知：每轮请求尾部注入当前时间上下文。 */
         val TIME_AWARENESS = booleanPreferencesKey("time_awareness")
+
+        // ── 云同步（docs/40）────────────────────────────────
+        val SYNC_ENABLED = booleanPreferencesKey("sync_enabled")
+        val SYNC_BASE_URL = stringPreferencesKey("sync_base_url")
+        val SYNC_USERNAME = stringPreferencesKey("sync_username")
+
+        /** 应用密码的**密文**（SecretBox 加密；明文绝不落盘）。 */
+        val SYNC_PASSWORD_ENC = stringPreferencesKey("sync_password_enc")
+        val SYNC_ROOT_DIR = stringPreferencesKey("sync_root_dir")
+        val SYNC_DEVICE_ID = stringPreferencesKey("sync_device_id")
+        val SYNC_DEVICE_NAME = stringPreferencesKey("sync_device_name")
+        val SYNC_WIFI_ONLY = booleanPreferencesKey("sync_wifi_only")
+        val SYNC_LAST_AT = longPreferencesKey("sync_last_at")
 
         /** 思考展示策略（JSON blob：总开关 + 生成中 / 生成结束）。 */
         val THINKING_DISPLAY = stringPreferencesKey("thinking_display")

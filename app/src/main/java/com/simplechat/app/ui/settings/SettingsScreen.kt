@@ -190,6 +190,8 @@ private enum class SettingsPage(private val parentName: String?) {
     VOICE_API("VOICE"),
     /** 回收站（数据管理 → 二级）。 */
     TRASH("DATA"),
+    /** 云同步（数据管理 → 二级，docs/40）。 */
+    SYNC("DATA"),
     /** 用量与余额：账户余额 + 全部会话累计消耗。 */
     USAGE("ROOT"),
     ABOUT("ROOT"),
@@ -744,6 +746,7 @@ internal fun SettingsScreen(
                 SettingsPage.VOICE -> stringResource(R.string.settings_read_aloud)
                 SettingsPage.VOICE_API -> stringResource(R.string.tts_third_party_api)
                 SettingsPage.TRASH -> stringResource(R.string.trash_title)
+                SettingsPage.SYNC -> stringResource(R.string.settings_group_sync)
                 SettingsPage.USAGE -> stringResource(
                     if (isOfficialDeepSeekEndpoint(stored.baseUrl)) R.string.settings_usage_title else R.string.settings_usage_only,
                 )
@@ -879,6 +882,21 @@ internal fun SettingsScreen(
                             onDeleteAll = { dialog = SettingsDialog.DeleteAll },
                             onOpenTrash = { page = SettingsPage.TRASH },
                             onOpenFavorites = onOpenFavorites,
+                            onOpenSync = { page = SettingsPage.SYNC },
+                        )
+
+                        SettingsPage.SYNC -> SyncSettingsPage(
+                            stored = stored,
+                            coordinator = container.syncCoordinator,
+                            onSetBaseUrl = { scope.launch { store.setSyncBaseUrl(it) } },
+                            onSetUsername = { scope.launch { store.setSyncUsername(it) } },
+                            onSetPassword = { scope.launch { store.setSyncPassword(it) } },
+                            onSetRootDir = { scope.launch { store.setSyncRootDir(it) } },
+                            onClear = {
+                                scope.launch {
+                                    runCatching { container.syncCoordinator.clearConfig() }
+                                }
+                            },
                         )
 
                         SettingsPage.API_PROFILE -> if (editingProfile != null && editingSettings != null) ApiPage(
@@ -2262,6 +2280,7 @@ private fun DataPage(
     onDeleteAll: () -> Unit,
     onOpenTrash: () -> Unit,
     onOpenFavorites: () -> Unit,
+    onOpenSync: () -> Unit,
 ) {
     SettingsSectionLabel(stringResource(R.string.settings_group_backup))
 
@@ -2314,6 +2333,16 @@ private fun DataPage(
             hint = stringResource(R.string.favorites_settings_hint),
             onClick = onOpenFavorites,
             icon = AppIcons.Star,
+        )
+    }
+
+    SettingsSectionLabel(stringResource(R.string.settings_group_sync))
+    SettingsCard {
+        SettingsNavRow(
+            icon = AppIcons.Globe,
+            label = stringResource(R.string.settings_group_sync),
+            value = null,
+            onClick = onOpenSync,
         )
     }
 

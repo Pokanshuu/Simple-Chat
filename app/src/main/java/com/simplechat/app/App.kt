@@ -79,6 +79,11 @@ class AppContainer(private val app: Application) {
 
     val chatRepository: ChatRepository by lazy { ChatRepository(database, app) }
 
+    /** 云同步协调器（docs/40）：网络/编排/数据三层分开，这里只做装配。 */
+    val syncCoordinator: com.simplechat.app.data.sync.SyncCoordinator by lazy {
+        com.simplechat.app.data.sync.SyncCoordinator(app, chatRepository, settingsStore)
+    }
+
     /**
      * OpenCode Go 的路由标识（`x-opencode-session`），安装级稳定即可。
      * 后续会持久化到 DataStore，避免每次启动变化。
