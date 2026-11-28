@@ -254,6 +254,8 @@
     <string name="settings_thinking_during_partial">Show the last few lines</string>
     <string name="settings_thinking_after_expand">Keep expanded</string>
     <string name="settings_thinking_after_collapse">Collapse</string>
+    <string name="settings_group_time">Time</string>
+    <string name="settings_time_awareness">Time awareness</string>
     <string name="settings_hold_to_talk">Hold input to talk</string>
     <string name="settings_search_inactive_branches">Search inactive branches</string>
     <string name="generation_channel">Generation progress</string>

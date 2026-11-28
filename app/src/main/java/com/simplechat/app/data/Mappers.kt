@@ -65,6 +65,7 @@ fun MessageEntity.toUi(): UiMessage = UiMessage(
     cacheHitTokens = cacheHitTokens,
     imageGeneration = imageGeneration,
     imageRequest = ImageRequest.decode(imageRequest),
+    createdAt = createdAt,
 )
 
 fun MessageStatus.toStorage(): String = name

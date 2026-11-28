@@ -7,6 +7,7 @@ import com.simplechat.app.net.ReplyBlock
 import com.simplechat.app.net.imageToolDefinition
 import com.simplechat.app.net.imageToolInstruction
 import com.simplechat.app.net.serverSearchInstruction
+import com.simplechat.app.net.withTrailingTurnNote
 import com.simplechat.app.net.anthropic.AnthropicMessageParam
 import com.simplechat.app.net.anthropic.AnthropicRequestDefaults
 import com.simplechat.app.net.anthropic.AnthropicRequest
@@ -81,6 +82,14 @@ internal fun buildAnthropicRequest(
      * 只有最新一轮问答需要重新 prefill。
      */
     promptCaching: Boolean = false,
+    /**
+     * 本轮时间上下文注记（docs/43 §53.4.2）。
+     *
+     * Anthropic 的 messages 不接受 system 角色，因此追加到**最新一条 user 消息**
+     * 的文本尾部；调用点必须在 [withCacheBreakpoint] 之后追加，否则这段每轮变化的
+     * 文本会被写进缓存断点里。空串时不追加，保证关闭态请求逐字节不变。
+     */
+    turnContextNote: String = "",
 ): AnthropicRequest {
     val flashExtensions = deepSeekExtensions && allowServerTools && model == DEEPSEEK_FLASH
     val messages = mutableListOf<AnthropicMessageParam>()
@@ -204,10 +213,12 @@ internal fun buildAnthropicRequest(
             content = withCacheBreakpoint(outgoingMessages[last].content),
         )
     }
+    // 时间注记必须在 cache 断点之后追加：每轮变化的文本不能进缓存前缀。
+    val messagesWithTime = withTrailingTurnNote(outgoingMessages, turnContextNote)
     return AnthropicRequest(
         model = model,
         system = effectiveToolSystem,
-        messages = outgoingMessages,
+        messages = messagesWithTime,
         thinking = when {
             deepSeekExtensions && thinkingEnabled -> AnthropicThinking.Enabled
             deepSeekExtensions -> AnthropicThinking.Disabled

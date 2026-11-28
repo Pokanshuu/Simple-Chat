@@ -111,6 +111,16 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
      */
     fun observeConversation(id: String): Flow<ConversationEntity?> = conversations.observeById(id)
 
+    /** 时间上下文用：上一条已完成消息的时间（见 docs/43 §53.5）。 */
+    suspend fun lastMessageAtBefore(
+        conversationId: String,
+        beforeMillis: Long,
+        excludeId: String,
+    ): Long? = messages.lastMessageAtBefore(conversationId, beforeMillis, excludeId)
+
+    /** 时间上下文用：会话创建时间；会话不存在时返回 null。 */
+    suspend fun conversationCreatedAt(id: String): Long? = conversations.findById(id)?.createdAt
+
     /** Full-text search across titles and message bodies, optionally including inactive branches. */
     fun searchConversations(
         query: String,

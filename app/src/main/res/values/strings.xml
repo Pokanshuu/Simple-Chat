@@ -256,6 +256,8 @@
     <string name="settings_thinking_during_partial">显示部分（最后约 4 行）</string>
     <string name="settings_thinking_after_expand">保持展开</string>
     <string name="settings_thinking_after_collapse">自动折叠</string>
+    <string name="settings_group_time">时间</string>
+    <string name="settings_time_awareness">时间感知</string>
     <string name="settings_hold_to_talk">长按输入框说话</string>
     <string name="settings_search_inactive_branches">搜索非当前分支</string>
     <string name="generation_channel">生成进度</string>

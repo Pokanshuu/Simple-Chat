@@ -823,6 +823,9 @@ internal fun SettingsScreen(
                             onSetThinkingDisplay = { display ->
                                 scope.launch { store.setThinkingDisplay(display) }
                             },
+                            onToggleTimeAwareness = { enabled ->
+                                scope.launch { store.setTimeAwareness(enabled) }
+                            },
                             onOpenSearch = { page = SettingsPage.SEARCH_SETTINGS },
                             onToggleHoldToTalk = {
                                 scope.launch { store.setHoldToTalk(it) }
@@ -1729,6 +1732,7 @@ private fun AppearancePage(
 private fun ChatBehaviorPage(
     stored: StoredSettings,
     onSetThinkingDisplay: (ThinkingDisplaySettings) -> Unit,
+    onToggleTimeAwareness: (Boolean) -> Unit,
     onOpenSearch: () -> Unit,
     onToggleHoldToTalk: (Boolean) -> Unit,
     onOpenLoadingWords: () -> Unit,
@@ -1799,6 +1803,16 @@ private fun ChatBehaviorPage(
                 onClick = { onSetThinkingDisplay(thinking.copy(after = ThinkingAfter.COLLAPSE)) },
             )
         }
+    }
+
+    SettingsSectionLabel(stringResource(R.string.settings_group_time))
+    SettingsCard {
+        SettingsSwitchRow(
+            icon = AppIcons.Clock,
+            label = stringResource(R.string.settings_time_awareness),
+            checked = stored.timeAwareness,
+            onCheckedChange = onToggleTimeAwareness,
+        )
     }
 
     SettingsSectionLabel(stringResource(R.string.settings_group_search))

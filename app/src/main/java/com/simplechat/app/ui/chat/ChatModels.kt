@@ -318,6 +318,13 @@ data class UiMessage(
     val cacheHitTokens: Int? = null,
     val imageGeneration: Boolean = false,
     val imageRequest: com.simplechat.app.data.ImageRequest? = null,
+    /**
+     * 消息落库时间（`createdAt`，本机时钟）。
+     *
+     * 只读、不参与请求构造以外的任何展示；时间上下文用它算"距上一条消息多久"。
+     * 旧数据或特殊构造处为 0，时间上下文会把它当不可信并省略相对时间句。
+     */
+    val createdAt: Long = 0,
 ) {
     val streaming: Boolean get() = status == MessageStatus.STREAMING
     internal val hasReasoning: Boolean get() = !reasoning.isNullOrBlank()

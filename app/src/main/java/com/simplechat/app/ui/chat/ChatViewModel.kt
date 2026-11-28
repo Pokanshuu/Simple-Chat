@@ -449,6 +449,60 @@ class ChatViewModel(
         if (messageId in thinkingOverrides) thinkingOverrides = thinkingOverrides - messageId
     }
 
+    /** 时间感知开关：每轮在请求尾部注入当前时间上下文（docs/43）。 */
+    var timeAwareness by mutableStateOf(true)
+        private set
+
+    /**
+     * 本轮的时间事实（docs/43 §53.6.1）。
+     *
+     * 同一轮内的多次模型请求（Agent loop / 重试）复用同一份，避免尾注在轮次之间变化破坏缓存；
+     * 新一轮开始时在 [startStream] 清空。不落库。
+     */
+    private var turnTimeFacts: com.simplechat.app.data.TimeFacts? = null
+
+    /**
+     * 本轮时间注记；开关关闭、没有会话或时间不可信时返回空串。
+     *
+     * [includeDate] / [includeWeekday] 在官方 DeepSeek 通道传 false —— 那一路的
+     * `latest_reminder` 已经带了日期与星期，避免模型看到两个可能不一致的来源。
+     */
+    private suspend fun turnTimeNote(includeDate: Boolean, includeWeekday: Boolean): String {
+        val facts = turnTimeFactsInternal() ?: return ""
+        if (!includeDate && !includeWeekday) {
+            return com.simplechat.app.data.TimeContext.buildNote(facts, includeDate = false, includeWeekday = false)
+        }
+        return com.simplechat.app.data.TimeContext.buildNote(
+            facts,
+            includeDate = includeDate,
+            includeWeekday = includeWeekday,
+        )
+    }
+
+    private suspend fun turnTimeFactsInternal(): com.simplechat.app.data.TimeFacts? {
+        turnTimeFacts?.let { return it }
+        if (!timeAwareness) return null
+        val conversationId = currentConversationId ?: return null
+        val now = System.currentTimeMillis()
+        // 本轮正在处理的 user 消息是最新一条；它的时间由库里的 createdAt 提供。
+        val lastUser = messages.lastOrNull { it.role == MessageRole.USER }
+        val before = lastUser?.createdAt?.takeIf { it > 0L } ?: now
+        val exclude = lastUser?.id.orEmpty()
+        val lastMessageAt = runCatching {
+            repository.lastMessageAtBefore(conversationId, before, exclude)
+        }.getOrNull()
+        val conversationStart = runCatching { repository.conversationCreatedAt(conversationId) }.getOrNull()
+        val facts = com.simplechat.app.data.TimeFacts(
+            nowMillis = now,
+            zone = java.time.ZoneId.systemDefault(),
+            cjk = Res.bool(R.bool.ui_is_cjk),
+            lastMessageAtMillis = lastMessageAt,
+            conversationStartMillis = conversationStart,
+        )
+        turnTimeFacts = facts
+        return facts
+    }
+
     /** 长按输入框开始语音输入（设置页可关）。 */
     var holdToTalk by mutableStateOf(true)
         private set
@@ -670,6 +724,7 @@ class ChatViewModel(
             pendingSearchSwitch = null
         }
         thinkingDisplay = value.thinkingDisplay
+        timeAwareness = value.timeAwareness
         holdToTalk = value.holdToTalk
         loadingWordsUseThemeColor = value.loadingWordsUseThemeColor
         ttsVoiceName = value.ttsVoiceName
@@ -2402,6 +2457,8 @@ class ChatViewModel(
         omitAttachmentsAndTools: Boolean = false,
     ) {
         if (conversationId != currentConversationId) return
+        // 新一轮：时间上下文重新取一次（同一轮内的 Agent 多次请求复用）。
+        turnTimeFacts = null
         retrySkipNotice = if (omitAttachmentsAndTools && stored.showRetrySkipNotice) Res.get(R.string.retry_skipped_notice) else null
         lastUsage = null
         /*
@@ -2922,6 +2979,8 @@ class ChatViewModel(
                     }
                 } else {
                     val outgoing = buildRequestMessages(systemContext, route, options, textOnly, memoryText, visualFollowUp)
+                    // 时间上下文：本轮只取一次，Agent 的多次请求复用同一份（docs/43 §53.6.1）。
+                    val timeNote = turnTimeNote(includeDate = true, includeWeekday = true)
                     val builtInFlash = route.officialFlash && !textOnly
                     val readLink = builtInFlash && HttpLink.containsMatchIn(latestQuestion)
                     val title = builtInFlash && shouldRequestTitle()
@@ -2942,6 +3001,7 @@ class ChatViewModel(
                         apiKey = route.apiKey,
                         model = options.model,
                         messages = outgoing + history.chat,
+                        turnContextNote = timeNote,
                         independentWeb = offer,
                         independentFetch = history.requestState.webFetchEnabled,
                         independentSearch = history.requestState.clientSearchEnabled,
@@ -3369,6 +3429,14 @@ class ChatViewModel(
         val officialDeepSeek = isOfficialDeepSeekEndpoint(
             route.baseUrl,
         )
+        /*
+         * 时间上下文：官方 DeepSeek 的 `latest_reminder` 已带日期与星期，
+         * 这里只补时刻/时区/相对间隔，避免两个日期来源打架（docs/43 §53.5.2）。
+         */
+        val timeNote = turnTimeNote(
+            includeDate = !officialDeepSeek,
+            includeWeekday = !officialDeepSeek,
+        )
         return buildAnthropicRequest(
             model = options.model.id,
             systemPrompt = system,
@@ -3386,6 +3454,7 @@ class ChatViewModel(
             includeAttachments = !omitAttachmentsAndTools,
             generateImageTool = generateImageTool,
             promptCaching = com.simplechat.app.net.supportsAnthropicPromptCaching(route.baseUrl),
+            turnContextNote = timeNote,
             temperature = options.temperature.toDouble(),
             topP = options.topP.toDouble(),
         ).also { request ->

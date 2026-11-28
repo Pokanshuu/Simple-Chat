@@ -93,6 +93,14 @@ class ChatApi(
         automaticWebSearchAllowed: Boolean = true,
         onRequestMetadata: ((List<String>, String?) -> Unit)? = null,
         extraInputTokens: Long = 0,
+        /**
+         * 本轮的时间上下文注记（docs/43 §53.4.2）。
+         *
+         * 作为**最后一条**尾部 `system` 指令插入，紧邻最新 user 消息 ——
+         * 系统提示词逐字节稳定，前缀缓存只在最后一段对话上失效。
+         * 空串时不插入任何消息，保证"关闭 = 请求体与旧版本一致"。
+         */
+        turnContextNote: String = "",
     ): Flow<StreamEvent> {
         val flash = isOfficialDeepSeekEndpoint(baseUrl) && model.id == DEEPSEEK_FLASH
         val tools = if (flash) buildList {
@@ -113,6 +121,8 @@ class ChatApi(
             if (serverSearchEnabled || automaticSearch) {
                 add(serverSearchInstruction)
             }
+            // 时间上下文放在指令列表**末尾**（离最新 user 最近），每轮变化只影响尾部。
+            if (turnContextNote.isNotBlank()) add(turnContextNote)
         }
         /*
          * 每轮变化的指令（运行时工具状态、联网阶段、生图说明）插在**最新一条 user 消息之前**，

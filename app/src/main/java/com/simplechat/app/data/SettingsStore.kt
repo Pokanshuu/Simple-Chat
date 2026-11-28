@@ -182,6 +182,8 @@ data class StoredSettings(
     val autoCollapseThinking: Boolean = true,
     /** 思考过程展示策略：总开关 + 生成中 / 生成结束两阶段。 */
     val thinkingDisplay: ThinkingDisplaySettings = ThinkingDisplaySettings(),
+    /** 时间感知：每轮在请求尾部注入当前时间上下文（docs/43）。 */
+    val timeAwareness: Boolean = true,
     /** 长按输入框开始语音输入（关闭后长按不再触发）。 */
     val holdToTalk: Boolean = true,
     /**
@@ -378,6 +380,7 @@ class SettingsStore(
                 ?: StoredSettings().followSystemFont,
             autoCollapseThinking = thinkingDisplay.effectiveAfter() == ThinkingAfter.COLLAPSE,
             thinkingDisplay = thinkingDisplay,
+            timeAwareness = prefs[Keys.TIME_AWARENESS] ?: StoredSettings().timeAwareness,
             holdToTalk = prefs[Keys.HOLD_TO_TALK] ?: StoredSettings().holdToTalk,
             crossChatMemory = prefs[Keys.CROSS_CHAT_MEMORY] ?: StoredSettings().crossChatMemory,
             crossChatMemoryLimit = prefs[Keys.CROSS_CHAT_MEMORY_LIMIT]
@@ -612,6 +615,11 @@ class SettingsStore(
             it[Keys.THINKING_DISPLAY] = apiProfileJson.encodeToString(settings)
             it[Keys.AUTO_COLLAPSE_THINKING] = settings.effectiveAfter() == ThinkingAfter.COLLAPSE
         }
+    }
+
+    /** 时间感知开关（docs/43 §53.13）。 */
+    suspend fun setTimeAwareness(enabled: Boolean) {
+        preferences.edit { it[Keys.TIME_AWARENESS] = enabled }
     }
 
     suspend fun setHoldToTalk(enabled: Boolean) {
@@ -1046,6 +1054,9 @@ class SettingsStore(
         val FONT_SCALE = floatPreferencesKey("font_scale")
         val FOLLOW_SYSTEM_FONT = booleanPreferencesKey("follow_system_font")
         val AUTO_COLLAPSE_THINKING = booleanPreferencesKey("auto_collapse_thinking")
+
+        /** 时间感知：每轮请求尾部注入当前时间上下文。 */
+        val TIME_AWARENESS = booleanPreferencesKey("time_awareness")
 
         /** 思考展示策略（JSON blob：总开关 + 生成中 / 生成结束）。 */
         val THINKING_DISPLAY = stringPreferencesKey("thinking_display")

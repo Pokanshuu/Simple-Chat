@@ -389,6 +389,21 @@ object AppIcons {
         }
     }
 
+    /** 时间（Lucide: clock）—— 时间感知设置入口。 */
+    val Clock: ImageVector by lazy {
+        vector("Clock") {
+            stroke {
+                moveTo(22f, 12f)
+                arcToRelative(10f, 10f, 0f, true, true, -20f, 0f)
+                arcToRelative(10f, 10f, 0f, true, true, 20f, 0f)
+                close()
+                moveTo(12f, 6f)
+                verticalLineTo(12f)
+                lineTo(16f, 14f)
+            }
+        }
+    }
+
     /** 更多（Lucide: ellipsis） */
     val More: ImageVector by lazy {
         vector("More") {

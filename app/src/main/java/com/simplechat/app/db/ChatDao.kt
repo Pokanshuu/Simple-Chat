@@ -241,6 +241,18 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId")
     suspend fun getAllFor(conversationId: String): List<MessageEntity>
 
+    /**
+     * 时间上下文用：本轮之前最近一条消息的时间。
+     *
+     * 按 `createdAt` 倒序取一条，排除本轮正在处理的那条 user（它刚从界面写进来，
+     * 拿它算会永远得到"刚刚"）。不可信的值由调用方过滤。
+     */
+    @Query(
+        "SELECT MAX(createdAt) FROM messages " +
+            "WHERE conversationId = :conversationId AND createdAt < :beforeMillis AND id != :excludeId",
+    )
+    suspend fun lastMessageAtBefore(conversationId: String, beforeMillis: Long, excludeId: String): Long?
+
     @Query("UPDATE messages SET attachments = :attachments, status = :status WHERE id = :id AND status = 'STREAMING'")
     suspend fun attachGeneratedImage(id: String, attachments: String?, status: String): Int
 
