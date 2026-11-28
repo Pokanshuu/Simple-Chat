@@ -563,6 +563,7 @@
     <string name="sync_err_conflict">The remote copy changed on another device, please retry</string>
     <string name="sync_err_busy">The cloud drive is busy, try again later</string>
     <string name="sync_err_network">Network error, check your connection</string>
+    <string name="sync_err_https_required">The sync server must use HTTPS (local debug addresses excepted)</string>
     <string name="sync_err_generic">Unknown error while syncing</string>
     <string name="settings_group_sync">Cloud sync</string>
     <string name="sync_group_account">Account</string>

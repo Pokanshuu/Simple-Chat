@@ -123,6 +123,10 @@ class SyncCoordinator(
         if (config.syncBaseUrl.isBlank() || config.syncUsername.isBlank() || password.isBlank()) {
             throw AppTextException(R.string.sync_not_configured)
         }
+        // WebDAV 会带 Basic 凭据：只允许 HTTPS（本机回环/模拟器宿主的 http 例外，方便调试）。
+        if (!isSecureEndpoint(config.syncBaseUrl)) {
+            throw AppTextException(R.string.sync_err_https_required)
+        }
         val (deviceId, deviceName) = settingsStore.ensureSyncDevice(defaultDeviceName())
         if (!config.syncEnabled) settingsStore.setSyncEnabled(true)
 
@@ -428,6 +432,15 @@ class SyncCoordinator(
         .joinToString(" ")
         .trim()
         .ifEmpty { "Android" }
+
+    /** 同步端点必须走 HTTPS，只有本机调试地址例外（docs/40 §50.10）。 */
+    private fun isSecureEndpoint(baseUrl: String): Boolean {
+        val url = baseUrl.trim().lowercase()
+        if (url.startsWith("https://")) return true
+        if (!url.startsWith("http://")) return false
+        val host = url.removePrefix("http://").substringBefore('/').substringBefore(':')
+        return host == "127.0.0.1" || host == "localhost" || host == "10.0.2.2"
+    }
 }
 
 /** 同步异常 → 可翻译文案（网络层不碰资源，由这里统一映射）。 */

@@ -90,6 +90,8 @@ fun ProcessPanel(
     modifier: Modifier = Modifier,
     /** 生成中只显示尾巴时，溢出是否显示「展开全部」胶囊（docs/42 组合 B/C）。 */
     allowExpandAll: Boolean = false,
+    /** 标题是否可点：分享多选 / 选择文本态下整块不可交互（docs/42 §52.11）。 */
+    toggleEnabled: Boolean = true,
     /** 用户点了「展开全部」—— 写入手动覆盖，本轮不再自动折叠。 */
     onExpandAll: () -> Unit = {},
 ) {
@@ -115,7 +117,7 @@ fun ProcessPanel(
         ThinkingHeader(
             label = thinkingLabel(running = reasoningStreaming, seconds = reasoningSeconds),
             expanded = expanded,
-            enabled = !reasoningStreaming,
+            enabled = toggleEnabled && !reasoningStreaming,
             onToggle = onToggleExpand,
         )
 

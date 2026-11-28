@@ -3468,12 +3468,26 @@ class ChatViewModel(
      *
      * 每次请求现算 —— "今天几号"必须跟着真实时间走，缓存一次就会在跨日之后说谎。
      */
-    private fun latestReminder(): String = createLatestReminder(
-        now = java.time.LocalDateTime.now(),
-        cjk = Res.bool(R.bool.ui_is_cjk),
-        region = stored.locationRegion,
-        languageLabel = Res.get(R.string.prompt_language_name),
-    )
+    /**
+     * 本轮的时间地点提醒。
+     *
+     * 时间基准与时间上下文**共用同一份** [turnTimeFacts]：同一轮里不能让
+     * "今天几号"和"现在几点"来自两次 `now()` —— 跨分钟/跨天的那一帧会出现
+     * 两个互相矛盾的时间来源。关闭时间感知时退回实时时钟（保持旧行为）。
+     */
+    private suspend fun latestReminder(): String {
+        val millis = turnTimeFactsInternal()?.nowMillis ?: System.currentTimeMillis()
+        val now = java.time.LocalDateTime.ofInstant(
+            java.time.Instant.ofEpochMilli(millis),
+            java.time.ZoneId.systemDefault(),
+        )
+        return createLatestReminder(
+            now = now,
+            cjk = Res.bool(R.bool.ui_is_cjk),
+            region = stored.locationRegion,
+            languageLabel = Res.get(R.string.prompt_language_name),
+        )
+    }
 
     /**
      * 这一轮要不要请服务端顺手起个标题。

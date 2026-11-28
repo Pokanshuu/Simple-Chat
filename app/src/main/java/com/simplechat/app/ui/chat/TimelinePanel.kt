@@ -78,6 +78,8 @@ fun TimelinePanel(
     duringFull: Boolean = false,
     /** 生成中只显示尾巴时，溢出是否显示「展开全部」胶囊。 */
     allowExpandAll: Boolean = false,
+    /** 标题是否可点：分享多选 / 选择文本态下整块不可交互（docs/42 §52.11）。 */
+    toggleEnabled: Boolean = true,
     onExpandAll: () -> Unit = {},
 ) {
     val colors = LocalChatColors.current
@@ -101,7 +103,7 @@ fun TimelinePanel(
             ThinkingHeader(
                 label = header.orEmpty(),
                 expanded = expanded,
-                enabled = !running,
+                enabled = toggleEnabled && !running,
                 onToggle = onToggleExpand,
             )
             Spacer(Modifier.size(8.dp))

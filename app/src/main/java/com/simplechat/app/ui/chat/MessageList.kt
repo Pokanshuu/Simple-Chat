@@ -1120,6 +1120,7 @@ fun AssistantBlock(
                             onFoldToggle()
                         },
                         allowExpandAll = thinkingExpandAll,
+                        toggleEnabled = interactive,
                         onExpandAll = { onSetThinkingExpanded(message.id, true) },
                         duringFull = thinkingDisplay.effectiveDuring() == ThinkingDuring.FULL,
                         onOpenSources = { sourceSheet = it },
@@ -1139,6 +1140,7 @@ fun AssistantBlock(
                             reasoningSeconds = message.reasoningSeconds,
                             expanded = reasoningExpanded,
                             allowExpandAll = thinkingExpandAll,
+                        toggleEnabled = interactive,
                             onExpandAll = { onSetThinkingExpanded(message.id, true) },
                             // 点开后先停跟底，避免展开的内容把标题推到屏幕外。
                             onToggleExpand = {

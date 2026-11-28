@@ -568,6 +568,7 @@
     <string name="sync_err_conflict">云端内容已被其他设备修改，请重试</string>
     <string name="sync_err_busy">云盘繁忙，请稍后再试</string>
     <string name="sync_err_network">网络错误，请检查连接</string>
+    <string name="sync_err_https_required">同步地址必须使用 HTTPS（本机调试地址除外）</string>
     <string name="sync_err_generic">同步时发生未知错误</string>
     <string name="settings_group_sync">云同步</string>
     <string name="sync_group_account">账号</string>
