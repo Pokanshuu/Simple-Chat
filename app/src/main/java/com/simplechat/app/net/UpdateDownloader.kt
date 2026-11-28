@@ -57,12 +57,13 @@ object UpdateDownloader {
         onProgress: (Progress) -> Unit,
     ): File = withContext(Dispatchers.IO) {
         val dir = File(context.cacheDir, DIR).apply { mkdirs() }
-        val target = File(dir, asset.name)
+        // 资产名来自网络 JSON，不能直接当路径用（`../databases/...` 会穿出 updates/）。
+        val target = File(dir, safeApkName(asset.name))
 
-        if (target.exists() && verifies(target, asset.sha256)) return@withContext target
+        if (target.exists() && verifies(target, asset)) return@withContext target
 
         val url = mirror.apply(asset.url)
-        val partial = File(dir, "${asset.name}.part")
+        val partial = File(dir, "${target.name}.part")
         partial.delete()
 
         val request = Request.Builder().url(url).get().build()
@@ -70,11 +71,10 @@ object UpdateDownloader {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) throw DownloadException("HTTP ${response.code}")
 
-                val total = response.body?.contentLength()?.takeIf { it > 0 }
+                val total = response.body.contentLength().takeIf { it > 0 }
                     ?: asset.size.takeIf { it > 0 }
                     ?: 0L
-                val source = response.body?.byteStream()
-                    ?: throw DownloadException("响应没有内容")
+                val source = response.body.byteStream()
 
                 partial.outputStream().use { sink ->
                     val buffer = ByteArray(64 * 1024)
@@ -88,6 +88,10 @@ object UpdateDownloader {
                         received += read
                         onProgress(Progress(received, total))
                     }
+                    // 总量已知时按字节数兜底：代理截断/返回错误页不能当成功。
+                    if (total > 0L && received != total) {
+                        throw DownloadException("下载不完整：$received/$total")
+                    }
                 }
             }
         } catch (error: Throwable) {
@@ -95,15 +99,51 @@ object UpdateDownloader {
             throw error
         }
 
-        if (!verifies(partial, asset.sha256)) {
+        if (!verifies(partial, asset)) {
             partial.delete()
             throw DownloadException("校验失败：文件可能没下完")
         }
-        if (!partial.renameTo(target)) {
-            partial.delete()
-            throw IOException("无法保存安装包")
-        }
+        moveIntoPlace(partial, target)
         return@withContext target
+    }
+
+    /**
+     * 把下载完成的 `.part` 变成正式文件。
+     *
+     * `renameTo()` 失败时**不抛异常、只返回 false**；某些容器（鸿蒙 / 卓易通之类
+     * 把私有目录映射到不同挂载点的环境）里同目录 rename 也会失败。这里必须检查
+     * 返回值，失败就退化成流式复制，并核对字节数 —— 任何情况下都不留 0 字节文件。
+     */
+    private fun moveIntoPlace(partial: File, target: File) {
+        if (partial.renameTo(target)) return
+        val expected = partial.length()
+        target.delete()
+        try {
+            partial.inputStream().use { input ->
+                target.outputStream().use { output -> input.copyTo(output, 64 * 1024) }
+            }
+            if (!target.exists() || target.length() != expected) {
+                throw IOException("无法保存安装包")
+            }
+        } catch (error: Throwable) {
+            target.delete()
+            partial.delete()
+            throw error
+        }
+        partial.delete()
+    }
+
+    /**
+     * 服务端文件名 → 安全的本地文件名。
+     *
+     * 只留字母/数字/`.`/`-`/`_`，且必须是 `.apk`；不符合的一律换成 `update.apk`。
+     */
+    internal fun safeApkName(raw: String): String {
+        val name = raw.substringAfterLast('/').substringAfterLast('\\').trim()
+        val valid = name.isNotEmpty() && name.length <= 120 &&
+            name.endsWith(".apk", ignoreCase = true) && !name.startsWith(".") &&
+            name.all { it.isLetterOrDigit() || it == '.' || it == '-' || it == '_' }
+        return if (valid) name else "update.apk"
     }
 
     /** 删除已下载的安装包（用户取消 / 装完后清理）。 */
@@ -118,17 +158,19 @@ object UpdateDownloader {
         File(context.cacheDir, DIR).listFiles()?.sumOf { it.length() } ?: 0L
 
     /**
-     * 校验 sha256。
+     * 校验下载结果。
      *
-     * [expected] 为空时返回 true —— 老 release 没给 digest，不能因此拒绝安装；
-     * 这种情况界面上会明说"未提供校验值"。
+     * 有 sha256 时比哈希；老 release 没给 digest 时退化为比字节数（[asset.size] 已知时），
+     * 两者都没有才放弃校验 —— 但上面的下载循环仍会核对实际收到的字节数。
      */
-    private fun verifies(file: File, expected: String?): Boolean {
-        if (!file.exists()) return false
-        val want = expected?.trim()?.lowercase()
-        if (want.isNullOrEmpty()) return true
-        val actual = runCatching { sha256Of(file) }.getOrNull() ?: return false
-        return actual == want
+    private fun verifies(file: File, asset: UpdateChecker.Asset): Boolean {
+        if (!file.exists() || file.length() == 0L) return false
+        val want = asset.sha256?.trim()?.lowercase()
+        if (!want.isNullOrEmpty()) {
+            val actual = runCatching { sha256Of(file) }.getOrNull() ?: return false
+            return actual == want
+        }
+        return asset.size <= 0L || file.length() == asset.size
     }
 
     private fun sha256Of(file: File): String {

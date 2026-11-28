@@ -57,6 +57,10 @@ interface FavoriteDao {
 
     @Query("SELECT COUNT(*) FROM favorites")
     suspend fun count(): Int
+
+    /** 「删除所有历史对话」一并清空收藏（§48.7.1）。 */
+    @Query("DELETE FROM favorites")
+    suspend fun clearAll()
 }
 
 @Dao
@@ -81,6 +85,10 @@ interface FavoriteFolderDao {
 
     @Query("SELECT COUNT(*) FROM favorite_folders")
     suspend fun count(): Int
+
+    /** 「删除所有历史对话」：自定义夹清空，默认夹保留（§48.7.1）。 */
+    @Query("DELETE FROM favorite_folders WHERE id != 'default'")
+    suspend fun clearCustom()
 }
 
 @Dao
@@ -108,6 +116,10 @@ interface FavoriteMembershipDao {
 
     @Query("SELECT * FROM favorite_memberships WHERE folderId = :folderId")
     suspend fun ofFolder(folderId: String): List<FavoriteMembershipEntity>
+
+    /** 「删除所有历史对话」一并清空归属。 */
+    @Query("DELETE FROM favorite_memberships")
+    suspend fun clearAll()
 }
 
 @Dao
@@ -123,4 +135,12 @@ interface FavoriteMediaDao {
 
     @Query("SELECT COUNT(*) FROM favorite_media WHERE path = :path")
     suspend fun references(path: String): Int
+
+    /** 全部图片路径 —— 「删除所有历史对话」与孤儿清理用。 */
+    @Query("SELECT DISTINCT path FROM favorite_media")
+    suspend fun allPaths(): List<String>
+
+    /** 「删除所有历史对话」一并清空图片登记。 */
+    @Query("DELETE FROM favorite_media")
+    suspend fun clearAll()
 }

@@ -104,6 +104,7 @@
     <string name="error_export_attachment_missing">Some original images could not be read. Check the attachments and try again.</string>
     <string name="export_failed">Export failed: %1$s</string>
     <string name="export_failed_short">Export failed</string>
+    <string name="export_verify_failed">The saved file is empty after writing; the system file manager may not support saving here</string>
     <string name="import_read_failed">Could not read the file</string>
     <string name="list_separator">; </string>
     <string name="import_note_separator"> | </string>
@@ -981,9 +982,7 @@
     <string name="favorites_default">Default</string>
     <string name="favorites_all">All</string>
     <string name="favorites_empty">No favorites yet</string>
-    <string name="favorites_empty_hint">Long-press a message or tap the bookmark in its action row; it will be here across conversations.</string>
     <string name="favorites_no_match">No matching favorites</string>
-    <string name="favorites_no_match_hint">Try another keyword, or switch back to All.</string>
     <string name="favorites_empty_preview">(No text)</string>
     <string name="favorites_untitled">Untitled conversation</string>
     <string name="favorites_search_hint">Search favorites…</string>

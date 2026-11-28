@@ -275,6 +275,74 @@ object AppIcons {
         }
     }
 
+    /** 收藏（Lucide: star）。 */
+    val Star: ImageVector by lazy {
+        vector("Star") {
+            stroke { starPath() }
+        }
+    }
+
+    /** 已收藏：实心五角星。 */
+    val StarFilled: ImageVector by lazy {
+        vector("StarFilled") {
+            solid { starPath() }
+        }
+    }
+
+    /** 收藏夹：文件夹 + 星标（替换旧的 folder 图标）。 */
+    val FolderStar: ImageVector by lazy {
+        vector("FolderStar") {
+            stroke {
+                folderPath()
+                smallStarPath()
+            }
+        }
+    }
+
+    private fun PathBuilder.starPath() {
+        moveTo(12f, 2f)
+        lineTo(15.09f, 8.26f)
+        lineTo(22f, 9.27f)
+        lineTo(17f, 14.14f)
+        lineTo(18.18f, 21f)
+        lineTo(12f, 17.77f)
+        lineTo(5.82f, 21f)
+        lineTo(7f, 14.14f)
+        lineTo(2f, 9.27f)
+        lineTo(8.91f, 8.26f)
+        close()
+    }
+
+    private fun PathBuilder.folderPath() {
+        moveTo(20f, 20f)
+        arcToRelative(2f, 2f, 0f, false, false, 2f, -2f)
+        verticalLineTo(8f)
+        arcToRelative(2f, 2f, 0f, false, false, -2f, -2f)
+        horizontalLineToRelative(-7.9f)
+        arcToRelative(2f, 2f, 0f, false, true, -1.69f, -0.9f)
+        lineToRelative(-0.81f, -1.2f)
+        arcToRelative(2f, 2f, 0f, false, false, -1.67f, -0.9f)
+        horizontalLineTo(4f)
+        arcToRelative(2f, 2f, 0f, false, false, -2f, 2f)
+        verticalLineToRelative(13f)
+        arcToRelative(2f, 2f, 0f, false, false, 2f, 2f)
+        close()
+    }
+
+    private fun PathBuilder.smallStarPath() {
+        moveTo(12f, 9.6f)
+        lineTo(13.45f, 12f)
+        lineTo(15.9f, 12.35f)
+        lineTo(14.05f, 14.15f)
+        lineTo(14.5f, 16.6f)
+        lineTo(12f, 15.25f)
+        lineTo(9.5f, 16.6f)
+        lineTo(9.95f, 14.15f)
+        lineTo(8.1f, 12.35f)
+        lineTo(10.55f, 12f)
+        close()
+    }
+
     /** 收藏夹（Lucide: folder） */
     val Folder: ImageVector by lazy {
         vector("Folder") {

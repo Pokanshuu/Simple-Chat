@@ -297,45 +297,49 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         }
         val message = messages.findById(messageId) ?: return null
         val conversation = conversations.findById(message.conversationId)
-        val raw = Attachments.decode(message.attachments)
-        val images = raw.filter { it.isImage }.map { attachment ->
-            if (attachment.isStored) {
-                attachment.copy(data = "")
-            } else {
-                val path = runCatching {
-                    AttachmentFiles.save(
-                        context,
-                        Base64.decode(attachment.data, Base64.NO_WRAP).inputStream(),
-                        attachment.mime,
-                    )
-                }.getOrNull()
-                if (path != null) attachment.copy(data = "", path = path) else attachment
+        // 内联图片要走 base64 解码 + 落盘、正文也要过一遍预览压缩：都在 IO 上做，
+        // 否则收藏一条带大图的消息会在主线程卡到掉帧（StrictMode 也会报）。
+        val (images, favoriteBody) = withContext(Dispatchers.IO) {
+            val raw = Attachments.decode(message.attachments)
+            val encoded = raw.filter { it.isImage }.map { attachment ->
+                if (attachment.isStored) {
+                    attachment.copy(data = "")
+                } else {
+                    val path = runCatching {
+                        AttachmentFiles.save(
+                            context,
+                            Base64.decode(attachment.data, Base64.NO_WRAP).inputStream(),
+                            attachment.mime,
+                        )
+                    }.getOrNull()
+                    if (path != null) attachment.copy(data = "", path = path) else attachment
+                }
             }
+            val names = raw.filterNot { it.isImage }.map { it.name }
+            encoded to FavoriteEntity(
+                id = UUID.randomUUID().toString(),
+                messageId = messageId,
+                conversationId = message.conversationId,
+                conversationTitle = conversation?.title.orEmpty(),
+                role = message.role,
+                content = message.content,
+                preview = FavoriteContent.preview(message.content),
+                attachments = Attachments.encode(encoded),
+                coverImage = FavoriteContent.coverJson(encoded),
+                imageCount = encoded.size,
+                attachmentNames = FavoriteContent.encodeNames(names),
+                messageCreatedAt = message.createdAt,
+                createdAt = System.currentTimeMillis(),
+            )
         }
-        val names = raw.filterNot { it.isImage }.map { it.name }
-        val id = UUID.randomUUID().toString()
-        val favorite = FavoriteEntity(
-            id = id,
-            messageId = messageId,
-            conversationId = message.conversationId,
-            conversationTitle = conversation?.title.orEmpty(),
-            role = message.role,
-            content = message.content,
-            preview = FavoriteContent.preview(message.content),
-            attachments = Attachments.encode(images),
-            coverImage = FavoriteContent.coverJson(images),
-            imageCount = images.size,
-            attachmentNames = FavoriteContent.encodeNames(names),
-            messageCreatedAt = message.createdAt,
-            createdAt = System.currentTimeMillis(),
-        )
+        val favorite = favoriteBody
         return db.withTransaction {
             if (favorites.insertIgnore(favorite) == -1L) {
                 favorites.byMessage(messageId)?.id
             } else {
-                attachFavoriteFolders(id, folderIds)
-                images.mapNotNull { it.path }.forEach { favoriteMedia.insertIgnore(FavoriteMediaEntity(it, id)) }
-                id
+                attachFavoriteFolders(favorite.id, folderIds)
+                images.mapNotNull { it.path }.forEach { favoriteMedia.insertIgnore(FavoriteMediaEntity(it, favorite.id)) }
+                favorite.id
             }
         }
     }
@@ -360,13 +364,37 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         }
     }
 
+    /**
+     * 面板里保存归属。
+     *
+     * 空集合 = 面板内取消掉最后一个归属 → 整条取消收藏（§48.7.1 表格 L149），
+     * 而不是悄悄落回默认夹。
+     */
     suspend fun setFavoriteFolders(favoriteId: String, folderIds: List<String>) {
-        val default = ensureDefaultFavoriteFolder()
-        val ids = folderIds.distinct().ifEmpty { listOf(default) }
+        if (folderIds.isEmpty()) {
+            removeFavorite(favoriteId)
+            return
+        }
         val now = System.currentTimeMillis()
+        val ids = folderIds.distinct()
         db.withTransaction {
             favoriteMemberships.clear(favoriteId)
             ids.forEach { favoriteMemberships.insertIgnore(FavoriteMembershipEntity(favoriteId, it, now)) }
+        }
+    }
+
+    /** 批量「加入夹」：只 insertIgnore，绝不清已有归属，也不依赖调用方手里的旧快照。 */
+    suspend fun addFavoriteFolders(favoriteId: String, folderIds: List<String>) {
+        val ids = folderIds.distinct()
+        if (ids.isEmpty()) return
+        val now = System.currentTimeMillis()
+        db.withTransaction {
+            ids.forEach { favoriteMemberships.insertIgnore(FavoriteMembershipEntity(favoriteId, it, now)) }
+            if (favoriteMemberships.ofFavorite(favoriteId).isEmpty()) {
+                favoriteMemberships.insertIgnore(
+                    FavoriteMembershipEntity(favoriteId, FavoriteFolders.DefaultId, now),
+                )
+            }
         }
     }
 
@@ -948,6 +976,8 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
                     ids.toList().chunked(MessageQueryChunk).forEach { messages.setMessageTrash(it, null, null) }
                 } else {
                     ids.toList().chunked(MessageQueryChunk).forEach { messages.scrubMessageNodes(it) }
+                    // 消息被彻底删除：收藏保留正文与图片，只断开指向它的指针（§48.7.1）。
+                    ids.forEach { favorites.detachMessage(it) }
                     attachmentRefs.pathsOf(conversationId).forEach { path ->
                         attachmentRefs.removeIfUnused(conversationId, path)
                         released += path
@@ -965,7 +995,13 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
         }
         withContext(Dispatchers.IO) {
             for (path in releasedPaths) {
-                if (!attachmentRefs.containsPath(path) && !messages.referencesAttachment(path)) AttachmentFiles.delete(context, path)
+                // 收藏与消息共用同一份文件（§48.5.5），引用表还保活时绝不能删。
+                if (!attachmentRefs.containsPath(path) &&
+                    favoriteMedia.references(path) == 0 &&
+                    !messages.referencesAttachment(path)
+                ) {
+                    AttachmentFiles.delete(context, path)
+                }
             }
         }
     }
@@ -1233,17 +1269,27 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
 
     /** 删除全部会话。消息 / 预设挂载 / 摘要靠外键级联一并清除。 */
     suspend fun deleteAllConversations() {
-        // 全清也要把落盘图片一起删干净：路径同样只查引用表，不碰 messages 的大列
+        // 全清也要把落盘图片一起删干净：路径同样只查引用表，不碰 messages 的大列。
+        // 收藏图片可能只被 favorite_media 引用（内联图收藏时另存的一份），要单独收集。
         val files = attachmentRefs.allPaths()
+        val favoriteFiles = favoriteMedia.allPaths()
         val wallpapers = db.withTransaction {
             val removed = conversations.allWallpaperOverrides().mapNotNull(ConversationWallpaper::decode)
             conversations.deleteEverything()
             drafts.clearEverything()
             attachmentRefs.clearEverything()
+            // 「删除所有历史对话」连收藏一起清（§48.7.1）：正文副本、归属、图片登记、
+            // 自定义夹都删，默认夹保留。
+            favorites.clearAll()
+            favoriteMemberships.clearAll()
+            favoriteMedia.clearAll()
+            favoriteFolders.clearCustom()
             removed
         }
-        withContext(Dispatchers.IO) { wallpapers.forEach { WallpaperFiles.deleteWallpaper(context, it.fileName) } }
-        files.forEach { AttachmentFiles.delete(context, it) }
+        withContext(Dispatchers.IO) {
+            wallpapers.forEach { WallpaperFiles.deleteWallpaper(context, it.fileName) }
+            (files + favoriteFiles).distinct().forEach { AttachmentFiles.delete(context, it) }
+        }
         withContext(Dispatchers.IO) { compactionCheckpoints.clear() }
         withContext(Dispatchers.IO) { File(context.filesDir, "file-api-cache").deleteRecursively() }
     }
@@ -1719,9 +1765,10 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
 
     private fun saveImportReport(report: ImportReport): Boolean = try {
         val target = File(context.filesDir, "last-import-report.json")
-        val temporary = File(context.filesDir, "last-import-report.tmp")
-        temporary.writeText(backupJson.encodeToString(ImportReport.serializer(), report), Charsets.UTF_8)
-        check(temporary.renameTo(target)) { "Could not save import report" }
+        // 容器里 renameTo 可能失败（跨挂载点），走带复制兜底的原子写。
+        writeFileAtomically(target) { file ->
+            file.writeText(backupJson.encodeToString(ImportReport.serializer(), report), Charsets.UTF_8)
+        }
         true
     } catch (error: Exception) {
         android.util.Log.w(ImportLogTag, "Import summary file unavailable: ${error.javaClass.simpleName}")
@@ -2312,6 +2359,8 @@ class ChatRepository(private val db: AppDatabase, private val context: Context) 
     private suspend fun deleteConversationRecords(id: String) {
         conversations.delete(id)
         drafts.clearAll(listOf(id))
+        // 会话没了，指向它的收藏要断链（否则会一直显示「可定位原文」但定位落空）。
+        favorites.detachConversations(listOf(id))
         deleteCompactionCheckpoint(id)
     }
 

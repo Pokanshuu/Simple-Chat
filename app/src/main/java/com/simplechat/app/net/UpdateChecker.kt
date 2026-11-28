@@ -136,7 +136,7 @@ object UpdateChecker {
             .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) error("HTTP ${response.code}")
-            val body = response.body?.string().orEmpty()
+            val body = response.body.string()
             val root = json.parseToJsonElement(body).jsonObject
             val tag = root["tag_name"]?.jsonPrimitive?.contentOrNull
                 ?: error("missing tag_name")
@@ -190,24 +190,69 @@ object UpdateChecker {
  * 规则（纯函数，有单测 `UpdateCheckerTest`）：
  * - 去掉 `v` / `V` 前缀；
  * - 按 `.` 切成数字段，逐段比较，缺的段按 0 算（`1.1` 与 `1.1.0` 相等）；
- * - 遇到非数字（`-beta.1` 之类的预发布后缀）当场截断 —— 只比版本号本身，
- *   预发布比正式版旧，不该因为后缀把它当成"更新"。
+ * - 数字段相等时按 **semver 预发布** 比较：有后缀 < 无后缀（`1.2.6-beta.5` < `1.2.6`），
+ *   两个都有后缀时逐标识符比较（数字段按数值，字母段按字典序，前缀短者更旧）。
+ *
+ * 这一点对当前发布渠道很关键：`/releases/latest` 只返回正式版，
+ * 而 App 自己可能装在 `1.2.6-beta.5` 这类预发布上 —— 若不比较后缀，
+ * 1.2.6 正式版发布后 beta.5 用户会一直被告知「已是最新」。
  */
 internal fun isNewerVersion(remote: String, local: String): Boolean {
-    val a = versionParts(remote)
-    val b = versionParts(local)
-    for (index in 0 until maxOf(a.size, b.size)) {
-        val left = a.getOrElse(index) { 0 }
-        val right = b.getOrElse(index) { 0 }
+    val a = parseVersion(remote) ?: return false
+    val b = parseVersion(local) ?: return false
+    for (index in 0 until maxOf(a.numbers.size, b.numbers.size)) {
+        val left = a.numbers.getOrElse(index) { 0 }
+        val right = b.numbers.getOrElse(index) { 0 }
         if (left != right) return left > right
     }
-    return false
+    val ap = a.pre
+    val bp = b.pre
+    return when {
+        ap == null && bp == null -> false
+        // 正式版比同号预发布新
+        ap == null -> true
+        bp == null -> false
+        else -> comparePreRelease(ap, bp) > 0
+    }
 }
 
-private fun versionParts(raw: String): List<Int> =
-    raw.trim()
-        .removePrefix("v")
-        .removePrefix("V")
-        .takeWhile { it.isDigit() || it == '.' }
-        .split('.')
-        .mapNotNull { it.toIntOrNull() }
+/** 解析后的版本：数字段 + 可选的预发布标识符。 */
+private data class ParsedVersion(val numbers: List<Int>, val pre: List<String>?)
+
+/**
+ * `v1.2.6-beta.5` → `[1, 2, 6]` + `[beta, 5]`。
+ *
+ * 只有「数字开头的版本号」才认；`release-2026.11` 这类 tag 直接返回 null（不当作更新），
+ * 与旧实现的保守行为一致。
+ */
+private fun parseVersion(raw: String): ParsedVersion? {
+    val text = raw.trim().removePrefix("v").removePrefix("V")
+    if (text.isEmpty() || !text.first().isDigit()) return null
+    val core = text.takeWhile { it.isDigit() || it == '.' }.trimEnd('.')
+    if (core.isEmpty()) return null
+    val numbers = core.split('.').mapNotNull { it.toIntOrNull() }
+    if (numbers.isEmpty()) return null
+    val suffix = text.substring(core.length).trim()
+    if (suffix.isEmpty()) return ParsedVersion(numbers, null)
+    val pre = suffix.removePrefix("-").removePrefix("_").trim()
+    if (pre.isEmpty()) return ParsedVersion(numbers, null)
+    return ParsedVersion(numbers, pre.split('.', '-', '_').filter { it.isNotEmpty() })
+}
+
+/** semver 预发布比较：数字标识符按数值比，数字 < 字母；前缀相同则短的更旧。 */
+private fun comparePreRelease(left: List<String>, right: List<String>): Int {
+    for (index in 0 until minOf(left.size, right.size)) {
+        val l = left[index]
+        val r = right[index]
+        val ln = l.toIntOrNull()
+        val rn = r.toIntOrNull()
+        val cmp = when {
+            ln != null && rn != null -> ln.compareTo(rn)
+            ln != null -> -1
+            rn != null -> 1
+            else -> l.compareTo(r)
+        }
+        if (cmp != 0) return cmp
+    }
+    return left.size.compareTo(right.size)
+}

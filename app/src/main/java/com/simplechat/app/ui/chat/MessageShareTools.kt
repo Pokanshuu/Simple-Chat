@@ -90,6 +90,7 @@ internal fun MessageShareTools(
         fontScale = globalFontScale,
         systemFontScale = systemFontScale,
         wallpaper = wallpaper.takeIf { it.active },
+        showCatMark = stored?.useSimpleCatIcon ?: true,
     )
 
     fun runExport(block: suspend () -> Unit) {

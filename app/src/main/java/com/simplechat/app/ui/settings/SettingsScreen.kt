@@ -115,6 +115,8 @@ import com.simplechat.app.data.normalizeLoadingWord
 import com.simplechat.app.data.ApiProfile
 import com.simplechat.app.data.userMessage
 import com.simplechat.app.data.copyExportFile
+import com.simplechat.app.data.copyExportFileToDescriptor
+import com.simplechat.app.data.destinationSize
 import com.simplechat.app.data.stageArchive
 import com.simplechat.app.net.ApiStyle
 import com.simplechat.app.net.ModelCapabilityOverride
@@ -546,10 +548,32 @@ internal fun SettingsScreen(
             try {
                 checkNotNull(staged) { Res.get(R.string.export_failed_short) }
                 withContext(Dispatchers.IO) {
-                    copyExportFile(staged, openDestination = {
-                        context.contentResolver.openOutputStream(uri, "wt")
-                            ?: error(Res.get(R.string.error_write_failed))
-                    }, onProgress = { archiveProgress.value = it })
+                    val resolver = context.contentResolver
+                    val expected = staged.length()
+                    fun destinationOk(): Boolean {
+                        val size = destinationSize(resolver, uri)
+                        // -1 = provider 不支持查询，只能信流写入的字节数。
+                        return size < 0L || size == expected
+                    }
+                    copyExportFile(
+                        staged,
+                        openDestination = {
+                            resolver.openOutputStream(uri, "wt")
+                                ?: error(Res.get(R.string.error_write_failed))
+                        },
+                        onProgress = { archiveProgress.value = it },
+                    )
+                    if (!destinationOk()) {
+                        /*
+                         * 0 字节目标：容器（鸿蒙 / 卓易通）里的 DocumentsProvider 把流内容丢了。
+                         * 换原生 FD 再写一次；仍然对不上就明确报错，别再说"已导出"。
+                         */
+                        copyExportFileToDescriptor(resolver, uri, staged) { archiveProgress.value = it }
+                        if (!destinationOk()) {
+                            DocumentsContract.deleteDocument(resolver, uri)
+                            error(Res.get(R.string.export_verify_failed))
+                        }
+                    }
                 }
                 saved = true
                 dataMessage = Res.get(R.string.export_done)
@@ -2231,7 +2255,7 @@ private fun DataPage(
             label = stringResource(R.string.favorites_title),
             hint = stringResource(R.string.favorites_settings_hint),
             onClick = onOpenFavorites,
-            icon = AppIcons.Bookmark,
+            icon = AppIcons.Star,
         )
     }
 
@@ -2744,7 +2768,7 @@ private fun AboutPage(
     /*
      * 更新流程的状态机（都是"没有就 null"的三个变量，不值得为它建 sealed class）：
      * - updateRelease 非空 = 「发现新版本」对话框开着；
-     * - downloadProgress 非空 = 正在下载（0..1）；
+     * - downloadProgress 非空 = 正在下载（0..1；负数 = 总量未知，走不确定进度条）；
      * - updateMessage = 一行结果提示（已是最新 / 检查失败 / 下载失败 / 需要授权）。
      */
     var updateRelease by remember { mutableStateOf<UpdateChecker.ReleaseInfo?>(null) }
@@ -2773,11 +2797,12 @@ private fun AboutPage(
     fun startDownload(mirror: UpdateChecker.Mirror) {
         val asset = updateRelease?.asset ?: return
         updateRelease = null
-        downloadProgress = 0f
+        downloadProgress = -1f
         downloadJob = scope.launch {
             try {
                 val file = UpdateDownloader.download(context, asset, mirror) { progress ->
-                    downloadProgress = progress.fraction
+                    // 总量未知时保持 -1（不确定进度条），别让用户盯着 0%。
+                    downloadProgress = if (progress.total > 0L) progress.fraction else -1f
                 }
                 downloadProgress = null
                 cachedBytes = UpdateDownloader.downloadedBytes(context)

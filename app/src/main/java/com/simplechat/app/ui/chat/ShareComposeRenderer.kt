@@ -41,7 +41,8 @@ import kotlin.coroutines.resumeWithException
 internal class ShareComposeRenderer private constructor(context: Context, private val parent: ViewGroup,
     private val accent: AccentColor, private val typography: TypographySettings?, private val fonts: TypographyFonts,
     private val globalScale: Float, private val systemScale: Float, private val dark: Boolean,
-    private val wallpaper: com.simplechat.app.ui.theme.WallpaperState?) {
+    private val wallpaper: com.simplechat.app.ui.theme.WallpaperState?,
+    private val showCatMark: Boolean) {
     private class Content(val body: @Composable () -> Unit) {
         var size by mutableStateOf(IntSize.Zero)
     }
@@ -71,6 +72,9 @@ internal class ShareComposeRenderer private constructor(context: Context, privat
                 LocalDensity provides Density(2f, systemScale),
                 com.simplechat.app.ui.theme.LocalWallpaper provides
                     (wallpaper ?: com.simplechat.app.ui.theme.WallpaperState()),
+                // 导出用的独立 Composition 不继承 Activity 的 provider，
+                // 品牌行的猫标开关必须在这里重新注入（§49.6.8）。
+                com.simplechat.app.ui.common.LocalUseSimpleCatIcon provides showCatMark,
             ) {
                 SimpleChatTheme(themeMode = if (dark) ThemeMode.DARK else ThemeMode.LIGHT, accent = accent,
                     typographySettings = typography, typographyFonts = fonts,
@@ -142,6 +146,7 @@ internal class ShareComposeRenderer private constructor(context: Context, privat
             systemScale: Float = 1f,
             dark: Boolean = false,
             wallpaper: com.simplechat.app.ui.theme.WallpaperState? = null,
+            showCatMark: Boolean = true,
         ): ShareComposeRenderer = suspendCancellableCoroutine { continuation ->
             val handler = Handler(Looper.getMainLooper())
             val create = Runnable {
@@ -150,7 +155,7 @@ internal class ShareComposeRenderer private constructor(context: Context, privat
                         var owner = context
                         while (owner is ContextWrapper && owner !is Activity) owner = owner.baseContext
                         val activity = owner as? Activity ?: error("Image export requires a visible activity")
-                        val renderer = ShareComposeRenderer(activity, activity.window.decorView as ViewGroup, accent, typography, fonts, globalScale, systemScale, dark, wallpaper)
+                        val renderer = ShareComposeRenderer(activity, activity.window.decorView as ViewGroup, accent, typography, fonts, globalScale, systemScale, dark, wallpaper, showCatMark)
                         continuation.resume(renderer, onCancellation = { _, resource, _ -> handler.post { resource.closeNow() } })
                     } catch (error: Exception) { continuation.resumeWithException(error) }
                 }

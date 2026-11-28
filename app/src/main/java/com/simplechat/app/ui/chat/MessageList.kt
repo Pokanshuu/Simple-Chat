@@ -567,14 +567,14 @@ private fun MessageRow(
             }
             if (onFavorite != null) AppMenuItem(
                 stringResource(if (favorited) R.string.favorites_remove else R.string.favorites_add),
-                if (favorited) AppIcons.BookmarkCheck else AppIcons.Bookmark,
+                if (favorited) AppIcons.StarFilled else AppIcons.Star,
             ) {
                 menuOpen = false
                 onFavorite()
             }
             if (favorited && onFavoriteLongPress != null) AppMenuItem(
                 stringResource(R.string.favorites_choose),
-                AppIcons.Folder,
+                AppIcons.FolderStar,
             ) {
                 menuOpen = false
                 onFavoriteLongPress()
@@ -1292,7 +1292,7 @@ private fun MessageActions(
         if (onDelete != null) ActionIcon(AppIcons.Trash, stringResource(R.string.action_delete), onDelete, colors)
         if (onFavorite != null) {
             IconCircleButton(
-                icon = if (favorited) AppIcons.BookmarkCheck else AppIcons.Bookmark,
+                icon = if (favorited) AppIcons.StarFilled else AppIcons.Star,
                 contentDescription = stringResource(
                     if (favorited) R.string.favorites_remove else R.string.favorites_add,
                 ),

@@ -201,7 +201,7 @@ fun HistoryDrawerContent(
         } else {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 DrawerFooterAction(
-                    icon = AppIcons.Bookmark,
+                    icon = AppIcons.Star,
                     label = stringResource(R.string.favorites_title),
                     onClick = onOpenFavorites,
                     modifier = Modifier.weight(1f),

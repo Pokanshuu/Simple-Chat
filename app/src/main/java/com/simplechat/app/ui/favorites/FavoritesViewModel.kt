@@ -50,6 +50,12 @@ class FavoritesViewModel(
 
     fun updateQuery(value: String) {
         query = value
+        refreshSearch()
+    }
+
+    /** 搜索结果只是快照：收藏被增删改之后必须重查，否则删掉的行还留在结果里。 */
+    private fun refreshSearch() {
+        val value = query
         searchJob?.cancel()
         if (value.isBlank()) {
             results = null
@@ -73,35 +79,51 @@ class FavoritesViewModel(
     }
 
     fun deleteFolder(id: String) {
-        viewModelScope.launch { repository.deleteFavoriteFolder(id) }
+        viewModelScope.launch {
+            repository.deleteFavoriteFolder(id)
+            // 正在按这个夹筛选时，夹没了就把筛选落回「全部」，别留一个高亮不了的悬空状态。
+            if (folderFilter == id) folderFilter = null
+            refreshSearch()
+        }
     }
 
     fun deleteFavorite(id: String) {
-        viewModelScope.launch { repository.removeFavorite(id) }
+        viewModelScope.launch {
+            repository.removeFavorite(id)
+            refreshSearch()
+        }
     }
 
     fun deleteFavorites(ids: Collection<String>) {
-        viewModelScope.launch { ids.forEach { repository.removeFavorite(it) } }
+        viewModelScope.launch {
+            ids.forEach { repository.removeFavorite(it) }
+            refreshSearch()
+        }
     }
 
     /** 批量把几个收藏加入所选夹，保留已有归属（批量操作只加不减）。 */
     fun addFoldersToFavorites(favoriteIds: Collection<String>, folderIds: Collection<String>) {
         viewModelScope.launch {
             favoriteIds.forEach { favoriteId ->
-                val existing = memberships.value
-                    .filter { it.favoriteId == favoriteId }
-                    .map { it.folderId }
-                repository.setFavoriteFolders(favoriteId, (existing + folderIds).distinct())
+                // 归属由仓库在事务内合并，不用调用方手里的旧快照（并发/首帧会丢归属）。
+                repository.addFavoriteFolders(favoriteId, folderIds.toList())
             }
         }
     }
 
+    /** 面板保存归属；空集合 = 取消收藏（仓库内处理）。 */
     fun setFolders(favoriteId: String, folderIds: List<String>) {
-        viewModelScope.launch { repository.setFavoriteFolders(favoriteId, folderIds) }
+        viewModelScope.launch {
+            repository.setFavoriteFolders(favoriteId, folderIds)
+            refreshSearch()
+        }
     }
 
     fun updateNote(favoriteId: String, note: String?) {
-        viewModelScope.launch { repository.updateFavorite(favoriteId, note?.trim()?.takeIf { it.isNotEmpty() }) }
+        viewModelScope.launch {
+            repository.updateFavorite(favoriteId, note?.trim()?.takeIf { it.isNotEmpty() })
+            refreshSearch()
+        }
     }
 
     fun folderIdsOf(favoriteId: String): List<String> =

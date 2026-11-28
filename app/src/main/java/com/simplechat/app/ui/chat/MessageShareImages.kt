@@ -79,7 +79,8 @@ internal suspend fun exportSharedImages(context: Context, document: MessageShare
     val directory = shareDirectory(context)
     val renderer = try {
         ShareComposeRenderer.create(context, effectiveAccent, effectiveTypography, effectiveFonts, effectiveFontScale,
-            effectiveSystemScale, dark = dark, wallpaper = wallpaper)
+            effectiveSystemScale, dark = dark, wallpaper = wallpaper,
+            showCatMark = style?.showCatMark ?: true)
     }
         catch (error: Throwable) { directory.deleteRecursively(); throw error }
     val memoryClass = (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).memoryClass
@@ -327,7 +328,9 @@ private class ShareImageWriter(private val context: Context, private val directo
             canvas.restore()
             top += band
         }
-        val veil = ((1f - state.opacity.coerceIn(0f, 1f)) * 255).toInt()
+        // 可读性保护层下限（§49.6.5）：浅色 0.55、深色 0.65。
+        // 用户把壁纸透明度调到更高时，导出必须把保护层钳回下限，正文才还能读。
+        val veil = (shareWallpaperVeil(state.opacity, dark) * 255).toInt()
         if (veil > 0) {
             val argb = base.toArgb()
             canvas.drawColor(Color.argb(veil, Color.red(argb), Color.green(argb), Color.blue(argb)))

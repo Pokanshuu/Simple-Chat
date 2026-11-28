@@ -4,6 +4,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.text.BasicTextField
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -19,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.pluralStringResource
@@ -50,6 +52,7 @@ import com.simplechat.app.ui.common.AppMenuItem
 import com.simplechat.app.ui.common.AppTextInputDialog
 import com.simplechat.app.ui.common.CapsuleButton
 import com.simplechat.app.ui.common.ContainerShape
+import com.simplechat.app.ui.common.FieldThickness
 import com.simplechat.app.ui.common.IconCircleButton
 import com.simplechat.app.ui.common.PillShape
 import com.simplechat.app.ui.common.SoftShape
@@ -83,6 +86,13 @@ fun FavoritesScreen(
     var batchFolderOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { vm.ensureDefault(defaultName) }
+    /*
+     * 切筛选 / 切分组 / 改搜索词都会改变"可见集合"：
+     * 不清空多选的话，批量操作会作用到屏幕上看不见的条目（§48.10.5）。
+     */
+    LaunchedEffect(vm.folderFilter, vm.query, groupMode) {
+        if (selectedIds.isNotEmpty()) selectedIds = emptySet()
+    }
     BackHandler(enabled = selectionMode) {
         selectionMode = false
         selectedIds = emptySet()
@@ -175,7 +185,7 @@ fun FavoritesScreen(
                     FavoriteGroupMode.CONVERSATION
                 }
                 IconCircleButton(
-                    if (groupMode == FavoriteGroupMode.CONVERSATION) AppIcons.Folder else AppIcons.MessageSquare,
+                    if (groupMode == FavoriteGroupMode.CONVERSATION) AppIcons.FolderStar else AppIcons.MessageSquare,
                     stringResource(
                         if (nextMode == FavoriteGroupMode.FOLDER) {
                             R.string.favorites_group_by_folder
@@ -188,7 +198,7 @@ fun FavoritesScreen(
                     iconSize = 19.dp,
                 )
                 IconCircleButton(
-                    AppIcons.FolderPlus,
+                    AppIcons.FolderStar,
                     stringResource(R.string.favorites_manage),
                     onClick = { manageOpen = true },
                     size = 40.dp,
@@ -197,35 +207,14 @@ fun FavoritesScreen(
             }
         }
 
-        OutlinedTextField(
-            value = vm.query,
-            onValueChange = vm::updateQuery,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = Space.Screen),
-            singleLine = true,
-            shape = PillShape,
-            textStyle = MaterialTheme.typography.bodyMedium,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = colors.fieldBackground,
-                unfocusedContainerColor = colors.fieldBackground,
-                focusedBorderColor = Color.Transparent,
-                unfocusedBorderColor = Color.Transparent,
-                cursorColor = MaterialTheme.colorScheme.primary,
-            ),
-            leadingIcon = { Icon(AppIcons.Search, null, tint = colors.placeholder) },
-            trailingIcon = if (vm.query.isNotEmpty()) {
-                {
-                    IconCircleButton(AppIcons.Close, stringResource(R.string.action_close), {
-                        vm.updateQuery("")
-                    }, size = 32.dp, iconSize = 14.dp)
-                }
-            } else null,
-            placeholder = {
-                Text(stringResource(R.string.favorites_search_hint), color = colors.placeholder)
-            },
+        FavoriteSearchField(
+            query = vm.query,
+            onQueryChange = vm::updateQuery,
         )
 
         LazyRow(
-            Modifier.fillMaxWidth().padding(horizontal = Space.Screen, vertical = Space.Gap),
+            Modifier.fillMaxWidth()
+                .padding(start = Space.Screen, end = Space.Screen, bottom = Space.Gap),
             horizontalArrangement = Arrangement.spacedBy(Space.Gap),
         ) {
             item {
@@ -302,6 +291,7 @@ fun FavoritesScreen(
                     onDelete = { batchDeleteOpen = true },
                     onChooseFolders = { batchFolderOpen = true },
                     onCancel = { selectionMode = false; selectedIds = emptySet() },
+                    enabled = selectedIds.isNotEmpty(),
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
             }
@@ -447,22 +437,22 @@ private fun FavoriteGroupHeader(
 private fun FavoritesEmptyState(searching: Boolean, folderEmpty: Boolean = false) {
     val colors = LocalChatColors.current
     Column(
-        Modifier.fillMaxSize().padding(horizontal = 40.dp),
+        Modifier.fillMaxSize().padding(horizontal = Space.Section),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         Box(
-            Modifier.size(72.dp).clip(CircleShape).background(colors.fieldBackground),
+            Modifier.size(64.dp).clip(CircleShape).background(colors.fieldBackground),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                if (searching) AppIcons.Search else if (folderEmpty) AppIcons.Folder else AppIcons.Bookmark,
+                if (searching) AppIcons.Search else if (folderEmpty) AppIcons.FolderStar else AppIcons.Star,
                 contentDescription = null,
                 tint = colors.placeholder,
-                modifier = Modifier.size(28.dp),
+                modifier = Modifier.size(26.dp),
             )
         }
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(Space.Card))
         Text(
             stringResource(
                 when {
@@ -475,13 +465,70 @@ private fun FavoritesEmptyState(searching: Boolean, folderEmpty: Boolean = false
             color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            stringResource(if (searching) R.string.favorites_no_match_hint else R.string.favorites_empty_hint),
-            style = MaterialTheme.typography.bodySmall,
-            color = colors.placeholder,
-            textAlign = TextAlign.Center,
+    }
+}
+
+/**
+ * 收藏页搜索框。
+ *
+ * 规格（§48.10.3）：`PillShape` + `colors.fieldBackground` + 纵向 [FieldThickness]（12dp）
+ * + 左右 14dp，与全屏搜索页同一套。**不要换回 Material 的 `OutlinedTextField`** ——
+ * 它自带 56dp 高度和 16dp 图标槽，会让搜索框比胶囊高一截、文字左边界也对不上栅格。
+ */
+@Composable
+private fun FavoriteSearchField(query: String, onQueryChange: (String) -> Unit) {
+    val colors = LocalChatColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = Space.Screen, end = Space.Screen, top = 2.dp, bottom = Space.Gap)
+            .clip(PillShape)
+            .background(colors.fieldBackground)
+            .padding(horizontal = 14.dp, vertical = FieldThickness),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.Gap),
+    ) {
+        Icon(
+            AppIcons.Search,
+            contentDescription = null,
+            tint = colors.placeholder,
+            modifier = Modifier.size(17.dp),
         )
+        Box(Modifier.weight(1f)) {
+            if (query.isEmpty()) {
+                Text(
+                    text = stringResource(R.string.favorites_search_hint),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.placeholder,
+                )
+            }
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                modifier = Modifier.fillMaxWidth(),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                    color = MaterialTheme.colorScheme.onSurface,
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                singleLine = true,
+            )
+        }
+        if (query.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .size(18.dp)
+                    .clip(CircleShape)
+                    .clickable { onQueryChange("") },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    AppIcons.Close,
+                    contentDescription = stringResource(R.string.action_clear),
+                    tint = colors.placeholder,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+        }
     }
 }
 
@@ -514,7 +561,9 @@ private fun FavoriteRow(
     val imageNote = stringResource(R.string.favorites_image_preview)
     val emptyNote = stringResource(R.string.favorites_empty_preview)
     val attachmentNote = stringResource(R.string.favorites_attachment_unsaved)
-    val thumbnailLabel = stringResource(R.string.favorites_view_images, maxOf(favorite.imageCount, 1))
+    val thumbnailLabel = cover?.let {
+        stringResource(R.string.favorites_view_images, favorite.imageCount.coerceAtLeast(1))
+    }
     val otherFolders = (folderNames.size - if (groupsInFolder) 1 else 0).coerceAtLeast(0)
     val trailing = when {
         groupsInFolder && otherFolders > 0 -> stringResource(R.string.favorites_other_folders, otherFolders)
@@ -582,18 +631,26 @@ private fun FavoriteRow(
                 }
             }
             Box(
-                Modifier.size(64.dp).clip(SoftShape).background(colors.fieldBackground)
-                    .semantics { contentDescription = thumbnailLabel }
-                    .clickable(role = Role.Button, enabled = !selectionMode) {
-                        val initial = cover ?: return@clickable
-                        onOpenImages(images.ifEmpty { listOf(initial) }, initial)
+                Modifier.size(64.dp).then(
+                    if (cover != null) {
+                        Modifier
+                            .clip(SoftShape)
+                            .background(colors.fieldBackground)
+                            .semantics { contentDescription = thumbnailLabel.orEmpty() }
+                            .clickable(role = Role.Button, enabled = !selectionMode) {
+                                onOpenImages(images.ifEmpty { listOf(cover) }, cover)
+                            }
+                    } else {
+                        // 纯文本收藏：这一格只是占位，不挂 clickable —— 否则点下去没反应。
+                        Modifier.clip(SoftShape).background(colors.fieldBackground)
                     },
+                ),
                 contentAlignment = Alignment.Center,
             ) {
                 if (bitmap != null) {
                     Image(bitmap, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 } else {
-                    Icon(AppIcons.Bookmark, null, tint = colors.placeholder, modifier = Modifier.size(22.dp))
+                    Icon(AppIcons.Star, null, tint = colors.placeholder, modifier = Modifier.size(22.dp))
                 }
                 if (favorite.imageCount > 1) {
                     Box(
@@ -620,7 +677,7 @@ private fun FavoriteRow(
                     )
                 }
                 AppMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    AppMenuItem(stringResource(R.string.favorites_manage), AppIcons.Folder) {
+                    AppMenuItem(stringResource(R.string.favorites_manage), AppIcons.FolderStar) {
                         menu = false
                         onManageFolders()
                     }
@@ -647,6 +704,7 @@ private fun FavoriteSelectionBar(
     onDelete: () -> Unit,
     onChooseFolders: () -> Unit,
     onCancel: () -> Unit,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalChatColors.current
@@ -655,12 +713,20 @@ private fun FavoriteSelectionBar(
             .heightIn(min = Space.Row).padding(horizontal = Space.Gap, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TextButton(onClick = onChooseFolders, modifier = Modifier.weight(1f).heightIn(min = Space.Row)) {
-            Icon(AppIcons.Folder, null, Modifier.size(18.dp))
+        TextButton(
+            onClick = onChooseFolders,
+            enabled = enabled,
+            modifier = Modifier.weight(1f).heightIn(min = Space.Row),
+        ) {
+            Icon(AppIcons.FolderStar, null, Modifier.size(18.dp))
             Spacer(Modifier.width(4.dp))
             Text(stringResource(R.string.favorites_choose_short), maxLines = 1)
         }
-        TextButton(onClick = onDelete, modifier = Modifier.weight(1f).heightIn(min = Space.Row)) {
+        TextButton(
+            onClick = onDelete,
+            enabled = enabled,
+            modifier = Modifier.weight(1f).heightIn(min = Space.Row),
+        ) {
             Icon(AppIcons.Trash, null, Modifier.size(18.dp), tint = colors.danger)
             Spacer(Modifier.width(4.dp))
             Text(stringResource(R.string.favorites_remove_short), color = colors.danger, maxLines = 1)
@@ -763,7 +829,7 @@ internal fun FavoriteFolderSheet(
                         }
                         if (onManageFolders != null) {
                             TextButton(onClick = onManageFolders) {
-                                Icon(AppIcons.Folder, null, Modifier.size(18.dp))
+                                Icon(AppIcons.FolderStar, null, Modifier.size(18.dp))
                                 Spacer(Modifier.width(6.dp))
                                 Text(stringResource(R.string.favorites_manage))
                             }

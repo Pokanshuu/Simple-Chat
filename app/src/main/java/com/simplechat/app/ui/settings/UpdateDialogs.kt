@@ -183,13 +183,14 @@ internal fun UpdateAvailableDialog(
     }
 }
 
-/** 「正在下载更新」：进度 + 取消。 */
+/** 「正在下载更新」：进度 + 取消。[progress] 为负表示总量未知（不确定进度条）。 */
 @Composable
 internal fun UpdateDownloadingDialog(
     progress: Float,
     onCancel: () -> Unit,
 ) {
     val colors = LocalChatColors.current
+    val indeterminate = progress < 0f
     Dialog(onDismissRequest = {}) {
         Column(
             modifier = Modifier
@@ -205,13 +206,18 @@ internal fun UpdateDownloadingDialog(
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.size(14.dp))
-            LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier.fillMaxWidth(),
-            )
+            if (indeterminate) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            } else {
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
             Spacer(Modifier.size(8.dp))
             Text(
-                text = "${(progress * 100).toInt()}%",
+                // 总量未知时不要写死 0% —— 看起来像卡死。
+                text = if (indeterminate) "…" else "${(progress * 100).toInt()}%",
                 style = MaterialTheme.typography.labelMedium,
                 color = colors.placeholder,
             )
